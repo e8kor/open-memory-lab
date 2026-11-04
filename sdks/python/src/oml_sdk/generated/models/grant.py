@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.grant_covers import GrantCovers
 from ..models.grant_role import GrantRole
 from ..types import UNSET, Unset
 
@@ -26,6 +27,7 @@ class Grant:
         role (GrantRole):
         epoch (int): The journal seq of this grant's grant.issued event.
         deny (list[GrantDenyItem] | Unset):
+        covers (GrantCovers | Unset): The node's subtree, or the node alone (ADR-0044 d4).
     """
 
     grant_id: str
@@ -33,6 +35,7 @@ class Grant:
     role: GrantRole
     epoch: int
     deny: list[GrantDenyItem] | Unset = UNSET
+    covers: GrantCovers | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +54,10 @@ class Grant:
                 deny_item = deny_item_data.to_dict()
                 deny.append(deny_item)
 
+        covers: str | Unset = UNSET
+        if not isinstance(self.covers, Unset):
+            covers = self.covers.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -63,6 +70,8 @@ class Grant:
         )
         if deny is not UNSET:
             field_dict["deny"] = deny
+        if covers is not UNSET:
+            field_dict["covers"] = covers
 
         return field_dict
 
@@ -88,12 +97,20 @@ class Grant:
 
                 deny.append(deny_item)
 
+        _covers = d.pop("covers", UNSET)
+        covers: GrantCovers | Unset
+        if isinstance(_covers, Unset):
+            covers = UNSET
+        else:
+            covers = GrantCovers(_covers)
+
         grant = cls(
             grant_id=grant_id,
             workarea_node_id=workarea_node_id,
             role=role,
             epoch=epoch,
             deny=deny,
+            covers=covers,
         )
 
         grant.additional_properties = d

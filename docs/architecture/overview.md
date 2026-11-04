@@ -28,7 +28,7 @@ Sections 1 to 6 are the design. Release v0.4.0 runs a subset of it:
 | Server | one binary, `oml-server-lead`, holding the signing key; no follower, lake-writer, reconciler or indexer | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md); the rest [not scheduled](../product/releases.md#not-scheduled) |
 | Store | PostgreSQL alone: journal, metadata, outbox rows nothing drains, full-text search per tenant. No object store, no lake, no vector search | [ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md), [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) |
 | Database roles | the lead migrates as the owner role (`postgres.owner_url`) and serves as a role that owns nothing (`postgres.url`), and refuses to start when both log in as one role | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4 |
-| Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answer hidden through v0.4.x, logging `mcp_alias_called` | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2, d12 |
+| Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answer hidden through v0.5.0, logging `mcp_alias_called` | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2, d12 |
 | OAuth | the lead is the protected resource and its own authorization server, on the origin that serves `/mcp`, only where `oauth.issuer` names that origin | [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1 |
 | Release artifacts | the CLI per platform (four Unix targets and Windows x86_64), the server for Intel and Arm Linux, one image index for both, the chart, the plugins as an archive and a pinned marketplace, and the agent kit, each signed with cosign and summed in `SHA256SUMS` | [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance) |
 | Installers | `install.sh` and `install.ps1` fetch the CLI archive and `SHA256SUMS`, verify with cosign when present, and write one file | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1, d2 |
@@ -75,7 +75,7 @@ flowchart LR
   over HTTP. Who may review what: [roles-and-keys.md](roles-and-keys.md); how a verdict is bound
   to what was served: [cli/reference.md](../cli/reference.md) and [admission.md](admission.md).
 - **Admins and the operator** use the `oml` CLI, which speaks the same HTTP API with
-  admin/operator keys. There is no web UI (§6). CLI verbs: [cli/reference.md](../cli/reference.md).
+  admin/operator keys. Beside the CLI, since v0.5.0, a user page and an admin page for people signed in with Google or GitHub (§6; [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)). CLI verbs: [cli/reference.md](../cli/reference.md).
 
 Tenancy is derived server-side from the API key, never from the request; everything below is
 per-tenant ([security.md](security.md)).
@@ -301,9 +301,11 @@ service; lineage exclusion is exactly as good as the declared graph.
 
 ## 6. What is deliberately not here
 
-- **No web UI.** Administration is the `oml` CLI against the same HTTP API; a web console was
+- **No web UI, beyond two planned pages.** Administration is the `oml` CLI against the same HTTP API; a web console was
   considered and declined ([cli/reference.md](../cli/reference.md),
-  [ADR-0015](../adr/ADR-0015-cli-administration.md)).
+  [ADR-0015](../adr/ADR-0015-cli-administration.md)). [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) amends that
+  to a user page and an admin page with a closed set of routes, since v0.5.0;
+  dashboards, recall views and graph pictures stay declined.
 - **No grounded Q&A.** Clients are agents that recall and reason themselves; OML returns
   memories, not answers. Out of scope for v1, recorded in [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) and
   [retrieval.md](retrieval.md).

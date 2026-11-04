@@ -1699,6 +1699,60 @@ async fn a_grant_by_workarea_name_issues_the_same_grant_as_by_id() {
     lab.stop().await;
 }
 
+/// `oml web allow` adds the first admin email under the tenant's admin key,
+/// sending the address in the body and never in the URL; `oml web list`
+/// reads it back and `oml web remove` takes it off (cli/reference.md
+/// `oml web`; ADR-0045 d2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    lab.take_requests();
+    let (code, entry, log) = lab.json(
+        None,
+        &[
+            "web",
+            "allow",
+            "Alice@Example.com",
+            "--user",
+            "alice",
+            "--admin",
+        ],
+    );
+    assert_eq!(code, 0, "web allow: {log}");
+    assert_eq!(
+        entry,
+        json!({"email": "alice@example.com", "user": "alice", "admin": true})
+    );
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/web/emails"]);
+    assert_eq!(
+        seen[0].body,
+        json!({"email": "Alice@Example.com", "user": "alice", "admin": true})
+    );
+    let (code, stdout, stderr) = lab.text(&["web", "list"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("alice@example.com  user: alice  admin"),
+        "{stdout}"
+    );
+    for seen in lab.take_requests() {
+        assert!(
+            !seen.path.contains('@') && !seen.query.contains('@'),
+            "no address in a URL: {} {}",
+            seen.path,
+            seen.query
+        );
+    }
+    let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
+    assert_eq!(code, 0, "web remove: {log}");
+    let (code, listed, log) = lab.json(None, &["web", "list"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(listed["items"], json!([]));
+    lab.stop().await;
+}
+
 /// `oml crews create <name>` creates a crew record, and `oml crews show`,
 /// `update` and `list` answer it by its name exactly as by its id
 /// (cli/reference.md `oml crews`; ADR-0026 d4, d8).
@@ -4248,6 +4302,161 @@ async fn doctor_names_each_values_source_and_never_prints_the_key() {
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
 
+/// ADR-0044 d11, d14 through the real lead: `--user` issues a user key whose
+/// root the first issuance creates, with `universe`'s node read added by the
+/// server; the key creates a workarea under its root by the bare parent
+/// name; `--grant …:node` sends a node grant; and `oml doctor` under the
+/// user key names its root and warns once the key no longer reads
+/// universe's claims.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_when_a_user_key_does_not_read_universe() {
+    let db_name = format!(
+        "oml_test_cli_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    if !mint_database(&db_name).await {
+        return;
+    }
+    let store = serving_store(&db_name).await;
+    let mut seed = [0_u8; 32];
+    getrandom::getrandom(&mut seed).expect("OS randomness");
+    let router = lead_state(
+        &store,
+        SigningKey::from_bytes(&seed),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral bind");
+    let addr = listener.local_addr().expect("local addr");
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    let server = format!("http://{addr}");
+    let creds_dir = std::env::temp_dir().join(format!("oml-cli-e2e-users-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&creds_dir);
+    let creds: PathBuf = creds_dir.join("credentials");
+    let (code, claim, log) = oml_in(
+        &server,
+        &creds,
+        None,
+        &[
+            "bootstrap",
+            "claim",
+            "root-admin",
+            "--token-stdin",
+            "--tenant-name",
+            "user-tenant",
+            "--principal",
+            "platform/admin",
+        ],
+        ENROLLMENT,
+    );
+    assert_eq!(code, 0, "bootstrap claim: {log}");
+    let root = claim["root_workarea_id"].as_str().expect("root").to_owned();
+
+    // --user with no --workarea: the user's root, created by this issuance.
+    let (code, alice, log) = oml(
+        &server,
+        &creds,
+        None,
+        &[
+            "keys",
+            "issue-agent",
+            "alice-laptop",
+            "--principal",
+            "alice/laptop",
+            "--user",
+            "alice",
+        ],
+    );
+    assert_eq!(code, 0, "issue-agent --user: {log}");
+    assert_eq!(alice["user"]["name"], "alice", "{log}");
+    let alice_root = alice["user"]["id"].as_str().expect("root id").to_owned();
+    assert_eq!(alice["default_workarea_id"], alice_root.as_str(), "{log}");
+    let grants = alice["grants"].as_array().expect("grants");
+    assert!(
+        grants.iter().any(|g| g["workarea_node_id"] == root.as_str()
+            && g["role"] == "reader"
+            && g["covers"] == "node"),
+        "universe's node read, added by the server: {log}"
+    );
+    let alice_key = alice["value"].as_str().expect("value").to_owned();
+    let alice_id = alice["key_id"].as_str().expect("key id").to_owned();
+
+    let (code, created, log) = oml(
+        &server,
+        &creds,
+        Some(&alice_key),
+        &["workareas", "create", "alice", "project"],
+    );
+    assert_eq!(code, 0, "a user key creates under its root: {log}");
+    assert_eq!(created["path"], "universe.alice.project", "{log}");
+
+    // --grant …:node on a tenant key.
+    let (code, node, log) = oml(
+        &server,
+        &creds,
+        None,
+        &[
+            "keys",
+            "issue",
+            "universe-reader",
+            "--role",
+            "reader",
+            "--grant",
+            &format!("{root}:reader:node"),
+        ],
+    );
+    assert_eq!(code, 0, "a node grant: {log}");
+    assert_eq!(node["grants"][0]["covers"], "node", "{log}");
+    assert_eq!(node["user"], Value::Null, "{log}");
+
+    let (code, doctor, log) = oml(&server, &creds, Some(&alice_key), &["doctor"]);
+    assert_eq!(code, 0, "doctor: {log}");
+    assert_eq!(doctor["verdict"], "ok", "{log}");
+    assert_eq!(doctor["whoami"]["user"], "alice", "{log}");
+    assert_eq!(doctor["reads_universe"], true, "{log}");
+
+    // A global denial on universe takes the node read away.
+    let (code, _, log) = oml(
+        &server,
+        &creds,
+        None,
+        &["deny", "set", &alice_id, &root, "--reason", "test"],
+    );
+    assert_eq!(code, 0, "deny set: {log}");
+    let (code, doctor, log) = oml(&server, &creds, Some(&alice_key), &["doctor"]);
+    assert_eq!(code, 0, "a warning is not a failure: {log}");
+    assert_eq!(doctor["verdict"], "warn", "{log}");
+    assert_eq!(doctor["reads_universe"], false, "{log}");
+    let text = Command::new(env!("CARGO_BIN_EXE_oml"))
+        .env("OML_CLI_CREDENTIALS", &creds)
+        .env("OML_URL", &server)
+        .env("OML_API_KEY", &alice_key)
+        .arg("doctor")
+        .output()
+        .expect("the oml binary runs");
+    let text = String::from_utf8_lossy(&text.stdout).into_owned();
+    assert!(
+        text.contains("user        : alice (root universe.alice)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("universe    : warn: this key does not read universe's claims\n"),
+        "{text}"
+    );
+
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&creds_dir);
+    drop_db(&db_name).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
     let (url, seen, task) = doctor_stub().await;
@@ -4257,13 +4466,23 @@ async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
     assert_eq!(code, 0, "{log}");
     assert_eq!(
         doctor["whoami"],
-        json!({ "role": "writer", "tenant": "acme", "default_workarea": "acme/metals" }),
+        json!({
+            "role": "writer",
+            "tenant": "acme",
+            "user": null,
+            "default_workarea": "acme/metals",
+        }),
         "{log}"
     );
     let (code, text) = doctor_text(&pair, &[]);
     assert_eq!(code, 0, "{text}");
     assert!(
         text.contains("whoami      : role writer, tenant acme, default workarea acme/metals\n"),
+        "{text}"
+    );
+    // A key that names no user says so (ADR-0044 d14).
+    assert!(
+        text.contains("user        : none (tenant key: names resolve in the shared namespace)\n"),
         "{text}"
     );
     assert!(
@@ -4537,7 +4756,7 @@ async fn each_old_cli_verb_runs_its_new_verb_and_names_it_on_stderr() {
         let lines: Vec<&str> = old_err.lines().collect();
         assert_eq!(lines.len(), 1, "{old:?}: one stderr line: {old_err}");
         assert!(
-            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.0"),
+            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.1"),
             "{old:?} names {successor} and the release that removes it: {old_err}"
         );
     }

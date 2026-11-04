@@ -1,6 +1,6 @@
 //! The hidden aliases: the eight tool names v0.3.0 served, callable through
-//! `tools/call` and named nowhere in `tools/list`, through v0.4.x as ADR-0039
-//! d12 reads its alias window; v0.5.0 removes them (docs/api/mcp-plugin.md,
+//! `tools/call` and named nowhere in `tools/list`, through v0.5.0 as ADR-0039
+//! d12 reads its alias window; v0.5.1 removes them (docs/api/mcp-plugin.md,
 //! "The v0.3.0 tools, not listed").
 //!
 //! Each alias takes its v0.3.0 input schema and answers its v0.3.0 output
@@ -10,7 +10,7 @@
 //! logs the event `mcp_alias_called` naming the tool, its successor, the
 //! calling key's `key_id` and `tenant_id` and the call's `request_id`, ids
 //! only and never the key's value (observability.md, structured logging), so
-//! an operator can see whose clients still call an old name before v0.5.0
+//! an operator can see whose clients still call an old name before v0.5.1
 //! removes it.
 
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use axum::body::Bytes;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 
 use super::{
     Presented, get_item, insert_header, listing_output, parse_args, recall_output, ring_headers,
@@ -135,7 +135,7 @@ pub(super) fn successor(name: &str) -> Option<&'static str> {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -158,7 +158,7 @@ where
             key_id = %caller.key_id,
             tenant_id = %caller.tenant_id,
             request_id = %caller.request_id,
-            "mcp_alias_called: {name} is a v0.3.0 tool name, which v0.5.0 removes; its successor is {successor}"
+            "mcp_alias_called: {name} is a v0.3.0 tool name, which v0.5.1 removes; its successor is {successor}"
         );
         match name {
             "oml_remember" => Self::tool_submit(st, presented, "remember", args).await,

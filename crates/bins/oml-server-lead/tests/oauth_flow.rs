@@ -21,6 +21,7 @@ use sqlx::{Connection, Executor};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::{ConnectionState, Issuer, RevokedCause};
 use oml_app::domain::{HeldBy, Role};
@@ -316,8 +317,10 @@ async fn run_flow(db: &str) -> Option<Flow> {
                     node: boot.root_workarea_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
+                    covers: Covers::Subtree,
                 }],
                 connect_code: true,
+                user: None,
             },
         )
         .await

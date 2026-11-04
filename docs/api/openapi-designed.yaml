@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API, designed operations
-  version: 0.4.0-design
+  version: 0.5.0-design
   summary: >-
     The designed annex of the OML HTTP API: decided, not routed. Nothing is generated from it.
   description: >-
-    Status: designed, not built. This annex holds under paths the 45 operations the design
+    Status: designed, not built. This annex holds under paths the 54 operations the design
     decides and the server does not route, and under x-oml-designed-fields, keyed by
     operationId, the designed fields of operations that openapi.yaml serves (ADR-0039 d9). No
     SDK and no server code is generated from it, and a call to any operation here answers 404
@@ -36,6 +36,7 @@ tags:
   - name: exports
   - name: settings
   - name: tenants
+  - name: web
 
 paths:
   /v2/memories/{artifact_id}/lineage:

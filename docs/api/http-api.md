@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.4.0-design`), from which moment the covenant — and this section's definition of
+(currently `0.5.0-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -287,6 +287,24 @@ The namespace is fixed by the caller and the kind:
   key resolves `tenant` first, in the deployment, and then the key's `name`, its `crew` and
   every other reference of the body in that tenant.
 - The bootstrap claim's `name` is in the provider's namespace.
+
+<a id="user-namespaces"></a>**User namespaces — since v0.5.0**
+([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d5). With
+[user roots](../architecture/workareas.md#user-roots), the workarea namespace
+splits in two. The **shared namespace** holds `universe`, every user root's name and every shared
+workarea's name; each **user namespace** holds the names strictly beneath one user root, where
+`universe` and the user's own name are reserved. A name is unique within its namespace, so
+`alice.project` and `bob.project` coexist. A workarea inside a user root also has the
+**qualified name** `<user>.<name>`, unique in the tenant and never changed, since nothing is
+re-parented across a user root's boundary; a shared workarea's qualified name is its name.
+Every field that takes a workarea id or name takes a qualified name too: exactly two labels
+joined by one `.`, the first naming a user root. A value whose first label is `universe`, or with
+more than two labels, is still a path and still `request.validation`. A
+[user key](../architecture/roles-and-keys.md#user-keys) resolves a bare workarea name in
+its own user namespace, plus `universe` and its own root's name; every other tenant key, admin
+keys included, resolves a bare name in the shared namespace; every tenant key resolves a
+qualified name. A user key creating a workarea is told `name.taken` for a name in its own user
+namespace and for no other.
 
 <a id="the-unresolved-value"></a>**The unresolved value.** The unresolved value of name *n* of
 kind *k* in namespace *s* is the version-8 UUID that RFC 9562 Appendix B.2 builds for a
@@ -543,6 +561,8 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) | designed |
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
+| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
+| `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -559,6 +579,17 @@ rings, and routed only where the deployment sets `oauth.issuer`
 | `GET /.well-known/oauth-protected-resource/mcp` · `GET /.well-known/oauth-authorization-server` | none, unauthenticated; no tenant data | served |
 | `GET /oauth/authorize` · `POST /oauth/authorize` | none; the person proves authority with the connect code | served |
 | `POST /oauth/token` · `POST /oauth/register` | none; public clients only | served |
+
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):* the web pages are unversioned, outside both
+rings, routed only by the lead and only where the deployment sets `oauth.issuer` and a sign-in
+provider, and authenticated by a session cookie alone, never by a key
+([Web pages](#web-pages-the-user-page-and-the-admin-page)):
+
+| Endpoint | Verb ceiling (effective access unless noted) | Contract |
+|---|---|---|
+| `GET /web` · `POST /web` | none for the sign-in page; a session, acting as its `<user>-web` session key, for the user page | served |
+| `POST /web/sign-in` · `GET /web/callback/{provider}` | none; the person proves a listed, verified email at the provider | served |
+| `GET /web/admin` · `POST /web/admin` | a session whose allowlist entry is an admin's, acting as the session key each act needs | served |
 
 Promote, sign and delete appear nowhere in these tables on purpose: promotion is an effect of
 ratification inside the admission pipeline, signing is `oml-server`'s alone, and deletion does not
@@ -639,7 +670,11 @@ with `request.workarea_unresolved` (422).
   (`submission.simulation_id_required` otherwise); writing with a `simulation_id` requires the key
   to be in that simulation's audience ([simulations.md](../architecture/simulations.md)).
 - `universe` refuses direct claim writes (`submission.universe_refused`); a `validated` workarea
-  refuses all new writes (`workarea.frozen`).
+  refuses all new writes (`workarea.frozen`). *Since v0.5.0
+  ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d7):* `universe` admits writes from a curator — a tenant
+  key with `writer` effective access on the `universe` node — held and reviewed like every write,
+  and a [user key](../architecture/roles-and-keys.md#user-keys)'s write there answers
+  `submission.universe_refused` in place of step 3's `access.grant_refused`.
 - The deterministic scan runs in the same call and can veto (`submission.scan_veto` — a refusal
   that journals nothing, reproducible from the journalled rule-set pin; nothing waits in the
   queue; [admission.md](../architecture/admission.md)). Banned authors and sources are refused at this
@@ -717,7 +752,10 @@ visibility, not ranking (R3/D12). Which steering applies, the total order of hit
 cut are declared on [retrieval.md](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked);
 every served row carries `tokens`, and `budget` is present if and only if `max_tokens` was sent.
 The read is logged with the ids served after truncation and the canonical request digest
-([retrieval.md](../architecture/retrieval.md#the-read-log)). Recall quality and latency are
+([retrieval.md](../architecture/retrieval.md#the-read-log)). *Since v0.5.0
+([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):* a scope inside a user root also searches the
+`universe` node's own claims, ranked with the scope's hits
+([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)). Recall quality and latency are
 unmeasured — [FR-4](../product/roadmap.md).
 
 ### Search — `GET /v1/memories`
@@ -789,6 +827,15 @@ the full closure appears there, with every node outside the caller's read scope 
 redacted bare id, so a reader learns that an unreadable ancestor exists and its id, never its
 content — a stated residual, [FR-31](../product/roadmap.md).
 
+<a id="universe-claims"></a>**A claim that lives in `universe` — since v0.5.0** ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9). To every key outside its authoring key set, a
+version whose workarea is `universe` is served with `workarea_id` the universe id and
+`workarea_path` `universe`, `principal` null, `derives_from` empty whatever the caller can read,
+and `replaces` only where it names a universe version. Its own `artifact_id`, `claim_key`,
+`version`, `kind`, `text`, `tokens`, `plaintext_digest`, `created_at` and `promoted_at` stay, so
+get by id works. The rule holds on get, recall and every listing here, on every `oml_read` mode,
+and on the CLI and hooks that read through them; the source's own author is served the same view.
+The journal and the [evidence export](#evidence-export) keep every attribution field.
+
 ### Lineage — `GET /v2/memories/{artifact_id}/lineage`
 
 *Not scheduled · [releases](../product/releases.md)*
@@ -799,7 +846,9 @@ serialized as stored — the server serializes the graph, it does not compute an
 `redacted: true`, so the shape of the closure is visible without leaking content. A redacted
 node still discloses that the version exists and its id — another author's held or rejected
 ancestor of a promoted version included — which is the residual
-[FR-31](../product/roadmap.md) tracks.
+[FR-31](../product/roadmap.md) tracks. For a claim in `universe`, read by a key outside its
+authoring key set, the closure stops at `universe`: nodes outside it are omitted, not redacted
+(since v0.5.0, [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9).
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
 
@@ -876,7 +925,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.2 · [releases](../product/releases.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -891,7 +940,7 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 | `GET /v2/workareas?path=<ltree>` | Resolve a node by derived path. Grants bind to node ids, never paths, and no reference field accepts a path ([names](#names-and-ids)); this is the lookup that bridges the two. |
 | `GET /v2/workareas/{workarea}` | Node: id, name, parent, derived path, status, crew record (`{crew_id, name, charter_uri, external_manager}`, or null) — and, relative to the calling key, its readable immediate `children` (`[{id, path_leaf, status}]`, ordered by `path_leaf` ascending in byte order, then `id`), the `edges` touching it (`[{edge_id, from, to, label, state}]`, ordered by `edge_id` ascending), `my_effective_verbs` (the [effective-verbs table](../architecture/roles-and-keys.md#effective-verbs)) and `permission_epoch` ([workareas.md](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)), in one call. Children and edges outside read access are absent. For an admin key, which reads structure by its key role, every child and edge is present and `my_effective_verbs` is empty, since it lists grant-role verbs and an admin key holds none. The review policy in force and the pending transitions are designed fields of this read (`policy`, `pending_transitions` under `x-oml-designed-fields`); the status route `/v2/workareas/{workarea}/status`, which carried them as a second read of the same node, is removed ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
 | `GET /v2/workareas/{workarea}/tree` | The subtree, paginated; nodes outside read scope are omitted. |
-| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). |
+| `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6):* a writer user key may also create, under a parent inside its own user root where its effective access confers `writer`, `parent` defaulting to that root, refused on the parent by the ordinary refusal order; `name` is then unique within the user's root; the `Workarea` object serves `user_root`. |
 | `POST /v2/workareas/{workarea}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v2/workareas/{workarea}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
 | `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`. Backward does not exist; `validated` is refused while any child is not validated (`workarea.transition_refused`). → `202`, pending. |
@@ -917,7 +966,7 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
@@ -1081,7 +1130,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2–d4):* The body gains `user`, the person the key acts for, by name: admitted on `reader`, `writer` and `dreamer` keys with `held_by` `agent` or `human`, else `request.validation` (`details.field: user`). The first key naming a user creates the user root `universe.<user>`; a name a shared workarea holds is `name.taken`. Every grant of such a key must lie inside that root (`access.issuer_ceiling`, details `{role, admissible, grant_index, user}`), and issuance adds a `reader` grant on `universe` with `covers: node`, echoed with the others. A grant gains `covers`, `subtree` (default) or `node`; a `node` grant with deny entries is `request.validation`. Workarea references in the body resolve in the user's namespace. |
 | `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events; `credential` (`bearer` or `connection`) and the key's open and revoked `connections`, each `{connection_id, client_id, client_kind, redirect_uri, resource, state, revoked_cause}`, an `authorized` one not listed (whether a connection is live, its client's name and its opening and revocation times are designed). Never values, never a token. As built, `GET /v2/keys/{key}` serves the detail. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
 | `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: `422 oauth.connect_refused` (`details.reason: connector_key`); a fresh connection is a new code, a fresh identity a new connector key ([connections](../architecture/roles-and-keys.md#connections)). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
@@ -1104,8 +1153,10 @@ tenant, role or key. The answer is `{key_id, name, role, principal, held_by, ten
 default_workarea, crew, grants}`: each reference is `{id, name}`, the default workarea also carries
 its derived `path`, `held_by` is the attestation as the key's row stores it, and `grants` are the
 key's stored grants as `GET /v2/keys/{key}` lists them, each `{grant_id, workarea_node_id, role,
-epoch}` without its per-grant `deny` masks. `tenant`, `default_workarea` and `crew`
-are null where the key names none; an operator key, which no tenant holds, has all three null and
+covers, epoch}` without its per-grant `deny` masks. `tenant`, `default_workarea` and `crew`
+are null where the key names none; *since v0.5.0
+([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d11):* the answer gains `user`, `{id, name}` of the key's
+user root, null for a tenant key; an operator key, which no tenant holds, has all three null and
 no grants.
 
 The key's denials and its grants' deny masks are omitted: both name subtrees the key may not read,
@@ -1309,6 +1360,99 @@ follower forwards an `/mcp` request that carries an access token and reaches a w
 whole `/mcp` `POST` to the lead's `/mcp`, over the enrolled hop, with the token unchanged in
 `Authorization`; the lead re-resolves token → connection → key and authorizes against that key.
 This is the MCP request forwarded to the same endpoint, not a token passed to a ring route.
+
+## Web pages: the user page and the admin page
+
+*Since v0.5.0; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)*
+
+Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
+page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
+codes, reads the setup steps, browses their memories and `universe`'s, creates workareas in
+their root, and reviews their own agents' held writes; and the **admin page**, where an admin
+keeps the email allowlist, grants review and curation, sees the review queue's depth and age,
+reads every memory's text and attribution, and reviews, curates and supersedes. Every act runs as one of the person's session keys:
+the first sign-in issues `<user>-web` and `<user>-review` under the admin key that added the
+entry, and `<user>-admin` for an admin entry.
+
+**Routes.** Six, a closed set the router serves exactly: `GET /web`, `POST /web`,
+`POST /web/sign-in`, `GET /web/callback/{provider}`, `GET /web/admin` and `POST /web/admin`.
+Each page is one `GET`, whose views are chosen by the query (`view`, `q`, `memory`,
+`workarea`), and one `POST`, whose form names one `action` from the page's closed set: on the
+user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea`,
+`review_next`, `verdict` and `sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
+`grant_curation`, `review_next`, `verdict`, `curate`, `supersede`, `cut_off` and, in v0.6.0,
+`demote`. A
+follower routes none; without `oauth.issuer` and a provider every one is an unknown path.
+
+**Sign-in.** `POST /web/sign-in` (`provider=google|github`) passes the same-origin check of
+`POST /oauth/authorize`, seals `{provider, state, PKCE verifier, nonce}` into the cookie
+`__Host-oml_signin` (`Secure`, `HttpOnly`, `SameSite=Lax`, ten minutes), and answers `303` to the
+provider with S256 PKCE. `GET /web/callback/{provider}` makes no outbound call unless the cookie
+opens, names that provider and carries the query's `state`; it then redeems the code, admits only
+a verified email on the allowlist — Google's `email` with `email_verified: true` from an ID token
+whose `iss`, `aud`, `exp` and `nonce` it checks, GitHub's one address with `primary` and
+`verified` both true — refuses an entry's address arriving from another provider account than the
+one pinned at its first sign-in, stores no provider token, and answers `303 /web` with the cookie
+`__Host-oml_session` (`Secure`, `HttpOnly`, `SameSite=Lax`, the session's remaining life). Each
+refusal is a page answering `auth.invalid` with `details.reason` `not_allowed`, `email_unverified`,
+`state_mismatch`, `identity_changed` or `provider_refused`, or `limit.rate` past the provider-call
+cap. The callback URL is `<oauth.issuer>/web/callback/<provider>`.
+
+**Sessions.** A row on the server under the SHA-256 of a fresh 256-bit token, minted only when the
+callback admits, living `web.session_ttl` ([configuration](../operations/configuration.md)), with
+no idle timeout and no renewal in place; sign-out, expiry, and any change to or removal of its
+allowlist entry end it.
+
+**Who acts.** Every act runs as a **session key**: a key the server holds for the person, with
+`credential: session`, `held_by: human` and no value — `<user>-web` (a user key for the user
+page) and `<user>-review` (dreamer and reader on the person's own root), both created at the
+first sign-in, and `<user>-curate` and `<user>-admin`, each created by the act that first needs
+it ([roles and keys](../architecture/roles-and-keys.md)). The server picks the key from the
+session and the action; no field names who acts, and a field the action does not define is
+`request.validation`.
+A session key cannot be sent as a bearer key, has no connect code (`oauth.connect_refused`,
+`details.reason: session_key`) and is reachable only from a live session of an entry naming its
+user. Review runs as the person's `<user>-review` alone, R2 checked on that key and the row's
+lineage closure, so a person approves their own agents' writes and never a version their own
+reviewer key proposed; the admin key is never offered a verdict. The admin page reads every
+memory's text and attribution as `<user>-admin`, through the [admin read](#admin-read).
+
+**Every page and every `POST`.** The connect page's headers: a CSP of `default-src 'none'`, one
+hashed stylesheet, `form-action 'self'` plus the configured providers' origins,
+`frame-ancestors 'none'` and `base-uri 'none'`; `Cache-Control: no-store`;
+`Referrer-Policy: same-origin`; `nosniff`. No script. Every `POST` passes the same-origin check
+(`oauth.origin_refused` otherwise), and every form of a signed-in page carries `csrf_token`, which
+the server derives from the session token and compares in constant time (`request.validation`,
+`details.field: csrf_token`, journalling nothing). An `Authorization` header on any web route is
+`access.verb_ceiling` with `details.reason: web_is_human_only`, and `/v1`, `/v2` and `/mcp` never
+read the `Cookie` header, so a session cookie there is `auth.missing`. A key value or connect code
+issued on the user page is shown once, in the answering page, never in a redirect.
+
+### Admin read
+
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*
+
+An admin key reads every memory of its tenant, with its text and its attribution, on two lab
+routes and nowhere else; every other route keeps the rule that an admin key reads structure and
+never content.
+
+| Route | Answers |
+|---|---|
+| `POST /v2/admin/memories/search` | `{query?, workarea?, state?, limit?, cursor?}` → a page of memories in every state, workarea and user root, `universe` included, each with `text`, `artifact_id`, `claim_key`, `version`, `state`, `workarea_path`, the authoring key's name, `principal` and `user`, and `created_at`. A `POST` so the query travels in a body. |
+| `GET /v2/admin/memories/{artifact_id}` | one memory: the fields above, `derives_from`, `replaces`, every verdict with its reviewing key, principal, reason and time, and `plaintext_digest`. A universe claim is shown with its source, unlike the served view of [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9. |
+
+Admin key role only; the operator and every other role answer `access.verb_ceiling`. Each answer
+journals one `memory.admin_read` event naming the admin key and the `artifact_ids` served, with a
+`query_digest` for a search, never the text or the query, visible on the events tail to admin keys
+alone. The routes run on the lead. They record no verdict, create no serve binding and change no
+tip. `oml admin read [<memory>] [--query <text>] [--workarea <workarea>]` calls them.
+
+**The allowlist on the API.** `GET /v2/web/emails`, `POST /v2/web/emails` (`{email, user,
+admin}`, adding or changing an entry) and `POST /v2/web/emails/remove` (`{email}`), admin key
+role: the CLI's `oml web allow`, `oml web list` and `oml web remove`, and how a tenant's first
+admin email gets in. An email is unique in the deployment (`name.taken`, kind `email`); a `user`
+a shared workarea holds, or whose composed key names a key holds, is `name.taken`. Removing an
+email ends its sessions and leaves the user's agent keys working.
 
 ## Bans
 

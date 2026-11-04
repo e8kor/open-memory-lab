@@ -570,10 +570,205 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/emails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's email allowlist — who may sign in to the user and admin pages, as which user, and whether as an admin.
+         * @description Requires: admin key role (ADR-0045 d2). Each entry is {email, user, admin}, in the order of the email's digest; the provider subjects pinned at first sign-in are not served. Since v0.5.0.
+         */
+        get: operations["listWebEmails"];
+        put?: never;
+        /**
+         * Add an email to the allowlist, or change the user or admin flag of one already there.
+         * @description Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as web.email_allowed or web.email_changed with an email digest, never the address. A change ends the entry's sessions. Since v0.5.0.
+         */
+        post: operations["allowWebEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/emails/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove an email from the allowlist, ending its sessions; the user's agent keys keep working.
+         * @description Requires: admin key role (ADR-0045 d2, d13). The email is in the body, never the path, so no proxy log records it. Journalled as web.email_removed with an email digest. An email not on the list answers access.not_found. Since v0.5.0.
+         */
+        post: operations["removeWebEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The sign-in page without a session; the user page with one.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         */
+        get: operations["userPage"];
+        put?: never;
+        /**
+         * One act of the user page, named by action.
+         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+         */
+        post: operations["userPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a provider's sign-in — the code flow with S256 PKCE, state and, for Google, a nonce.
+         * @description The same-origin check of POST /oauth/authorize, then a 303 to the provider with the sealed __Host-oml_signin cookie set (SameSite=Lax, ten minutes). Writes no row (ADR-0045 d3). Since v0.5.0.
+         */
+        post: operations["webSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/callback/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The provider's redirect; admits a listed, verified email and starts a session.
+         * @description Refused before any outbound call unless the sealed cookie opens, is under ten minutes old, names this provider and carries the query's state. Google: the ID token from the token endpoint over TLS, iss, aud, exp, nonce and email_verified checked. GitHub: the primary verified address of /user/emails. The provider subject is pinned per entry at first sign-in. Refusals are pages, auth.invalid with details.reason not_allowed, email_unverified, state_mismatch, identity_changed or provider_refused; limit.rate past the provider-call cap. The query is never logged (ADR-0045 d3, d4, d5, d14). Since v0.5.0.
+         */
+        get: operations["webCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin page, for a session whose allowlist entry is an admin's.
+         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory. The memories view and one memory's attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+         */
+        get: operations["adminPage"];
+        put?: never;
+        /**
+         * One act of the admin page, named by action, run as the capacity it needs.
+         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+         */
+        post: operations["adminPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search every memory of the tenant, in every state, workarea and user root, with its text and attribution.
+         * @description Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.
+         */
+        post: operations["adminSearchMemories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/memories/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One memory of the tenant with its text and full attribution, a universe claim with its source.
+         * @description Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Since v0.5.0.
+         */
+        get: operations["adminReadMemory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state. */
+        AdminMemory: {
+            artifact_id: string;
+            claim_key: string;
+            version: number;
+            /** @enum {string} */
+            state: "held" | "promoted" | "rejected" | "superseded" | "demoted";
+            workarea_path: string;
+            text: string;
+            /** @description The authoring key's name. */
+            key: string;
+            principal?: string | null;
+            user?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page. */
+        WebEmail: {
+            email: string;
+            /** @description A name under the creation grammar, at most 56 characters. */
+            user: string;
+            admin: boolean;
+        };
         /** @description SHA-256 of plaintext unless a field says ciphertext. */
         Digest: string;
         /** @description The id of a workarea, crew, key or tenant: RFC 9562 section 4 hex-and-dash UUID text, either case accepted, lowercase served, whose version digit (the first of the third group) is not 8. The server mints these ids as version 4; version 8 is reserved for the unresolved value of a name that names no row, so a hex-and-dash value of version 8 is neither an id nor a name and is refused (request.validation). A value in this form is always an id (docs/api/http-api.md, Names and ids; ADR-0026 d3, d4). */
@@ -582,8 +777,10 @@ export interface components {
         Name: string;
         /** @description A name in a reference: the reference grammar. A lowercase RFC 1035 label, 1-63 characters, that is not in the id form and not 32 hexadecimal digits. The derived form (tenant-, wa-, crew- or key- followed by 32 hexadecimal digits) is a name here: it addresses the row ADR-0026 d11 named (docs/api/http-api.md, Names and ids; ADR-0026 d2, d3). */
         NameRef: string;
-        /** @description A workarea, by its node id or its name. Resolved server-side before any check that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused (request.validation). */
-        WorkareaRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
+        /** @description A workarea, by its node id, its name or its qualified name. Resolved server-side before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe, is neither, and is refused (request.validation). */
+        WorkareaRef: components["schemas"]["Id"] | components["schemas"]["NameRef"] | components["schemas"]["QualifiedName"];
+        /** @description <user>.<name>: the workarea named name in the namespace of the user root named user, unique in the tenant and never changed, since nothing crosses a user root's boundary; exactly two reference-grammar labels joined by one '.', the first not universe (docs/api/http-api.md, Names and ids; ADR-0044 d5). */
+        QualifiedName: string;
         /** @description A crew record, by its id or its name, resolved server-side like every reference (ADR-0026 d4). */
         CrewRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
         /** @description A key, by its id or its name, resolved server-side like every reference; a revoked or expired key's name still resolves (ADR-0026 d4, d10). */
@@ -679,7 +876,8 @@ export interface components {
             kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
-            principal?: string;
+            /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
+            principal?: string | null;
             /** @enum {string} */
             provenance?: "agent" | "human" | "connector" | "simulation";
             simulation_id?: string | null;
@@ -839,6 +1037,8 @@ export interface components {
             status: "development" | "committed" | "validated";
             /** @description The crew record the workarea names, or null. */
             crew?: components["schemas"]["Crew"] | null;
+            /** @description Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11). */
+            user_root?: boolean;
             /** Format: date-time */
             created_at?: string;
         };
@@ -867,7 +1067,8 @@ export interface components {
             permission_epoch: number;
         };
         WorkareaCreate: {
-            parent: components["schemas"]["WorkareaRef"];
+            /** @description The parent. Omitted, a user key's own root; every other key sends it (request.workarea_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6). */
+            parent?: components["schemas"]["WorkareaRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
         };
@@ -943,10 +1144,16 @@ export interface components {
              * @enum {string}
              */
             role: "reader" | "writer" | "dreamer";
-            /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). */
+            /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). A node grant takes none (request.validation, details.field /grants/<i>/deny). */
             deny?: {
                 workarea: components["schemas"]["WorkareaRef"];
             }[];
+            /**
+             * @description subtree covers the node and every descendant; node covers the node alone (ADR-0044 d4).
+             * @default subtree
+             * @enum {string}
+             */
+            covers?: "subtree" | "node";
         };
         /** @description A stored grant, as echoed at issuance and listed on a key. */
         Grant: {
@@ -958,6 +1165,11 @@ export interface components {
             deny?: {
                 subtree_node_id?: string;
             }[];
+            /**
+             * @description The node's subtree, or the node alone (ADR-0044 d4).
+             * @enum {string}
+             */
+            covers?: "subtree" | "node";
             /** @description The journal seq of this grant's grant.issued event. */
             epoch: number;
         };
@@ -975,8 +1187,10 @@ export interface components {
             role: components["schemas"]["Role"];
             /** @description The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9). */
             name: components["schemas"]["Name"];
-            /** @description Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
+            /** @description Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
             grants?: components["schemas"]["GrantRequest"][];
+            /** @description The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workarea references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workarea holds is 409 name.taken. Refused on admin and operator keys, on held_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3). */
+            user?: components["schemas"]["Name"];
             /** @description The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
             default_workarea?: components["schemas"]["WorkareaRef"];
             /**
@@ -1004,6 +1218,8 @@ export interface components {
             principal?: string;
             /** @description The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8). */
             crew_id?: string | null;
+            /** @description The key's user root, by id and name; null for a tenant key (ADR-0044 d11). */
+            user?: components["schemas"]["WhoamiRef"] | null;
             /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4). */
             default_workarea_id: string | null;
             /**
@@ -1022,10 +1238,10 @@ export interface components {
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
             /**
-             * @description bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+             * @description bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6).
              * @enum {string}
              */
-            credential?: "bearer" | "connection";
+            credential?: "bearer" | "connection" | "session";
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
         };
@@ -1048,6 +1264,11 @@ export interface components {
             workarea_node_id: string;
             /** @enum {string} */
             role: "reader" | "writer" | "dreamer";
+            /**
+             * @description The node's subtree, or the node alone (ADR-0044 d4).
+             * @enum {string}
+             */
+            covers?: "subtree" | "node";
             /** @description The journal seq of this grant's grant.issued event. */
             epoch: number;
         };
@@ -1069,6 +1290,8 @@ export interface components {
             default_workarea: components["schemas"]["WhoamiWorkarea"] | null;
             /** @description The key's crew record, fixed for its life; null when none was named. */
             crew: components["schemas"]["WhoamiRef"] | null;
+            /** @description The key's user root, from which a client learns its root; null for a tenant key (ADR-0044 d11). */
+            user: components["schemas"]["WhoamiRef"] | null;
             /** @description The key's stored grants, each with its epoch and without its deny masks. */
             grants: components["schemas"]["WhoamiGrant"][];
         };
@@ -3316,6 +3539,448 @@ export interface operations {
                     "application/json": components["schemas"]["Ready"];
                 };
             };
+        };
+    };
+    listWebEmails: {
+        parameters: {
+            query?: {
+                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
+                limit?: components["parameters"]["Limit"];
+                /** @description The next_cursor of the page before: the digest of its last entry's email, never an address. */
+                cursor?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The allowlist. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "email": "alice@example.com",
+                     *           "user": "alice",
+                     *           "admin": true
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": {
+                        items: components["schemas"]["WebEmail"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    allowWebEmail: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "email": "alice@example.com",
+                 *       "user": "alice",
+                 *       "admin": true
+                 *     }
+                 */
+                "application/json": components["schemas"]["WebEmail"];
+            };
+        };
+        responses: {
+            /** @description The entry as stored. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebEmail"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    removeWebEmail: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "email": "alice@example.com"
+                 *     }
+                 */
+                "application/json": {
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Removed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The seq of the web.email_removed event. */
+                        journal_seq: number;
+                        /** Format: uuid */
+                        event_id: string;
+                        /** @constant */
+                        dry_run: false;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    userPage: {
+        parameters: {
+            query?: {
+                view?: "keys" | "setup" | "memories" | "workarea" | "review";
+                q?: string;
+                memory?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    userPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "review_next" | "verdict" | "sign_out";
+                    csrf_token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The page after the act. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description After sign_out, to /web. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    webSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    provider: "google" | "github";
+                };
+            };
+        };
+        responses: {
+            /** @description To the provider's authorization endpoint. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description oauth.origin_refused, on a page. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    webCallback: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+            };
+            header?: never;
+            path: {
+                provider: "google" | "github";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To /web, setting the __Host-oml_session cookie. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A sign-in refusal page. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description limit.rate on a page. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    adminPage: {
+        parameters: {
+            query?: {
+                view?: "people" | "queue" | "review" | "curate" | "memories";
+                q?: string;
+                memory?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    adminPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "curate" | "supersede" | "cut_off";
+                    csrf_token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The page after the act. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    adminSearchMemories: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "query": "deploy window",
+                 *       "state": "held"
+                 *     }
+                 */
+                "application/json": {
+                    query?: string;
+                    workarea?: string;
+                    /** @enum {string} */
+                    state?: "held" | "promoted" | "rejected" | "superseded" | "demoted";
+                    limit?: number;
+                    cursor?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description A page of memories with text and attribution. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminMemory"][];
+                        /** @description The last item's created_at and id; send it back as cursor. */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminReadMemory: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The memory with its attribution. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminMemory"] & {
+                        derives_from?: string[];
+                        replaces?: string | null;
+                        plaintext_digest?: string;
+                        verdicts?: {
+                            verdict?: string;
+                            key?: string;
+                            principal?: string | null;
+                            reason?: string | null;
+                            /** Format: date-time */
+                            at?: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
         };
     };
 }

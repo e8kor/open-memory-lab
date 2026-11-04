@@ -15,7 +15,7 @@ use core::pin::pin;
 use core::task::Poll;
 
 use oml_app::domain::Sha256Hash;
-use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, DOCUMENT_KEPT_SECONDS, Issuer, KeyState,
@@ -481,6 +481,8 @@ pub fn workarea_record(
         name: name(workarea_name),
         crew: None,
         crew_id: None,
+        user_root: false,
+        namespace: None,
     }
 }
 
@@ -513,6 +515,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         name: None,
         crew_id: None,
         revoked_at: None,
+        user: None,
+        session_user: None,
     }
 }
 
@@ -1458,6 +1462,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         name: Some(name("wanda-laptop")),
         crew_id: None,
         revoked_at: None,
+        user: None,
+        session_user: None,
     };
     rig.commit(
         store,
@@ -1701,12 +1707,14 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         node: crew_a,
         role: Role::Writer,
         deny: vec![masked, masked_too],
+        covers: Covers::Subtree,
     };
     let reader_grant = Grant {
         grant_id: Uuid::from_u128(0xF10),
         node: crew_a,
         role: Role::Reader,
         deny: Vec::new(),
+        covers: Covers::Subtree,
     };
     let first = rig
         .issue_grant(store, agent.key_id, writer_grant.clone())
@@ -1808,6 +1816,7 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
                 node,
                 role: Role::Reader,
                 deny: Vec::new(),
+                covers: Covers::Subtree,
             },
         )
         .await
@@ -1880,6 +1889,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         node,
         role,
         deny: Vec::new(),
+        covers: Covers::Subtree,
     };
     let denial = |id, node| KeyDenial {
         denial_id: Uuid::from_u128(id),
@@ -3255,6 +3265,151 @@ async fn resolved<S: JournalStore>(
         .expect("resolve")
 }
 
+/// ADR-0044 d1, d2, d4, d5: a workarea's name is unique in its namespace —
+/// the shared one, or the namespace of the user root it lies beneath — so
+/// two user roots each hold a `project` beside a shared one; the shared
+/// lookup reads the shared namespace alone and the user lookup one user
+/// root's; a user root, a node's namespace, a key's user and a node grant's
+/// coverage round-trip through their folds.
+pub async fn workarea_names_are_unique_per_namespace_and_resolve_in_their_own<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(31);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0xB310), None, "universe");
+    let root = |id: u128, user: &str| WorkareaRecord {
+        user_root: true,
+        ..workarea_record(t, Uuid::from_u128(id), Some(universe.workarea_id), user)
+    };
+    let (alice, bob) = (root(0xB311, "alice"), root(0xB312, "bob"));
+    let shared = workarea_record(
+        t,
+        Uuid::from_u128(0xB313),
+        Some(universe.workarea_id),
+        "project",
+    );
+    let under = |id: u128, root: &WorkareaRecord| WorkareaRecord {
+        namespace: Some(root.workarea_id),
+        ..workarea_record(t, Uuid::from_u128(id), Some(root.workarea_id), "project")
+    };
+    let (alice_project, bob_project) = (under(0xB314, &alice), under(0xB315, &bob));
+    for w in [
+        universe.clone(),
+        alice.clone(),
+        bob.clone(),
+        shared.clone(),
+        alice_project.clone(),
+        bob_project.clone(),
+    ] {
+        rig.create_workarea(store, w).await;
+    }
+    let head = store.chain_head(t).await.expect("head");
+    let twin = WorkareaRecord {
+        parent_id: Some(alice_project.workarea_id),
+        ..under(0xB316, &alice)
+    };
+    assert_eq!(
+        rig.commit(
+            store,
+            event_types::WORKAREA_CREATE,
+            json!({ "workarea_id": twin.workarea_id.to_string(), "name": "project" }),
+            MetadataFold::WorkareaCreated(twin.clone()),
+            None,
+        )
+        .await,
+        Err(StoreError::NameTaken {
+            kind: NamedKind::Workarea,
+            name: name("project"),
+        }),
+        "one name once in one user's namespace"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(
+        store
+            .resolve_name(t, NamedKind::Workarea, &name("project"))
+            .await
+            .expect("resolve"),
+        Some(shared.workarea_id),
+        "the shared lookup reads the shared namespace alone"
+    );
+    assert_eq!(
+        store
+            .resolve_name(t, NamedKind::Workarea, &name("alice"))
+            .await
+            .expect("resolve"),
+        Some(alice.workarea_id),
+        "a user root's name is shared"
+    );
+    for (root, project) in [(&alice, &alice_project), (&bob, &bob_project)] {
+        assert_eq!(
+            store
+                .resolve_user_workarea(t, root.workarea_id, &name("project"))
+                .await
+                .expect("resolve"),
+            Some(project.workarea_id)
+        );
+    }
+    assert_eq!(
+        store
+            .resolve_user_workarea(t, shared.workarea_id, &name("project"))
+            .await
+            .expect("resolve"),
+        None,
+        "a shared node's namespace holds nothing"
+    );
+    assert_eq!(
+        store
+            .workarea(t, alice.workarea_id)
+            .await
+            .expect("read")
+            .as_ref(),
+        Some(&alice)
+    );
+    assert_eq!(
+        store
+            .workarea(t, alice_project.workarea_id)
+            .await
+            .expect("read")
+            .as_ref(),
+        Some(&alice_project)
+    );
+
+    let key = KeyRecord {
+        user: Some(alice.workarea_id),
+        name: Some(name("alice-laptop")),
+        ..key_record(t, Uuid::from_u128(0xD310), Role::Writer, None)
+    };
+    rig.issue_key(store, key.clone()).await;
+    assert_eq!(
+        store
+            .key(t, key.key_id)
+            .await
+            .expect("read")
+            .map(|k| k.user),
+        Some(Some(alice.workarea_id))
+    );
+    let node = Grant {
+        grant_id: Uuid::from_u128(0xF310),
+        node: universe.workarea_id,
+        role: Role::Reader,
+        deny: Vec::new(),
+        covers: Covers::Node,
+    };
+    rig.issue_grant(store, key.key_id, node.clone())
+        .await
+        .expect("a node grant");
+    let access = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("access");
+    assert_eq!(
+        access.grants.iter().map(|g| &g.grant).collect::<Vec<_>>(),
+        vec![&node]
+    );
+}
+
 /// A workarea's name is unique in its tenant across the whole tree: a
 /// second node of that name, under any parent, is refused with `NameTaken`
 /// and commits nothing, its event included, while another tenant's node
@@ -3296,7 +3451,7 @@ pub async fn two_workareas_in_one_tenant_cannot_share_a_name<S: JournalStore>(st
                 kind: NamedKind::Workarea,
                 name: name("metals-crew"),
             }),
-            "one flat namespace across the whole tree"
+            "one shared namespace across the tree outside user roots"
         );
     }
     assert_eq!(
@@ -4031,6 +4186,7 @@ where
     a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(&new_store().await).await;
     a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await).await;
     two_workareas_in_one_tenant_cannot_share_a_name(&new_store().await).await;
+    workarea_names_are_unique_per_namespace_and_resolve_in_their_own(&new_store().await).await;
     the_root_and_only_the_root_workarea_is_named_universe(&new_store().await).await;
     a_second_tenant_cannot_take_a_tenants_name(&new_store().await).await;
     a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing_in_another_tenant(

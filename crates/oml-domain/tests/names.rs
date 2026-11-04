@@ -251,9 +251,17 @@ proptest! {
                 prop_assert_eq!(id, None);
                 prop_assert_eq!(Ok(parsed), as_name);
             }
+            // A qualified name holds one `.`, which no name or id holds
+            // (ADR-0044 d5).
+            Ok(Reference::Qualified { .. }) => {
+                prop_assert_eq!(id, None);
+                prop_assert!(value.contains('.'));
+            }
             Err(refusal) => {
                 prop_assert_eq!(id, None);
-                prop_assert_eq!(Err(refusal), as_name);
+                if !value.contains('.') {
+                    prop_assert_eq!(Err(refusal), as_name);
+                }
             }
         }
     }
@@ -619,4 +627,40 @@ fn a_crew_with_no_external_manager_satisfies_no_manager_inequality_requirement()
         Some(&unmanaged),
         Some(&also_unmanaged)
     ));
+}
+
+/// ADR-0044 d5: exactly two labels joined by one `.`, the first not
+/// `universe`, are a qualified name, displayed as sent; three or more
+/// labels, or a value that starts at `universe`, are a path and refused, as
+/// ADR-0026 d7 refuses every path.
+#[test]
+fn a_three_label_value_is_still_a_path_and_refused() {
+    assert_eq!(
+        Reference::parse("alice.project"),
+        Ok(Reference::Qualified {
+            user: named_ref("alice"),
+            name: named_ref("project"),
+        })
+    );
+    assert_eq!(
+        Reference::parse("alice.project")
+            .expect("a qualified name")
+            .to_string(),
+        "alice.project"
+    );
+    for path in [
+        "universe.alice.project",
+        "alice.experiments.run-grid",
+        "universe.alice",
+        "alice.",
+        ".project",
+        "alice..project",
+        "Alice.project",
+    ] {
+        assert!(Reference::parse(path).is_err(), "{path:?} is refused");
+    }
+}
+
+fn named_ref(value: &str) -> Name {
+    Name::parse_reference(value).expect("a name in a reference")
 }

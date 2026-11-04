@@ -20,6 +20,7 @@ use uuid::Uuid;
 use axum::Router;
 use oml_app::App;
 use oml_app::domain::oauth::Issuer;
+use oml_app::domain::web::Provider;
 use oml_app::domain::{EventTime, KeySet};
 use oml_app::ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use oml_app::oauth_fetch::CappedFetcher;
@@ -29,11 +30,13 @@ use oml_app::ports::{
 };
 use oml_app::types::AssignedNames;
 use oml_fetch::PinnedFetcher;
+use oml_fetch::signin::{ClientCredentials, ProviderClients};
 use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
 };
 use oml_transport_http::traffic::{ScopeObserver, Traffic, TrustedProxies};
+use oml_transport_http::web::WebPages;
 use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
 
 use crate::timed::Timed;
@@ -69,6 +72,12 @@ pub struct Config {
     /// `server.otlp_endpoint`: the collector spans are exported to; unset,
     /// none are (ADR-0042 d13).
     pub otlp_endpoint: Option<otlp::Endpoint>,
+    /// `web.google.client_id` and `web.google.client_secret`: Google
+    /// sign-in, on when both are set (ADR-0045 d17).
+    pub web_google: Option<ClientCredentials>,
+    /// `web.github.client_id` and `web.github.client_secret`: GitHub
+    /// sign-in, on when both are set (ADR-0045 d17).
+    pub web_github: Option<ClientCredentials>,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -91,6 +100,10 @@ const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
 const KEY_METRICS_LISTEN: &str = "server.metrics_listen";
 const KEY_OTLP_ENDPOINT: &str = "server.otlp_endpoint";
+const KEY_WEB_GOOGLE_CLIENT_ID: &str = "web.google.client_id";
+const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
+const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
+const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -217,6 +230,34 @@ impl Config {
             .map(|value| otlp::Endpoint::parse(&value))
             .transpose()
             .map_err(ConfigError::Invalid)?;
+        // A provider is on when both of its values are set; one without the
+        // other, or a provider without oauth.issuer, whose origin is the
+        // callback's, stops the start (configuration.md web.*; ADR-0045 d17).
+        let provider = |id_key: &str,
+                        secret_key: &str|
+         -> Result<Option<ClientCredentials>, ConfigError> {
+            match (lookup(id_key), lookup(secret_key)) {
+                (None, None) => Ok(None),
+                (Some(client_id), Some(client_secret))
+                    if !client_id.is_empty() && !client_secret.is_empty() =>
+                {
+                    if oauth_issuer.is_none() {
+                        return Err(ConfigError::Invalid(format!(
+                            "{id_key} is set and {KEY_OAUTH_ISSUER} is not: the sign-in callback is <oauth.issuer>/web/callback/<provider> (ADR-0045 d17)"
+                        )));
+                    }
+                    Ok(Some(ClientCredentials {
+                        client_id,
+                        client_secret,
+                    }))
+                }
+                _ => Err(ConfigError::Invalid(format!(
+                    "{id_key} and {secret_key} are set together or not at all (ADR-0045 d17)"
+                ))),
+            }
+        };
+        let web_google = provider(KEY_WEB_GOOGLE_CLIENT_ID, KEY_WEB_GOOGLE_CLIENT_SECRET)?;
+        let web_github = provider(KEY_WEB_GITHUB_CLIENT_ID, KEY_WEB_GITHUB_CLIENT_SECRET)?;
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -226,6 +267,30 @@ impl Config {
             trusted_proxies,
             metrics_listen,
             otlp_endpoint,
+            web_google,
+            web_github,
+        })
+    }
+
+    /// The web pages over the configured providers, or `None` when no
+    /// provider is set and the pages are off (ADR-0045 d1, d17).
+    #[must_use]
+    pub fn web_pages(&self) -> Option<WebPages> {
+        let mut providers = Vec::new();
+        if let Some(google) = &self.web_google {
+            providers.push((Provider::Google, google.client_id.clone()));
+        }
+        if let Some(github) = &self.web_github {
+            providers.push((Provider::GitHub, github.client_id.clone()));
+        }
+        (!providers.is_empty()).then(|| {
+            WebPages::new(
+                providers,
+                ProviderClients {
+                    google: self.web_google.clone(),
+                    github: self.web_github.clone(),
+                },
+            )
         })
     }
 
@@ -607,6 +672,8 @@ pub struct ConnectionSweep {
     pub codes_cleared: u64,
     /// Authorization requests 24 hours past their expiry.
     pub authorizations_removed: u64,
+    /// Web sessions past their expiry (ADR-0045 d5).
+    pub web_sessions_removed: u64,
 }
 
 /// The operational removal at `at` (postgres-schema.md, connections): every
@@ -645,6 +712,10 @@ pub async fn sweep_connections(store: &PgStore, at: &EventTime) -> Result<Connec
         sweep.tokens_removed += report.tokens_removed;
         sweep.codes_cleared += report.codes_cleared;
         sweep.authorizations_removed += report.authorizations_removed;
+        sweep.web_sessions_removed +=
+            oml_app::ports::WebStore::web_sessions_sweep(store, tenant_id, at)
+                .await
+                .map_err(|e| format!("tenant {tenant_id} web sessions: {e}"))?;
     }
     Ok(sweep)
 }
@@ -675,6 +746,7 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
                     tokens_removed = sweep.tokens_removed,
                     codes_cleared = sweep.codes_cleared,
                     authorizations_removed = sweep.authorizations_removed,
+                    web_sessions_removed = sweep.web_sessions_removed,
                     "connections swept (ADR-0031 d5, d9, d10)"
                 ),
                 Err(reason) => tracing::error!(
@@ -803,6 +875,7 @@ pub async fn start_lead(
         oauth_issuer,
         PinnedFetcher,
         Traffic::default(),
+        None,
     )
     .await
 }
@@ -817,6 +890,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     oauth_issuer: Option<Issuer>,
     fetcher: F,
     traffic: Traffic,
+    web: Option<WebPages>,
 ) -> Result<LeadStart, String> {
     let tenants = enumerate_tenants(store.pool())
         .await
@@ -838,7 +912,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
             .map(|()| Vec::new())
     };
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
-    let router = composed(
+    let state = composed(
         app,
         store,
         pg_ping(store.pool().clone()),
@@ -846,9 +920,12 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         enrollment_token.clone(),
         fetcher,
         traffic,
-    )
-    .with_names_assigned(names.is_ok())
-    .into_router();
+    );
+    let state = match web {
+        Some(pages) => state.with_web(pages),
+        None => state,
+    };
+    let router = state.with_names_assigned(names.is_ok()).into_router();
     Ok(LeadStart {
         tenants,
         fork_check,
@@ -1023,6 +1100,44 @@ mod tests {
             assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
             assert!(err.to_string().contains("oauth.issuer"), "{err}");
         }
+    }
+
+    #[test]
+    fn a_provider_without_its_secret_stops_the_process() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+            ("OML_OAUTH__ISSUER", "https://oml.example.com"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("no provider loads");
+        assert!(cfg.web_pages().is_none(), "no provider, no pages");
+        for (set, missing) in [
+            ("OML_WEB__GOOGLE__CLIENT_ID", "web.google.client_secret"),
+            ("OML_WEB__GITHUB__CLIENT_SECRET", "web.github.client_id"),
+        ] {
+            let mut env = env_of(&base);
+            env.insert(set.to_owned(), "value".to_owned());
+            let err = Config::from_sources(None, &|k| env.get(k).cloned())
+                .expect_err("one value without the other stops the start");
+            assert!(err.to_string().contains(missing), "{err}");
+        }
+        let mut env = env_of(&base);
+        env.insert("OML_WEB__GITHUB__CLIENT_ID".to_owned(), "gh-id".to_owned());
+        env.insert(
+            "OML_WEB__GITHUB__CLIENT_SECRET".to_owned(),
+            "gh-s3cret".to_owned(),
+        );
+        let cfg = Config::from_sources(None, &|k| env.get(k).cloned()).expect("a provider loads");
+        assert!(cfg.web_pages().is_some());
+        assert!(
+            !format!("{cfg:?}").contains("gh-s3cret"),
+            "the secret is never printed"
+        );
+        env.remove("OML_OAUTH__ISSUER");
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("a provider without oauth.issuer stops the start");
+        assert!(err.to_string().contains("oauth.issuer"), "{err}");
     }
 
     #[test]

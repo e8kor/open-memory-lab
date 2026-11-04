@@ -13,6 +13,7 @@ use axum::http::{Request, header};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::{HeldBy, Role};
 use oml_app::doubles::MemStore;
@@ -36,6 +37,7 @@ async fn agent() -> (Router, String) {
         node: boot.root_workarea_id.into(),
         role,
         deny: Vec::new(),
+        covers: Covers::Subtree,
     });
     let key = app
         .issue_key(
@@ -49,6 +51,7 @@ async fn agent() -> (Router, String) {
                 crew: None,
                 grants: grants.to_vec(),
                 connect_code: false,
+                user: None,
             },
         )
         .await

@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design and 0.4.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design and 0.5.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.4.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,143 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.5.0-design
+
+Opened on 2026-11-04 for release v0.5.0, which carries this revision: a person's own workarea and
+the curated shared area above it ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
+and sign-in with Google or GitHub to a user page and an admin page
+([ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).
+`info.version` moved to `0.5.0-design` because a provider-ring response changed shape:
+`Memory.principal` is nullable, null on a universe claim served to a key outside its authoring
+key set (ADR-0044 d9). Every other change of the revision is additive or on the lab ring.
+
+### 2026-11-04 — Release v0.5.0: ADR-0044 and ADR-0045 accepted
+
+The maintainer accepted [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+and [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+on 2026-11-04 with release v0.5.0, ADR-0045 but its demotion, planned for v0.6.0. Every
+"amended by … (proposed)" naming either loses "(proposed)"; the register rows, the
+[releases](product/releases.md) page, which moves v0.5.0 from planned to shipped, llms.txt and the
+README's "What works today" read "introduced in v0.5.0" or "since v0.5.0".
+
+The hidden v0.3.0 names ADR-0039 d12 scheduled to leave in v0.5.0 stay through v0.5.0: 30 of
+the facade's end-to-end tests still drive MCP through them, so their removal moves to v0.5.1 with
+those tests rewritten on the three tools; ADR-0039 d12, releases, the upgrade guides, the CLI
+reference and mcp-plugin.md say v0.5.1.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.0, and the spec is 0.5.0-design
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.0; every reader page fetches the
+installer at `v0.5.0`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.0-design`.
+
+### 2026-11-04 — The user page and the admin page act through session keys, and an admin reads every memory, journalled (ADR-0045 W3, W4, implementation)
+
+The rest of [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+but demotion, on top of ADR-0044's user roots. **W3:** `credential: session` and
+`api_keys.session_for`; the first sign-in issues `<user>-web`, whose issuance creates
+`universe.<user>`, and `<user>-review`, dreamer and reader on that root, under the admin key that
+added the entry (`web_emails.added_by`), and `<user>-admin` for an admin entry; the user page's
+keys (issue, connector key and connect code, cut-off), setup steps naming the server and the
+default `https://memory.doublegate.io`, memories (the person's agents' rows in every state,
+search, and the shared area's anonymous view), workareas, and review of the person's own agents'
+work. **W4:** the admin page's list (add, remove with a confirmation listing the user's keys and a
+cut-off beside each, the admin flag, the last-admin guard), review and curation grants, the
+queue's depth and age, review, curation and supersession; the admin read,
+`POST /v2/admin/memories/search` and `GET /v2/admin/memories/{artifact_id}`, now served, each
+answer journalled as `memory.admin_read`, and `oml admin read`; `oml doctor` names a user with no
+session key. A user name held by the user's own root is no longer `name.taken`. Demotion waits
+for its verb (v0.6.0).
+
+- **Pages:** the ADR-0045 markers on the [HTTP API](api/http-api.md), [errors](api/errors.md),
+  [roles and keys](architecture/roles-and-keys.md), [security](architecture/security.md), the
+  [architecture overview](architecture/overview.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), the [CLI reference](cli/reference.md),
+  [administering](guides/administering.md), the [roadmap](product/roadmap.md),
+  [releases](product/releases.md), the register and [llms.txt](llms.txt) read "since v0.5.0";
+  the [event catalog](data/event-catalog.md) and [Postgres schema](data/postgres-schema.md) carry
+  `memory.admin_read`, `session_user` and `added_by`.
+
+### 2026-11-04 — Sign-in with Google or GitHub, sessions and the email allowlist are built on the web-console branch (ADR-0045 W1, W2, implementation)
+
+The first two steps of [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),
+built for v0.5.0 and not released. **W1:** the per-tenant email allowlist (`web_emails`,
+migration `0015_web`), its three admin routes `GET` and `POST /v2/web/emails` and
+`POST /v2/web/emails/remove`, now served, journalled as `web.email_allowed`, `web.email_changed`
+and `web.email_removed` with an email digest, and `oml web allow|list|remove`; the settings
+`web.google.*` and `web.github.*`, a provider without its secret, or without `oauth.issuer`,
+stopping the start. **W2:** the six web routes, routed where `oauth.issuer` and a provider are
+set; the code flow with S256 PKCE, `state` and a Google nonce sealed in `__Host-oml_signin`;
+Google's ID token claims and GitHub's primary verified address admitted, the provider subject
+pinned per entry; server-side sessions under a fresh token in `__Host-oml_session`; the CSRF token,
+the same-origin check, the CSP and headers; an `Authorization` header refused on every page; the
+request line's `credential: session`, `web_action` and `web_provider`, and the `web_sign_in` line;
+the `/readyz` web section and two doctor lines. The pages show who is signed in; every act other
+than sign-out waits for ADR-0044's user roots and answers `request.validation` with
+`details.reason: not_built`. No provider has been reached: every test runs against a double.
+
+- **Pages:** the [HTTP API](api/http-api.md#web-pages-the-user-page-and-the-admin-page),
+  [errors](api/errors.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), the [Postgres schema](data/postgres-schema.md),
+  the [event catalog](data/event-catalog.md) and the [CLI reference](cli/reference.md).
+
+### 2026-11-04 — ADR-0045 revised with the maintainer's answers: an admin reads every memory, a person reviews their own agents' work, and v0.5.0 narrows to ADR-0044 and ADR-0045
+
+[ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),
+still proposed, records the maintainer's answers to its open choices (d20). An admin session reads
+every memory's text and attribution through a new admin read, `POST /v2/admin/memories/search`
+and `GET /v2/admin/memories/{artifact_id}`, each answer journalled as `memory.admin_read` (d21),
+which narrows ADR-0026 d15 and sets ADR-0044 d9's served view aside for that read; the attribution
+view moves into v0.5.0 and demotion stays in v0.6.0. Every signed-in person holds `<user>-review`
+on their own root from the first sign-in and reviews their own agents' work on the user page. The
+first clients sign in to the existing `oml` tenant, a root each. v0.5.0 is ADR-0044 and ADR-0045
+alone: guardrails move to v0.5.1, and the workarea lifecycle, links between memories and the
+workarea brief to v0.5.2. Both admin read routes join the designed annex; `info.version` stays
+`0.4.0-design`.
+
+- **Pages:** [releases](product/releases.md), the [HTTP API](api/http-api.md#admin-read),
+  [roles and keys](architecture/roles-and-keys.md), [security](architecture/security.md),
+  [administering](guides/administering.md), [workareas](architecture/workareas.md),
+  [use cases](product/use-cases.md), [scenarios](product/scenarios.md), the
+  [CLI reference](cli/reference.md), [mcp-plugin.md](api/mcp-plugin.md), the README, the decision
+  register, [llms.txt](llms.txt) and the Release lines of ADR-0008, ADR-0009 and ADR-0021.
+
+### 2026-11-04 — User roots, node grants, curation into universe and its served view, built for v0.5.0 (ADR-0044, implementation)
+
+[ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), still proposed, is built as its d15 lays out, in four steps. **S1:** a grant
+carries `covers`, `subtree` or `node`; a key carries `user`, and the first key naming a user
+creates `universe.<user>`, journalled as `workarea.create` with `user_root: true` before
+`key.issued`; a user key's grants lie in its root, and issuance adds a reader grant on the
+`universe` node. **S2:** names are unique in the shared namespace or within one user root, the
+qualified name `<user>.<name>` resolves for every key, and a writer user key creates workareas in
+its root, `parent` defaulting to it. **S3:** a curator's write into `universe` is held and
+reviewed like every write; a user key's is `submission.universe_refused`, which no code answered
+before; the reviewer exclusion stays per key and principal. **S4:** a `universe` version is
+served to every key outside its authoring key set with `principal` null and no `derives_from`;
+recall in a user root joins `universe`'s own claims; `oml doctor` and `oml login` print the key's
+user root, and doctor warns when a user key does not read `universe`. Migration
+`0014_user_roots` adds `workareas.user_root`, `workareas.namespace_root_id`,
+`api_keys.user_root_id` and `grants.covers`, splits the workarea name constraint in two, and
+rewrites and journals nothing: every existing key is a tenant key and every workarea shared (d12).
+
+- **Wire:** `POST /v2/keys` takes `user` and `grants[].covers`; `Key`, `KeyIssued` and `Whoami`
+  serve `user`; `Grant` and `WhoamiGrant` serve `covers`; `Workarea` serves `user_root`;
+  `WorkareaCreate.parent` is optional for a user key; every workarea reference takes a
+  `QualifiedName`; `MemorySummary.principal` is nullable. `info.version` is left for the release.
+- **CLI:** `--user` on `oml keys issue` and `oml keys issue-agent`, whose `--workarea` then
+  defaults to the user's root; `--grant <workarea>:<role>:node`.
+- **Not built:** the review-availability doctor line for `universe` (d14), since review
+  availability itself is not built; the lineage read's universe cut (d9), since the lineage read
+  is not built; grant acts after issuance (d3), since none is built.
+- **Pages:** the markers ADR-0044 placed on [concepts](concepts.md),
+  [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
+  [retrieval](architecture/retrieval.md), the [HTTP API](api/http-api.md),
+  [errors](api/errors.md), the [CLI reference](cli/reference.md), [releases](product/releases.md),
+  the [roadmap](product/roadmap.md) and [llms.txt](llms.txt) read "since v0.5.0"; the
+  [event catalog](data/event-catalog.md) and [Postgres schema](data/postgres-schema.md) carry the
+  new fields and columns.
 
 ## 0.4.0-design
 

@@ -69,7 +69,7 @@ For your own server, your administrator gives you two things: the server's addre
 key. With those, and Claude Code on your machine, three lines connect your agent:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```
@@ -112,6 +112,9 @@ Each row names the release that built it; [releases](docs/product/releases.md) h
 | **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Since v0.4.0 |
 | **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Since v0.4.0 |
 | **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Since v0.4.0 |
+| **A workarea of one's own** | Each person's keys write, read and make workareas under a root of their own, so two people can each have a `project`. Above them, a shared area that only curators an administrator chooses write into, each copy reviewed by someone else and shown without its author or source. | Since v0.5.0 |
+| **Sign-in with Google or GitHub** | People whose email address an administrator listed sign in to the server's own address; no password is stored and no mail is sent. Unverified: no sign-in has reached Google or GitHub yet. | Since v0.5.0 |
+| **Your page and the admin page** | On your page: your agents' keys and connect codes, the setup steps, your memories, your workareas, and review of your own agents' work. On the admin page: the list of who signs in, who reviews and who curates, how much waits for review, reading any memory with who wrote and reviewed it, and review, curation and replacing memories. | Since v0.5.0 |
 
 ## Planned
 
@@ -120,9 +123,9 @@ assigned to it yet ([releases](docs/product/releases.md)).
 
 | Capability | What it will add | Release |
 | --- | --- | --- |
-| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.0 |
-| **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.0 |
-| **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.0 |
+| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.1 |
+| **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.2 |
+| **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.2 |
 | **In-progress workareas** | Teammates see each other's unreviewed work at once inside a development workarea that opts in, and nothing leaves it until it is committed. | Planned for v0.6.0 |
 | **Files with memories** | Documents, images and PDFs stored with the memory they belong to, each encrypted under its own key. | Not scheduled |
 | **Semantic search** | Search by meaning beside keyword search. | Not scheduled |

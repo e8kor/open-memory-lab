@@ -36,7 +36,7 @@ use oml_app::domain::oauth::{
 };
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, DocumentFetchFailure, FetchedDocument, IdGen,
-    JournalStore, Scanner, Signer,
+    JournalStore, Scanner, Signer, WebStore,
 };
 use oml_app::types::{
     AppError, AuthorizeOutcome, AuthorizeParams, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
@@ -54,7 +54,7 @@ const JSON: &str = "application/json";
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -431,7 +431,7 @@ fn no_store(mut response: Response) -> Response {
 
 /// A body sent in another media type is refused before it is read; an
 /// absent `Content-Type` is read as the endpoint's own, as on the rings.
-fn require_media(headers: &HeaderMap, supported: &str) -> Result<(), OAuthError> {
+pub(crate) fn require_media(headers: &HeaderMap, supported: &str) -> Result<(), OAuthError> {
     let Some(content_type) = headers.get(header::CONTENT_TYPE) else {
         return Ok(());
     };
@@ -518,7 +518,7 @@ impl TokenParams {
 /// order: split on `&`, empty sequences skipped, `+` and `%XX` decoded in
 /// each name and value. A malformed escape or a value that is not UTF-8
 /// once decoded is `invalid_request`.
-fn form_pairs(raw: &[u8]) -> Result<Vec<(String, String)>, OAuthError> {
+pub(crate) fn form_pairs(raw: &[u8]) -> Result<Vec<(String, String)>, OAuthError> {
     raw.split(|b| *b == b'&')
         .filter(|p| !p.is_empty())
         .map(|pair| {
@@ -619,7 +619,7 @@ impl Submission {
 /// `Sec-Fetch-Site: same-origin`, or with that header absent an `Origin`
 /// equal to the issuer's. `Origin: null`, any other value, and a header
 /// sent twice are refused.
-fn same_origin(headers: &HeaderMap, issuer: &Issuer) -> bool {
+pub(crate) fn same_origin(headers: &HeaderMap, issuer: &Issuer) -> bool {
     let single = |name: &str| {
         let mut values = headers.get_all(name).iter();
         match (values.next(), values.next()) {
@@ -730,7 +730,7 @@ fn redirect(
 }
 
 /// Every byte outside RFC 3986's unreserved set as `%XX`.
-fn percent_encode(value: &str) -> String {
+pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for b in value.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {

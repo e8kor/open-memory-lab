@@ -41,18 +41,18 @@ the [changelog](../changelog.md). The names a user meets:
 
 **The alias window.** Through v0.4.x the eight old MCP tool names and the old CLI verbs and flags
 still answer, hidden: each old MCP call logs `mcp_alias_called` naming the calling key, and each
-old CLI verb prints one stderr line naming its successor. v0.5.0 removes them. `OML_CLI_SERVER`
+old CLI verb prints one stderr line naming its successor. v0.5.1 removes them. `OML_CLI_SERVER`
 and `OML_CLI_KEY` are not read at all; a missing setting names the variable to rename. HTTP and
 the SDKs keep no aliases. The window is ADR-0039 d12's reading, which the maintainer has not
 decided; the other reading keeps no aliases, and then v0.4.0 answers only the new names.
 
 ## Upgrading from v0.3.x as a user of Claude Code
 
-1. Install the v0.4.1 CLI: `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh`.
+1. Install the v0.5.0 CLI: `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh`.
 2. `oml login <url>` once. It rewrites the credentials file with `url` and `api_key`; a v0.3 file's
-   `server` and `key` are read until then, through v0.4.x.
+   `server` and `key` are read until then, through v0.5.0.
 3. `oml setup claude-code`. It finds the `open-memory-lab` marketplace you added, pinned at a v0.3
-   tag or at none, removes it, adds it at the CLI's own tag, `v0.4.1`, and installs again each plugin the removal
+   tag or at none, removes it, adds it at the CLI's own tag, `v0.5.0`, and installs again each plugin the removal
    uninstalled, then configures the plugin; a marketplace from another source, such as a local
    checkout, is refused as `setup.marketplace`, nothing changed
    ([CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start)).
@@ -74,7 +74,7 @@ decided; the other reading keeps no aliases, and then v0.4.0 answers only the ne
    session-start hook runs on.
 3. Move scripts to the new verbs, and enrollment to `--token-stdin`, which keeps the secret out of
    argv and shell history.
-4. To find the clients that still call an old tool before v0.5.0, read `mcp_alias_called` in the server log:
+4. To find the clients that still call an old tool before v0.5.1, read `mcp_alias_called` in the server log:
    it names each key still calling an old tool.
 5. Check with `oml doctor`.
 

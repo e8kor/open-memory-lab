@@ -247,6 +247,17 @@ Membership and order of both segments are fixed
   the candidate list for a given query is part of FR-4's measurement, not a
   property this page claims.
 
+*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):*
+when the scope node lies inside a [user root](workareas.md#user-roots),
+the hits also include the served tips of the `universe` node itself where the key's
+reader access covers it — every user key's node grant does — ranked with the
+scope's own hits in the one total order above. Applicable steering needs no change:
+`universe` is an ancestor of every scope. A universe claim is served with no
+principal, no `derives_from` and no path below `universe`
+([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)). Whether universe
+hits crowd out a project's own is unmeasured, tracked as
+[FR-74](../product/roadmap.md).
+
 The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
 and the MCP `recall` tool): clients may rely on segment order, and nothing a
 client sends re-ranks segment 1.

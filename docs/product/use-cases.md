@@ -23,7 +23,7 @@ what happens, not how; each use case links to the page that explains how.
 The stories below tell how each use case works in v0.4.0. In v0.4.0 an agent has three tools:
 `oml_write` saves, `oml_read` finds, and `oml_workarea` says where the agent works and what it may
 do there. People use the `oml` command. v0.3.1 offers the same use cases under older tool names,
-which keep answering through the 0.4 releases ([upgrading from v0.3](../guides/upgrading.md)).
+which keep answering through v0.5.0 ([upgrading from v0.3](../guides/upgrading.md)).
 
 ## How to read the status
 
@@ -94,7 +94,7 @@ each memory, who approved or rejected it, and when.
 its first task and finds the approved dollar-quote finding, which it had never seen.
 
 What the same day will add as designed use cases are built: the team's rules loaded and checked
-before each command (planned for v0.5.0), an in-progress workarea where teammates see each
+before each command (planned for v0.5.1), an in-progress workarea where teammates see each
 other's unreviewed work at once (planned for v0.6.0), and the price chart attached to the
 conclusion as a file (not scheduled).
 
@@ -229,7 +229,7 @@ who runs the `oml` command
 - **How it plays out:** the agent gets one tool to save, one to read and one to see its
   workarea, in place of eight. The libraries and the command line follow the same shape:
   `write`, `read`, and the review calls. Existing users migrate once, with each change listed;
-  the old tool names and commands keep answering, unlisted, through the 0.4 releases.
+  the old tool names and commands keep answering, unlisted, through v0.5.0.
 - **What they see:** fewer tools to learn, and no invented labels to supply.
 - **How it works:** [MCP plugin](../api/mcp-plugin.md), [upgrading from v0.3](../guides/upgrading.md).
 
@@ -342,7 +342,7 @@ who runs the `oml` command
 
 ### Link two memories
 
-**Designed** · planned for v0.5.0 · an agent
+**Designed** · planned for v0.5.2 · an agent
 
 - **Goal:** connect two memories with a labelled link, and browse memories through their links
   and sources.
@@ -557,7 +557,7 @@ person in a development workarea
 
 ### A workarea grows up
 
-**Designed** · planned for v0.5.0 · an admin
+**Designed** · planned for v0.5.2 · an admin
 
 - **Goal:** move a workarea from development to committed to validated, proposed by one person
   and confirmed by another. Validated freezes it.
@@ -706,7 +706,7 @@ How it works: [ontologies](../architecture/ontologies.md).
 **Planned** · an agent in Claude Code
 
 - **Goal:** on entering an area, get its short brief: what it is for, key decisions, conventions
-  and where things are (planned for v0.5.0); read an approved summary of a whole area that names
+  and where things are (planned for v0.5.2); read an approved summary of a whole area that names
   every memory it draws on (parked); leave a note for the next session on what was done and what
   is open; be asked to meet the area's agreed definition of done before ending a turn; and load
   instructions for particular files only when touching them (these three not scheduled). Today
@@ -778,7 +778,7 @@ Every use case here is **designed** and **parked**.
 
 ### Team rules
 
-**Designed** · planned for v0.5.0 · an admin, every agent in the workarea
+**Designed** · planned for v0.5.1 · an admin, every agent in the workarea
 
 - **Goal:** set an approved team rule ("never", "must" or "should"), optionally checked by
   machine, that applies to every agent in a workarea and below.

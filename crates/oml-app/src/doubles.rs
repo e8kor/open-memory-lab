@@ -13,7 +13,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde_json::Value;
 use uuid::Uuid;
 
-use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::access::{Covers, Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_domain::oauth::{
@@ -32,14 +32,19 @@ use crate::ports::{
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
+use crate::ports::{SignInExchange, WebStore};
+use crate::types::{
+    AdminSearch, AdminState, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
+};
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
     DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WorkareaRecord, WorkareaRef,
+    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
+use oml_domain::web::Provider;
 
 /// The states whose versions hold their `claim_key` and their ordinal
 /// (postgres-schema.md `memories_claim_version`; ADR-0025 d18).
@@ -138,6 +143,12 @@ struct TenantState {
     queue: Vec<QueueEntry>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
+    /// The web allowlist by the email's digest (postgres-schema.md
+    /// `web_emails`; ADR-0045 d2).
+    web_entries: BTreeMap<[u8; 32], WebEntry>,
+    /// Web sessions by their token's digest (postgres-schema.md
+    /// `web_sessions`; ADR-0045 d5).
+    web_sessions: BTreeMap<[u8; 32], WebSessionRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -300,6 +311,17 @@ impl MemStore {
             .map_or(0, |t| t.lock().expect("tenant lock").outbox.len())
     }
 
+    /// Points a key row at `user` as its user root, as no verb does: a
+    /// fixture for the refusal of a key whose row names a node that is not a
+    /// user root (ADR-0044 d14).
+    pub fn set_key_user(&self, tenant_id: Uuid, key_id: Uuid, user: Option<Uuid>) {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if let Some(key) = state.keys.get_mut(&key_id) {
+            key.user = user;
+        }
+    }
+
     /// Test visibility: how many names have been looked up through
     /// `resolve_name` on any handle, so a test can show that a refusal came
     /// before any resolution (ADR-0026 d4).
@@ -429,7 +451,9 @@ fn fold_poc_event(
                     key_hash: None,
                     name: None,
                     crew_id: None,
+                    user: None,
                     revoked_at: None,
+                    session_user: None,
                 },
             );
         }
@@ -440,6 +464,7 @@ fn fold_poc_event(
                 node: poc_required_id(payload, "workarea_node_id")?,
                 role: role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?,
                 deny: Vec::new(),
+                covers: Covers::Subtree,
             };
             if let Some(access) = state.access.get_mut(&key_id) {
                 access.grants.push(GrantRecord {
@@ -698,17 +723,59 @@ fn apply_fold(
 ) -> Result<(), StoreError> {
     match fold {
         // The tenant's name is the deployment's, applied by the commit.
-        MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
+        MetadataFold::TenantGenesis { .. }
+        | MetadataFold::VerdictRecorded { .. }
+        | MetadataFold::AdminRead => {}
         MetadataFold::WorkareaCreated(workarea) => {
             require_universe_root(&workarea)?;
+            // Unique in its namespace: the shared one, or its user root's,
+            // as the two unique indexes hold (ADR-0044 d5).
             require_free_name(
-                state.workareas.values().map(|w| &w.name),
+                state
+                    .workareas
+                    .values()
+                    .filter(|w| w.namespace == workarea.namespace)
+                    .map(|w| &w.name),
                 NamedKind::Workarea,
                 &workarea.name,
             )?;
+            if let Some(root) = workarea.namespace
+                && !state.workareas.get(&root).is_some_and(|w| w.user_root)
+            {
+                return Err(StoreError::Backend(format!(
+                    "workarea {}'s namespace {root} is not a user root of this tenant",
+                    workarea.workarea_id
+                )));
+            }
             require_crew(state, workarea.crew_id)?;
             require_parent(state, workarea.parent_id)?;
             state.workareas.insert(workarea.workarea_id, workarea);
+        }
+        MetadataFold::WebEmailAllowed(entry) => {
+            let hash = entry.email.digest().0;
+            if state.web_entries.contains_key(&hash) {
+                return Err(StoreError::EmailTaken);
+            }
+            state.web_entries.insert(hash, entry);
+        }
+        MetadataFold::WebEmailChanged(entry) => {
+            let hash = entry.email.digest();
+            let Some(held) = state.web_entries.get_mut(&hash.0) else {
+                return Err(StoreError::Backend(
+                    "web.email_changed names an entry the tenant does not hold".to_owned(),
+                ));
+            };
+            held.user = entry.user;
+            held.admin = entry.admin;
+            state.web_sessions.retain(|_, s| s.email_hash != hash);
+        }
+        MetadataFold::WebEmailRemoved { email_hash } => {
+            if state.web_entries.remove(&email_hash.0).is_none() {
+                return Err(StoreError::Backend(
+                    "web.email_removed names an entry the tenant does not hold".to_owned(),
+                ));
+            }
+            state.web_sessions.retain(|_, s| s.email_hash != email_hash);
         }
         MetadataFold::CrewCreated(crew) => {
             require_free_name(
@@ -765,6 +832,14 @@ fn apply_fold(
                 )?;
             }
             require_crew(state, key.crew_id)?;
+            if let Some(root) = key.user
+                && !state.workareas.contains_key(&root)
+            {
+                return Err(StoreError::Backend(format!(
+                    "key {}'s user root {root} is not held by this tenant",
+                    key.key_id
+                )));
+            }
             state.access.insert(
                 key.key_id,
                 KeyAccess {
@@ -1111,10 +1186,16 @@ fn assign_names_fold(
                     name: assignment.name.clone(),
                     crew: unnamed.crew,
                     crew_id: crew_of.remove(&id),
+                    user_root: false,
+                    namespace: None,
                 };
                 require_universe_root(&workarea)?;
                 require_free_name(
-                    state.workareas.values().map(|w| &w.name),
+                    state
+                        .workareas
+                        .values()
+                        .filter(|w| w.namespace.is_none())
+                        .map(|w| &w.name),
                     NamedKind::Workarea,
                     &workarea.name,
                 )?;
@@ -1715,10 +1796,11 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         Ok(match kind {
+            // The shared namespace alone (ADR-0044 d5).
             NamedKind::Workarea => state
                 .workareas
                 .values()
-                .find(|w| &w.name == name)
+                .find(|w| w.namespace.is_none() && &w.name == name)
                 .map(|w| w.workarea_id),
             NamedKind::Crew => state
                 .crews
@@ -1733,6 +1815,24 @@ impl JournalStore for MemStore {
             // A tenant's name is in the deployment's namespace.
             NamedKind::Tenant => None,
         })
+    }
+
+    async fn resolve_user_workarea(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        name: &Name,
+    ) -> Result<Option<Uuid>, StoreError> {
+        self.name_lookups.fetch_add(1, Ordering::SeqCst);
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .workareas
+            .values()
+            .find(|w| w.namespace == Some(user_root) && &w.name == name)
+            .map(|w| w.workarea_id))
     }
 
     async fn crew(&self, tenant_id: Uuid, crew_id: Uuid) -> Result<Option<CrewRecord>, StoreError> {
@@ -1813,6 +1913,13 @@ impl JournalStore for MemStore {
             }),
             None => None,
         };
+        let user = match key.user {
+            Some(root) => self.workarea(tenant_id, root).await?.map(|w| NamedRef {
+                id: w.workarea_id,
+                name: w.name,
+            }),
+            None => None,
+        };
         Ok(Some(KeyReferences {
             tenant: NamedRef {
                 id: tenant_id,
@@ -1820,6 +1927,7 @@ impl JournalStore for MemStore {
             },
             default_workarea,
             crew,
+            user,
         }))
     }
 
@@ -1960,6 +2068,282 @@ impl JournalStore for MemStore {
             .idempotency
             .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
             .cloned())
+    }
+}
+
+impl MemStore {
+    /// The tenant's keys `keep` admits, in name order.
+    fn tenant_keys(&self, tenant_id: Uuid, keep: impl Fn(&KeyRecord) -> bool) -> Vec<KeyRecord> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Vec::new();
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut keys: Vec<KeyRecord> = state.keys.values().filter(|k| keep(k)).cloned().collect();
+        keys.sort_by(|a, b| a.name.cmp(&b.name));
+        keys
+    }
+}
+
+impl WebStore for MemStore {
+    async fn web_entry_by_email(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> Result<Option<WebEntry>, StoreError> {
+        Ok(self
+            .find_in_tenants(|state| state.web_entries.get(&email_hash.0).cloned())
+            .map(|found| found.row))
+    }
+
+    async fn web_entries(
+        &self,
+        tenant_id: Uuid,
+        after: Option<&Sha256Hash>,
+        limit: usize,
+    ) -> Result<Vec<WebEntry>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .web_entries
+            .iter()
+            .filter(|(hash, _)| after.is_none_or(|a| **hash > a.0))
+            .map(|(_, e)| e.clone())
+            .take(limit)
+            .collect())
+    }
+
+    async fn web_pin(
+        &self,
+        tenant_id: Uuid,
+        email_hash: &Sha256Hash,
+        provider: Provider,
+        subject: &str,
+    ) -> Result<PinOutcome, StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let entry = state
+            .web_entries
+            .get_mut(&email_hash.0)
+            .ok_or_else(|| StoreError::Backend("no entry to pin".to_owned()))?;
+        let slot = match provider {
+            Provider::Google => &mut entry.google_subject,
+            Provider::GitHub => &mut entry.github_subject,
+        };
+        Ok(match slot {
+            None => {
+                *slot = Some(subject.to_owned());
+                PinOutcome::Pinned
+            }
+            Some(pinned) if pinned == subject => PinOutcome::Matched,
+            Some(_) => PinOutcome::Differs,
+        })
+    }
+
+    async fn web_session_open(
+        &self,
+        session: WebSessionRecord,
+        replaces: Option<Sha256Hash>,
+    ) -> Result<(), StoreError> {
+        if let Some(old) = replaces
+            && let Some(found) =
+                self.find_in_tenants(|state| state.web_sessions.contains_key(&old.0).then_some(()))
+        {
+            let state = self.tenant(found.tenant_id);
+            state
+                .lock()
+                .expect("tenant lock")
+                .web_sessions
+                .remove(&old.0);
+        }
+        let state = self.tenant(session.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        if !state.web_entries.contains_key(&session.email_hash.0) {
+            return Err(StoreError::Backend(
+                "a session names an entry the tenant does not hold".to_owned(),
+            ));
+        }
+        state.web_sessions.insert(session.token_hash.0, session);
+        Ok(())
+    }
+
+    async fn web_session(
+        &self,
+        token_hash: &Sha256Hash,
+    ) -> Result<Option<WebSessionRecord>, StoreError> {
+        Ok(self
+            .find_in_tenants(|state| state.web_sessions.get(&token_hash.0).cloned())
+            .map(|found| found.row))
+    }
+
+    async fn web_session_end(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+    ) -> Result<(), StoreError> {
+        if let Some(state) = self.tenant_existing(tenant_id) {
+            state
+                .lock()
+                .expect("tenant lock")
+                .web_sessions
+                .remove(&token_hash.0);
+        }
+        Ok(())
+    }
+
+    async fn web_user_keys(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.user == Some(user_root)))
+    }
+
+    async fn web_session_keys(
+        &self,
+        tenant_id: Uuid,
+        session_user: &Name,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.session_user.as_ref() == Some(session_user)))
+    }
+
+    async fn web_queue(&self, tenant_id: Uuid) -> Result<Vec<QueueDepth>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut depths: BTreeMap<Uuid, QueueDepth> = BTreeMap::new();
+        for m in state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held)
+        {
+            let depth = depths.entry(m.workarea_id).or_insert_with(|| QueueDepth {
+                workarea_id: m.workarea_id,
+                held: 0,
+                oldest: m.created_at.clone(),
+            });
+            depth.held += 1;
+            if m.created_at.unix_micros() < depth.oldest.unix_micros() {
+                depth.oldest = m.created_at.clone();
+            }
+        }
+        Ok(depths.into_values().collect())
+    }
+
+    async fn web_admin_search(
+        &self,
+        tenant_id: Uuid,
+        search: &AdminSearch,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let terms = search.query.as_deref().map(words).unwrap_or_default();
+        let mut rows: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| terms.is_subset(&words(&m.body)))
+            .filter(|m| {
+                search
+                    .nodes
+                    .as_ref()
+                    .is_none_or(|n| n.contains(&m.workarea_id))
+            })
+            .filter(|m| search.state.is_none_or(|s| AdminState::of(m) == s))
+            .filter(|m| {
+                search.after.as_ref().is_none_or(|a| {
+                    (m.created_at.unix_micros(), m.memory_id)
+                        < (a.created_at.unix_micros(), a.artifact_id)
+                })
+            })
+            .cloned()
+            .collect();
+        rows.sort_by(|a, b| {
+            (b.created_at.unix_micros(), b.memory_id)
+                .cmp(&(a.created_at.unix_micros(), a.memory_id))
+        });
+        rows.truncate(search.limit);
+        Ok(rows)
+    }
+
+    async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let mut state = state.lock().expect("tenant lock");
+        let before = state.web_sessions.len();
+        state
+            .web_sessions
+            .retain(|_, s| s.expires_at.unix_micros() > at.unix_micros());
+        Ok((before - state.web_sessions.len()) as u64)
+    }
+}
+
+/// A sign-in provider double (ADR-0045 d3, d4): it answers each provider
+/// with what the test set, counts the exchanges asked of it, and reaches
+/// no network.
+#[derive(Debug, Clone, Default)]
+pub struct MemSignIn {
+    answers: Arc<Mutex<BTreeMap<Provider, Result<ProviderAnswer, ProviderFailure>>>>,
+    calls: Arc<AtomicU64>,
+    /// The last code and verifier redeemed, for a test to compare.
+    last: Arc<Mutex<Option<Redeemed>>>,
+}
+
+/// One exchange as the double saw it: the provider, the code, the
+/// verifier and the redirect URI.
+pub type Redeemed = (Provider, String, String, String);
+
+impl MemSignIn {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What every exchange with `provider` answers from now on.
+    pub fn answer(&self, provider: Provider, answer: Result<ProviderAnswer, ProviderFailure>) {
+        self.answers
+            .lock()
+            .expect("answers lock")
+            .insert(provider, answer);
+    }
+
+    /// How many exchanges were asked of any provider.
+    #[must_use]
+    pub fn calls(&self) -> u64 {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// The provider, code, verifier and redirect URI of the last exchange.
+    #[must_use]
+    pub fn last(&self) -> Option<Redeemed> {
+        self.last.lock().expect("last lock").clone()
+    }
+}
+
+impl SignInExchange for MemSignIn {
+    async fn redeem(
+        &self,
+        provider: Provider,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<ProviderAnswer, ProviderFailure> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        *self.last.lock().expect("last lock") = Some((
+            provider,
+            code.to_owned(),
+            verifier.to_owned(),
+            redirect_uri.to_owned(),
+        ));
+        self.answers
+            .lock()
+            .expect("answers lock")
+            .get(&provider)
+            .cloned()
+            .unwrap_or(Err(ProviderFailure::Refused("no_answer_set")))
     }
 }
 

@@ -1,11 +1,12 @@
 //! Application-layer records and use-case request/response shapes.
 
-use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::access::{Covers, Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -30,6 +31,9 @@ pub const PROVIDER_TENANT: Uuid = Uuid::nil();
 pub enum Credential {
     Bearer,
     Connection,
+    /// A key the server holds for a person and acts with only from their
+    /// web session: no value, no hash, no connection (ADR-0045 d6).
+    Session,
 }
 
 impl Credential {
@@ -39,6 +43,7 @@ impl Credential {
         match self {
             Credential::Bearer => "bearer",
             Credential::Connection => "connection",
+            Credential::Session => "session",
         }
     }
 
@@ -48,6 +53,7 @@ impl Credential {
         match s {
             "bearer" => Some(Credential::Bearer),
             "connection" => Some(Credential::Connection),
+            "session" => Some(Credential::Session),
             _ => None,
         }
     }
@@ -86,11 +92,19 @@ pub struct KeyRecord {
     /// The crew record named at issuance, fixed for the key's life; `None`
     /// for a key with no crew (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The user root of the person the key acts for, fixed for the key's
+    /// life: a **user key**; `None` for a **tenant key**, every key issued
+    /// before ADR-0044 included (ADR-0044 d2, d12).
+    pub user: Option<Uuid>,
     /// The `at` of the key's `key.revoked`; the row stays as history, so a
     /// revoked key reads back with it. `None` for a live key, as every
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
     /// ADR-0026 d10).
     pub revoked_at: Option<EventTime>,
+    /// For a session key, the allowlist user it serves, reached only from a
+    /// live session of an entry naming that user; `None` for every other
+    /// key (ADR-0045 d6).
+    pub session_user: Option<Name>,
 }
 
 /// A connect code as `connection.code_issued` mints it, for the commit's
@@ -718,6 +732,28 @@ pub struct WorkareaRecord {
     /// The crew record the workarea names; `None` when it names none
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// A user root, `universe.<user>`, which only issuance creates; fixed at
+    /// creation (ADR-0044 d1).
+    pub user_root: bool,
+    /// The user root whose namespace holds this node's name: the root a
+    /// node lies strictly beneath, `None` for a shared node, `universe` and
+    /// every user root included (ADR-0044 d5). Fixed at creation, since no
+    /// node crosses a user root's boundary (d1).
+    pub namespace: Option<Uuid>,
+}
+
+impl WorkareaRecord {
+    /// The user root the node belongs to: itself for a user root, the root
+    /// whose namespace holds it beneath one, `None` for a shared node
+    /// (ADR-0044 d1).
+    #[must_use]
+    pub fn user(&self) -> Option<Uuid> {
+        if self.user_root {
+            Some(self.workarea_id)
+        } else {
+            self.namespace
+        }
+    }
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
@@ -929,6 +965,11 @@ pub struct ServedMemory {
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,
+    /// A `universe` version served to a key outside its authoring key set:
+    /// no principal, no `derives_from`, and the memory's author and lineage
+    /// fields blanked, so no field says where its source lived (ADR-0044
+    /// d9). The transport serves `principal` null.
+    pub anonymous: bool,
 }
 
 impl MemoryRecord {
@@ -983,6 +1024,9 @@ pub struct IssuedKey {
     /// The crew record named at issuance, fixed for the key's life
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The key's user root, by id and name; `None` for a tenant key
+    /// (ADR-0044 d2, d11).
+    pub user: Option<NamedRef>,
     pub access: KeyAccess,
     /// A connector key's connect code, returned only after the key's last
     /// `grant.issued` and its `connection.code_issued` committed; `None` for
@@ -1037,6 +1081,11 @@ pub struct IssueKeyRequest {
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
+    /// The person the key acts for, by the user's name: a user key, whose
+    /// grants lie in that user's root and whose references resolve in its
+    /// namespace. The first key naming a user creates its root (ADR-0044
+    /// d2, d3, d5).
+    pub user: Option<Name>,
     /// Issue a connector key: no value, a connect code in its place, after
     /// step 7 admits a key that can hold a connection (roles-and-keys.md
     /// issuance order, step 7; ADR-0031 d7).
@@ -1051,6 +1100,8 @@ pub struct GrantRequest {
     pub node: Reference,
     pub role: Role,
     pub deny: Vec<Reference>,
+    /// The node's subtree, the default, or the node alone (ADR-0044 d4).
+    pub covers: Covers,
 }
 
 /// `POST /v2/crews` (http-api.md crews; ADR-0026 d8): every field but the
@@ -1345,6 +1396,9 @@ pub struct CrewPage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDetail {
     pub key: KeyRecord,
+    /// The key's user root, by id and name; `None` for a tenant key
+    /// (ADR-0044 d11).
+    pub user: Option<NamedRef>,
     pub held_by: Option<HeldBy>,
     pub access: KeyAccess,
 }
@@ -1374,6 +1428,8 @@ pub struct KeyReferences {
     pub tenant: NamedRef,
     pub default_workarea: Option<WorkareaRef>,
     pub crew: Option<NamedRef>,
+    /// The key's user root (ADR-0044 d11).
+    pub user: Option<NamedRef>,
 }
 
 /// `GET /v2/whoami`: the calling key's own record, the references it names
@@ -1386,6 +1442,9 @@ pub struct Whoami {
     pub tenant: Option<NamedRef>,
     pub default_workarea: Option<WorkareaRef>,
     pub crew: Option<NamedRef>,
+    /// The key's user root, by id and name, from which a client learns its
+    /// root; `None` for a tenant key (ADR-0044 d11).
+    pub user: Option<NamedRef>,
     pub grants: Vec<GrantRecord>,
 }
 
@@ -1477,6 +1536,9 @@ pub enum Bearer<'a> {
     /// The caller of a live connection's access token, resolved on this
     /// request.
     Connection(&'a crate::app::Caller),
+    /// A session key's caller, resolved from a live web session on this
+    /// request (ADR-0045 d6).
+    Session(&'a crate::app::Caller),
 }
 
 impl<'a> From<&'a str> for Bearer<'a> {
@@ -1516,6 +1578,39 @@ pub enum AppError {
         "an admin key never carries a dreamer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
     )]
     RoleExclusive,
+    /// A user key's grant names a node outside its user's root: issuer
+    /// ceiling, with the root the grant must lie in (ADR-0044 d3).
+    #[error(
+        "grant {grant_index} lies outside the root of user {} (ADR-0044 d3, access.issuer_ceiling)",
+        .user.as_str()
+    )]
+    GrantOutsideUserRoot {
+        role: Role,
+        admissible: &'static [Role],
+        grant_index: usize,
+        user: Name,
+    },
+    /// `user` on a key that acts for no person, or naming `universe`
+    /// (ADR-0044 d2, d14; request.validation, field user).
+    #[error("{0} (ADR-0044 d2, request.validation, field user)")]
+    UserRefused(&'static str),
+    /// A node grant carries no deny entry, since nothing beneath it is
+    /// covered (ADR-0044 d4; request.validation, field `/grants/<i>/deny`).
+    #[error(
+        "grant {grant_index} covers its node alone and takes no deny entry (ADR-0044 d4, request.validation)"
+    )]
+    NodeGrantDeny { grant_index: usize },
+    /// A user key's claim write addresses `universe`, which only curators
+    /// write: answered in place of `access.grant_refused` (ADR-0044 d7, d14;
+    /// errors.md `submission.universe_refused`).
+    #[error(
+        "universe holds only claims its curators write; a user key never writes there (ADR-0044 d7, submission.universe_refused)"
+    )]
+    UniverseRefused,
+    /// The key names a user root that is not one: the lead serves it
+    /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
+    #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]
+    UserRootInvalid,
     #[error(
         "the node is readable but effective access does not confer {needed_role:?} (roles-and-keys.md refusal order, access.grant_refused)"
     )]
@@ -1662,6 +1757,33 @@ pub enum AppError {
         "oauth.client_invalid: clients are public and send no client authentication (ADR-0031 d5)"
     )]
     ClientAuthentication { scheme: Option<String> },
+    /// An allowlist entry's email that another tenant's entry holds: the
+    /// email is unique in the deployment, and the refusal says so and
+    /// nothing more (errors.md `name.taken`, `details.kind: email`;
+    /// ADR-0045 d2).
+    #[error("the email is on another organisation's list (errors.md name.taken, kind email)")]
+    WebEmailTaken,
+    /// An allowlist entry's user longer than every session key name admits
+    /// (request.validation, field user; ADR-0045 d2).
+    #[error(transparent)]
+    WebUserTooLong(#[from] UserTooLong),
+    /// A sign-in or a session refused, `auth.invalid` with its reason
+    /// (ADR-0045 d4, d18).
+    #[error(transparent)]
+    WebSignIn(#[from] SignInRefusal),
+    /// The act needs one of the person's session keys that does not exist:
+    /// a curator key no admin designated, or a first sign-in's keys whose
+    /// issuance failed part way, issued again at the next sign-in
+    /// (`access.not_found`, `details.capacity`; ADR-0045 d6, d18).
+    #[error("the person holds no {capacity} session key")]
+    WebKeyMissing { capacity: &'static str },
+    /// A page act's field the act refuses, with the rule it breaks
+    /// (request.validation, `details.field`; ADR-0045 d9, d10).
+    #[error("{message}")]
+    WebField {
+        field: &'static str,
+        message: &'static str,
+    },
     #[error(transparent)]
     Store(StoreError),
 }
@@ -1673,7 +1795,186 @@ impl From<StoreError> for AppError {
     fn from(error: StoreError) -> Self {
         match error {
             StoreError::NameTaken { kind, name } => AppError::NameTaken { kind, name },
+            StoreError::EmailTaken => AppError::WebEmailTaken,
             other => AppError::Store(other),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The web pages: allowlist entries and sessions (ADR-0045 d2, d5)
+// ---------------------------------------------------------------------------
+
+/// An allowlist entry (ADR-0045 d2): the email a person signs in with, the
+/// user they sign in as, whether it opens the admin page, and the provider
+/// subject each provider pinned at its first sign-in (d4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebEntry {
+    pub tenant_id: Uuid,
+    pub email: Email,
+    pub user: Name,
+    pub admin: bool,
+    pub google_subject: Option<String>,
+    pub github_subject: Option<String>,
+    /// The admin key that added the entry: the entry's first sign-in issues
+    /// the person's session keys under it (ADR-0045 d6).
+    pub added_by: Uuid,
+}
+
+impl WebEntry {
+    /// The subject `provider` pinned on this entry, if it did.
+    #[must_use]
+    pub fn subject(&self, provider: Provider) -> Option<&str> {
+        match provider {
+            Provider::Google => self.google_subject.as_deref(),
+            Provider::GitHub => self.github_subject.as_deref(),
+        }
+    }
+}
+
+/// What `POST /v2/web/emails` asks (ADR-0045 d2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebEmailRequest {
+    pub email: Email,
+    pub user: Name,
+    pub admin: bool,
+}
+
+/// What the allowlist act did: added the entry, changed its user or admin
+/// flag (ending its sessions), or found it as asked and journalled nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebEmailOutcome {
+    Allowed,
+    Changed,
+    Unchanged,
+}
+
+/// A pin of a provider subject on an entry, as the store answers it
+/// (ADR-0045 d4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinOutcome {
+    /// This sign-in is the entry's first through the provider; its subject
+    /// is now pinned.
+    Pinned,
+    /// The subject equals the pinned one.
+    Matched,
+    /// Another subject is pinned: the address moved to another account.
+    Differs,
+}
+
+/// A session row (ADR-0045 d5): the SHA-256 of its token, never the
+/// token, the entry and user it acts for, and its fixed lifetime. Session
+/// rows are operational state, not journalled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSessionRecord {
+    pub token_hash: Sha256Hash,
+    pub tenant_id: Uuid,
+    pub email_hash: Sha256Hash,
+    pub user: Name,
+    pub admin: bool,
+    pub created_at: EventTime,
+    pub expires_at: EventTime,
+}
+
+/// A session just opened: the token the cookie carries, shown to the
+/// browser once and stored only as its digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedSession {
+    pub token: String,
+    pub record: WebSessionRecord,
+}
+
+/// What a provider's token endpoint and, for GitHub, its API answered for
+/// one sign-in, before the server judges it (ADR-0045 d4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderAnswer {
+    /// The ID token Google's token endpoint returned.
+    GoogleIdToken(String),
+    /// GitHub's account `id` and its `GET /user/emails` list.
+    GitHub {
+        account_id: u64,
+        emails: Vec<GitHubEmail>,
+    },
+}
+
+/// Why a provider exchange answered nothing the server can judge: the
+/// provider refused or failed, or the per-provider cap was reached
+/// (ADR-0045 d15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderFailure {
+    /// The token call, or a GitHub API call, failed, timed out or answered
+    /// an error; the reason is a closed word for the doctor counter.
+    Refused(&'static str),
+    /// The provider's concurrent-call cap was reached.
+    Busy,
+}
+
+/// One workarea's review queue as the admin page shows it: how many held
+/// versions wait there and when the oldest was written, no content
+/// (ADR-0045 d10, amending ADR-0026 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueDepth {
+    pub workarea_id: Uuid,
+    pub held: u64,
+    pub oldest: EventTime,
+}
+
+/// What the admin read searches (ADR-0045 d21): the full-text `query`
+/// recall uses, without the visibility filter, narrowed to the subtree
+/// `nodes` and to a state; newest first after `after`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdminSearch {
+    pub query: Option<String>,
+    pub nodes: Option<Vec<Uuid>>,
+    pub state: Option<AdminState>,
+    pub after: Option<ListingPosition>,
+    pub limit: usize,
+}
+
+/// A memory's state as the admin read names it: a promoted version that
+/// is no longer its claim's tip is `superseded` (ADR-0045 d21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminState {
+    Held,
+    Promoted,
+    Rejected,
+    Superseded,
+    Demoted,
+}
+
+impl AdminState {
+    #[must_use]
+    pub fn of(memory: &MemoryRecord) -> Self {
+        match memory.status {
+            MemoryStatus::Held => AdminState::Held,
+            MemoryStatus::Promoted if memory.is_tip => AdminState::Promoted,
+            MemoryStatus::Promoted => AdminState::Superseded,
+            MemoryStatus::Rejected => AdminState::Rejected,
+            MemoryStatus::Demoted | MemoryStatus::Erased => AdminState::Demoted,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdminState::Held => "held",
+            AdminState::Promoted => "promoted",
+            AdminState::Rejected => "rejected",
+            AdminState::Superseded => "superseded",
+            AdminState::Demoted => "demoted",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            AdminState::Held,
+            AdminState::Promoted,
+            AdminState::Rejected,
+            AdminState::Superseded,
+            AdminState::Demoted,
+        ]
+        .into_iter()
+        .find(|s| s.as_str() == value)
     }
 }

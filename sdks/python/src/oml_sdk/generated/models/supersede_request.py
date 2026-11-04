@@ -20,9 +20,11 @@ class SupersedeRequest:
         Attributes:
             body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
                 larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
-            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
-                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
-                (request.validation).
+            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
+                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
+                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
+                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
+                is neither, and is refused (request.validation).
             retirement (bool | Unset): true proposes retiring the claim, and body states why. Refused with
                 request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from
                 the target's. Default: False.

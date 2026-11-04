@@ -11,9 +11,12 @@ answers: every administrative CLI verb, its flags and refusals; oml write, oml r
 
 **Release:** the verbs below arrived in v0.1.0 to v0.3.1, as each section says ([releases](../product/releases.md)).
 
-`oml` is the administration surface of Open Memory Lab. There is no web UI: every administrative
+`oml` is the administration surface of Open Memory Lab. There is no web UI today: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
-ADR-0015. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
+ADR-0015. Since v0.5.0 a user page and an admin page serve people signed in with Google or GitHub
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)); every ceremony keeps its verb here, and
+`oml web allow`, `oml web list` and `oml web remove` keep the email allowlist that lets the
+first admin in. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
 agent — every ceremony rides the lab ring (`/v2`,
 [ADR-0022](../adr/ADR-0022-two-ring-api.md)); the CLI holds no verb the API lacks — authenticated
 by operator, admin or dreamer keys, and holds no authority of its own; the `oml hook` verbs,
@@ -156,7 +159,7 @@ no key, so it takes the URL of the first source that sets one, and writes `url` 
 nothing else, to the credentials file
 ([owner-only](#installing-oml-and-what-differs-on-windows)). `OML_CLI_CREDENTIALS` selects the
 file, so a second server is a second file. A v0.3.0 file's `server` and `key` are read as `url`
-and `api_key` through v0.4.x, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
+and `api_key` through v0.5.0, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
 `oml audit verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`.
 
 `oml doctor` checks the pair alone and refuses nothing: it reports which source set the URL and
@@ -168,7 +171,7 @@ setting; no URL in the first source sends nothing and is a `fail` (exit `1`).
 
 The v0.3.0 names follow [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12. `--server`
 and `--key` still answer, hidden, each printing one stderr line naming `--url` or `--api-key`,
-until v0.5.0 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
+until v0.5.1 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
 is missing and either is set, the failure names the variable to rename.
 
 ## `oml login` and `oml doctor` — storing and checking the pair
@@ -183,8 +186,8 @@ from the file ([security](../architecture/security.md)).
 
 | Verb | Does |
 |---|---|
-| `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. |
-| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. |
+| `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d11):* it also prints the key's user root, or that the key is a tenant key. |
+| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* under a user key it prints the user root and warns `universe: this key does not read universe's claims` when the key holds no reader on `universe`; under a tenant key it prints `user: none (tenant key: names resolve in the shared namespace)`. |
 
 ## `oml setup claude-code` and `oml quickstart` — the quick start
 
@@ -263,8 +266,8 @@ exactly the grant it names.
 
 | Verb | Does |
 |---|---|
-| `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
-| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, a third line pipes the file to `claude plugin configure`, and a fourth runs `oml setup claude-code --key-file` on it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4; [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d7). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). Without `oauth.issuer` the issuance is refused with `oauth.connect_refused` (`not_configured`) and nothing is printed on stdout. |
+| `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2–d4, d11):* `--user <user>` names the person the key acts for, refused on `--role admin`; the first key naming a user creates its root `universe.<user>`, every `--grant` must then lie inside it, and the server adds a reader grant on the `universe` node. `--grant <workarea>:<role>:node` sends a grant with `covers: node`, which covers that workarea alone. |
+| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, a third line pipes the file to `claude plugin configure`, and a fourth runs `oml setup claude-code --key-file` on it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4; [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d7). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). Without `oauth.issuer` the issuance is refused with `oauth.connect_refused` (`not_configured`) and nothing is printed on stdout. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2, d11):* `--user <user>` sends `user`; with it `--workarea` is optional, defaults to the user's root and is resolved by the server in that user's namespace, so `oml keys issue-agent claude-laptop --principal alice/laptop --user alice --out <path>` issues a writer key granted on `universe.alice`, its reader grant beside it and the `universe` node read the server adds. `--principal` stays required and is never derived from `--user`. `--connect-code` takes `--user` the same way. |
 | `oml keys connect-code <key>` | Mint a fresh connect code for a connector key, by id or name (`POST /v2/keys/{key}/connect-codes`), for a code that lapsed or a connection that was revoked; the key's earlier codes are voided as [connections](../architecture/roles-and-keys.md#connections) declares. Prints the same two lines as `issue-agent --connect-code`. Refused with `oauth.connect_refused` for a bearer key, a revoked or expired key, or a deployment without `oauth.issuer`. As built the route keeps no idempotency record, so a re-run mints another code and voids the one before it. |
 | `oml keys disconnect <key> <connection-id> [--reason <text>]` | End a connection of the key, which is named by id or name (`POST /v2/keys/{key}/connections/{connection_id}/revoke`); a connection has no name and is named by its id. Journalled as `connection.revoked`, which ends it as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection, the 60 seconds between Connect and the token exchange, is not listed and cannot be named (`access.not_found`). Works whether or not the deployment sets `oauth.issuer`. |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
@@ -371,7 +374,7 @@ a ban would refuse — without journalling anything.
 
 | Verb | Does |
 |---|---|
-| `oml grants add <key> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. |
+| `oml grants add <key> <workarea>:<role> [--deny <subtree> …]` | Add a grant, optionally carrying deny entries that mask subtrees within this grant only. A dreamer-class grant on an admin key is refused (`access.role_exclusive` — the two-key rule). Journalled; bumps the key's permission epoch. *Designed with this verb ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d3, d4):* a `:node` suffix sends `covers: node`; a grant on a user key outside its user's root is refused with `access.issuer_ceiling`, as issuance refuses it since v0.5.0. |
 | `oml grants remove <key> <grant-id>` | Remove one grant. Journalled; epoch bump. |
 | `oml grants list [--key <key>] [--workarea <workarea>]` | Grants as journalled, with the derived effective access per key. |
 | `oml grants effective <key> [--at <workarea>]` | The resolved answer: what this key can do, where, and which deny produced each hole — reproducible from the journal by construction. |
@@ -383,7 +386,7 @@ a ban would refuse — without journalling anything.
 
 ## `oml workareas` — tree, edges, status
 
-*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.2 · [releases](../product/releases.md)*
 
 The algebra — one tree per tenant under `universe`, labelled `related` edges conferring zero
 access, forward-only status ladder — is declared in [workareas](../architecture/workareas.md).
@@ -396,7 +399,7 @@ them into `propose` and `ratify` run under different keys.
 
 | Verb | Does |
 |---|---|
-| `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` (a vocabulary needs a named curator crew). |
+| `oml workareas create <parent> <name> [--crew <crew>] [--prefix <PREFIX>]` | Create a child workarea named `<name>` — unique in the tenant (`name.taken`; `universe` is the root's) — in `development`. Refused under a `validated` parent. `--crew` names an existing [crew record](#oml-crews-crew-records). `--prefix` registers a vocabulary workarea ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the prefix is tenant-unique and **permanent** — the command states this and confirms before acting — and requires `--crew` (a vocabulary needs a named curator crew). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d5, d6):* a writer user key also runs it, under a `<parent>` inside its own user root, so under alice's key `oml workareas create alice project` creates `universe.alice.project`; `<name>` is then unique within that root, and `<parent>` may be a qualified name such as `alice.experiments`. |
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, or from `--root`, with status and crew per node. The verb as built takes `--root` and not `--status`, and reads every page of `GET /v2/workareas/{workarea}/tree`; `--json` prints their items as one page. Under a key with reader effective access, a node it cannot read is absent. |
 | `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
@@ -423,6 +426,35 @@ throughout; no agent role reaches these verbs.
 | `oml crews list` | Crew records: name, id, charter URI, external manager. Reads every page; `--json` prints their items as one page. |
 | `oml crews show <crew>` | One crew record, by id or name. |
 
+## `oml web` — the email allowlist
+
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2*
+
+Who may sign in to the [web pages](../api/http-api.md#web-pages-the-user-page-and-the-admin-page):
+an email address, the user it signs in as, and whether it opens the admin page. The first admin
+email comes from here, under the tenant's existing admin key; there is no other way in. Admin key
+role throughout. The email travels in a request body, never in a URL, and the journal holds its
+digest, never the address.
+
+| Verb | Does |
+|---|---|
+| `oml web allow <email> --user <user> [--admin]` | Add the address (`web.email_allowed`), or change its user or admin flag (`web.email_changed`), which ends its sessions. An address another organisation's list holds is `name.taken` (kind `email`); a user a workarea or another key's name already holds is `name.taken`; a user longer than 56 characters is `request.validation`. |
+| `oml web remove <email>` | Remove the address (`web.email_removed`) and end its sessions. The user's agent keys keep working; cut one off with `oml deny set <key> universe`. |
+| `oml web list` | The organisation's list: email, user, admin. Reads every page; `--json` prints their items as one page. |
+
+## `oml admin read` — every memory, with its attribution
+
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*
+
+An administrator reads every memory of the organisation — every state, every workarea, every
+person's root — with its text and who wrote, derived and reviewed it. Admin key role alone; each
+answer is recorded in the history as `memory.admin_read` with the ids served and a digest of the
+query, never the text. The admin key still recalls nothing and records no verdict.
+
+| Verb | Does |
+|---|---|
+| `oml admin read [<memory>] [--query <text>] [--workarea <workarea>] [--state <state>]` | With a memory id, that memory's text, author key, principal and user, `derives_from`, `replaces` and verdicts. Without one, a search over every memory, newest first, `--state` one of `held`, `promoted`, `rejected`, `superseded` or `demoted`; reads every page, and `--json` prints their items as one page. |
+
 ## `oml write`, `oml read`, `oml events` — memories and the journal
 
 *Available since v0.4.0 · [releases](../product/releases.md)*
@@ -443,7 +475,7 @@ arguments choose is refused by name before anything is sent (exit `2`), as `oml_
 | `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` | One page of `GET /v2/events`: the journal's events within the key's reader access on the workarea, the key's default when omitted, digest-only, with the head seq and the `next_after_seq` to pass back as `--after-seq`. A feed for audit, not a verification surface: `oml audit verify-chain` reads the chain export. |
 
 **The v0.3.0 verbs.** `oml submit`, `oml recall`, `oml supersede` and `oml review verdict` still
-answer, hidden from `--help`, until v0.5.0 removes them
+answer, hidden from `--help`, until v0.5.1 removes them
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12). Each runs its successor with
 the same request and the same output and prints one stderr line naming it: `oml submit --claim
 <text>` runs `oml write <text>`, `oml recall --query` runs `oml read --query`, `oml supersede
@@ -548,7 +580,7 @@ what to do next. Both emit the same four named signals — the contract that
 | Verb | Does |
 |---|---|
 | `oml status` | The four signals, one screen, plus chain-head seq and last reconciler run per tenant. |
-| `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. |
+| `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. *Designed with review availability, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* review availability also warns when `universe` holds curated claims and no dreamer outside their lineage can review them; the user-key lines `oml doctor` prints [above](#start-settings) are built since v0.5.0. |
 
 ## The `oml-admin` plugin
 

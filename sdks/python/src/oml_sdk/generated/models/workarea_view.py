@@ -45,6 +45,8 @@ class WorkareaView:
             permission_epoch (int): The calling key's permission epoch as declared in docs/architecture/workareas.md
                 (ADR-0025 d14).
             crew (Crew | None | Unset): The crew record the workarea names, or null.
+            user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
+                key naming its user creates (ADR-0044 d1, d11).
             created_at (datetime.datetime | Unset):
     """
 
@@ -58,6 +60,7 @@ class WorkareaView:
     my_effective_verbs: list[WorkareaViewMyEffectiveVerbsItem]
     permission_epoch: int
     crew: Crew | None | Unset = UNSET
+    user_root: bool | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -100,6 +103,8 @@ class WorkareaView:
         else:
             crew = self.crew
 
+        user_root = self.user_root
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -121,6 +126,8 @@ class WorkareaView:
         )
         if crew is not UNSET:
             field_dict["crew"] = crew
+        if user_root is not UNSET:
+            field_dict["user_root"] = user_root
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
 
@@ -190,6 +197,8 @@ class WorkareaView:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
+        user_root = d.pop("user_root", UNSET)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -208,6 +217,7 @@ class WorkareaView:
             my_effective_verbs=my_effective_verbs,
             permission_epoch=permission_epoch,
             crew=crew,
+            user_root=user_root,
             created_at=created_at,
         )
 

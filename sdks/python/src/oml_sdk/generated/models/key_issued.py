@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..models.connection import Connection
     from ..models.denial import Denial
     from ..models.grant import Grant
+    from ..models.whoami_ref import WhoamiRef
 
 
 T = TypeVar("T", bound="KeyIssued")
@@ -39,6 +40,7 @@ class KeyIssued:
         principal (str | Unset):
         crew_id (None | str | Unset): The key's crew record, as key.issued journals it; null when none was named
             (ADR-0026 d8).
+        user (None | Unset | WhoamiRef): The key's user root, by id and name; null for a tenant key (ADR-0044 d11).
         label (str | Unset):
         expiry (datetime.datetime | None | Unset):
         revoked_at (datetime.datetime | None | Unset):
@@ -48,7 +50,8 @@ class KeyIssued:
         denials (list[Denial] | Unset):
         epoch (int | Unset):
         credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
-            a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+            a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the
+            server holds for a person and acts with only from their web session, no value (ADR-0045 d6).
         connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
             most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
             (ADR-0031 d11).
@@ -63,6 +66,7 @@ class KeyIssued:
     held_by: KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None
     principal: str | Unset = UNSET
     crew_id: None | str | Unset = UNSET
+    user: None | Unset | WhoamiRef = UNSET
     label: str | Unset = UNSET
     expiry: datetime.datetime | None | Unset = UNSET
     revoked_at: datetime.datetime | None | Unset = UNSET
@@ -77,6 +81,8 @@ class KeyIssued:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.whoami_ref import WhoamiRef
+
         key_id = self.key_id
 
         name = self.name
@@ -103,6 +109,14 @@ class KeyIssued:
             crew_id = UNSET
         else:
             crew_id = self.crew_id
+
+        user: dict[str, Any] | None | Unset
+        if isinstance(self.user, Unset):
+            user = UNSET
+        elif isinstance(self.user, WhoamiRef):
+            user = self.user.to_dict()
+        else:
+            user = self.user
 
         label = self.label
 
@@ -176,6 +190,8 @@ class KeyIssued:
             field_dict["principal"] = principal
         if crew_id is not UNSET:
             field_dict["crew_id"] = crew_id
+        if user is not UNSET:
+            field_dict["user"] = user
         if label is not UNSET:
             field_dict["label"] = label
         if expiry is not UNSET:
@@ -207,6 +223,7 @@ class KeyIssued:
         from ..models.connection import Connection
         from ..models.denial import Denial
         from ..models.grant import Grant
+        from ..models.whoami_ref import WhoamiRef
 
         d = dict(src_dict)
         key_id = d.pop("key_id")
@@ -267,6 +284,23 @@ class KeyIssued:
             return cast(None | str | Unset, data)
 
         crew_id = _parse_crew_id(d.pop("crew_id", UNSET))
+
+        def _parse_user(data: object) -> None | Unset | WhoamiRef:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                user_type_0 = WhoamiRef.from_dict(data)
+
+                return user_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | WhoamiRef, data)
+
+        user = _parse_user(d.pop("user", UNSET))
 
         label = d.pop("label", UNSET)
 
@@ -366,6 +400,7 @@ class KeyIssued:
             held_by=held_by,
             principal=principal,
             crew_id=crew_id,
+            user=user,
             label=label,
             expiry=expiry,
             revoked_at=revoked_at,

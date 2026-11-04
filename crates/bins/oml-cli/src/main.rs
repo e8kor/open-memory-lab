@@ -49,10 +49,10 @@ struct Cli {
         hide_env_values = true
     )]
     api_key: Option<String>,
-    /// The v0.3.0 spelling of --url, read through v0.4.x (ADR-0039 d12).
+    /// The v0.3.0 spelling of --url, read through v0.5.0 (ADR-0039 d12).
     #[arg(long, global = true, hide = true)]
     server: Option<String>,
-    /// The v0.3.0 spelling of --api-key, read through v0.4.x (ADR-0039 d12).
+    /// The v0.3.0 spelling of --api-key, read through v0.5.0 (ADR-0039 d12).
     #[arg(long, global = true, hide = true)]
     key: Option<String>,
     /// Emit the server's typed response as one JSON document on stdout.
@@ -129,6 +129,18 @@ enum Command {
         #[command(subcommand)]
         command: CrewsCommand,
     },
+    /// The web pages' email allowlist: who may sign in, as which user, and
+    /// whether as an admin (admin key role; ADR-0045 d2).
+    Web {
+        #[command(subcommand)]
+        command: WebCommand,
+    },
+    /// An administrator's reads of every memory's text and attribution,
+    /// each recorded in the history (admin key role; ADR-0045 d21).
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
     /// Write a claim, held until reviewed: a submission, or with --replaces
     /// a new version of a claim or its retirement (ADR-0039 d3, d10).
     Write(WriteArgs),
@@ -143,14 +155,14 @@ enum Command {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// The v0.3.0 name of `oml write`, hidden until v0.5.0 (ADR-0039 d12).
+    /// The v0.3.0 name of `oml write`, hidden until v0.5.1 (ADR-0039 d12).
     #[command(hide = true)]
     Submit(SubmitArgs),
-    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.0
+    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.1
     /// (ADR-0039 d12).
     #[command(hide = true)]
     Recall(RecallArgs),
-    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.0
+    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.1
     /// (ADR-0039 d12).
     #[command(hide = true)]
     Supersede(SupersedeArgs),
@@ -319,14 +331,20 @@ struct KeysIssueArgs {
     /// none; some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
     default_workarea: Option<String>,
-    /// Grant as <workarea>:<role>, the workarea by id or name; repeatable. A
-    /// writer grant brings a reader grant on the same workarea unless
-    /// --write-only.
+    /// Grant as <workarea>:<role>, or <workarea>:<role>:node for the node
+    /// alone (ADR-0044 d4), the workarea by id or name; repeatable. A writer
+    /// grant brings a reader grant on the same workarea, with the same
+    /// coverage, unless --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
     /// The key's crew record, by id or name, fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
+    /// The person the key acts for: a user key, whose grants lie in the
+    /// user's root `universe.<user>` and whose workarea names resolve there;
+    /// the first key naming a user creates the root (ADR-0044 d2, d11).
+    #[arg(long)]
+    user: Option<String>,
     /// Send the writer grants alone, with no reader grant beside them
     /// (ADR-0028 d2).
     #[arg(long)]
@@ -347,9 +365,14 @@ struct IssueAgentArgs {
     #[arg(long)]
     principal: String,
     /// The workarea, by id or name, the key writes and recalls on, and its
-    /// default.
+    /// default. With --user it is optional, defaults to the user's root, and
+    /// resolves in that user's namespace (ADR-0044 d11).
     #[arg(long)]
-    workarea: String,
+    workarea: Option<String>,
+    /// The person the key acts for: a user key under `universe.<user>`, the
+    /// root created by the first key naming the user (ADR-0044 d2, d11).
+    #[arg(long)]
+    user: Option<String>,
     /// The key's crew record, by id or name, fixed for the key's life
     /// (ADR-0026 d12).
     #[arg(long)]
@@ -431,6 +454,50 @@ enum WorkareaCrewCommand {
         #[arg(long)]
         crew: String,
     },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// One memory with its text and attribution, or with --query, --workarea
+    /// or --state a search over every memory of the organisation
+    /// (memory.admin_read).
+    Read {
+        /// The memory's artifact id; omitted, a search.
+        memory: Option<String>,
+        /// Full-text search, the words recall matches.
+        #[arg(long)]
+        query: Option<String>,
+        /// Only this workarea's subtree, by id, name or qualified name.
+        #[arg(long)]
+        workarea: Option<String>,
+        /// held, promoted, rejected, superseded or demoted.
+        #[arg(long)]
+        state: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebCommand {
+    /// Add an email to the list, or change its user or admin flag
+    /// (web.email_allowed, web.email_changed); a change ends its sessions.
+    Allow {
+        /// The email address, compared whole and ASCII case-insensitively.
+        email: String,
+        /// The user the address signs in as, at most 56 characters.
+        #[arg(long)]
+        user: String,
+        /// The address opens the admin page.
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Remove an email from the list (web.email_removed), ending its
+    /// sessions; the user's agent keys keep working.
+    Remove {
+        /// The email address.
+        email: String,
+    },
+    /// The tenant's list.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -592,7 +659,7 @@ enum ReviewCommand {
         #[arg(long)]
         reason: String,
     },
-    /// The v0.3.0 verdict, hidden until v0.5.0 (ADR-0039 d12).
+    /// The v0.3.0 verdict, hidden until v0.5.1 (ADR-0039 d12).
     #[command(hide = true)]
     Verdict(VerdictArgs),
 }
@@ -672,15 +739,22 @@ struct VerifyChainArgs {
     tenant: Option<String>,
 }
 
-/// `<workarea>:<role>`, the workarea by id or name, sent as typed: the
+/// `<workarea>:<role>`, or `<workarea>:<role>:node` for a grant on the node
+/// alone (ADR-0044 d4), the workarea by id or name, sent as typed: the
 /// server classifies and resolves it, the CLI neither (cli/reference.md
 /// conventions; ADR-0026 d4). Neither an id nor a name holds a `:`, so the
-/// first one splits the two.
+/// first one splits the two; the role keeps its `:node` suffix until
+/// [`grants_json`] sends it as `covers`.
 fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
         .ok_or_else(|| format!("{s:?} is not <workarea>:<role>"))?;
-    Ok((node.to_owned(), role.to_owned()))
+    match role.split_once(':') {
+        None | Some((_, "node")) => Ok((node.to_owned(), role.to_owned())),
+        Some(_) => Err(format!(
+            "{s:?} is not <workarea>:<role> or <workarea>:<role>:node"
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -828,7 +902,7 @@ fn main() -> ExitCode {
             ("--key", "--api-key", cli.key.is_some()),
         ] {
             if used {
-                eprintln!("warning: {old} is renamed {new}; v0.5.0 removes {old} (ADR-0039 d12)");
+                eprintln!("warning: {old} is renamed {new}; v0.5.1 removes {old} (ADR-0039 d12)");
             }
         }
     }
@@ -987,6 +1061,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(crew) = &args.crew {
                 body["crew"] = json!(crew);
             }
+            if let Some(user) = &args.user {
+                body["user"] = json!(user);
+            }
             if let Some(p) = &args.principal {
                 body["principal"] = json!(p);
             }
@@ -1004,12 +1081,16 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
                 println!("    default: {}", field(&response, "default_workarea_id"));
+                if response["user"].is_object() {
+                    println!("    user   : {}", field(&response["user"], "name"));
+                }
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
                         println!(
-                            "    grant  : {} : {}",
+                            "    grant  : {} : {}{}",
                             field(g, "workarea_node_id"),
-                            field(g, "role")
+                            field(g, "role"),
+                            node_suffix(g)
                         );
                     }
                 }
@@ -1040,12 +1121,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    principal: {}", field(&response, "principal"));
                 println!("    held by  : {}", field(&response, "held_by"));
                 println!("    crew     : {}", field(&response, "crew_id"));
+                println!("    user     : {}", field(&response["user"], "name"));
                 println!("    default  : {}", field(&response, "default_workarea_id"));
                 for g in response["grants"].as_array().into_iter().flatten() {
                     println!(
-                        "    grant    : {} : {}",
+                        "    grant    : {} : {}{}",
                         field(g, "workarea_node_id"),
-                        field(g, "role")
+                        field(g, "role"),
+                        node_suffix(g)
                     );
                 }
                 for d in response["denials"].as_array().into_iter().flatten() {
@@ -1253,6 +1336,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Crews { command } => run_crews(cli, &stored, command),
+        Command::Web { command } => run_web(cli, &stored, command),
+        Command::Admin { command } => run_admin(cli, &stored, command),
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
         Command::Read(args) => run_read(cli, &stored, args),
@@ -1260,7 +1345,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Review { command } => run_review(cli, &stored, command),
 
         // The v0.3.0 verbs run their successors, each naming it on one
-        // stderr line, until v0.5.0 removes them (ADR-0039 d12).
+        // stderr line, until v0.5.1 removes them (ADR-0039 d12).
         Command::Submit(args) => {
             renamed("oml submit", "oml write");
             run_write(
@@ -1384,6 +1469,16 @@ fn field<'a>(v: &'a Value, name: &str) -> &'a str {
     v[name].as_str().unwrap_or("—")
 }
 
+/// ` (node)` for a grant on its node alone, empty for a subtree grant
+/// (ADR-0044 d4).
+fn node_suffix(grant: &Value) -> &'static str {
+    if grant["covers"] == "node" {
+        " (node)"
+    } else {
+        ""
+    }
+}
+
 /// A crew record as one line: its name and id, or `—` for none.
 fn crew_line(crew: &Value) -> String {
     if crew.is_object() {
@@ -1398,7 +1493,11 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| json!({ "workarea": node, "role": role }))
+        .map(|(node, role)| match role.split_once(':') {
+            // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
+            Some((role, covers)) => json!({ "workarea": node, "role": role, "covers": covers }),
+            None => json!({ "workarea": node, "role": role }),
+        })
         .collect()
 }
 
@@ -1409,7 +1508,7 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// The one stderr line a v0.3.0 verb prints before it runs its successor
 /// (ADR-0039 d12).
 fn renamed(old: &str, new: &str) {
-    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.0 removes `{old}` (ADR-0039 d12)");
+    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.1 removes `{old}` (ADR-0039 d12)");
 }
 
 /// One write, from `oml write`'s flags or a v0.3.0 verb's.
@@ -1822,25 +1921,38 @@ fn run_issue_agent(
              value; nothing was sent (ADR-0028 d1)",
         ));
     }
+    // With --user the workarea defaults to the user's root, which the
+    // server resolves in that user's namespace (ADR-0044 d11).
+    let workarea = match (&args.workarea, &args.user) {
+        (Some(workarea), _) => workarea.clone(),
+        (None, Some(user)) => user.clone(),
+        (None, None) => {
+            return Err(CliError::local(
+                "refused: --workarea is required without --user; nothing was sent \
+                 (ADR-0028 d1; ADR-0044 d11)",
+            ));
+        }
+    };
     let client = resolve(cli, stored)?;
     let key_file = match &args.out {
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    let grants = with_reader_beside_writers(
-        &[(args.workarea.clone(), "writer".to_owned())],
-        args.write_only,
-    );
+    let grants =
+        with_reader_beside_writers(&[(workarea.clone(), "writer".to_owned())], args.write_only);
     let mut body = json!({
         "role": "writer",
         "name": args.key_name,
         "held_by": args.held_by,
         "principal": args.principal,
-        "default_workarea": args.workarea,
+        "default_workarea": workarea,
         "grants": grants_json(&grants),
     });
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
+    }
+    if let Some(user) = &args.user {
+        body["user"] = json!(user);
     }
     if args.connect_code {
         body["connect_code"] = json!(true);
@@ -1930,7 +2042,14 @@ fn run_issue_agent(
         .map(|grants| {
             grants
                 .iter()
-                .map(|g| format!("{}:{}", field(g, "workarea_node_id"), field(g, "role")))
+                .map(|g| {
+                    format!(
+                        "{}:{}{}",
+                        field(g, "workarea_node_id"),
+                        field(g, "role"),
+                        if g["covers"] == "node" { ":node" } else { "" }
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -2077,6 +2196,144 @@ fn run_crews(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `oml admin read` (cli/reference.md `oml admin`; ADR-0045 d21): one
+/// memory by id, or every page of a search, each answer journalled by the
+/// server as `memory.admin_read`.
+fn run_admin(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &AdminCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let AdminCommand::Read {
+        memory,
+        query,
+        workarea,
+        state,
+    } = command;
+    let line = |m: &Value| {
+        format!(
+            "{}  {}  {}  {}  {}",
+            field(m, "artifact_id"),
+            field(m, "state"),
+            field(m, "workarea_path"),
+            field(m, "key"),
+            field(m, "text").replace('\n', " ")
+        )
+    };
+    if let Some(memory) = memory {
+        let (_, read) = client.get(&format!("/v2/admin/memories/{}", segment(memory)?))?;
+        if cli.json {
+            print_json(&read);
+        } else {
+            println!("{}", line(&read));
+            println!("    principal   : {}", field(&read, "principal"));
+            println!("    user        : {}", field(&read, "user"));
+            println!("    derives from: {}", read["derives_from"]);
+            println!("    replaces    : {}", field(&read, "replaces"));
+            for v in read["verdicts"].as_array().into_iter().flatten() {
+                println!(
+                    "    verdict     : {} by {} at {}",
+                    field(v, "verdict"),
+                    field(v, "key"),
+                    field(v, "at")
+                );
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut body = json!({});
+    if let Some(q) = query {
+        body["query"] = json!(q);
+    }
+    if let Some(w) = workarea {
+        body["workarea"] = json!(w);
+    }
+    if let Some(s) = state {
+        body["state"] = json!(s);
+    }
+    let mut items: Vec<Value> = Vec::new();
+    loop {
+        let read = CallOpts {
+            auth: true,
+            idempotency: false, // read-shaped POST (http-api.md idempotency)
+        };
+        let (_, page) = client.post("/v2/admin/memories/search", &body, &read)?;
+        items.extend(page["items"].as_array().into_iter().flatten().cloned());
+        match page["next_cursor"].as_str() {
+            Some(cursor) => body["cursor"] = json!(cursor),
+            None => break,
+        }
+    }
+    if cli.json {
+        print_json(&json!({ "items": items, "next_cursor": Value::Null }));
+    } else {
+        for m in &items {
+            println!("{}", line(m));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The allowlist verbs, admin key role throughout (cli/reference.md `oml
+/// web`; http-api.md web pages; ADR-0045 d2). The email travels in a body,
+/// never a path; `oml web list` reads every page.
+fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let entry_line = |entry: &Value| {
+        format!(
+            "{}  user: {}{}",
+            field(entry, "email"),
+            field(entry, "user"),
+            if entry["admin"].as_bool() == Some(true) {
+                "  admin"
+            } else {
+                ""
+            }
+        )
+    };
+    match command {
+        WebCommand::Allow { email, user, admin } => {
+            let body = json!({ "email": email, "user": user, "admin": admin });
+            let (_, entry) = client.post("/v2/web/emails", &body, &write_opts())?;
+            if cli.json {
+                print_json(&entry);
+            } else {
+                println!("allowed {}", entry_line(&entry));
+            }
+        }
+        WebCommand::Remove { email } => {
+            let body = json!({ "email": email });
+            let (_, result) = client.post("/v2/web/emails/remove", &body, &write_opts())?;
+            if cli.json {
+                print_json(&result);
+            } else {
+                println!("removed {email}; the user's agent keys keep working");
+            }
+        }
+        WebCommand::List => {
+            let mut items: Vec<Value> = Vec::new();
+            let mut path = "/v2/web/emails".to_owned();
+            loop {
+                let (_, page) = client.get(&path)?;
+                items.extend(page["items"].as_array().into_iter().flatten().cloned());
+                match page["next_cursor"].as_str() {
+                    Some(cursor) => path = format!("/v2/web/emails?cursor={}", encode(cursor)),
+                    None => break,
+                }
+            }
+            if cli.json {
+                print_json(&json!({ "items": items, "next_cursor": Value::Null }));
+            } else {
+                for entry in &items {
+                    println!("{}", entry_line(entry));
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 // ---------------------------------------------------------------------------
 // oml audit verify-chain
 // ---------------------------------------------------------------------------
@@ -2146,12 +2403,13 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
         print_json(&me);
     } else {
         println!(
-            "logged in to {} as key {} ({}): role {}, tenant {}, default workarea {}",
+            "logged in to {} as key {} ({}): role {}, tenant {}, user root {}, default workarea {}",
             client.server(),
             field(&me, "name"),
             field(&me, "key_id"),
             field(&me, "role"),
             field(&me["tenant"], "name"),
+            user_root_line(&me),
             field(&me["default_workarea"], "path"),
         );
         println!(
@@ -2161,6 +2419,15 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A key's user root as `oml login` and `oml doctor` print it:
+/// `universe.<user>`, or `none (tenant key: …)` (ADR-0044 d11, d14).
+fn user_root_line(me: &Value) -> String {
+    match me["user"]["name"].as_str() {
+        Some(user) => format!("universe.{user}"),
+        None => "none (tenant key: names resolve in the shared namespace)".to_owned(),
+    }
 }
 
 /// The API key for `url`, read as [`read_secret`] reads it.
@@ -2852,6 +3119,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut ready = None;
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
+    // A user key reads universe's own claims through its node grant; one
+    // that cannot is warned about (ADR-0044 d14).
+    let mut reads_universe: Option<bool> = None;
+    let mut admin_emails: Option<(usize, Vec<String>)> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -2859,12 +3130,32 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            if let Some(Ok(v)) = &me
+                && v["user"].is_object()
+            {
+                reads_universe = Some(match client.get("/v2/workareas/universe") {
+                    Ok(_) => true,
+                    Err(CliError::Refused { .. }) => false,
+                    Err(other) => return Err(other),
+                });
+            }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
                 .ok()
                 .and_then(|(_, v)| v["head_seq"].as_u64());
+            // The allowlist's admin entries, read by an admin key where the
+            // pages are on (ADR-0045 d18).
+            let pages_on = ready
+                .as_ref()
+                .is_some_and(|(_, body)| body["web"].is_object());
+            let is_admin = matches!(&me, Some(Ok(v)) if v["role"] == "admin");
+            if pages_on && is_admin {
+                admin_emails = count_admin_emails(&client);
+            }
         }
     }
+    let web = web_doctor(ready.as_ref(), admin_emails);
+    let web_warn = web.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -2876,7 +3167,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let whoami_ok = !matches!(me, Some(Err(_)));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() {
+    } else if me.is_none() || reads_universe == Some(false) || web_warn {
         "warn"
     } else {
         "ok"
@@ -2885,6 +3176,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         Some(Ok(v)) => json!({
             "role": v["role"],
             "tenant": v["tenant"]["name"],
+            "user": v["user"]["name"],
             "default_workarea": v["default_workarea"]["path"],
         }),
         Some(Err(e)) => json!({ "error": refusal(e) }),
@@ -2905,7 +3197,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "readyz": probe_json(&ready),
             "whoami": whoami,
             "chain_head_seq": head_seq,
+            "reads_universe": reads_universe,
             "oauth_discovery": oauth,
+            "web": web,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -2943,6 +3237,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
         }
+        if let Some(Ok(v)) = &me {
+            match v["user"]["name"].as_str() {
+                Some(user) => println!("user        : {user} (root universe.{user})"),
+                None => println!(
+                    "user        : none (tenant key: names resolve in the shared namespace)"
+                ),
+            }
+        }
+        if reads_universe == Some(false) {
+            println!("universe    : warn: this key does not read universe's claims");
+        }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
             None => println!("chain head  : unavailable (needs a key with events-tail access)"),
@@ -2962,6 +3267,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             ),
             None => println!("oauth       : not probed (no URL)"),
         }
+        for line in &web {
+            println!("web         : {line}");
+        }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
             (_, Some(version)) => println!("server      : oml-server-lead {version}"),
@@ -2978,6 +3286,87 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// How many of the tenant's allowlist entries open the admin page, read
+/// through every page of `GET /v2/web/emails`; `None` when the listing is
+/// refused or unreadable.
+fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
+    let mut admins = 0;
+    let mut users: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut path = "/v2/web/emails?limit=200".to_owned();
+    loop {
+        let (_, page) = client.get(&path).ok()?;
+        let items = page["items"].as_array()?;
+        admins += items
+            .iter()
+            .filter(|e| e["admin"].as_bool() == Some(true))
+            .count();
+        users.extend(
+            items
+                .iter()
+                .filter_map(|e| e["user"].as_str().map(ToOwned::to_owned)),
+        );
+        match page["next_cursor"].as_str() {
+            Some(cursor) => path = format!("/v2/web/emails?limit=200&cursor={}", encode(cursor)),
+            None => break,
+        }
+    }
+    // A user whose `<user>-web` session key is absent: its first sign-in
+    // has not happened or failed part way (ADR-0045 d18).
+    let keyless = users
+        .into_iter()
+        .filter(|user| {
+            matches!(
+                client.get(&format!("/v2/keys/{user}-web")),
+                Err(CliError::Refused { status: 404, .. })
+            )
+        })
+        .collect();
+    Some((admins, keyless))
+}
+
+/// The web pages' doctor lines (ADR-0045 d18): off when `/readyz` names no
+/// provider; a warning per provider whose exchanges failed since the lead
+/// started; and, read by an admin key, a warning when no entry of the
+/// tenant's list opens the admin page.
+fn web_doctor(
+    ready: Option<&(u16, Value)>,
+    admin_emails: Option<(usize, Vec<String>)>,
+) -> Vec<String> {
+    let Some((_, body)) = ready else {
+        return Vec::new();
+    };
+    let Some(providers) = body["web"]["providers"].as_object() else {
+        return vec!["off (no sign-in provider, or no oauth.issuer)".to_owned()];
+    };
+    let mut lines = vec![format!(
+        "on ({})",
+        providers.keys().cloned().collect::<Vec<_>>().join(", ")
+    )];
+    for (provider, state) in providers {
+        let failed = state["failed_exchanges"].as_u64().unwrap_or(0);
+        if failed > 0 {
+            lines.push(format!(
+                "warn web_provider_{provider}: {failed} failed exchanges since start, last {}",
+                state["last_failure"].as_str().unwrap_or("unknown")
+            ));
+        }
+    }
+    if let Some((admins, keyless)) = admin_emails {
+        if admins == 0 {
+            lines.push(
+                "warn web: no admin email; add one with oml web allow <email> --user <user> --admin"
+                    .to_owned(),
+            );
+        }
+        for user in keyless {
+            lines.push(format!(
+                "warn web: {user} has no session key; it is created at {user}'s next sign-in"
+            ));
+        }
+    }
+    lines
 }
 
 /// The server's version, as `/readyz` names its build, ready or not

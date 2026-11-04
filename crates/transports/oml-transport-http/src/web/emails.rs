@@ -1,0 +1,195 @@
+//! The allowlist's three lab routes (ADR-0045 d2): `GET /v2/web/emails`,
+//! `POST /v2/web/emails` and `POST /v2/web/emails/remove`, admin by key
+//! role. The email travels in a body, never in a path or query string, and
+//! the listing's cursor is an email's digest, so no proxy log records an
+//! address.
+
+use axum::body::Bytes;
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::Response;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use oml_app::domain::Sha256Hash;
+use oml_app::domain::name::Name;
+use oml_app::domain::web::Email;
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
+use oml_app::types::{WebEmailRequest, WebEntry};
+
+use crate::error::{ApiError, ErrorContext, map_app_error};
+use crate::traffic::Rid;
+use crate::{
+    ApiState, bearer, finish, idempotency_key, json_response, page_params, parse_json, retry_chain,
+};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllowBody {
+    email: Option<String>,
+    user: Option<String>,
+    admin: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveBody {
+    email: Option<String>,
+}
+
+fn entry_json(entry: &WebEntry) -> Value {
+    json!({
+        "email": entry.email.as_str(),
+        "user": entry.user.as_str(),
+        "admin": entry.admin,
+    })
+}
+
+fn email_field(value: Option<&str>) -> Result<Email, ApiError> {
+    let value = value.ok_or_else(|| {
+        ApiError::validation("email is required").with_details(json!({ "field": "/email" }))
+    })?;
+    Email::parse(value)
+        .map_err(|e| ApiError::validation(e.to_string()).with_details(json!({ "field": "/email" })))
+}
+
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    pub(crate) async fn list_web_emails(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::list_web_emails_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/web/emails`: one page of the tenant's entries, after the
+    /// cursor, which is the hex of the last entry's email digest.
+    async fn list_web_emails_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let (limit, cursor) = page_params(params)?;
+        let after = cursor
+            .map(|c| {
+                hex::decode(c)
+                    .ok()
+                    .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                    .map(Sha256Hash)
+                    .ok_or_else(|| {
+                        ApiError::validation("cursor is not a cursor this listing served")
+                            .with_details(json!({ "field": "cursor" }))
+                    })
+            })
+            .transpose()?;
+        let entries = st
+            .app
+            .web_emails(&token, after.as_ref(), limit)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let next_cursor = (entries.len() == limit)
+            .then(|| entries.last().map(|e| hex::encode(e.email.digest().0)))
+            .flatten();
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": entries.iter().map(entry_json).collect::<Vec<_>>(),
+                "next_cursor": next_cursor,
+            }),
+        ))
+    }
+
+    pub(crate) async fn allow_web_email(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::allow_web_email_inner(&st, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/web/emails`: adds an entry or changes one, journalled with
+    /// the email's digest; answers the entry as stored.
+    async fn allow_web_email_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let req: AllowBody = parse_json(headers, body)?;
+        let email = email_field(req.email.as_deref())?;
+        let user = req
+            .user
+            .as_deref()
+            .ok_or_else(|| {
+                ApiError::validation("user is required").with_details(json!({ "field": "/user" }))
+            })
+            .and_then(|u| {
+                Name::parse(u).map_err(|e| {
+                    ApiError::validation(e.to_string()).with_details(json!({ "field": "/user" }))
+                })
+            })?;
+        let admin = req.admin.ok_or_else(|| {
+            ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
+        })?;
+        let request = WebEmailRequest { email, user, admin };
+        let (entry, _) = retry_chain(|| st.app.allow_web_email(&token, &request))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &entry_json(&entry)))
+    }
+
+    pub(crate) async fn remove_web_email(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::remove_web_email_inner(&st, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/web/emails/remove`: the entry and its sessions end; the
+    /// user's agent keys keep working (ADR-0045 d13).
+    async fn remove_web_email_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let req: RemoveBody = parse_json(headers, body)?;
+        let email = email_field(req.email.as_deref())?;
+        let (_, seq, event_id) = retry_chain(|| st.app.remove_web_email(&token, &email))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
+        ))
+    }
+}

@@ -257,6 +257,9 @@ pub enum ConnectRefused {
     Expired,
     NotConfigured,
     ConnectorKey,
+    /// A session key, which a person acts with only from their web session
+    /// (ADR-0045 d6).
+    SessionKey,
 }
 
 impl ConnectRefused {
@@ -271,6 +274,7 @@ impl ConnectRefused {
             ConnectRefused::Expired => "expired",
             ConnectRefused::NotConfigured => "not_configured",
             ConnectRefused::ConnectorKey => "connector_key",
+            ConnectRefused::SessionKey => "session_key",
         }
     }
 }

@@ -262,6 +262,40 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             )
             .with_details(details)
         }
+        AppError::GrantOutsideUserRoot {
+            role,
+            admissible,
+            grant_index,
+            user,
+        } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.issuer_ceiling",
+            "A key is issued with a role no higher than the issuer's (D9).",
+            format!(
+                "grant {grant_index} lies outside the root of user {}: a user key's every grant lies in its own root",
+                user.as_str()
+            ),
+        )
+        .with_details(json!({
+            "role": role.as_str(),
+            "admissible": admissible.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            "grant_index": grant_index,
+            "user": user.as_str(),
+        })),
+        AppError::UserRefused(why) => {
+            ApiError::validation(why).with_details(json!({ "field": "/user" }))
+        }
+        AppError::NodeGrantDeny { grant_index } => ApiError::validation(format!(
+            "grant {grant_index} covers its node alone, so it takes no deny entry"
+        ))
+        .with_details(json!({ "field": format!("/grants/{grant_index}/deny") })),
+        AppError::UniverseRefused => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.universe_refused",
+            "Universe holds only curated claims: a curator writes there and a second identity reviews it; a user key reads it and never writes it (ADR-0044 d7).",
+            "universe is curated: a user key never writes there",
+        ),
+        AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.role_exclusive",
@@ -466,6 +500,35 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({ "kind": kind.as_str(), "name": name.as_str() })),
+        // The email is unique in the deployment; the refusal names the
+        // kind and nothing more (errors.md `name.taken`; ADR-0045 d2).
+        AppError::WebEmailTaken | AppError::Store(StoreError::EmailTaken) => ApiError::new(
+            StatusCode::CONFLICT,
+            "name.taken",
+            "An allowlist entry's email is unique in the deployment, so a sign-in finds at most one entry (ADR-0045 d2).",
+            "the email is on another organisation's list",
+        )
+        .with_details(json!({ "kind": "email" })),
+        AppError::WebUserTooLong(e) => {
+            ApiError::validation(e.to_string()).with_details(json!({ "field": "user" }))
+        }
+        AppError::WebSignIn(refusal) => ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "A person signs in only with a verified email on an organisation's list, through the account that first signed in with it (ADR-0045 d4).",
+            refusal.to_string(),
+        )
+        .with_details(json!({ "reason": refusal.reason() })),
+        AppError::WebKeyMissing { capacity } => ApiError::new(
+            StatusCode::NOT_FOUND,
+            "access.not_found",
+            "Every page act runs as one of the person's session keys (ADR-0045 d6).",
+            format!("you hold no {capacity} key on this organisation"),
+        )
+        .with_details(json!({ "capacity": capacity })),
+        AppError::WebField { field, message } => {
+            ApiError::validation(message).with_details(json!({ "field": field }))
+        }
         // Denials attenuate grants, and an admin key carries none
         // (http-api.md keys, grants, denials; ADR-0026 d15).
         AppError::DenialOnAdminKey => ApiError::validation(

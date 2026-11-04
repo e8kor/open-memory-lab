@@ -1,19 +1,20 @@
 <!--
 id: product/releases
 tier: client
-status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03 and revised on 2026-11-04
 answers: which release introduced each feature and decision, which release each planned one is for, and which are parked or not scheduled
 -->
 
 # Releases
 
-**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03 and revised on 2026-11-04
 
 This page is the one place that says when a feature arrived or when it is planned to arrive.
 Every other page links here instead of repeating it. A shipped release is a signed tag on the
 [releases page](https://github.com/e8kor/open-memory-lab/releases); what it holds is read from
 the tagged source, not from intentions. A planned release is a plan the maintainer made on
-2026-11-03: nothing in it is built until its tag exists, and its contents can still move.
+2026-11-03 and narrowed on 2026-11-04, when v0.5.0 became a person's own workarea and the two web
+pages alone: nothing in it is built until its tag exists, and its contents can still move.
 
 Four words carry the status of everything below:
 
@@ -34,15 +35,17 @@ Four words carry the status of everything below:
 | **v0.3.1** | 2026-11-03 | The server runs its database changes as one account and serves as a second account that owns nothing, and refuses to start when both are the same. Each organisation's search index is its own. The `oml` command line ships on its own for Linux, macOS and Windows, and the server for Intel and Arm Linux. Each release also ships the Claude Code plugins as an offline archive and as a marketplace pinned to the release, and a kit that connects other agent tools: OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop. | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), in part |
 | **v0.4.0** | 2026-11-04 | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the eight, with the eight old names and the old command-line verbs still answering, unlisted, through the 0.4 releases, and one server address and one key as the only settings any client needs. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent searches for itself during a session, a failed command searches only when the user opts in, and a read-only librarian subagent searches for you. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key, on the server's own address; no live claude.ai connection has been made yet. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. The documentation upgrade: a Get started page and an install page, guides for Claude Code, claude.ai and mobile, other agent tools, self-hosting and upgrading from v0.3, eight short use-case scenarios beside the full use-case catalogue, refreshed for v0.4.0, and the README, architecture overview and plugin and kit READMEs rewritten. Not in it: the one-line install that also runs the quick start, and the short install address. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md); the librarian is ADR-0038's d10 |
 | **v0.4.1** | 2026-11-04 | Seeing the traffic. The server writes one log line for every request and every agent tool call: who sent it, from which key, organisation, workarea and client, the address it came from, how it ended and how long it took. A request carries an id the caller may choose, and every answer returns it. Logs are kept at most 30 days by whatever stores them, because they now hold addresses and names. Request counts and timings are served for Prometheus on a separate address, off unless set, so they never reach the public internet. Traces can be sent to an OpenTelemetry collector, off unless an address is set. The Claude Code plugin and the agent kit connect to the maintainer's public server, `https://memory.doublegate.io`, unless told otherwise, so an agent needs only its key; every other command still needs a server address. `oml doctor` prints the server's version. | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md), [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) |
+| **v0.5.0** | 2026-11-04 | A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. Two web pages on the server's own address, for people and never for agents: sign in with Google or GitHub, if an administrator has put the address on the organisation's list; on the user page, see and make your own agent keys and connect codes, read the setup steps for each agent tool, browse your memories and the shared area's, make workareas of your own, and review what your own agents wrote; on the admin page, keep the list, choose who reviews and who curates, see how many memories wait and for how long, read any memory with who wrote, derived and reviewed it, each read recorded in the history, and review, curate and replace memories, each act of review or curation done by the person's own reviewer or curator identity, never the administrator's. The eight v0.3.0 agent tool names and the old command-line verbs and flags still answer, unlisted; their removal moves to v0.5.1. Not in it: demoting a memory from the admin page, planned for v0.6.0; no sign-in has yet reached Google or GitHub. | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) but demotion |
 
 ## Planned releases
 
-Nothing in this section is released. Each row is the plan of 2026-11-03.
+Nothing in this section is released. Each row is the plan of 2026-11-03 as revised on 2026-11-04.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
-| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
+| **v0.5.1** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. The eight v0.3.0 agent tool names and the old command-line verbs and flags, unlisted since v0.4.0, are removed. | ADR-0037 (proposed); [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 |
+| **v0.5.2** | planned | Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
+| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
@@ -63,7 +66,7 @@ them; revoking, rotating and expiring keys, and changing a key's grants after is
 policies per workarea and held writes that expire unreviewed; moving a workarea in the tree;
 the evidence export and checking the history against a running server; settings managed
 through the command line; plugins for checks, embedding models and export formats; and writing
-many memories in one request. A web console is declined, not deferred.
+many memories in one request. A web console beyond the two pages of ADR-0045 is declined, not deferred.
 
 ## Feature index
 
@@ -109,10 +112,16 @@ many memories in one request. A web console is declined, not deferred.
 | One log line per request and per agent tool call, under an id the caller may choose | introduced in v0.4.1 |
 | Request metrics for Prometheus on a separate address | introduced in v0.4.1 |
 | Trace export to an OpenTelemetry collector, off by default | introduced in v0.4.1 |
-| Guardrails | planned for v0.5.0 |
-| Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
-| Labelled links between memories | planned for v0.5.0 |
-| A brief for each workarea | planned for v0.5.0 |
+| A workarea of one's own for each person, and a curated shared area above them | introduced in v0.5.0 |
+| Sign-in with Google or GitHub to a user page and an admin page | introduced in v0.5.0 |
+| Reviewing your own agents' work on the user page | introduced in v0.5.0 |
+| Review, curation and replacing memories from the admin page | introduced in v0.5.0 |
+| Reading any memory, with who wrote, derived and reviewed it, on the admin page | introduced in v0.5.0 |
+| Guardrails | planned for v0.5.1 |
+| Workarea lifecycle: development, committed, validated | planned for v0.5.2 (workareas carry the development status since v0.1.0) |
+| Labelled links between memories | planned for v0.5.2 |
+| A brief for each workarea | planned for v0.5.2 |
+| Demotion on the admin page | planned for v0.6.0 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
 | Deliverables and files on any memory | parked |
@@ -134,8 +143,8 @@ which part is still decided, not built.
 | [ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md) erasure | accepted | Not scheduled. |
 | [ADR-0006](../adr/ADR-0006-pure-rust.md) pure Rust | accepted | Partly in v0.1.0: every binary is Rust. Lake maintenance is not scheduled. |
 | [ADR-0007](../adr/ADR-0007-tenancy-first-class.md) tenancy | accepted | Partly in v0.1.0: the organisation is read from the key and every table is fenced by organisation. v0.3.1 added the account that owns nothing and the per-organisation search index. More than one organisation is not scheduled. |
-| [ADR-0008](../adr/ADR-0008-workarea-algebra.md) workareas | accepted | Partly in v0.1.0: one tree per organisation and access bound to a workarea's id. v0.2.0 added grants combined with denials that win; v0.3.0 added crew records. Links are planned for v0.5.0; moving a workarea is not scheduled. |
-| [ADR-0009](../adr/ADR-0009-status-ladder.md) the workarea lifecycle | accepted | Decided, not built; planned for v0.5.0. Workareas are created in development since v0.1.0. |
+| [ADR-0008](../adr/ADR-0008-workarea-algebra.md) workareas | accepted | Partly in v0.1.0: one tree per organisation and access bound to a workarea's id. v0.2.0 added grants combined with denials that win; v0.3.0 added crew records. Links are planned for v0.5.2; moving a workarea is not scheduled. |
+| [ADR-0009](../adr/ADR-0009-status-ladder.md) the workarea lifecycle | accepted | Decided, not built; planned for v0.5.2. Workareas are created in development since v0.1.0. |
 | [ADR-0010](../adr/ADR-0010-roles-and-keys.md) roles and keys | accepted | Partly in v0.1.0: reader, writer, reviewer and admin keys, the enrollment claim, and admins kept out of review. Key names since v0.3.0. The operator, bans, revocation and rotation are not scheduled. |
 | [ADR-0011](../adr/ADR-0011-simulations.md) simulations | accepted | Not scheduled. |
 | [ADR-0012](../adr/ADR-0012-admission-and-review.md) admission and review | accepted | Partly in v0.1.0: capture, scan, hold, review bound to what was served, approval. Review policies, held writes that expire and comparing crews for independence are not scheduled. |
@@ -147,7 +156,7 @@ which part is still decided, not built.
 | [ADR-0018](../adr/ADR-0018-the-documentation-set.md) the documentation set | accepted | Governs the documentation since the first design revision of 2026-10-29; no software ships it. The documentation upgrade arrived with v0.4.0. |
 | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md) a pure core with ports | accepted | Partly in v0.1.0: the pure core, ports and thin binaries. Two of the five binaries exist; the plugin points are not scheduled. |
 | [ADR-0020](../adr/ADR-0020-dataset-onboarding.md) dataset imports | accepted | Not scheduled. |
-| [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) shared vocabularies | accepted | Decided, not built. Links between memories are planned for v0.5.0; vocabularies are parked. |
+| [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) shared vocabularies | accepted | Decided, not built. Links between memories are planned for v0.5.2; vocabularies are parked. |
 | [ADR-0022](../adr/ADR-0022-two-ring-api.md) the two-ring API | accepted | Introduced in v0.1.0: one listener, a stable agent ring and an evolving lab ring, MCP over both. The compatibility promise is not yet in force. Amended by the v0.4.0 rewrite (ADR-0039). |
 | [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) install profiles and cluster mode | accepted | Partly in v0.1.0: one host and Docker, with a file keyring. The Kubernetes chart in v0.3.0. Read followers and cluster mode are not scheduled. |
 | [ADR-0024](../adr/ADR-0024-performance-foundation.md) the performance foundation | accepted | Not scheduled as a release item. No part of it is measured; batch writes and streamed attachments are not built. |
@@ -162,10 +171,12 @@ which part is still decided, not built.
 | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) the server serves as an account that owns nothing | accepted | Partly in v0.3.1: the two accounts, the startup refusal, the per-organisation search index and the keys that carry the organisation. Its spike groundwork shipped in v0.3.0. The separate bootstrap workload and the health check for the split are not scheduled; one further hardening step waits on search measurements. |
 | ADR-0035 deliverables | proposed | Parked. |
 | ADR-0036 time | proposed | Parked. |
-| ADR-0037 guardrails | proposed | Planned for v0.5.0. |
+| ADR-0037 guardrails | proposed | Planned for v0.5.1. |
 | [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) turn context | accepted | Introduced in v0.4.0. |
-| [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
+| [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0; the hidden v0.3.0 names it keeps answer through v0.5.0, their removal planned for v0.5.1 (d12). |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |
 | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
+| [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | accepted | Introduced in v0.5.0. |
+| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | accepted | Introduced in v0.5.0: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |

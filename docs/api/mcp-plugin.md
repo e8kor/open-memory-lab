@@ -9,7 +9,7 @@ answers: which MCP tools the agent plugin exposes over streamable HTTP and how e
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answer unlisted through the 0.4 releases ([releases](../product/releases.md)).
+**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answer unlisted through v0.5.0 ([releases](../product/releases.md)).
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
@@ -453,7 +453,7 @@ admin key for its structure read. The output is
   a call to either is -32602 naming that file.
 - **The eight v0.3.0 tool names are not in `tools/list`.** They are hidden
   aliases: a `tools/call` naming one answers with its v0.3.0 inputs, output
-  shape and refusal codes through v0.4.x, and v0.5.0 removes them, as
+  shape and refusal codes through v0.5.0, and v0.5.1 removes them, as
   [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 reads its
   alias window, a reading the maintainer has not decided. Their sections
   [below](#the-v030-tools-not-listed) are their contracts for that window.
@@ -510,7 +510,7 @@ workarea arguments are `workarea`, as on the served tools
 
 ### `oml_relate_propose`
 
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
 
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a
@@ -672,7 +672,7 @@ tool, its successor (`oml_write`, `oml_read`, `oml_workarea`, or
 and the call's `request_id`: ids only, never the key's value
 ([observability](../operations/observability.md), structured logging). The
 operator sees which keys still call an old name, so whose clients to move
-before the removal. **v0.5.0 removes
+before the removal. **v0.5.1 removes
 the eight**, and a call to one is then -32602 like any tool not served
 (d12).
 
@@ -1529,7 +1529,7 @@ mismatched session from `oml_remember`. Example:
 
 ### `oml_graph`
 
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
 
 A scoped read of claims and their edges: the declared lineage
 (`derives_from`), claim↔claim connection edges with their pending/ratified

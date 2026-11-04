@@ -7,7 +7,7 @@ answers: what the lead logs for each HTTP request and each MCP call, in which fo
 
 # ADR-0042 — Every request logs one line under an id the caller may name, metrics stay off the public port, and trace export is opt-in
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
 **Release:** introduced in v0.4.1 ([releases](../product/releases.md#decisions))
 

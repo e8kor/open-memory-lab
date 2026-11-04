@@ -6,7 +6,7 @@
 //! structure reads (ADR-0026 d4–d6, d8, d9, d11, d15).
 
 use oml_app::App;
-use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
+use oml_app::domain::access::{Covers, admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::oauth::{
@@ -105,6 +105,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         node: node.into(),
         role,
         deny: Vec::new(),
+        covers: Covers::Subtree,
     }
 }
 
@@ -138,6 +139,7 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         crew: None,
         grants,
         connect_code: false,
+        user: None,
     }
 }
 
@@ -1320,6 +1322,7 @@ async fn a_dreamer_is_served_only_held_rows_inside_its_dreamer_grants() {
                 node: crew.into(),
                 role: Role::Dreamer,
                 deny: vec![masked.into()],
+                covers: Covers::Subtree,
             },
             grant(other, Role::Reader),
         ],
@@ -1954,6 +1957,7 @@ async fn a_default_no_grant_covers_is_refused() {
         node: crew.into(),
         role: Role::Writer,
         deny: vec![masked.into()],
+        covers: Covers::Subtree,
     };
     for default in [sibling, masked, boot.root_workarea_id] {
         let err = app
@@ -2025,6 +2029,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
             node: crew.into(),
             role: Role::Writer,
             deny: vec![Uuid::from_u128(0xDEAD).into()],
+            covers: Covers::Subtree,
         },
     ] {
         let err = app
@@ -2046,6 +2051,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
                         node: crew.into(),
                         role: Role::Writer,
                         deny: vec![sibling.into()],
+                        covers: Covers::Subtree,
                     },
                 ],
             ),
@@ -2114,6 +2120,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                 node: crew.into(),
                 role: Role::Writer,
                 deny: vec![sub.into()],
+                covers: Covers::Subtree,
             },
             grant(crew, Role::Reader),
         ],
@@ -2154,6 +2161,8 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             "name": issued.name.as_str(),
             "crew_id": null,
             "credential": "bearer",
+            // A tenant key names no user (ADR-0044 d2).
+            "user": null,
         })
     );
     for record in &issued.access.grants {
@@ -2172,6 +2181,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                     .iter()
                     .map(|d| serde_json::json!({ "subtree_node_id": d.to_string() }))
                     .collect::<Vec<_>>(),
+                "covers": "subtree",
                 "epoch": record.epoch,
             })
         );
@@ -2377,6 +2387,7 @@ async fn workarea_info_lists_only_readable_children() {
             node: crew.into(),
             role: Role::Reader,
             deny: vec![sealed.into()],
+            covers: Covers::Subtree,
         }],
     )
     .await;
@@ -6075,6 +6086,8 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         name: Some(name("operator-fixture")),
         crew_id: None,
         revoked_at: None,
+        user: None,
+        session_user: None,
     };
     seal_onto(
         store,

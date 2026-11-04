@@ -13,7 +13,7 @@
 //! `oml_workarea` (ADR-0039 d2). The designed tools and arguments live in
 //! docs/api/mcp-tools.designed.json, which is never served. The eight v0.3.0
 //! tool names are not listed and still answer with their v0.3.0 shapes,
-//! through v0.4.x, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
+//! through v0.5.0, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
 
 mod alias;
 mod call;
@@ -30,7 +30,7 @@ use serde_json::{Map, Value, json};
 use oml_app::app::Caller;
 use oml_app::domain::oauth::{ChallengeCause, Issuer, TokenKind, mcp_challenge, token_kind};
 use oml_app::domain::sha256_digest_string;
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -208,7 +208,7 @@ struct WorkareaInfoArgs {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,

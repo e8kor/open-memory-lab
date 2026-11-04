@@ -116,6 +116,6 @@ made yet ([claude.ai and mobile](../guides/claude-ai-and-mobile.md)).
 ## Planned next
 
 Not built, each with its release on [releases](releases.md): team rules checked before each tool
-call, and a workarea that moves from development to committed to validated (v0.5.0); teammates
+call (v0.5.1), and a workarea that moves from development to committed to validated (v0.5.2); teammates
 seeing each other's unreviewed work inside a workarea that opts in (v0.6.0); files attached to a
 memory, erasure, and one export of who wrote and approved a memory (not scheduled).

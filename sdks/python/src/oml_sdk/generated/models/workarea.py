@@ -28,6 +28,8 @@ class Workarea:
             accepted as a reference.
         status (WorkareaStatus):
         crew (Crew | None | Unset): The crew record the workarea names, or null.
+        user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
+            key naming its user creates (ADR-0044 d1, d11).
         created_at (datetime.datetime | Unset):
     """
 
@@ -37,6 +39,7 @@ class Workarea:
     path: str
     status: WorkareaStatus
     crew: Crew | None | Unset = UNSET
+    user_root: bool | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -62,6 +65,8 @@ class Workarea:
         else:
             crew = self.crew
 
+        user_root = self.user_root
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -79,6 +84,8 @@ class Workarea:
         )
         if crew is not UNSET:
             field_dict["crew"] = crew
+        if user_root is not UNSET:
+            field_dict["user_root"] = user_root
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
 
@@ -121,6 +128,8 @@ class Workarea:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
+        user_root = d.pop("user_root", UNSET)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -135,6 +144,7 @@ class Workarea:
             path=path,
             status=status,
             crew=crew,
+            user_root=user_root,
             created_at=created_at,
         )
 

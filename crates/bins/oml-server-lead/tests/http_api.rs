@@ -2343,6 +2343,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "role": "writer",
             "principal": "claude/laptop",
             "crew_id": crew_record["crew_id"],
+            "user": null,
             "default_workarea_id": quarter,
             "held_by": "agent",
             "expiry": null,
@@ -2744,6 +2745,7 @@ async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
             "path": "universe.metals-crew.q1-2027",
             "status": "development",
             "crew": record,
+            "user_root": false,
         })
     );
     let (status, _, view) = send(
@@ -2792,6 +2794,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "path": "universe",
                 "status": "committed",
                 "crew": null,
+                "user_root": false,
                 "children": [
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
@@ -5250,6 +5253,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "path": "universe.metals-crew",
             "status": "development",
             "crew": crew_record,
+            "user_root": false,
             "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
             "edges": [],
             "my_effective_verbs": [
@@ -5404,6 +5408,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "path": "universe.procurement",
                     "status": "development",
                     "crew": null,
+                    "user_root": false,
                 },
                 {
                     "id": metals["id"],
@@ -5412,6 +5417,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "path": "universe.procurement.metals",
                     "status": "development",
                     "crew": crew,
+                    "user_root": false,
                 },
                 {
                     "id": q1["id"],
@@ -5420,6 +5426,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "path": "universe.procurement.metals.q1-2027",
                     "status": "development",
                     "crew": null,
+                    "user_root": false,
                 },
                 {
                     "id": q2["id"],
@@ -5428,6 +5435,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "path": "universe.procurement.metals.q2-2027",
                     "status": "development",
                     "crew": null,
+                    "user_root": false,
                 },
                 {
                     "id": review["id"],
@@ -5436,6 +5444,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "path": "universe.procurement.metals.q2-2027.lit-review",
                     "status": "development",
                     "crew": null,
+                    "user_root": false,
                 },
             ],
             "next_cursor": null,
@@ -6874,6 +6883,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
                 "path": "universe.metals-crew.q1-2027",
             },
             "crew": { "id": crew_record["crew_id"], "name": "metals-crew" },
+            "user": null,
             "grants": whoami_grants(&issued),
         })
     );
@@ -6985,6 +6995,7 @@ async fn whoami_serves_each_grant_without_its_deny_masks() {
             "grant_id": issued["grants"][0]["grant_id"],
             "workarea_node_id": crew.to_string(),
             "role": "writer",
+            "covers": "subtree",
             "epoch": issued["grants"][0]["epoch"],
         }]),
         "{me}"
@@ -7124,6 +7135,21 @@ fn doubles_router_over(issuer: Option<&str>) -> Router {
         true,
         Some(ENROLLMENT.to_owned()),
     )
+    // Both sign-in providers, through the in-memory double: the web routes
+    // exist only where the issuer is also set (ADR-0045 d1, d17).
+    .with_web(oml_transport_http::web::WebPages::new(
+        vec![
+            (
+                oml_app::domain::web::Provider::Google,
+                "google-client".to_owned(),
+            ),
+            (
+                oml_app::domain::web::Provider::GitHub,
+                "github-client".to_owned(),
+            ),
+        ],
+        oml_app::doubles::MemSignIn::new(),
+    ))
     .into_router()
 }
 
@@ -7144,6 +7170,7 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     };
     let rings = table(oml_transport_http::ROUTES);
     let oauth = table(oml_transport_http::OAUTH_ROUTES);
+    let web = table(oml_transport_http::web::WEB_ROUTES);
     assert_eq!(
         rings.len(),
         oml_transport_http::ROUTES.len(),
@@ -7155,7 +7182,15 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
         "the OAuth route table lists an operation twice"
     );
     assert!(rings.is_disjoint(&oauth), "an operation is in both tables");
-    let routed: std::collections::BTreeSet<_> = rings.union(&oauth).cloned().collect();
+    assert!(
+        rings.is_disjoint(&web) && oauth.is_disjoint(&web),
+        "a web route is in another table"
+    );
+    let routed: std::collections::BTreeSet<_> = rings
+        .union(&oauth)
+        .cloned()
+        .chain(web.iter().cloned())
+        .collect();
     let only_declared: Vec<_> = declared.difference(&routed).collect();
     let only_routed: Vec<_> = routed.difference(&declared).collect();
     assert!(
@@ -7168,8 +7203,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        31,
-        "the 24 routed operations, whoami and the six OAuth operations"
+        42,
+        "the 29 routed operations, whoami, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -7677,4 +7712,299 @@ async fn each_reference_field_takes_an_id_or_a_name() {
         assert_eq!(status, StatusCode::OK, "{by_name}: {read_by_name}");
         assert_eq!(read_by_id, read_by_name, "{by_id} and {by_name}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// User roots, node grants, curation and the served universe view (ADR-0044)
+// ---------------------------------------------------------------------------
+
+/// `POST /v2/keys` with `body`, under the admin; returns status and body.
+async fn issue_raw(router: &Router, admin: &str, idem: &str, body: Value) -> (StatusCode, Value) {
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(admin).idem(idem).body(body),
+    )
+    .await;
+    (status, body)
+}
+
+/// ADR-0044 d2–d11 over the wire: `user` and `covers` at issuance, `user`
+/// on whoami and the key read, `user_root` on the workarea, `parent`
+/// omitted by a user key, `submission.universe_refused`, the refusals named
+/// by field, a qualified name, and a curated claim served without its source.
+#[tokio::test]
+async fn user_roots_ride_the_wire() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _, root) = bootstrap(router).await;
+
+    let (status, alice) = issue_raw(
+        router,
+        &admin,
+        "alice",
+        json!({
+            "role": "writer",
+            "name": "alice-laptop",
+            "principal": "alice/laptop",
+            "user": "alice",
+            "grants": [
+                { "workarea": "alice", "role": "writer" },
+                { "workarea": "alice", "role": "reader" },
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{alice}");
+    assert_eq!(alice["user"]["name"], "alice", "{alice}");
+    let alice_root = alice["user"]["id"].as_str().expect("root").to_owned();
+    let grants = alice["grants"].as_array().expect("grants");
+    assert_eq!(
+        grants.len(),
+        3,
+        "the two sent and universe's node read: {alice}"
+    );
+    assert_eq!(grants[0]["covers"], "subtree");
+    assert_eq!(grants[2]["workarea_node_id"], root.to_string().as_str());
+    assert_eq!(grants[2]["covers"], "node");
+    let alice_key = alice["value"].as_str().expect("value").to_owned();
+
+    let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&alice_key)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["user"], json!({ "id": alice_root, "name": "alice" }));
+    assert_eq!(me["grants"][2]["covers"], "node");
+    let (_, _, detail) = send(router, "GET", "/v2/keys/alice-laptop", Call::auth(&admin)).await;
+    assert_eq!(detail["user"]["name"], "alice", "{detail}");
+
+    let (status, _, project) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&alice_key)
+            .idem("wa-project")
+            .body(json!({ "name": "project" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{project}");
+    assert_eq!(project["path"], "universe.alice.project");
+    assert_eq!(project["user_root"], false);
+    let (status, _, root_view) =
+        send(router, "GET", "/v2/workareas/alice", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{root_view}");
+    assert_eq!(root_view["user_root"], true);
+    let (status, _, qualified) = send(
+        router,
+        "GET",
+        "/v2/workareas/alice.project",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a qualified name: {qualified}");
+    assert_eq!(qualified["id"], project["id"]);
+    let (status, _, path) = send(
+        router,
+        "GET",
+        "/v2/workareas/universe.alice.project",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+    assert_envelope(&path, "request.validation");
+
+    // A user key's write into universe is told universe is curated.
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&alice_key, "into-universe", "universe", "for-everyone"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_envelope(&refused, "submission.universe_refused");
+
+    // The refusals of issuance, each by its field.
+    for (idem, body, field) in [
+        (
+            "admin-user",
+            json!({ "role": "admin", "name": "a2", "user": "bob" }),
+            "/user",
+        ),
+        (
+            "node-deny",
+            json!({
+                "role": "reader",
+                "name": "nd",
+                "grants": [{
+                    "workarea": "universe",
+                    "role": "reader",
+                    "covers": "node",
+                    "deny": [{ "workarea": alice_root }],
+                }],
+            }),
+            "/grants/0/deny",
+        ),
+        (
+            "bad-covers",
+            json!({
+                "role": "reader",
+                "name": "bc",
+                "grants": [{ "workarea": "universe", "role": "reader", "covers": "tree" }],
+            }),
+            "/grants/0/covers",
+        ),
+    ] {
+        let (status, body) = issue_raw(router, &admin, idem, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{idem}: {body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], field, "{idem}: {body}");
+    }
+    let (status, outside) = issue_raw(
+        router,
+        &admin,
+        "outside",
+        json!({
+            "role": "reader",
+            "name": "bob-reader",
+            "user": "bob",
+            "grants": [{ "workarea": alice_root, "role": "reader" }],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{outside}");
+    assert_envelope(&outside, "access.issuer_ceiling");
+    assert_eq!(outside["error"]["details"]["user"], "bob", "{outside}");
+    assert_eq!(outside["error"]["details"]["grant_index"], 0, "{outside}");
+
+    // Curation: alice's promoted source, placed in universe by a curator and
+    // approved there by a tenant dreamer, is served to alice without it.
+    let alice_review = issue_raw(
+        router,
+        &admin,
+        "alice-review",
+        json!({
+            "role": "dreamer",
+            "name": "alice-review",
+            "principal": "alice/review",
+            "user": "alice",
+            "grants": [{ "workarea": "alice", "role": "dreamer" }],
+        }),
+    )
+    .await
+    .1["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let approve = |reviewer: String, idem: &'static str| async move {
+        let (status, _, serve) = send(
+            router,
+            "POST",
+            "/v2/review/next",
+            Call::auth(&reviewer).idem(&format!("{idem}-next")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{serve}");
+        let (status, _, verdict) = send(
+            router,
+            "POST",
+            "/v2/review/verdicts",
+            Call::auth(&reviewer).idem(idem).body(json!({
+                "serve_id": serve["serve_id"],
+                "verdict": "approve",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{verdict}");
+        assert_eq!(verdict["state"], "promoted", "{verdict}");
+    };
+    let (status, _, source) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(&alice_key, "source", "alice", "source"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{source}");
+    approve(alice_review, "approve-source").await;
+    let curator = issue_raw(
+        router,
+        &admin,
+        "curator",
+        json!({
+            "role": "writer",
+            "name": "curator",
+            "principal": "curator",
+            "grants": [
+                { "workarea": "universe", "role": "writer", "covers": "node" },
+                { "workarea": alice_root, "role": "reader" },
+            ],
+        }),
+    )
+    .await
+    .1["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let (status, _, placed) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&curator)
+            .idem("placed")
+            .workarea("universe")
+            .body(json!({
+                "claim_key": "curated",
+                "kind": "memory",
+                "body": "Supplier quote, curated.",
+                "derives_from": [source["artifact_id"]],
+            })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{placed}");
+    assert_eq!(placed["state"], "held");
+    let reviewer = issue_raw(
+        router,
+        &admin,
+        "universe-reviewer",
+        json!({
+            "role": "dreamer",
+            "name": "universe-reviewer",
+            "principal": "universe-reviewer",
+            "grants": [
+                { "workarea": "universe", "role": "dreamer", "covers": "node" },
+                { "workarea": "universe", "role": "reader", "covers": "node" },
+            ],
+        }),
+    )
+    .await
+    .1["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    approve(reviewer, "approve-placed").await;
+    let id = placed["artifact_id"].as_str().expect("artifact id");
+    let (status, _, served) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Call::auth(&alice_key),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    assert_eq!(served["workarea_path"], "universe", "{served}");
+    assert_eq!(served["principal"], Value::Null, "{served}");
+    assert_eq!(served["derives_from"], json!([]), "{served}");
+    let (_, _, own) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Call::auth(&curator),
+    )
+    .await;
+    assert_eq!(own["principal"], "curator", "{own}");
+    assert_eq!(own["derives_from"], json!([source["artifact_id"]]), "{own}");
+
+    drop_db(&rig.db_name).await;
 }

@@ -26,11 +26,19 @@ class KeyIssueRequest:
             names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable, never
             released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2).
             References use NameRef.
-        grants (list[GrantRequest] | Unset): Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's
-            reader grant beside a writer grant is sent here like any other (ADR-0028 d2).
-        default_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
-            that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is
-            refused (request.validation).
+        grants (list[GrantRequest] | Unset): Taken exactly as sent, except that a user key also gets a reader grant on
+            the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a writer grant is sent here
+            like any other (ADR-0028 d2).
+        user (str | Unset): A new name, in a creation body: the creation grammar. A lowercase RFC 1035 label, 1-63
+            characters, that is not in the id form, not 32 hexadecimal digits and not the derived form, which only rows that
+            predate names hold; a creation that sends that form is request.validation. Unique in its namespace, immutable,
+            never released; compared byte for byte, never lowercased (docs/api/http-api.md, Names and ids; ADR-0026 d1, d2).
+            References use NameRef.
+        default_workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
+            resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
+            shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
         held_by (KeyIssueRequestHeldBy | Unset): The issuing admin's journalled attestation (ADR-0021); never verified
             as fact.
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
@@ -45,6 +53,7 @@ class KeyIssueRequest:
     role: Role
     name: str
     grants: list[GrantRequest] | Unset = UNSET
+    user: str | Unset = UNSET
     default_workarea: str | Unset = UNSET
     held_by: KeyIssueRequestHeldBy | Unset = UNSET
     crew: str | Unset = UNSET
@@ -63,6 +72,8 @@ class KeyIssueRequest:
             for grants_item_data in self.grants:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
+
+        user = self.user
 
         default_workarea: str | Unset
         if isinstance(self.default_workarea, Unset):
@@ -96,6 +107,8 @@ class KeyIssueRequest:
         )
         if grants is not UNSET:
             field_dict["grants"] = grants
+        if user is not UNSET:
+            field_dict["user"] = user
         if default_workarea is not UNSET:
             field_dict["default_workarea"] = default_workarea
         if held_by is not UNSET:
@@ -129,6 +142,8 @@ class KeyIssueRequest:
 
                 grants.append(grants_item)
 
+        user = d.pop("user", UNSET)
+
         def _parse_default_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
@@ -160,6 +175,7 @@ class KeyIssueRequest:
             role=role,
             name=name,
             grants=grants,
+            user=user,
             default_workarea=default_workarea,
             held_by=held_by,
             crew=crew,

@@ -7,7 +7,7 @@ answers: how Claude's hosted apps reach the agent plugin through a claude.ai cus
 
 # ADR-0031 — Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
 **Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 

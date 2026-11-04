@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oml_domain::access::{
-    AccessRefusal, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
+    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
     admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
 };
@@ -27,6 +27,15 @@ fn grant(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
         node,
         role,
         deny: deny.to_vec(),
+        covers: Covers::Subtree,
+    }
+}
+
+/// A grant on `node` alone (ADR-0044 d4).
+fn node_grant(n: u128, node: Uuid, role: Role) -> Grant {
+    Grant {
+        covers: Covers::Node,
+        ..grant(n, node, role, &[])
     }
 }
 
@@ -963,6 +972,7 @@ proptest! {
                 node: node_id(*node),
                 role: *role,
                 deny: deny.iter().map(|&d| node_id(d)).collect(),
+                covers: Covers::Subtree,
             })
             .collect();
         let denials: Vec<KeyDenial> = denial_nodes
@@ -997,4 +1007,34 @@ proptest! {
             );
         }
     }
+}
+
+/// ADR-0044 d4: a node grant covers its node and nothing beneath it, while a
+/// subtree grant on the same node covers every descendant; global denials
+/// still win over a node grant.
+#[test]
+fn a_node_grant_covers_its_node_and_no_descendant() {
+    let t = Tree::new();
+    let grants = [node_grant(1, t.universe, Role::Reader)];
+    assert_eq!(
+        effective_roles(&grants, &[], &t.ancestry(t.universe)),
+        roles(&[Role::Reader])
+    );
+    for below in [t.research_crew, t.ops_crew, t.run_grid] {
+        assert!(effective_roles(&grants, &[], &t.ancestry(below)).is_empty());
+    }
+    let subtree = [grant(2, t.universe, Role::Reader, &[])];
+    assert_eq!(
+        effective_roles(&subtree, &[], &t.ancestry(t.run_grid)),
+        roles(&[Role::Reader])
+    );
+    let denied = [denial(1, t.universe)];
+    assert!(effective_roles(&grants, &denied, &t.ancestry(t.universe)).is_empty());
+    assert_eq!(Covers::default(), Covers::Subtree);
+    assert_eq!(Covers::parse("node"), Some(Covers::Node));
+    assert_eq!(
+        Covers::parse(Covers::Subtree.as_str()),
+        Some(Covers::Subtree)
+    );
+    assert_eq!(Covers::parse("tree"), None);
 }

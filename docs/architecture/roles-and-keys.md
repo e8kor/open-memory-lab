@@ -92,7 +92,7 @@ settings, tenants — a column names the key's role itself.
 | ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
 | issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
 | mint a connect code / revoke a connection ([connections](#connections)) | — | — | — | ✓ | — |
-| create / re-parent workareas | — | — | — | ✓ | — |
+| create / re-parent workareas | — | ⁷ | — | ✓ | — |
 | reassign claims between workareas | — | — | — | ✓ | — |
 | ban / lift-ban an author or source | — | — | — | ✓ | — |
 | demote (journalled; bytes kept, R4) | — | — | — | ✓ | — |
@@ -136,6 +136,10 @@ so each answers `access.verb_ceiling` at step 1 of the refusal order. The conten
 two-key rule is therefore unchanged — an admin key carries no grant role, receives no serve,
 records no verdict and reads no claim's content — and "admin is never a reviewer" holds as
 before.
+
+⁷ *Since v0.5.0* ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6): a writer
+[user key](#user-keys) creates a workarea under a parent inside its own user root where its
+effective access confers `writer`; it never re-parents, and a tenant writer key creates nothing.
 
 Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
 admission pipeline, signing is done by `oml-server` with the deployment key
@@ -377,6 +381,11 @@ claim" disqualifies a reviewer exactly as "I wrote this claim" does. Because the
 pending edges, a dreamer cannot launder authorship by proposing an edit and reviewing the result
 before the edit is ratified. A dreamer's own proposals always need another reviewer.
 
+*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8):* the
+exclusion stays per key and principal for [user keys](#user-keys) too: `user` is not in
+it, so a person may review their own agents' writes through a separate dreamer key in their root,
+and the journal shows that both keys name the same user.
+
 **Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
 successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
 author's key and principal; review next never serves such a row to that key, and a verdict from
@@ -523,6 +532,72 @@ A key may also name a [crew](workareas.md#crews-recorded-not-operated) at issuan
 `key.issued` as `crew_id`, fixed for the key's life and carried to a rotation's successor. It is
 the key→crew link the [independence axis](#review-independence-and-the-evidence-of-collusion)
 reads.
+
+## User keys
+
+*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
+
+This section is the single declaration site for user keys. A key
+carries a fourth identifying field, `user`: the person an admin attests the key acts for, named as
+that person's [user root](workareas.md#user-roots) is named. A key with it is a **user
+key**; a key without it is a **tenant key**, which every key issued before the build is.
+
+- **Who may carry it.** `reader`, `writer` and `dreamer` keys, `held_by` `agent` or `human`,
+  connector keys included. `admin`, `operator` and `held_by: service` keys may not
+  (`request.validation`, `details.field: user`). It is given explicitly and never derived from the
+  principal, the name or the label, which keep the meanings
+  [above](#key-names-principals-and-labels). It is fixed for the key's life, journalled in
+  `key.issued` as the root's id, carried to a rotation's successor once rotation is built, and
+  served by `GET /v2/whoami` and `GET /v2/keys/{key}` as `{id, name}`.
+- **The first key naming a user creates the root** (`universe.<user>`), in a commit of its own
+  before `key.issued`; a name a shared workarea holds is `name.taken`.
+- **Grants.** Every grant of a user key lies inside its own root; any other is refused with
+  `access.issuer_ceiling`, details `{role, admissible, grant_index, user}`, at issuance, and at
+  every later grant act once one is built. Issuance adds one grant the request did not send: `reader` on `universe`
+  with `covers: node` ([node grants](workareas.md#node-grants)), so a user key reads
+  universe's own claims and never another user's root, a crew's workareas or any shared workarea
+  beneath `universe`. A person who also works in a crew holds a tenant key for it.
+- **Names.** A user key's bare workarea names resolve in its own root, plus `universe` and its
+  root's name; tenant keys, admin keys included, resolve the shared namespace, and every tenant
+  key resolves a qualified name `<user>.<name>` ([names](../api/http-api.md#names-and-ids)).
+- **Writes into `universe`.** A user key's write there is refused with
+  `submission.universe_refused`, answered in place of step 3's `access.grant_refused`. Only a
+  **curator** — a tenant writer key an admin granted writer on the `universe` node — writes there,
+  each write held and reviewed by a dreamer on `universe` outside its lineage closure
+  ([admission](admission.md)).
+- **Review.** The [reviewer-exclusion set](#the-dreamer-split) stays per key and principal: `user`
+  is not in it, so a user's own dreamer key may review that user's agents' writes (ADR-0044 d8).
+- **The row names a user root.** A key whose stored `user` names a node that is not a user root is
+  served nothing: `auth.invalid` with `details.reason: user_root`, which `oml doctor` under the key
+  reports (ADR-0044 d14).
+
+## Session keys
+
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../product/releases.md)*
+
+A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
+`held_by: human` with no value and no connection, held by the server for one person and acted
+with only from that person's web session, which the server re-checks on every request
+([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). It cannot be sent as
+a bearer key and never gets a connect code (`oauth.connect_refused`, `details.reason:
+session_key`). A person holds at most four, one per capacity, under the two-key rule
+([admin verbs](#admin-verbs)):
+
+| Key | Role and grants |
+|---|---|
+| `<user>-web` | a [user key](#user-keys): writer and reader on `universe.<user>`, and the node read on `universe` |
+| `<user>-review` | a tenant dreamer key with dreamer and reader on `universe.<user>` from the first sign-in, and any further grants an admin gives it |
+| `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and reader on the user roots an admin chooses |
+| `<user>-admin` | a tenant admin key, no grants |
+
+`<user>-web`, and no bearer key, may issue reader, writer and connector keys naming its own user
+with grants inside its root, mint their connect codes and deny them on `universe`; for it, own
+means every key naming its user. `<user>-web` and `<user>-review` are created at the first
+sign-in, so a person reviews their own agents' held writes on the user page without an admin step.
+Each session key's principal is its own name, so R2, checked on the reviewing key and the row's
+lineage closure, lets `<user>-review` approve the person's agents' writes and never a version it
+proposed itself. `<user>-admin` reads every memory's text and attribution through the
+[admin read](../api/http-api.md#admin-read), journalled; it still records no verdict.
 
 ## Key format
 
@@ -812,4 +887,6 @@ key's crew and the admin structure reads are the proposed
 [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
 adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
 keys, connect codes and connections are
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11).
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11). User keys, user
+roots, curators and the user in the reviewer exclusion are the proposed
+[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.

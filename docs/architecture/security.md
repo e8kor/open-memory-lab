@@ -427,6 +427,33 @@ connection yet holds — belong to the
 reserved provider tenant and hold no tenant content
 ([Postgres schema](../data/postgres-schema.md#connections-adr-0031)).
 
+## Web pages: sign-in and sessions
+
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).* A user page and an admin
+page on the lead's own origin, signed in through Google or GitHub against a per-tenant email
+allowlist ([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). They add
+what [ADR-0015](../adr/ADR-0015-cli-administration.md) declined to carry: a session cookie, and
+pages that act with a person's authority. The origin policy, the CSP and the frame rule are the
+connect page's, already built. Every act runs as a **session key** the server holds for the
+person — credential `session`, no value, one key per capacity — so the role matrix, the grants and
+the journal are the same as for every key. The threats below are the delta; every control is a
+built since v0.5.0; none is penetration-tested or measured, and no sign-in has reached a live provider ([FR-76](../product/roadmap.md)).
+
+| Threat | Controls | Residual |
+|---|---|---|
+| **An agent using the pages** (R1) | An `Authorization` header on a web route is `access.verb_ceiling`; `/v1`, `/v2` and `/mcp` never read `Cookie`; a session key has no value and no connect code; no MCP tool names a page; a session exists only after a provider sign-in. | An agent that drives the person's signed-in browser acts as the person, as an agent at an admin's shell already can; OML cannot tell them apart. |
+| **Session fixation** | No session identifier exists before the callback admits; the token is minted then, and a browser arriving with an old cookie gets a new token while the old row ends. | — |
+| **Session cookie theft** | `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`; the server holds only its SHA-256; `web.session_ttl` bounds it; sign-out and any change to its allowlist entry end it. | Until then a stolen cookie acts as the person through their session keys. There is no idle timeout. |
+| **Cross-site request forgery** | `SameSite=Lax` withholds the cookie from cross-site `POST`s; every `POST` passes the connect page's same-origin check; every signed-in form carries a `csrf_token` derived from the session token and compared in constant time; every `GET` is free of effect. | — |
+| **Login forgery** (an attacker signs the victim in as the attacker) | The callback admits only the `state` sealed in the `__Host-oml_signin` cookie of the browser that started the flow. | — |
+| **Provider mix-up** | The provider is in the callback path and in the sealed cookie, which must agree before any code is redeemed. | — |
+| **A moved or recycled email address** | Only a verified address the provider returns over TLS; GitHub's primary verified address alone; the provider account is pinned per entry at first sign-in, and another account with the same address is `identity_changed`. | A provider that calls an address verified is trusted as far as the allowlist reaches. Before an entry's first sign-in nothing is pinned, so whoever controls the address at the provider first holds it. |
+| **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; every rendered string escaped and stripped of control and bidirectional formatting characters. | Memory text an agent wrote is shown to a person; it is escaped, never rendered as markup, and still says whatever it says. |
+| **Secrets in logs** | The route template, never the query: the callback's `code` and `state` and the sign-in redirect's `Location` are never logged; no cookie, token or email reaches a line; the journal holds an email's digest, never the address. | A reverse proxy's access log must drop `/web/callback/*`'s query too: stated, not checkable. |
+| **Sign-in flooding** | A sign-in start writes no row; a callback whose cookie does not open makes no outbound call; provider calls are capped per provider and timed out. | Anyone can start flows of their own and make the lead call the providers' token endpoints at the cap's rate (unmeasured, FR-76). No limit keys on a source address. |
+| **A person outliving their access** | Removing an email ends its sessions and, when it was the user's last, makes the user's session keys unreachable at once. | The person's agent keys keep working until an admin cuts each off, which the removal confirmation lists; revocation is not built. |
+| **Admin authority through the pages** | The admin key never reviews; review runs as the person's reviewer key, R2 checked on that key and the lineage closure. The admin key reads content only on the two [admin read](../api/http-api.md#admin-read) routes, and each read is journalled as `memory.admin_read` with the ids served. | A person may approve their own agents' writes through their reviewer key; the journal shows both keys. A tenant's admin reads every person's memories, held ones included, so people who need privacy from that admin need a tenant of their own. |
+
 ## Trust boundaries
 
 ```mermaid
@@ -435,6 +462,7 @@ flowchart LR
     A["Agent / crew<br/>(bearer API key)"]
     H["Claude hosted apps via claude.ai<br/>(connection access token, /mcp only)"]
     CLI["oml CLI<br/>(operator / admin / dreamer key)"]
+    W["A person's browser, planned v0.5.0<br/>(session cookie, /web only)"]
   end
 
   subgraph tcb["TCB: oml-server replicas"]
@@ -458,6 +486,7 @@ flowchart LR
   A -- "HTTPS, bearer key" --> S
   H -- "HTTPS, access token" --> S
   CLI -- "HTTPS, bearer key" --> S
+  W -- "HTTPS, session cookie" --> S
   S --> PG
   S --> OS
   S -- "wrap / unwrap DEK" --> KMS
@@ -470,7 +499,7 @@ flowchart LR
 ```
 
 Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
-into oml-server, carrying a bearer key or a connection's access token that resolves to one —
+into oml-server, carrying a bearer key or a connection's access token that resolves to one, or, since v0.5.0, a session cookie that resolves to a person's session keys —
 there is no client path to Postgres, the object store, the
 lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
 between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to

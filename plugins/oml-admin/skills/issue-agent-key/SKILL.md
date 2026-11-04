@@ -38,6 +38,11 @@ follows from that.
     - the **workarea** the agent will write and recall in, by its name, for example
       `metals-crew`; its id works too. A path such as `universe.procurement.metals-crew` is not a
       name: pass its last segment.
+    - whether the key acts for a person, and who (`--user`, the person's name, for example
+      `alice`). With `--user` the workarea is optional: the key works in that person's own
+      workarea `universe.<user>`, which the first key naming them creates, and a workarea name is
+      looked up inside it. A name a shared workarea already holds cannot be a person's. Never
+      derive the person from the principal.
     - whether the key belongs to a crew, and which (`--crew`, the crew's name). A key's crew is
       fixed for its life.
     - whether a person rather than an agent holds the key (`--held-by human`).
@@ -55,8 +60,8 @@ follows from that.
     mkdir -p "$HOME/.config/oml/keys" && chmod 700 "$HOME/.config/oml/keys"
     ```
 
-4. Run the issuance, adding `--held-by human`, `--crew <crew>` or `--write-only` only if the
-   operator asked:
+4. Run the issuance, adding `--user <user>`, `--held-by human`, `--crew <crew>` or
+   `--write-only` only if the operator asked (with `--user`, `--workarea` may be left out):
 
     ```sh
     oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workarea metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"

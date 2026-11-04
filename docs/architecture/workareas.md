@@ -9,7 +9,7 @@ answers: how the workarea algebra works — universe tree, node-id grants, deny-
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.0 ([releases](../product/releases.md)).
+**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.2 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
@@ -34,7 +34,8 @@ tenant's `universe`. Inclusion is single-parent: every workarea except the
 universe has exactly one parent, so cycles are impossible by construction, and
 every node has one derivable path from the root. Every workarea has a
 [name](../api/http-api.md#names-and-ids), unique in its tenant across the whole
-tree and never changed, and the root's is `universe` in every tenant: tenant
+tree (since v0.5.0, within the shared namespace or one user's root:
+[user roots](#user-roots)) and never changed, and the root's is `universe` in every tenant: tenant
 creation creates the root under that name, so no other workarea can take it
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d6).
 
@@ -46,6 +47,12 @@ The universe root is special in three ways, all of them refusals:
 - it refuses direct claim writes. Claims live in crew workareas beneath it. The
   universe exists so that paths, subtree grants, and subtree denies have a
   well-defined top, not so that anything is stored at the top.
+
+*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):* the third
+refusal becomes a curation rule. `universe` holds only the claims curators place
+there — tenant writer keys an admin granted writer on the `universe` node — each
+held and reviewed by a second identity like every write; no user key can write or
+propose to it ([user roots](#user-roots)).
 
 Cross-tenant mapping — relating workareas of different tenants into one "whole
 world" — does not exist in this design. It is an explicitly future federation
@@ -85,6 +92,54 @@ Note that `lit-review` is `validated` while its parent `research-crew` is
 `committed`: the child-status rule constrains a parent becoming validated, not a
 child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 `experiments` is legal because `experiments` is not frozen.
+
+## User roots
+
+*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
+
+Every user — a person an admin attests a key acts for — has a **user root**: a
+direct child of `universe` named after the user, `universe.<user>`, marked
+`user_root` when it is created. The tree stays one tree. The first key issued with
+`user: <user>` creates the root, journalled as `workarea.create` with
+`user_root: true`; later keys naming that user join it (d1, d2). Everything strictly
+beneath a user root is that user's; every workarea outside every user root,
+`universe` included, is **shared**, crew workareas among them (d13).
+
+```mermaid
+flowchart TD
+    U["universe<br/>(committed; curated claims only)"]
+    A["alice<br/>(user root)"]
+    B["bob<br/>(user root)"]
+    AP["project<br/>(alice.project)"]
+    BP["project<br/>(bob.project)"]
+    C["crew<br/>(shared)"]
+    U --> A
+    U --> B
+    U --> C
+    A --> AP
+    B --> BP
+```
+
+- **A user key reaches its own root and the `universe` node, nothing else.** Its
+  grants must lie inside its user's root, and issuance adds one reader grant on
+  `universe` with `covers: node` ([below](#node-grants)), so it reads
+  universe's own claims and never another user's root or a shared workarea beneath
+  `universe` ([roles and keys](roles-and-keys.md#user-keys)).
+- **Names.** `alice.project` and `bob.project` coexist: a name is unique within
+  one user's root, or within the shared namespace that holds `universe`, every
+  user root's name and every shared workarea's name. The qualified name
+  `<user>.<name>` is unique in the tenant and never changes, since nothing is
+  re-parented across a user root's boundary; a user key's bare names resolve in
+  its own root ([names](../api/http-api.md#names-and-ids)).
+- **Creating.** A writer user key creates workareas inside its own root, where its
+  writer grant covers the parent; the root is the default parent (d6).
+- **Recall.** A recall whose scope lies inside a user root also searches
+  `universe`'s own claims, and `universe`'s steering applies there as an ancestor's
+  ([retrieval](retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)).
+  A universe claim is served with origin `universe` and nothing of its source
+  ([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)).
+- **Existing tenants.** Workareas created before the build are shared and keys
+  issued before it are tenant keys; nothing moves (d12).
 
 ## Grants bind to node ids; paths are derived
 
@@ -149,6 +204,13 @@ that states its own staleness window there.
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
+<a id="node-grants"></a>*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+d4):* a grant gains `covers`, `subtree` (the default, every grant
+today) or `node`. A `node` grant covers its own node and no descendant, carries no
+deny entries, and otherwise enters the formula below like every grant, so "covers"
+in step 1 means "N is the grant's node or, for a `subtree` grant, a descendant of
+it". Its first use is the reader grant on `universe` every user key carries.
+
 One formula, applied everywhere a key touches a workarea:
 
 > **Effective access = the union of the key's grants, each grant first
@@ -206,7 +268,7 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 ### Edge kinds
 
@@ -310,7 +372,7 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no
@@ -407,4 +469,6 @@ ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
 per-request effective access are
 [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14); the
 root's name, names as references and crew records are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8).
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8). User roots, node grants, the
+qualified name and curation into `universe` are the proposed
+[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.

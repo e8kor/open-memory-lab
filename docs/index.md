@@ -7,7 +7,7 @@ answers: what Open Memory Lab is, the problem it solves, what it guarantees in p
 
 # Open Memory Lab
 
-Design revision **0.4.0-design** — see the [changelog](changelog.md).
+Design revision **0.5.0-design** — see the [changelog](changelog.md).
 **See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
 memory through OML — recall along grants, remember, review, supersede, and the grants a freeze
 opens — over mocked data.
@@ -62,8 +62,9 @@ OML sits between your crews and their memory and makes the write path accountabl
   tracked.
 
 Agents connect over a standard HTTP plugin interface; humans administer the system entirely from
-a command-line tool. There is no web console — that is a deliberate choice, examined in the
-[review guide](review-guide.md).
+a command-line tool, beside two web pages since v0.5.0: one where people sign in to manage their
+own keys and memories and one for administrators. A web console beyond them is declined, a
+deliberate choice examined in the [review guide](review-guide.md) ([releases](product/releases.md)).
 
 ## Honest status
 

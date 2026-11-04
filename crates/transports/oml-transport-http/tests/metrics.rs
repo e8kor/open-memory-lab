@@ -12,6 +12,7 @@ use axum::http::{Request, StatusCode, header};
 use serde_json::json;
 use tower::ServiceExt as _;
 
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::{HeldBy, Role};
@@ -74,8 +75,10 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                     node: boot.root_workarea_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
+                    covers: Covers::Subtree,
                 }],
                 connect_code: false,
+                user: None,
             },
         )
         .await

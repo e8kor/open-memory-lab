@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// The stored pair. Either field may be absent in a hand-edited file; the
 /// caller refuses a file that sets one alone. A v0.3.0 file's `server` and
-/// `key` are read as `url` and `api_key` through v0.4.x, and its `key_id`,
+/// `key` are read as `url` and `api_key` through v0.5.0, and its `key_id`,
 /// `tenant_id` and `root_workarea_id` are ignored (ADR-0039 d15).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Credentials {

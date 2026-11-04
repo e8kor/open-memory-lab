@@ -380,7 +380,8 @@ Tree and edge governance. Rules: [workareas](../architecture/workareas.md).
   "workarea_id": "…", "parent_id": "…",
   "name": "crew-redline", "status": "development",
   "crew_id": "…",
-  "prefix": null
+  "prefix": null,
+  "user_root": false
 }
 ```
 
@@ -391,7 +392,12 @@ null. Before ADR-0026 this event carried a `crew` object instead; such events st
 signed, and `system.names_assigned` turns their objects into crew records. A non-null `prefix`
 registers the workarea as a vocabulary ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the
 prefix is tenant-unique and **permanent** — never reused or reassigned, even after the vocabulary
-retires — and `vocab_prefixes` folds from exactly these events.
+retires — and `vocab_prefixes` folds from exactly these events. `user_root` is `true` on the one
+event that creates a [user root](../architecture/workareas.md#user-roots), `universe.<user>`, which
+the issuance of the first key naming that user journals with the issuing admin as actor, and
+`false` on every other; an event signed before v0.5.0 carries no `user_root` and folds as `false`.
+A node created beneath a user root takes its name in that root's namespace ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d1, d2, d5,
+d12).
 
 ### workarea.reparent
 
@@ -547,7 +553,8 @@ genesis byte rule).
   "default_workarea_id": "…",
   "name": "procure-agent-7",
   "crew_id": null,
-  "credential": "bearer"
+  "credential": "bearer",
+  "user": null
 }
 ```
 
@@ -556,7 +563,13 @@ unique in its namespace and never released; `crew_id` is the crew record it name
 null, fixed for the key's life. `credential` is `bearer` for a key with a value and `connection`
 for a connector key, which has no value at all; its connect code follows in
 `connection.code_issued` ([roles and keys](../architecture/roles-and-keys.md#connections),
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7).
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). `user` is the id of the
+key's [user root](../architecture/roles-and-keys.md#user-keys), fixed for the key's life, or null
+for a tenant key; an event signed before v0.5.0 carries no `user` and folds as null ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2,
+d12). Since v0.5.0 `credential` may be `session`, a key the server holds for a person and acts
+with only from their web session, which has no value; such an event also carries
+`session_user`, the allowlist user it serves, absent on every other key
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d6).
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
@@ -604,11 +617,14 @@ permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-i
   "grant_id": "…", "key_id": "…",
   "workarea_node_id": "…", "role": "reader",
   "deny": [{"subtree_node_id": "…"}],
+  "covers": "subtree",
   "epoch": 17
 }
 ```
 
-Binds a key to a workarea node id (never a path) with per-grant deny masks; `epoch` is this
+Binds a key to a workarea node id (never a path) with per-grant deny masks; `covers` is `subtree`,
+the node and every descendant, or `node`, the node alone, which carries no deny entry; an event
+signed before v0.5.0 carries no `covers` and folds as `subtree` ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d4, d12); `epoch` is this
 event's own journal seq, which makes every historical effective-access computation reproducible
 ([workareas](../architecture/workareas.md)).
 
@@ -730,6 +746,41 @@ and the envelope names the connector key, whose past token triggered it; a conne
 once, so a holder of past tokens can cause at most one such event. A revoked or expired key ends
 its connections with no event of this type
 ([roles and keys](../architecture/roles-and-keys.md#connections)).
+
+## Web family
+
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2*
+
+### web.email_allowed
+
+```json
+{ "email_digest": "sha256:…", "user": "alice", "admin": true, "by_key_id": "…" }
+```
+
+An admin key adds an email to its tenant's web allowlist. `email_digest` is SHA-256 over a fixed
+purpose string and the ASCII-lower-cased address, the `web_emails.email_hash` the sign-in finds
+the entry by; the journal never holds the address. `user` is the user the address signs in as.
+
+### web.email_changed
+
+The same payload: the entry's user or admin flag changed. The commit ends every session of the
+entry.
+
+### web.email_removed
+
+The same payload, naming the entry as it stood. The commit removes the entry and ends its
+sessions; the user's agent keys are untouched (ADR-0045 d13).
+
+### memory.admin_read
+
+```json
+{ "artifact_ids": ["…"], "query_digest": "sha256:…" }
+```
+
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21.* An admin key read
+memories' text and attribution through the admin read: the ids served, and for a search the
+SHA-256 of its query, null for a read of one memory. Never the text and never the query. The
+envelope names the admin key; nothing but the journal changes.
 
 ## Simulation family
 

@@ -7,7 +7,7 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 
 **Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
@@ -222,6 +222,13 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       failure names the variable to rename.
     - **HTTP and the SDKs: no aliases.** The CLI and the hook ship with the server, and neither SDK
       is on a registry ([client SDKs](../engineering/sdks.md)); each moves to `0.2.0`.
+    - **The removal moves to v0.5.1 (2026-11-04).** v0.5.0 keeps the window open: the aliases
+      are not one contained deletion, since 30 of the facade's Postgres suite's end-to-end tests
+      (`crates/bins/oml-server-lead/tests/mcp_facade.rs`) still drive the MCP surface through the
+      v0.3.0 names and assert their v0.3.0 shapes, and each must first move to `oml_write`,
+      `oml_read` and `oml_workarea`. v0.5.1 rewrites those tests on the three tools and then
+      removes the eight names, the four verbs, `--server`, `--key` and a v0.3.0 credentials file's
+      `server` and `key` (d15) together.
 
 - **d13 — The breaking changes are these, and each has its migration.**
 

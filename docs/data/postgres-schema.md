@@ -324,13 +324,25 @@ CREATE TABLE workareas (
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
     crew_id    uuid,                   -- the crew record this workarea names, or NULL
+    user_root  boolean     NOT NULL DEFAULT false,
+                                       -- universe.<user>, created by the first key naming its
+                                       -- user; fixed at creation (ADR-0044 d1)
+    namespace_root_id uuid,            -- the user root whose namespace holds the name; NULL in
+                                       -- the shared namespace, user roots included (ADR-0044 d5)
     created_at timestamptz NOT NULL,
-    UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
+    UNIQUE (tenant_id, namespace_root_id, name),  -- unique within one user root's namespace
     UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
     FOREIGN KEY (tenant_id, parent_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
-    CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
+    FOREIGN KEY (tenant_id, namespace_root_id) REFERENCES workareas (tenant_id, id),
+    CHECK ((parent_id IS NULL) = (name = 'universe')),  -- the root, and only the root, is universe
+    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL))
 );
+
+-- unique within the shared namespace: universe, every user root and every
+-- shared workarea (ADR-0044 d5; migrations/0014_user_roots.sql).
+CREATE UNIQUE INDEX workareas_shared_name ON workareas (tenant_id, name)
+    WHERE namespace_root_id IS NULL;
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
 CREATE UNIQUE INDEX workareas_universe ON workareas (tenant_id)
@@ -393,6 +405,8 @@ CREATE TABLE api_keys (
     rotated_from uuid,                  -- successor link; predecessor revoked at grace end
     name       oml_name    NOT NULL,      -- the key's name; never changed, never released
     crew_id    uuid,                      -- the crew record named at issuance; fixed for life
+    user_root_id uuid,                    -- the user root of a user key; NULL for a tenant key;
+                                          -- fixed for life (ADR-0044 d2)
     held_by    text        NOT NULL DEFAULT 'agent'
         CHECK (held_by IN ('agent', 'human', 'service')),
                                           -- issuance-time attestation by the issuing admin
@@ -414,6 +428,7 @@ CREATE TABLE api_keys (
     FOREIGN KEY (tenant_id, rotated_from) REFERENCES api_keys (tenant_id, id),
     FOREIGN KEY (tenant_id, default_workarea_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    FOREIGN KEY (tenant_id, user_root_id) REFERENCES workareas (tenant_id, id),
     CHECK (credential = 'bearer' OR hash IS NULL)  -- a connector key never has a hash
 );
 
@@ -426,10 +441,14 @@ CREATE TABLE grants (
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
     workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
+    covers           text   NOT NULL DEFAULT 'subtree'
+        CHECK (covers IN ('subtree', 'node')),      -- the node's subtree, or the node alone
+                                                    -- (ADR-0044 d4)
     epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
-    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id),
+    CHECK (covers = 'subtree' OR deny = '[]'::jsonb)  -- a node grant masks nothing
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
@@ -497,6 +516,8 @@ constraint (ADR-0034 d12). The keys built this way:
 | `workareas.parent_id` | `(tenant_id, parent_id)` | `workareas (tenant_id, id)` |
 | `api_keys.default_workarea_id` | `(tenant_id, default_workarea_id)` | `workareas (tenant_id, id)` |
 | `api_keys.rotated_from` | `(tenant_id, rotated_from)` | `api_keys (tenant_id, id)` |
+| `api_keys.user_root_id` | `(tenant_id, user_root_id)` | `workareas (tenant_id, id)` |
+| `workareas.namespace_root_id` | `(tenant_id, namespace_root_id)` | `workareas (tenant_id, id)` |
 | `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
 | `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
 
@@ -733,6 +754,54 @@ connection's revocation, so a rotated refresh token keeps its row, and reuse of 
 window is always recognized; and `auth_code_hash`, cleared with the connection's token rows once
 the connection is revoked, so a second redemption is recognized for as long as the connection
 stands.
+
+## web (ADR-0045)
+
+*Since v0.5.0 (migration `0015_web`) ·
+[ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, d4, d5*
+
+```sql
+CREATE TABLE web_emails (
+    tenant_id      uuid        NOT NULL REFERENCES tenants (id),
+    email_hash     bytea       NOT NULL,       -- SHA-256 over a purpose string and the email
+    email          text        NOT NULL,       -- ASCII-lower-cased, at most 254 bytes
+    user_name      oml_name    NOT NULL,       -- at most 56 characters
+    admin          boolean     NOT NULL,
+    google_subject text,                       -- pinned at the first Google sign-in
+    github_subject text,                       -- pinned at the first GitHub sign-in
+    created_at     timestamptz NOT NULL,
+    added_by       uuid        NOT NULL,       -- the admin key that added it; issues the session keys
+    PRIMARY KEY (tenant_id, email_hash),
+    CONSTRAINT web_emails_email_hash UNIQUE (email_hash)   -- one entry per email, deployment-wide
+);
+
+CREATE TABLE web_sessions (
+    token_hash bytea       PRIMARY KEY,        -- SHA-256 of the session token, never the token
+    tenant_id  uuid        NOT NULL,
+    email_hash bytea       NOT NULL,
+    user_name  oml_name    NOT NULL,
+    admin      boolean     NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, email_hash) REFERENCES web_emails (tenant_id, email_hash)
+);
+```
+
+`web_emails` is folded from `web.email_allowed`, `web.email_changed` and `web.email_removed`; the
+journal carries `email_digest`, which is `email_hash`, never the address, so a re-fold restores
+every entry's digest, user and admin flag but not its address, which the admin adds again. A
+change or a removal ends the entry's sessions in the same commit. The provider subjects are an
+operational write at each provider's first sign-in, journalled nothing. A sign-in finds its entry
+by `email_hash`, and a request finds its session by `token_hash`, before any tenant is known,
+under `key_resolution` policies of 0001's form; every other statement runs under the tenant's
+`tenant_isolation`. `web_sessions` is operational state: a row is written at an admitted callback,
+deleted at sign-out, at the read that finds it expired, by the hourly sweep once expired, and with
+its entry. The serving role holds `SELECT, INSERT, UPDATE, DELETE` on `web_emails` and
+`SELECT, INSERT, DELETE` on `web_sessions`.
+
+The same migration lets `api_keys.credential` be `session` and adds `api_keys.session_for`
+(`oml_name`), the allowlist user a session key serves, set exactly on a session key
+(`api_keys_session_user`); a session key, like a connector key, has no hash.
 
 ## vocabularies (ADR-0021)
 
@@ -1193,6 +1262,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `simulations` | simulation open / end events |
 | `connect_codes`, `oauth_connections` (state columns, `resource` among them) | `connection.code_issued`, `connection.opened`, `connection.revoked`, and `key.revoked` for a voided code |
 | `api_keys` (state columns, `credential` among them) | key issue / rotate / revoke events, `system.names_assigned` |
+| `web_emails` (all but the address and the pinned subjects) | `web.email_allowed`, `web.email_changed`, `web.email_removed` |
 
 A chain's `system.names_assigned` sits later in the chain than the creation events of the rows it
 names, and those rows' `name` and `path` are `NOT NULL`. So a fold of a chain from genesis is two
@@ -1223,8 +1293,8 @@ re-opens a replay window bounded by key behaviour), `read_events` (retention-bou
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
 exist), `upload_sessions` (in-flight uploads restart), `oauth_tokens` (loss ends every open
 connection at its next request or refresh, and each needs a new connect code),
-`oauth_authorizations` (pages in progress start again) and `oauth_clients` (documents are fetched
-again; registered clients register again).
+`oauth_authorizations` (pages in progress start again), `oauth_clients` (documents are fetched
+again; registered clients register again) and `web_sessions` (every person signs in again).
 
 ## Migrations
 

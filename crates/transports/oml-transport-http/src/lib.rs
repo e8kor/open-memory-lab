@@ -23,6 +23,7 @@ pub mod mcp;
 pub mod oauth;
 pub mod time;
 pub mod traffic;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -43,6 +44,7 @@ use uuid::Uuid;
 
 use oml_app::App;
 use oml_app::app::Caller;
+use oml_app::domain::access::Covers;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
@@ -50,7 +52,7 @@ use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
-    Signer, StoreError,
+    Signer, StoreError, WebStore,
 };
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
@@ -98,6 +100,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workareas/{workarea}/crew"),
     ("GET", "/v2/events"),
     ("POST", "/v2/bootstrap/claim"),
+    ("GET", "/v2/web/emails"),
+    ("POST", "/v2/web/emails"),
+    ("POST", "/v2/web/emails/remove"),
+    ("POST", "/v2/admin/memories/search"),
+    ("GET", "/v2/admin/memories/{artifact_id}"),
 ];
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
@@ -189,6 +196,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     documents: oauth::Documents,
     /// The traffic layer's configuration (ADR-0042).
     traffic: traffic::Traffic,
+    /// The web pages, where the composition set providers (ADR-0045 d17).
+    web: Option<Arc<web::WebPages>>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -204,6 +213,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             sealer: Arc::clone(&self.sealer),
             documents: self.documents.clone(),
             traffic: self.traffic.clone(),
+            web: self.web.clone(),
         }
     }
 }
@@ -212,7 +222,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
 /// composition's store is both ports.
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -239,7 +249,8 @@ where
             let router = probes
                 .merge(rings)
                 .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
-            self.with_oauth_routes(router).with_state(self)
+            let router = self.with_oauth_routes(router);
+            self.with_web_routes(router).with_state(self)
         } else {
             probes.fallback(names_unassigned).with_state(self)
         };
@@ -282,6 +293,11 @@ where
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
             ("GET", "/v2/events") => get(Self::events_tail),
             ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
+            ("GET", "/v2/web/emails") => get(Self::list_web_emails),
+            ("POST", "/v2/web/emails") => post(Self::allow_web_email),
+            ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
+            ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
+            ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
     }
@@ -289,7 +305,7 @@ where
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -316,6 +332,7 @@ where
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
             documents: oauth::Documents::default(),
             traffic: traffic::Traffic::default(),
+            web: None,
         }
     }
 
@@ -335,6 +352,14 @@ where
     #[must_use]
     pub fn with_traffic(mut self, traffic: traffic::Traffic) -> Self {
         self.traffic = traffic;
+        self
+    }
+
+    /// The web pages over their providers (ADR-0045 d1, d17): routed where
+    /// `oauth.issuer` is also set. Without it no web route exists.
+    #[must_use]
+    pub fn with_web(mut self, pages: web::WebPages) -> Self {
+        self.web = Some(Arc::new(pages));
         self
     }
 
@@ -386,6 +411,10 @@ where
             // The lead's oauth.issuer, or null: doctor reads whether
             // connections are on here, off the route it checks (ADR-0031 d14).
             "oauth_issuer": st.app.oauth_issuer().map(|issuer| issuer.as_str()),
+            // The web pages' providers and their failed exchanges since
+            // start, or null where the pages are off: doctor's web line
+            // reads it (ADR-0045 d18).
+            "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
         });
         let status = if ready {
             StatusCode::OK
@@ -979,6 +1008,7 @@ where
                 Ok(GrantRequest {
                     node: reference(&format!("/grants/{i}/workarea"), &g.workarea)?,
                     role: parse_grant_role(&g.role)?,
+                    covers: parse_covers(i, g.covers.as_deref())?,
                     deny: g
                         .deny
                         .iter()
@@ -993,6 +1023,12 @@ where
         let default_workarea =
             optional_reference("/default_workarea", req.default_workarea.as_deref())?;
         let crew = optional_reference("/crew", req.crew.as_deref())?;
+        // A user's name, under the creation grammar (ADR-0044 d2).
+        let user = req
+            .user
+            .as_deref()
+            .map(|user| creation_name("/user", user))
+            .transpose()?;
         let principal = req
             .principal
             .clone()
@@ -1007,6 +1043,7 @@ where
             crew,
             grants,
             connect_code: req.connect_code,
+            user,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
@@ -1090,13 +1127,13 @@ where
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
             ));
         }
-        let parent = reference("/parent", &req.parent)?;
+        let parent = optional_reference("/parent", req.parent.as_deref())?;
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &name, Some(parent.clone()), crew.clone())
+                .create_workarea(&token, &name, parent.clone(), crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -1765,6 +1802,9 @@ struct GrantBody {
     role: String,
     #[serde(default)]
     deny: Vec<DenyBody>,
+    /// `subtree`, the default, or `node` (ADR-0044 d4).
+    #[serde(default)]
+    covers: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1786,6 +1826,10 @@ struct KeyIssueBody {
     default_workarea: Option<String>,
     /// The key's crew record, by id or name (ADR-0026 d8).
     crew: Option<String>,
+    /// The person the key acts for, by the user's name; the first key
+    /// naming a user creates its root (ADR-0044 d2).
+    #[serde(default)]
+    user: Option<String>,
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,
@@ -1822,7 +1866,9 @@ struct DenialBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkareaCreateBody {
-    parent: String,
+    /// Omitted, a user key's own root (ADR-0044 d6).
+    #[serde(default)]
+    parent: Option<String>,
     name: String,
     /// A crew record's id or name (ADR-0026 d8).
     #[serde(default)]
@@ -2187,6 +2233,20 @@ fn not_the_shape(e: serde_json::Error) -> ApiError {
     ))
 }
 
+/// A grant's `covers`, `subtree` when omitted; any other value is
+/// `request.validation` naming `/grants/<i>/covers` (ADR-0044 d4).
+fn parse_covers(index: usize, covers: Option<&str>) -> Result<Covers, ApiError> {
+    match covers {
+        None => Ok(Covers::Subtree),
+        Some(value) => Covers::parse(value).ok_or_else(|| {
+            ApiError::validation(format!(
+                "covers is subtree or node, not {value:?} (ADR-0044 d4)"
+            ))
+            .with_details(json!({ "field": format!("/grants/{index}/covers") }))
+        }),
+    }
+}
+
 fn parse_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
@@ -2225,6 +2285,7 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "role": issued.role.as_str(),
         "principal": issued.principal,
         "crew_id": issued.crew_id,
+        "user": issued.user.as_ref().map(named_ref_json),
         "default_workarea_id": issued.default_workarea,
         "held_by": issued.held_by.map(HeldBy::as_str),
         "label": label,
@@ -2281,6 +2342,7 @@ fn grant_json(g: &GrantRecord) -> Value {
         "grant_id": g.grant.grant_id,
         "workarea_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
+        "covers": g.grant.covers.as_str(),
         "deny": g
             .grant
             .deny
@@ -2310,6 +2372,7 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
         "role": key.role.as_str(),
         "principal": key.principal,
         "crew_id": key.crew_id,
+        "user": detail.user.as_ref().map(named_ref_json),
         "default_workarea_id": key.default_workarea,
         "held_by": detail.held_by.map(HeldBy::as_str),
         "expiry": Value::Null,
@@ -2351,6 +2414,7 @@ fn whoami_json(whoami: &Whoami) -> Value {
             "path": w.path,
         })),
         "crew": whoami.crew.as_ref().map(named),
+        "user": whoami.user.as_ref().map(named),
         "grants": whoami.grants.iter().map(whoami_grant_json).collect::<Vec<_>>(),
     })
 }
@@ -2364,8 +2428,14 @@ fn whoami_grant_json(g: &GrantRecord) -> Value {
         "grant_id": g.grant.grant_id,
         "workarea_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
+        "covers": g.grant.covers.as_str(),
         "epoch": g.epoch,
     })
+}
+
+/// A reference `{id, name}`, as `user` is served (ADR-0044 d11).
+fn named_ref_json(r: &oml_app::types::NamedRef) -> Value {
+    json!({ "id": r.id, "name": r.name.as_str() })
 }
 
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
@@ -2537,7 +2607,13 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "workarea_path": served.workarea_path,
         "kind": m.kind.as_str(),
         "state": m.status.as_str(),
-        "principal": m.author_principal,
+        // A universe claim names no author outside its authoring key set
+        // (ADR-0044 d9).
+        "principal": if served.anonymous {
+            Value::Null
+        } else {
+            Value::from(m.author_principal.clone())
+        },
         "provenance": "agent",
         "simulation_id": Value::Null,
         "self_signed": false,
@@ -2601,6 +2677,7 @@ fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord
         "path": path,
         "status": workarea.status(),
         "crew": crew.map(crew_json),
+        "user_root": workarea.user_root,
     })
 }
 
@@ -2678,6 +2755,7 @@ mod tests {
                 node: Uuid::from_u128(2),
                 role: Role::Writer,
                 deny: vec![sealed],
+                covers: Covers::Subtree,
             },
             epoch: 41,
         };
@@ -2687,6 +2765,7 @@ mod tests {
                 "grant_id": Uuid::from_u128(1),
                 "workarea_node_id": Uuid::from_u128(2),
                 "role": "writer",
+                "covers": "subtree",
                 "epoch": 41,
             })
         );

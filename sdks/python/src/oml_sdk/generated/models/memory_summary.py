@@ -49,7 +49,9 @@ class MemorySummary:
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
-        principal (str | Unset):
+        principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
+            its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
+            source (ADR-0044 d9).
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
@@ -75,7 +77,7 @@ class MemorySummary:
     created_at: datetime.datetime
     promoted_at: datetime.datetime | None
     retirement: bool = False
-    principal: str | Unset = UNSET
+    principal: None | str | Unset = UNSET
     provenance: MemorySummaryProvenance | Unset = UNSET
     simulation_id: None | str | Unset = UNSET
     self_signed: bool | Unset = UNSET
@@ -129,7 +131,11 @@ class MemorySummary:
         else:
             promoted_at = self.promoted_at
 
-        principal = self.principal
+        principal: None | str | Unset
+        if isinstance(self.principal, Unset):
+            principal = UNSET
+        else:
+            principal = self.principal
 
         provenance: str | Unset = UNSET
         if not isinstance(self.provenance, Unset):
@@ -276,7 +282,14 @@ class MemorySummary:
 
         promoted_at = _parse_promoted_at(d.pop("promoted_at"))
 
-        principal = d.pop("principal", UNSET)
+        def _parse_principal(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        principal = _parse_principal(d.pop("principal", UNSET))
 
         _provenance = d.pop("provenance", UNSET)
         provenance: MemorySummaryProvenance | Unset

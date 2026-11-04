@@ -116,7 +116,9 @@ A tenant's workareas form one tree under `universe`. A grant on a workarea cover
 | Point a workarea at another crew | `oml workareas crew set <workarea> --crew <crew>` |
 
 A new workarea starts in `development`; the ladder to `committed` and `validated` is planned for
-v0.5.0. An admin key reads the structure of every workarea in its tenant and never a memory in it.
+v0.5.2. An admin key reads the structure of every workarea in its tenant and never a memory in it;
+the [admin read](../api/http-api.md#admin-read), since v0.5.0, adds two routes on which it
+reads every memory's text and attribution, each read journalled.
 
 Workareas, crews, keys and tenants each carry a **name**: unique in the tenant, given at creation,
 never changed and never released ([names](../concepts.md#names)). Every verb accepts a name where
@@ -234,5 +236,5 @@ verify-chain` exists and is refused while the server serves no chain export.
   the request.
 
 Guardrails, the reviewed rules every session loads and each tool call is checked against, are
-planned for v0.5.0 ([ADR-0037](../product/releases.md#planned-releases), proposed); no guardrail
+planned for v0.5.1 ([ADR-0037](../product/releases.md#planned-releases), proposed); no guardrail
 setting exists in v0.4.0.
