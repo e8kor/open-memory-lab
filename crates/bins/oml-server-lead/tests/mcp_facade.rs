@@ -727,21 +727,21 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
         "request.validation"
     );
 
-    // A catalog tool that is not built yet is named, not unknown.
-    let unbuilt = rpc(
+    // A designed tool is named as designed, not unknown.
+    let designed = rpc(
         &router,
         &writer,
         4,
         "tools/call",
-        json!({"name": "oml_graph", "arguments": {}}),
+        json!({"name": "oml_vocab", "arguments": {}}),
     )
     .await;
-    assert_eq!(unbuilt["error"]["code"], -32602);
+    assert_eq!(designed["error"]["code"], -32602);
     assert!(
-        unbuilt["error"]["message"]
+        designed["error"]["message"]
             .as_str()
             .expect("message")
-            .contains("not built yet")
+            .contains("is designed")
     );
 
     drop_db(&db).await;
@@ -858,39 +858,105 @@ async fn a_tool_that_is_not_served_answers_json_rpc_32602() {
 }
 
 #[tokio::test]
-async fn tools_list_serves_exactly_the_eleven_built_tools() {
+async fn tools_list_names_three_tools_each_with_its_annotations() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (writer, _, _, _) = crew(&router).await;
 
-    // The served subset of mcp-tools.json, in catalog order (ADR-0025 d12).
+    // Exactly the three task-shaped tools, in catalog order, each with
+    // ADR-0039 d5's hints: the reads read-only, the write neither read-only
+    // nor destructive, all three idempotent and closed-world (d2, d5).
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
-    let names: Vec<&str> = listed["result"]["tools"]
-        .as_array()
-        .expect("tools")
+    let tools = listed["result"]["tools"].as_array().expect("tools");
+    let named: Vec<(&str, &Value)> = tools
         .iter()
-        .filter_map(|t| t["name"].as_str())
+        .map(|t| (t["name"].as_str().expect("name"), &t["annotations"]))
         .collect();
+    let read_only = json!({"readOnlyHint": true, "idempotentHint": true, "openWorldHint": false});
     assert_eq!(
-        names,
+        named,
         [
-            "oml_write",
-            "oml_read",
-            "oml_workarea",
-            "oml_remember",
-            "oml_recall",
-            "oml_learn",
-            "oml_get",
-            "oml_supersede",
-            "oml_my_work",
-            "oml_workarea_info",
-            "oml_events_tail",
-        ]
+            (
+                "oml_write",
+                &json!({
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false,
+                })
+            ),
+            ("oml_read", &read_only),
+            ("oml_workarea", &read_only),
+        ],
+        "{listed}"
     );
 
-    // The other four catalog tools are named as not built, never unknown.
-    for (id, name) in (2..).zip(["oml_attach", "oml_relate_propose", "oml_graph", "oml_vocab"]) {
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn tools_list_names_no_designed_tool() {
+    let designed: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.designed.json"))
+            .expect("json");
+    let designed_tools: Vec<&str> = designed["tools"]
+        .as_array()
+        .expect("designed tools")
+        .iter()
+        .map(|t| t["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(designed_tools, ["oml_relate_propose", "oml_vocab"]);
+    let designed_arguments = designed["designed_arguments"]
+        .as_object()
+        .expect("designed arguments");
+
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+
+    // No designed tool, no designed argument, and none of the v0.3.0 names
+    // or the two tools with no successor tool is listed (ADR-0039 d2, d10).
+    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
+    let tools = listed["result"]["tools"].as_array().expect("tools");
+    for tool in tools {
+        let name = tool["name"].as_str().expect("name");
+        assert!(!designed_tools.contains(&name), "{name} is designed");
+        let properties = tool["inputSchema"]["properties"]
+            .as_object()
+            .expect("properties");
+        for argument in designed_arguments
+            .get(name)
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(serde_json::Map::keys)
+        {
+            assert!(
+                !properties.contains_key(argument),
+                "{name} lists the designed argument {argument}"
+            );
+        }
+    }
+    let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+    for gone in [
+        "oml_remember",
+        "oml_learn",
+        "oml_recall",
+        "oml_get",
+        "oml_supersede",
+        "oml_my_work",
+        "oml_workarea_info",
+        "oml_events_tail",
+        "oml_attach",
+        "oml_graph",
+    ] {
+        assert!(!names.contains(&gone), "{gone} is listed: {names:?}");
+    }
+
+    // A designed tool is a protocol fault that names where it is designed,
+    // never an unknown tool under the verb ceiling (ADR-0039 d11).
+    for (id, name) in (2..).zip(designed_tools) {
         let body = rpc(
             &router,
             &writer,
@@ -901,7 +967,7 @@ async fn tools_list_serves_exactly_the_eleven_built_tools() {
         .await;
         assert_eq!(body["error"]["code"], -32602, "{body}");
         let message = body["error"]["message"].as_str().expect("message");
-        assert!(message.contains("not built yet"), "{body}");
+        assert!(message.contains("mcp-tools.designed.json"), "{body}");
         assert!(!message.contains("(R1)"), "{body}");
     }
 
@@ -1888,15 +1954,16 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
     assert_eq!(error["code"], "request.validation", "{refused}");
     assert_eq!(error["details"]["field"], "/workarea", "{refused}");
 
-    // The served entry describes what the build serves: the id or the
-    // name, and no path (ADR-0025 d12).
+    // The served entry of its successor, oml_write, describes what the
+    // build serves: the id or the name, and no path (ADR-0025 d12,
+    // ADR-0039 d10).
     let listed = rpc(&router, &agent, 4, "tools/list", json!({})).await;
     let tool = listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
-        .find(|t| t["name"] == "oml_remember")
-        .expect("oml_remember is served");
+        .find(|t| t["name"] == "oml_write")
+        .expect("oml_write is served");
     let described = tool["inputSchema"]["properties"]["workarea"]["description"]
         .as_str()
         .expect("a description");
@@ -1972,15 +2039,16 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;
 
-    // Listed, and omitted workarea means the key's journalled default: the
-    // same answer as naming it, from one ring call.
+    // Listed under its v0.4.0 name, oml_workarea, and still callable under
+    // this one; omitted workarea means the key's journalled default: the
+    // same answer as naming it, from one ring call (ADR-0039 d10, d12).
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
     assert!(
         listed["result"]["tools"]
             .as_array()
             .expect("tools")
             .iter()
-            .any(|t| t["name"] == "oml_workarea_info"),
+            .any(|t| t["name"] == "oml_workarea"),
         "{listed}"
     );
     let info = call_tool(&router, &agent, 2, "oml_workarea_info", json!({})).await;
@@ -2237,15 +2305,16 @@ async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
     };
     let (writer, _, _, _) = crew(&router).await;
 
-    // The served schema states the ring's page bound, so an agent never
-    // sends a limit the catalog admits and the ring refuses (ADR-0025 d12).
+    // The served schema of its successor, oml_read's listing, states the
+    // ring's page bound, so an agent never sends a limit the catalog admits
+    // and the ring refuses (ADR-0025 d12, ADR-0039 d10).
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
     let my_work = listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
-        .find(|t| t["name"] == "oml_my_work")
-        .expect("oml_my_work is served");
+        .find(|t| t["name"] == "oml_read")
+        .expect("oml_read is served");
     let limit = &my_work["inputSchema"]["properties"]["limit"];
     assert_eq!(limit["minimum"], 1, "{limit}");
     assert_eq!(limit["maximum"], 200, "{limit}");
@@ -2413,25 +2482,26 @@ const ALLOY: &str =
     "Tema Alloys aluminium price is 409 USD/t for Q1-2027 delivery, valid until 2026-12-15.";
 
 #[tokio::test]
-async fn oml_recall_takes_include_own_held_and_max_tokens_from_the_catalog_schema() {
+async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_them() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (agent, _, reader, _) = agent_crew(&router).await;
 
-    // tools/list advertises both inputs and the ring's k and max_tokens
-    // maxima, the latter the largest integer RFC 8785 digests exactly
-    // (retrieval.md token budgets; ADR-0025 d7, d12).
+    // tools/list advertises, on the successor oml_read, the one flag for
+    // unreviewed rows and the ring's k and max_tokens maxima, the latter the
+    // largest integer RFC 8785 digests exactly (retrieval.md token budgets;
+    // ADR-0025 d7, d12; ADR-0039 d4, d10).
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
     let recall = listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
-        .find(|t| t["name"] == "oml_recall")
-        .expect("oml_recall is served");
+        .find(|t| t["name"] == "oml_read")
+        .expect("oml_read is served");
     let properties = &recall["inputSchema"]["properties"];
-    assert_eq!(properties["include_own_held"]["type"], "boolean");
-    assert_eq!(properties["include_own_held"]["default"], false);
+    assert_eq!(properties["include_unreviewed"]["type"], "boolean");
+    assert_eq!(properties["include_unreviewed"]["default"], false);
     assert_eq!(properties["max_tokens"]["type"], "integer");
     assert_eq!(properties["max_tokens"]["minimum"], 1);
     assert_eq!(properties["max_tokens"]["maximum"], MAX_TOKENS);

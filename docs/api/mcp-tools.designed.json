@@ -1,0 +1,147 @@
+{
+  "_meta": {
+    "comment": "Status: designed, never served (ADR-0039 d2). The designed annex of the MCP catalog: the tools and the served tools' arguments that mcp-plugin.md decides and the server does not serve. tools/list never serves this file; mcp-tools.json holds exactly the served catalog, and the two name no tool in common (scripts/check_contract_sync.py). An entry moves to mcp-tools.json in the change that serves it. A designed tool called by name is a JSON-RPC -32602 naming this file; a designed argument sent to a served tool is refused with request.validation: oml_read names lineage and depth in details.field, and oml_write refuses attachments as outside its input schema. A fourth served tool needs a record saying why no parameter of the three, no resource and no hook carries it (ADR-0039 d8).",
+    "catalog_page": "mcp-plugin.md",
+    "design_spec_version": "0.4.0-design"
+  },
+  "tools": [
+    {
+      "name": "oml_relate_propose",
+      "description": "Propose a labelled edge - claim-to-claim or workarea-to-workarea. The proposal is journalled and pending; it confers nothing and changes no access until a different dreamer ratifies it (R2 extends to edges). Ratification is not on this surface. Rides the designed POST /v2/edges with kind claim or workarea (ADR-0039 d9).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workarea",
+              "claim"
+            ],
+            "description": "Which graph the edge lives in; endpoints are workareas, by node id or name, or artifact ids accordingly."
+          },
+          "label": {
+            "type": "string",
+            "description": "For workarea edges, the closed set: relates_to | continues | derived_from | mirrors. The claim-edge label vocabulary is not fixed by the design - an open detail tracked in the roadmap."
+          },
+          "from": {
+            "type": "string",
+            "description": "The from endpoint (a workarea's node id or name, or an artifact id, per kind)."
+          },
+          "to": {
+            "type": "string",
+            "description": "The to endpoint (a workarea's node id or name, or an artifact id, per kind)."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional proposer note, journalled with the proposal."
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oml_vocab",
+      "description": "Read the tenant's vocabularies: term lookup, deterministic typeahead, hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool, four actions, each one GET /v2/vocab/* call. Strictly read-only at the reader ceiling: proposing a term or mapping is oml_write with the matching kind, and nothing here deprecates, ratifies or cuts a release.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "suggest",
+              "get",
+              "hierarchy",
+              "mappings"
+            ],
+            "description": "suggest takes q (and optionally workarea); get and hierarchy take curie; mappings takes term."
+          },
+          "q": {
+            "type": "string",
+            "description": "With action suggest: the prefix+label typeahead text, deterministic matching only - no model runs here."
+          },
+          "workarea": {
+            "type": "string",
+            "description": "With action suggest: optionally restrict to one granted vocabulary workarea, by node id or name."
+          },
+          "curie": {
+            "type": "string",
+            "description": "With action get or hierarchy: the term's CURIE. Unknown and out-of-scope are indistinguishable (fail closed)."
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "parents",
+              "children",
+              "ancestors",
+              "descendants"
+            ],
+            "description": "With action hierarchy: which way to look over ratified is_a, served from the per-release closure (a lookup, never a traversal)."
+          },
+          "release": {
+            "type": "string",
+            "description": "With action hierarchy: optional release id; defaults to the owning vocabulary's latest ratified release."
+          },
+          "term": {
+            "type": "string",
+            "description": "With action mappings: the CURIE whose ratified mappings to return."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size, where the action paginates (suggest, hierarchy, mappings)."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor from the previous page."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "designed_arguments": {
+    "oml_read": {
+      "lineage": {
+        "type": "string",
+        "enum": [
+          "ancestors",
+          "descendants"
+        ],
+        "description": "Get mode, with artifact_id: return the claim's declared lineage in that direction as claim items, the successor of oml_graph (ADR-0039 d2, d4). Served once the lineage read is routed."
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "With lineage: how many hops from artifact_id; a value above the served ceiling is a typed limit error, never a truncated answer pretending to be whole."
+      }
+    },
+    "oml_write": {
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "upload_session": {
+              "type": "string",
+              "description": "A completed upload session; its recorded digest is bound into the signed submission envelope (D3)."
+            }
+          },
+          "required": [
+            "upload_session"
+          ],
+          "additionalProperties": false
+        },
+        "description": "Upload sessions completed through the designed oml attach put <file> or an SDK's upload. MCP carries no file bytes, so no tool uploads (ADR-0039 d2)."
+      }
+    }
+  }
+}

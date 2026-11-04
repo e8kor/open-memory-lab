@@ -29,6 +29,12 @@ This script extracts each surface and fails with a diff on any disagreement:
   * a `memory.<field>` read in README.md, an SDK README or a script under
     scripts/ that names a field the served Memory schema does not declare:
     whatever names a field moves in the step that renames it (ADR-0039 d14)
+  * docs/api/mcp-tools.json's tools, in order, other than the tools/list the
+    facade serves (SERVED_TOOLS in crates/transports/oml-transport-http/src/
+    mcp.rs, which serves that file whole); a tool docs/api/mcp-tools.designed.json
+    and mcp-tools.json both name, or a designed tool the facade does not name as
+    designed (DESIGNED_TOOLS); and a designed argument that names no served
+    tool or that the served tool's inputSchema already declares (ADR-0039 d2)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -61,6 +67,7 @@ Exit status: 0 when all surfaces agree, 1 with a readable diff otherwise.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -76,6 +83,9 @@ HTTP_API_MD = ROOT / "docs" / "api" / "http-api.md"
 OPENAPI_YAML = ROOT / "docs" / "api" / "openapi.yaml"
 DESIGNED_YAML = ROOT / "docs" / "api" / "openapi-designed.yaml"
 DESIGNED_FIELDS = "x-oml-designed-fields"
+MCP_TOOLS_JSON = ROOT / "docs" / "api" / "mcp-tools.json"
+MCP_DESIGNED_JSON = ROOT / "docs" / "api" / "mcp-tools.designed.json"
+MCP_RS = ROOT / "crates" / "transports" / "oml-transport-http" / "src" / "mcp.rs"
 MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
                   *sorted((ROOT / "scripts").glob("*.sh"))]
 MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
@@ -364,6 +374,45 @@ def null_keys(node, path: str = "") -> list[str]:
     return found
 
 
+def rust_str_array(source: str, name: str) -> list[str] | None:
+    """The string literals of `const NAME: [&str; n] = [...]` in `source`."""
+    match = re.search(name + r": \[&str; \d+\] = \[([^\]]*)\]", source)
+    return re.findall(r'"([^"]+)"', match.group(1)) if match else None
+
+
+def mcp_catalog_problems() -> list[str]:
+    """mcp-tools.json is the served tools/list and mcp-tools.designed.json the
+    designed annex, disjoint from it (ADR-0039 d2)."""
+    served = json.loads(MCP_TOOLS_JSON.read_text(encoding="utf-8"))["tools"]
+    designed = json.loads(MCP_DESIGNED_JSON.read_text(encoding="utf-8"))
+    mcp_rs = MCP_RS.read_text(encoding="utf-8")
+    problems = []
+    names = [t["name"] for t in served]
+    listed = rust_str_array(mcp_rs, "SERVED_TOOLS")
+    if listed is None:
+        problems.append("SERVED_TOOLS not found in mcp.rs")
+    elif names != listed:
+        problems.append(f"mcp-tools.json declares {names}, the facade serves {listed}")
+    designed_names = [t["name"] for t in designed.get("tools", [])]
+    for name in sorted(set(designed_names) & set(names)):
+        problems.append(f"{name} is in both mcp-tools.json and mcp-tools.designed.json")
+    named_designed = rust_str_array(mcp_rs, "DESIGNED_TOOLS")
+    if named_designed is None:
+        problems.append("DESIGNED_TOOLS not found in mcp.rs")
+    elif sorted(named_designed) != sorted(designed_names):
+        problems.append(
+            f"mcp-tools.designed.json declares {designed_names}, the facade names {named_designed} as designed"
+        )
+    schemas = {t["name"]: t["inputSchema"].get("properties", {}) for t in served}
+    for tool, arguments in sorted(designed.get("designed_arguments", {}).items()):
+        if tool not in schemas:
+            problems.append(f"designed_arguments names {tool}, which mcp-tools.json does not serve")
+            continue
+        for argument in sorted(set(arguments) & set(schemas[tool])):
+            problems.append(f"{tool}.{argument} is designed and also in the served inputSchema")
+    return problems
+
+
 def format_ops(ops: set[tuple[str, str]]) -> list[str]:
     return [f"{method} {path}" for method, path in sorted(ops, key=lambda t: (t[1], t[0]))]
 
@@ -468,6 +517,10 @@ def main() -> int:
         failures.append(("a memory field read that the served Memory schema does not declare",
                          read_problems))
 
+    catalog_problems = mcp_catalog_problems()
+    if catalog_problems:
+        failures.append(("the MCP catalog disagrees with the served tools/list", catalog_problems))
+
     mark_lines = []
     for op, op_marks in sorted(marks.items(), key=lambda t: (t[0][1], t[0][0])):
         want = {"served"} if op in served_ops else {"designed"} if op in designed_ops else set()
@@ -492,6 +545,7 @@ def main() -> int:
     print(f"  error codes agreeing on all three surfaces: {len(enum_set)}")
     print(f"  path+method operations agreeing: {len(spec_ops)} "
           f"({len(served_ops)} served, {len(designed_ops)} designed)")
+    print("  MCP tools: mcp-tools.json is the served tools/list, mcp-tools.designed.json disjoint from it")
     return 0
 
 

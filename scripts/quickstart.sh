@@ -6,10 +6,11 @@
 # an id would go (ADR-0026 d4, d6): the agent's one key, a writer key with a
 # writer and a reader grant, and a dreamer key (the reviewer, a different
 # identity). Then checks
-# the agent plugin end to end over /mcp on the agent's one key: remember ->
-# held in its own work -> its held row in its own recall -> approved by the
-# dreamer -> recalled (docs/api/mcp-plugin.md, "Wiring it into your agent";
-# ADR-0025). Prints the environment the `oml` Claude Code plugin reads.
+# the agent plugin end to end over /mcp on the agent's one key, through
+# oml_write and oml_read alone: write -> held in its own work -> its held row
+# in its own recall -> approved by the dreamer, as its own work's state says ->
+# recalled (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025,
+# ADR-0039 d2). Prints the environment the `oml` Claude Code plugin reads.
 #
 # Two ways to run it:
 #   docker compose up -d && scripts/quickstart.sh
@@ -100,24 +101,27 @@ state_of() { # list artifact_id response: the artifact's state in that list, if 
 }
 
 tools="$(rpc 1 tools/list '{}' | jq -r '[.result.tools[].name] | join(", ")')"
-held="$(call 2 oml_remember '{"claim_key":"quickstart-check","text":"The quickstart wrote this memory through the agent plugin.","idempotency_key":"quickstart/1"}')"
-[ "$(jq -r .result.structuredContent.state <<<"$held")" = "held" ] || fail "oml_remember did not hold the write: $held"
+held="$(call 2 oml_write '{"text":"The quickstart wrote this memory through the agent plugin.","idempotency_key":"quickstart/1"}')"
+[ "$(jq -r .result.structuredContent.state <<<"$held")" = "held" ] || fail "oml_write did not hold the write: $held"
 artifact="$(jq -r .result.structuredContent.artifact_id <<<"$held")"
+claim="$(jq -c '{claim_key: .result.structuredContent.claim_key}' <<<"$held")"
 
-work="$(call 3 oml_my_work '{"claim_key":"quickstart-check"}')"
-[ "$(state_of items "$artifact" "$work")" = "held" ] || fail "oml_my_work does not list the write as held: $work"
-own="$(call 4 oml_recall '{"query":"quickstart wrote","include_own_held":true}')"
-[ "$(state_of hits "$artifact" "$own")" = "held" ] || fail "oml_recall with include_own_held did not return the held write to its author: $own"
+work="$(call 3 oml_read "$claim")"
+[ "$(state_of items "$artifact" "$work")" = "held" ] || fail "oml_read does not list the write as held in its own work: $work"
+own="$(call 4 oml_read '{"query":"quickstart wrote","include_unreviewed":true}')"
+[ "$(state_of hits "$artifact" "$own")" = "held" ] || fail "oml_read with include_unreviewed did not recall the held write to its author: $own"
 
 oml --key "$dreamer" review next >/dev/null
 oml --key "$dreamer" review verdict --memory "$artifact" --approve >/dev/null
-recalled="$(call 5 oml_recall '{"query":"quickstart wrote"}')"
-[ "$(state_of hits "$artifact" "$recalled")" = "promoted" ] || fail "the approved memory did not come back from oml_recall: $recalled"
+approved="$(call 5 oml_read '{"state":"promoted"}')"
+[ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
+recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
+[ "$(state_of hits "$artifact" "$recalled")" = "promoted" ] || fail "the approved memory did not come back from oml_read: $recalled"
 
 cat <<EOF
-OML is ready at $OML_URL. The MCP check passed on the agent's one key: remember ->
-held in its own work and its own recall -> approved by a different identity ->
-recalled. Tools served: $tools.
+OML is ready at $OML_URL. The MCP check passed on the agent's one key: write ->
+held in its own work and its own recall -> approved by a different identity, as
+its own work shows -> recalled. Tools served: $tools.
 
 Workarea "$WORKAREA_NAME": $workarea
 

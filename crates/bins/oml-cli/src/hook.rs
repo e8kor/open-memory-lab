@@ -267,21 +267,21 @@ fn render(r: &Rendered<'_>) -> String {
         )),
         None => out.push(format!(
             "OML memory for this session, from {}, in this key's default workarea \
-             (oml_workarea_info names it).",
+             (oml_workarea names it).",
             origin(r.server)
         )),
     }
     // The hook's own instructions come before the framing line, which then
     // sits directly over the stored entries it describes.
     out.push(
-        "To record a durable fact or decision, call oml_remember with one checkable claim, its \
-         source and date, a stable claim_key and an idempotency_key such as \
-         <task>/<date>/<claim_key>; never a secret."
+        "To record a durable fact or decision, call oml_write with one checkable claim, its \
+         source and date and an idempotency_key such as <task>/<date>/<topic>, and no \
+         claim_key; never a secret."
             .to_owned(),
     );
     if r.compacted {
         out.push(
-            "The conversation was just compacted. Before continuing, record with oml_remember \
+            "The conversation was just compacted. Before continuing, record with oml_write \
              the durable facts and decisions from the summary that are not in OML yet."
                 .to_owned(),
         );
@@ -344,7 +344,7 @@ fn render(r: &Rendered<'_>) -> String {
     out.extend(hits);
     if cut {
         out.push(format!(
-            "- {} more matched beyond the {}-token budget; oml_recall shows them.",
+            "- {} more matched beyond the {}-token budget; oml_read shows them.",
             r.budget["hits_omitted"], r.budget["max_tokens"]
         ));
     }

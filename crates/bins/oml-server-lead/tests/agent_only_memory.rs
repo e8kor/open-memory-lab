@@ -467,31 +467,16 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     let (agent, other, wa) = (&crew.agent, &crew.other, crew.workarea.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 
-    // 1. One connection serves the eleven built tools: the eight v0.3.0
-    // tools and, beside them, oml_write, oml_read and oml_workarea
-    // (ADR-0025 d12; ADR-0039 d2).
+    // 1. One connection lists the three tools, oml_write, oml_read and
+    // oml_workarea; the v0.3.0 names this journey calls are not listed and
+    // still answer (ADR-0025 d12; ADR-0039 d2, d12).
     let listed = agent.rpc("tools/list", json!({})).await;
     let names = set(listed["result"]["tools"]
         .as_array()
         .expect("tools")
         .iter()
         .map(|t| t["name"].as_str().expect("name")));
-    assert_eq!(
-        names,
-        set([
-            "oml_remember",
-            "oml_learn",
-            "oml_recall",
-            "oml_get",
-            "oml_supersede",
-            "oml_my_work",
-            "oml_workarea_info",
-            "oml_events_tail",
-            "oml_write",
-            "oml_read",
-            "oml_workarea",
-        ])
-    );
+    assert_eq!(names, set(["oml_write", "oml_read", "oml_workarea"]));
 
     // 2. On its default workarea the one key both remembers and recalls
     // (d1, d14; roles-and-keys.md, effective verbs).

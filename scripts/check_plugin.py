@@ -11,9 +11,14 @@ class of disagreement found:
 - .mcp.json declares exactly one server, `oml`: one key does the agent's whole
   loop (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025);
 - every MCP entry targets the server's /mcp endpoint with a bearer key;
-- the skill and the plugin README name exactly the tools the server serves
-  (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), and every
-  served tool is declared in docs/api/mcp-tools.json;
+- the skill and the plugin README name every tool the server serves
+  (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), every
+  served tool is declared in docs/api/mcp-tools.json, and the skill, its
+  description included, and the lines the session-start hook adds to a
+  session (crates/bins/oml-cli/src/hook.rs) name no other tool, so the model
+  is never told to call a name tools/list does not offer (ADR-0039 d2, d13);
+- every permission rule the plugin README shows, `mcp__plugin_oml_oml__<tool>`,
+  names a served tool (ADR-0039 d13, amending ADR-0029 d8);
 - plugins/oml/hooks/hooks.json exists and parses, and its SessionStart hooks
   are exactly one command, in a group with no matcher, with a timeout of 10
   seconds and the status message "Loading OML memory", which, run under
@@ -59,6 +64,11 @@ LABEL = re.compile(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?")
 ID_FORM = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 HEX32 = re.compile(r"[0-9a-f]{32}")
 DERIVED = re.compile(r"(?:tenant|wa|crew|key)-[0-9a-f]{32}")
+# A tool name, bare or backticked. A key literal such as oml_k_01JB… or
+# oml_... is not one: its run breaks at a digit, a capital or a dot.
+TOOL = re.compile(r"\boml_[a-z]+(?:_[a-z]+)*\b")
+RULE = re.compile(r"mcp__plugin_oml_oml__([a-z_]+)")
+HOOK_RS = "crates/bins/oml-cli/src/hook.rs"
 
 
 def main() -> int:
@@ -109,10 +119,18 @@ def main() -> int:
         named = set(re.findall(r"`(oml_[a-z_]+)`", text))
         for tool in sorted(served - named):
             errors.append(f"{doc.relative_to(ROOT)} does not name the served tool {tool}")
-        unbuilt_mentioned = named - served
-        if doc.name == "SKILL.md" and unbuilt_mentioned:
+        if doc.name == "README.md":
+            for tool in sorted(set(RULE.findall(text)) - served):
+                errors.append(
+                    f"{doc.relative_to(ROOT)} shows the permission rule mcp__plugin_oml_oml__{tool}, "
+                    f"which names no served tool (ADR-0039 d13)"
+                )
+
+    for path in [plugin_dir / "skills/oml-memory/SKILL.md", ROOT / HOOK_RS]:
+        unserved = set(TOOL.findall(path.read_text())) - served
+        if unserved:
             errors.append(
-                f"{doc.relative_to(ROOT)} names tools the server does not serve: {sorted(unbuilt_mentioned)}"
+                f"{path.relative_to(ROOT)} names tools the server does not serve: {sorted(unserved)}"
             )
 
     check_hooks(plugin_dir, errors)

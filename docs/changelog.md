@@ -34,6 +34,23 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `tools/list` names three tools, `oml_write`, `oml_read` and `oml_workarea`, and every surface that names a tool moves with it (ADR-0039 d2, d5, d8, d13, implementation)
+
+`mcp-tools.json` declares exactly the three served tools with their annotations, and the facade
+serves it whole. The new `mcp-tools.designed.json`, never served, holds `oml_relate_propose`,
+`oml_vocab`, `oml_read`'s `lineage` and `depth` and `oml_write`'s `attachments`; a call to a
+designed tool is JSON-RPC -32602 naming that file, and `oml_attach` and `oml_graph` answer -32602
+naming their successors. The eight v0.3.0 tool names leave `tools/list` and still answer, as d12
+reads its window. [mcp-plugin.md](api/mcp-plugin.md) describes the three tools, their modes and
+hints, the events tail on HTTP and the CLI only, and d8's rule, and records the catalog at 8,130
+characters against 18,893. The skill and the agent kit's `AGENTS.md` block teach the three tools,
+with no invented `claim_key` and `oml_read {state}` for a write's outcome; the session-start
+hook's lines name `oml_write`, `oml_read` and `oml_workarea`; the plugin README's permission rules
+are `mcp__plugin_oml_oml__oml_read` and `__oml_workarea`, or `mcp__plugin_oml_oml` (amends
+ADR-0029 d8); the quickstart drives `oml_write` and `oml_read`. `check_plugin.py` fails on a tool
+the skill or the hook names that is not served, and `check_contract_sync.py` on a catalog other
+than the served `tools/list` or a designed tool in both files.
+
 ### 2026-11-04 — `oml_read` chooses get, recall or listing from the fields present, and `oml_workarea` reads one node (ADR-0039 d2, d4, implementation)
 
 The facade serves `oml_read` and `oml_workarea` beside `oml_write` and the eight v0.3.0 tools,

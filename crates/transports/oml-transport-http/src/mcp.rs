@@ -8,9 +8,12 @@
 //! route runs, so validation, idempotency and the typed refusals cannot drift
 //! between the two surfaces. A workarea argument is passed through as sent,
 //! an id or a name; the facade resolves nothing (mcp-plugin.md; ADR-0026
-//! d4). The catalog served is the PoC slice of docs/api/mcp-tools.json — the
-//! tools whose ring endpoint exists — and the schemas are read from that
-//! file, its one declaration site.
+//! d4). `tools/list` serves docs/api/mcp-tools.json whole, its one
+//! declaration site: the three tools `oml_write`, `oml_read` and
+//! `oml_workarea` (ADR-0039 d2). The designed tools and arguments live in
+//! docs/api/mcp-tools.designed.json, which is never served. The eight v0.3.0
+//! tool names are not listed and still dispatch, through v0.4.x, as ADR-0039
+//! d12 reads its alias window.
 
 use std::collections::HashMap;
 
@@ -42,24 +45,15 @@ const ACCEPTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 /// The normative `tools/list` payload (docs/api/mcp-tools.json).
 const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 
-/// The catalog tools whose ring endpoint exists in this slice.
-pub const SERVED_TOOLS: [&str; 11] = [
-    "oml_write",
-    "oml_read",
-    "oml_workarea",
-    "oml_remember",
-    "oml_learn",
-    "oml_recall",
-    "oml_get",
-    "oml_supersede",
-    "oml_my_work",
-    "oml_workarea_info",
-    "oml_events_tail",
-];
+/// The tools `tools/list` names, in catalog order: exactly the entries of
+/// docs/api/mcp-tools.json, as scripts/check_contract_sync.py holds them
+/// (ADR-0039 d2).
+pub const SERVED_TOOLS: [&str; 3] = ["oml_write", "oml_read", "oml_workarea"];
 
-/// Catalog tools whose ring endpoint is not built yet: named, not unknown
-/// (ADR-0025 d12).
-const UNBUILT_TOOLS: [&str; 4] = ["oml_attach", "oml_relate_propose", "oml_graph", "oml_vocab"];
+/// The tools of docs/api/mcp-tools.designed.json: designed, never served,
+/// and named as such when called, not as unknown (ADR-0025 d12, ADR-0039
+/// d2).
+const DESIGNED_TOOLS: [&str; 2] = ["oml_relate_propose", "oml_vocab"];
 
 /// How a tool's refusal of arguments outside its input schema begins, as
 /// distinct from any refusal the ring answers to well-typed arguments.
@@ -71,7 +65,7 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// The served subset of the catalog, in catalog order.
+/// The served catalog, in catalog order: docs/api/mcp-tools.json's tools.
 #[must_use]
 pub fn served_catalog() -> Vec<Value> {
     let catalog: Value =
@@ -79,14 +73,7 @@ pub fn served_catalog() -> Vec<Value> {
     catalog["tools"]
         .as_array()
         .expect("docs/api/mcp-tools.json carries a tools array")
-        .iter()
-        .filter(|t| {
-            t["name"]
-                .as_str()
-                .is_some_and(|name| SERVED_TOOLS.contains(&name))
-        })
-        .cloned()
-        .collect()
+        .clone()
 }
 
 #[derive(Deserialize)]
@@ -352,7 +339,8 @@ where
 
     /// One `tools/call`. A tool that is not served is a protocol fault,
     /// JSON-RPC -32602; a served tool's refusal is a tool result (ADR-0039
-    /// d11).
+    /// d11). The eight v0.3.0 names dispatch to their handlers though
+    /// `tools/list` names none of them (ADR-0039 d12).
     async fn call_tool(
         st: &Self,
         token: &str,
@@ -374,13 +362,27 @@ where
             "oml_my_work" => Self::tool_my_work(st, token, args).await,
             "oml_workarea_info" => Self::tool_workarea_info(st, token, args).await,
             "oml_events_tail" => Self::tool_events_tail(st, token, args).await,
-            _ if UNBUILT_TOOLS.contains(&name) => {
+            _ if DESIGNED_TOOLS.contains(&name) => {
                 return rpc_error(
                     id,
                     INVALID_PARAMS,
                     &format!(
-                        "{name} is in the catalog (docs/api/mcp-tools.json) but not built yet; tools/list names the tools this server serves."
+                        "{name} is designed (docs/api/mcp-tools.designed.json), not served; tools/list names the tools this server serves."
                     ),
+                );
+            }
+            "oml_graph" => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    "oml_graph is not a tool: lineage is oml_read's designed lineage mode (ADR-0039 d2); tools/list names the tools this server serves.",
+                );
+            }
+            "oml_attach" => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    "oml_attach has no successor tool: MCP carries no file bytes, so files go through the designed oml attach put and the SDKs' upload (ADR-0039 d2); tools/list names the tools this server serves.",
                 );
             }
             _ => {

@@ -205,7 +205,7 @@ A working agent's loop, with no human in sight:
 
 1. **Cite.** Before writing, `oml_vocab suggest` offers matching terms; the claim carries
    `terms: [biz:churn-risk]` and, under `annotate`, nothing ever blocks.
-2. **Propose mid-task.** No term fits, so the agent submits one — `oml_remember`, kind `term` —
+2. **Propose mid-task.** No term fits, so the agent submits one — `oml_write`, kind `term` —
    and keeps working. Under `annotate`, citing the held CURIE records `vocab.term_pending`; after
    a curator-crew dreamer promotes the term, the agent re-cites and the finding class goes quiet.
 3. **Self-heal on deprecation.** A later citation of a deprecated term returns

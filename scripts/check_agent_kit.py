@@ -40,7 +40,7 @@ import package_agent_artifacts as pkg  # noqa: E402
 
 KEY = pkg.KEY_VAR
 # An OML key's shape: `oml_` and a long run of key characters. A tool name
-# such as oml_workarea_info breaks the run at its underscores.
+# such as oml_workarea breaks the run at its underscores.
 LITERAL_KEY = re.compile(r"\boml_[A-Za-z0-9-]{16,}")
 KIT_CONFIGS = {
     "codex/config.toml",
@@ -203,7 +203,7 @@ def check_agents(errors: list[str], text: str) -> None:
     expected = "\n\n".join(skill[s] for s in pkg.AGENTS_SECTIONS if s in skill)
     if block.group(1) != expected:
         errors.append("AGENTS.md: the block's text is not the oml-memory skill's sections")
-    for tool in ("oml_recall", "oml_remember"):
+    for tool in ("oml_write", "oml_read", "oml_workarea"):
         if f"`{tool}`" not in block.group(1):
             errors.append(f"AGENTS.md: the block never names {tool}")
 
