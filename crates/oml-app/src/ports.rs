@@ -20,8 +20,8 @@ use oml_domain::{
 };
 
 use crate::types::{
-    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState,
-    ClientDescription, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord, KeyReferences,
     ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord, RecallCandidate, RefreshFacts,
     RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
@@ -832,16 +832,18 @@ pub trait JournalStore: Send + Sync {
         edge_id: Uuid,
     ) -> impl Future<Output = Result<Option<ClaimEdgeRecord>, StoreError>> + Send;
 
-    /// One page of the tenant's claim edges, pending and ratified, that pass
-    /// `filter` — `artifact_id` matching either endpoint, `workarea_id`
-    /// either endpoint's workarea — newest first, `created_at` descending
+    /// One page of the tenant's claim edges, pending and ratified, that
+    /// `selection` selects — `artifact_id` matching either endpoint,
+    /// `within` holding either endpoint's workarea, and both endpoints rows
+    /// whose workarea is in `readable_nodes` and which are promoted or
+    /// authored by `reader_key_id` — newest first, `created_at` descending
     /// then `edge_id` descending, strictly after `after`, at most `limit` of
-    /// them (http-api.md pagination and claim edges). Read scope is the
-    /// use-case's.
+    /// them (http-api.md pagination and claim edges). An edge with an
+    /// endpoint the tenant does not hold is absent.
     fn claim_edges(
         &self,
         tenant_id: Uuid,
-        filter: &ClaimEdgeFilter,
+        selection: &ClaimEdgeSelection,
         after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send;

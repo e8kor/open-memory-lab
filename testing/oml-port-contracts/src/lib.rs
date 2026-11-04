@@ -35,12 +35,12 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState,
-    ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome, ConnectionRecord,
-    Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
+    KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken,
+    OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
+    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -5491,7 +5491,7 @@ pub async fn the_stores_widened_closure_equals_the_authors_of_the_domains_lineag
 
 /// A claim-edge page is newest first, `created_at` then edge id
 /// descending, resumes strictly after its cursor, and its artifact filter
-/// matches either endpoint, its workarea filter either endpoint's node;
+/// matches either endpoint, its `within` nodes either endpoint's node;
 /// another tenant lists nothing (http-api.md pagination and claim edges).
 pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint<
     S: JournalStore,
@@ -5515,6 +5515,11 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     let c = world
         .hold(store, side, Uuid::from_u128(0x320C), "carol", &[])
         .await;
+    for row in [&a, &b, &c] {
+        promote(&mut world.rig, store, row.memory_id)
+            .await
+            .expect("promote");
+    }
     // Proposed out of id order, so the page order is the proposals' time,
     // newest first, and never the ids'.
     let mut proposed = Vec::new();
@@ -5528,7 +5533,15 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
         proposed.push(world.propose(store, edge).await.expect("propose"));
     }
     let [e3, e1, e4, e2] = <[ClaimEdgeRecord; 4]>::try_from(proposed).expect("four edges");
-    let all = ClaimEdgeFilter::default();
+    // Every endpoint is promoted on a node the selection reads, so its read
+    // scope keeps every edge and the page laws alone decide.
+    let select = |artifact_id: Option<Uuid>, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
+        artifact_id,
+        within,
+        readable_nodes: vec![root, side],
+        reader_key_id: world.proposer.key_id,
+    };
+    let all = select(None, None);
     let at = |e: &ClaimEdgeRecord| ClaimEdgePosition {
         created_at: e.created_at.clone(),
         edge_id: e.edge_id,
@@ -5561,10 +5574,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
         "nothing after the oldest edge"
     );
 
-    let on_b = ClaimEdgeFilter {
-        artifact_id: Some(b.memory_id),
-        workarea_id: None,
-    };
+    let on_b = select(Some(b.memory_id), None);
     assert_eq!(
         store
             .claim_edges(tenant, &on_b, None, 10)
@@ -5573,10 +5583,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
         vec![e1.clone(), e3.clone()],
         "b is e1's target and e3's source"
     );
-    let on_c = ClaimEdgeFilter {
-        artifact_id: Some(c.memory_id),
-        workarea_id: None,
-    };
+    let on_c = select(Some(c.memory_id), None);
     assert_eq!(
         store
             .claim_edges(tenant, &on_c, Some(&at(&e4)), 10)
@@ -5585,22 +5592,16 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
         vec![e3.clone()],
         "the filter and the cursor both hold"
     );
-    let on_side = ClaimEdgeFilter {
-        artifact_id: None,
-        workarea_id: Some(side),
-    };
+    let on_side = select(None, Some(vec![side]));
     assert_eq!(
         store
             .claim_edges(tenant, &on_side, None, 10)
             .await
             .expect("page"),
         vec![e4.clone(), e3.clone()],
-        "the workarea filter matches either endpoint's node"
+        "the within nodes match either endpoint's node"
     );
-    let a_on_side = ClaimEdgeFilter {
-        artifact_id: Some(a.memory_id),
-        workarea_id: Some(side),
-    };
+    let a_on_side = select(Some(a.memory_id), Some(vec![side]));
     assert_eq!(
         store
             .claim_edges(tenant, &a_on_side, None, 10)
@@ -5618,6 +5619,98 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
             .expect("page")
             .is_empty(),
         "another tenant lists none of these edges"
+    );
+}
+
+/// A claim-edge page holds only the edges whose two endpoints are each a
+/// row on a node of `readable_nodes` that is promoted or authored by
+/// `reader_key_id`, and its limit counts only those, so a page is one
+/// bounded read whatever else the tenant holds (http-api.md claim edges;
+/// roles-and-keys.md footnote 5).
+pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or_the_readers_own_on_its_readable_nodes<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 322).await;
+    let root = world.root;
+    let tenant = world.rig.tenant_id;
+    let side = Uuid::from_u128((322_u128 << 32) | 0x03);
+    world
+        .rig
+        .create_workarea(store, workarea_record(tenant, side, Some(root), "side"))
+        .await;
+    let p1 = world
+        .hold(store, root, Uuid::from_u128(0x322A), "alice", &[])
+        .await;
+    let p2 = world
+        .hold(store, root, Uuid::from_u128(0x322B), "bob", &[])
+        .await;
+    let held = world
+        .hold(store, root, Uuid::from_u128(0x322C), "alice", &[])
+        .await;
+    let far = world
+        .hold(store, side, Uuid::from_u128(0x322D), "carol", &[])
+        .await;
+    for row in [&p1, &p2, &far] {
+        promote(&mut world.rig, store, row.memory_id)
+            .await
+            .expect("promote");
+    }
+    let mut proposed = Vec::new();
+    for (id, src, dst) in [
+        (0x322E1, p1.memory_id, p2.memory_id),
+        (0x322E2, p1.memory_id, held.memory_id),
+        (0x322E3, far.memory_id, p2.memory_id),
+    ] {
+        let edge = world.edge(Uuid::from_u128(id), src, dst);
+        proposed.push(world.propose(store, edge).await.expect("propose"));
+    }
+    let [e1, e2, e3] = <[ClaimEdgeRecord; 3]>::try_from(proposed).expect("three edges");
+    let stranger = Uuid::from_u128(0x322F);
+    let select = |nodes: Vec<Uuid>, reader: Uuid, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
+        artifact_id: None,
+        within,
+        readable_nodes: nodes,
+        reader_key_id: reader,
+    };
+    let page = |selection: ClaimEdgeSelection, limit: usize| async move {
+        store
+            .claim_edges(tenant, &selection, None, limit)
+            .await
+            .expect("page")
+    };
+
+    assert_eq!(
+        page(select(vec![root], stranger, None), 10).await,
+        vec![e1.clone()],
+        "another author's held row and a row off the readable nodes are out of scope"
+    );
+    assert_eq!(
+        page(select(vec![root], stranger, None), 1).await,
+        vec![e1.clone()],
+        "the limit counts only the edges in scope"
+    );
+    assert_eq!(
+        page(select(vec![root], author_key("alice"), None), 10).await,
+        vec![e2.clone(), e1.clone()],
+        "the reader's own held row is in its scope"
+    );
+    assert_eq!(
+        page(select(vec![root, side], stranger, None), 10).await,
+        vec![e3.clone(), e1.clone()],
+        "both endpoints on readable nodes"
+    );
+    assert_eq!(
+        page(select(vec![root, side], stranger, Some(vec![side])), 10).await,
+        vec![e3.clone()],
+        "within narrows to either endpoint's node, after the scope holds"
+    );
+    assert!(
+        page(select(Vec::new(), author_key("alice"), None), 10)
+            .await
+            .is_empty(),
+        "no readable node reads no edge"
     );
 }
 
@@ -6178,6 +6271,10 @@ where
     )
     .await;
     a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or_the_readers_own_on_its_readable_nodes(
         &new_store().await,
     )
     .await;

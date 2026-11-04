@@ -11525,6 +11525,194 @@ async fn an_edge_with_an_endpoint_outside_read_scope_is_absent_from_the_read() {
 }
 
 #[tokio::test]
+async fn an_edge_to_a_version_demoted_after_its_proposal_is_absent_for_another_reader_and_served_to_its_author()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    // No use case demotes in this build; the row turns demoted after the
+    // edge to it was proposed.
+    f.store
+        .set_status(f.boot.tenant_id, f.a, MemoryStatus::Demoted);
+
+    for query in [
+        edges_of(f.b),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery::default(),
+    ] {
+        let page = f
+            .app
+            .claim_edges(&rory.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(page.items.is_empty(), "{:?}", page.items);
+    }
+    // Alice wrote a and holds reader on crew: her own row in any state is
+    // in her read scope, and b is promoted.
+    let by_author = f
+        .app
+        .claim_edges(&f.alice.value, edges_of(f.b), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&by_author), vec![f.edge_id]);
+}
+
+#[tokio::test]
+async fn an_edge_whose_endpoint_is_another_authors_held_row_in_a_readable_workarea_is_absent() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let held = f
+        .app
+        .submit_memory(&f.alice.value, &submit_req("held-h", "h"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    // No proposer could read alice's held row; the edge lands as another
+    // writer's commit would.
+    let edge = ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_00AB),
+        ..pending_edge(f.boot.tenant_id, &f.pat, f.b, held)
+    };
+    commit_pending_edge(&f.store, edge, 0xEE0A).await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    for query in [edges_of(f.b), edges_of(held), ClaimEdgeQuery::default()] {
+        let page = f
+            .app
+            .claim_edges(&rory.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(
+            page.items.iter().all(|e| e.to_artifact_id != held),
+            "{:?}",
+            page.items
+        );
+    }
+    assert_eq!(
+        edge_ids(
+            &f.app
+                .claim_edges(&rory.value, edges_of(f.b), None, 10)
+                .await
+                .expect("the read")
+        ),
+        vec![f.edge_id]
+    );
+}
+
+#[tokio::test]
+async fn another_tenants_key_reads_an_empty_page_by_this_tenants_artifact_and_its_cursor_answers_foreign()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let cursor = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 1)
+        .await
+        .expect("the first page")
+        .next_cursor
+        .expect("another page");
+
+    let globex = f
+        .app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap another tenant");
+    let globex_admin = &globex.admin_key.value;
+    let desk = workarea(&f.app, globex_admin, "desk", globex.root_workarea_id).await;
+    let gus = issue(&f.app, globex_admin, Role::Reader, "gus", desk).await;
+
+    for query in [edges_of(f.a), edges_of(f.b), ClaimEdgeQuery::default()] {
+        let page = f
+            .app
+            .claim_edges(&gus.value, query, None, 10)
+            .await
+            .expect("the read");
+        assert!(page.items.is_empty(), "{:?}", page.items);
+        assert_eq!(page.next_cursor, None);
+    }
+    let err = f
+        .app
+        .claim_edges(&gus.value, edges_of(f.a), Some(&cursor), 1)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Cursor(CursorError::Foreign)),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_named_workarea_the_key_holds_no_reader_on_answers_access_not_found() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    // Wes holds writer on crew and no reader anywhere: a node without
+    // reader is unreadable, so the refusal order stops at access.not_found
+    // before access.grant_refused (roles-and-keys.md refusal order).
+    let wes = issue(&f.app, admin, Role::Writer, "wes", f.crew).await;
+
+    for (key, reference) in [
+        (&rory, Reference::from(elsewhere)),
+        (&rory, by_name("elsewhere")),
+        (&wes, Reference::from(f.crew)),
+        (&wes, by_name("crew")),
+    ] {
+        let err = f
+            .app
+            .claim_edges(&key.value, edges_in(reference), None, 10)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_workarea_filter_serves_an_edge_between_two_claims_in_its_child_workareas() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let left = workarea(&f.app, admin, "left", f.crew).await;
+    let right = workarea(&f.app, admin, "right", f.crew).await;
+    let dana = issue(&f.app, admin, Role::Dreamer, "dina", f.crew).await;
+    let l = promoted(
+        &f.app,
+        &f.alice.value,
+        &dana.value,
+        &submit_into("sub-l", "l", left),
+    )
+    .await;
+    let r = promoted(
+        &f.app,
+        &f.bob.value,
+        &dana.value,
+        &submit_into("sub-r", "r", right),
+    )
+    .await;
+    let below = proposed(&f.app, &f.pat.value, l, r, "acme:supports").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let in_crew = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_crew), vec![below, f.edge_id]);
+    let in_left = f
+        .app
+        .claim_edges(&rory.value, edges_in(left.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_left), vec![below]);
+}
+
+#[tokio::test]
 async fn a_page_cursor_resumes_after_the_last_edge() {
     let f = edge_fixture().await;
     let admin = &f.boot.admin_key.value;

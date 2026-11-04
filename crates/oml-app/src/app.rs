@@ -59,19 +59,19 @@ use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
     Bearer, BootstrapRequest, BootstrapResult, ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition,
     ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeQuery, ClaimEdgeRatification,
-    ClaimEdgeRecord, ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome,
-    ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode,
-    ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord,
-    CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, ProposeClaimEdge,
-    RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
-    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    ClaimEdgeRecord, ClaimEdgeSelection, ClientAuthentication, ClientDescription, ClientKind,
+    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
+    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
+    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
+    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord,
+    PROVIDER_TENANT, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord, WorkareaStatusView,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -1153,15 +1153,21 @@ where
     /// its dreamer grants' subtrees, a row outside which is never served
     /// (ADR-0025 d1).
     async fn dreamer_nodes(&self, caller: &Caller) -> Result<Vec<Uuid>, AppError> {
+        self.nodes_holding(caller, Role::Dreamer).await
+    }
+
+    /// Every node where `role` is effective for the caller: the union over
+    /// its `role` grants' subtrees, each node judged by [`Self::nodes_with`].
+    async fn nodes_holding(&self, caller: &Caller, role: Role) -> Result<Vec<Uuid>, AppError> {
         let roots: BTreeSet<Uuid> = caller
             .grants
             .iter()
-            .filter(|g| g.role == Role::Dreamer)
+            .filter(|g| g.role == role)
             .map(|g| g.node)
             .collect();
         let mut nodes = BTreeSet::new();
         for root in roots {
-            nodes.extend(self.nodes_with(caller, root, Role::Dreamer).await?);
+            nodes.extend(self.nodes_with(caller, root, role).await?);
         }
         Ok(nodes.into_iter().collect())
     }
@@ -4313,17 +4319,18 @@ where
     /// `GET /v2/claim-edges` (http-api.md claim edges and pagination;
     /// ADR-0008 d5): one page of the tenant's claim edges, pending and
     /// ratified, newest first, narrowed to `query`'s workarea, by id or name
-    /// (ADR-0026), and its version at either endpoint. A reader key is
-    /// needed: an admin key answers `access.verb_ceiling`, since an edge joins
-    /// content and an admin structure read never includes it (ADR-0026 d15).
-    /// A named workarea asks reader effective there by the refusal order. An
-    /// edge is served only when both its endpoints are in the key's read
-    /// scope, reader on the endpoint's workarea and `readable`, so the read
-    /// never names an unreadable version's id; the page reads past the edges
-    /// it filters out until it holds `limit` of them or the store has no
-    /// more. The cursor is bound to the key, to `api.cursor_ttl` and to the
-    /// filter, its workarea resolved, so either spelling of the workarea
-    /// resumes it.
+    /// (ADR-0026), whose subtree holds either endpoint, and its version at
+    /// either endpoint. A reader key is needed: an admin key answers
+    /// `access.verb_ceiling`, since an edge joins content and an admin
+    /// structure read never includes it (ADR-0026 d15). A named workarea
+    /// asks reader effective there by the refusal order. An edge is served
+    /// only when both its endpoints are in the key's read scope, a row in a
+    /// node where reader is effective that is promoted or the key's own
+    /// (`readable`), so the read never names an unreadable version's id.
+    /// The store selects by that scope, so one keyset page of at most
+    /// `limit + 1` edges answers the call. The cursor is bound to the key,
+    /// to `api.cursor_ttl` and to the filter, its workarea resolved, so
+    /// either spelling of the workarea resumes it.
     pub async fn claim_edges(
         &self,
         api_key: &str,
@@ -4348,48 +4355,53 @@ where
             workarea_id,
         };
         let now = self.clock.now();
-        let mut after = cursor
+        let after = cursor
             .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
             .transpose()?;
 
+        // reading: the read scope is pushed into the store's query, not
+        // filtered after it, so the keyset LIMIT counts only servable edges
+        // and a page is one bounded store read whatever the tenant holds.
+        // The cost left is the scope itself: every reader node of the key,
+        // one subtree read per reader grant, bound into the query as an
+        // array that grows with the tenant's workareas, unmeasured (FR-7,
+        // FR-25).
+        let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
+        let within = match workarea_id {
+            None => None,
+            Some(node) => {
+                let subtree: BTreeSet<Uuid> = self
+                    .journal
+                    .workarea_subtree(tenant_id, node)
+                    .await?
+                    .into_iter()
+                    .map(|w| w.workarea_id)
+                    .collect();
+                Some(
+                    readable_nodes
+                        .iter()
+                        .copied()
+                        .filter(|n| subtree.contains(n))
+                        .collect(),
+                )
+            }
+        };
+        let selection = ClaimEdgeSelection {
+            artifact_id: filter.artifact_id,
+            within,
+            readable_nodes,
+            reader_key_id: key.key_id,
+        };
         // One edge past the page says whether another page exists.
-        let want = limit.saturating_add(1);
-        let mut readable: BTreeMap<Uuid, bool> = BTreeMap::new();
-        let mut served = Vec::with_capacity(want.min(64));
-        'pages: loop {
-            let batch = self
-                .journal
-                .claim_edges(tenant_id, &filter, after.as_ref(), want)
-                .await?;
-            let exhausted = batch.len() < want;
-            for edge in batch {
-                after = Some(ClaimEdgePosition {
-                    created_at: edge.created_at.clone(),
-                    edge_id: edge.edge_id,
-                });
-                let mut both = true;
-                for id in [edge.src_artifact_id, edge.dst_artifact_id] {
-                    let in_scope = match readable.get(&id) {
-                        Some(known) => *known,
-                        None => {
-                            let known = self.endpoint_readable(&caller, id).await?;
-                            readable.insert(id, known);
-                            known
-                        }
-                    };
-                    both &= in_scope;
-                }
-                if both {
-                    served.push(edge);
-                    if served.len() == want {
-                        break 'pages;
-                    }
-                }
-            }
-            if exhausted {
-                break;
-            }
-        }
+        let mut served = self
+            .journal
+            .claim_edges(
+                tenant_id,
+                &selection,
+                after.as_ref(),
+                limit.saturating_add(1),
+            )
+            .await?;
         let more = served.len() > limit;
         served.truncate(limit);
         let next_cursor = served.last().filter(|_| more).map(|last| {
@@ -4408,20 +4420,6 @@ where
             items: served.iter().map(ClaimEdgeProposal::from).collect(),
             next_cursor,
         })
-    }
-
-    /// Whether the version `id` is in the caller's read scope as a claim
-    /// endpoint: present, reader effective on its workarea, and `readable`
-    /// (roles-and-keys.md footnote 5).
-    async fn endpoint_readable(&self, caller: &Caller, id: Uuid) -> Result<bool, AppError> {
-        let Some(memory) = self.journal.memory(caller.key.tenant_id, id).await? else {
-            return Ok(false);
-        };
-        let ancestry = self
-            .ancestry(caller.key.tenant_id, memory.workarea_id)
-            .await?;
-        Ok(caller.effective(&ancestry).contains(&Role::Reader)
-            && self.readable(caller, &memory).await?)
     }
 
     /// Verify the tenant chain end to end with the domain procedure
