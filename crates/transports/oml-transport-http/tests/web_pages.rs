@@ -1911,3 +1911,138 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         "{page}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Guardrails on the pages (proposed ADR-0037 d17, d18 Q5; build step S6)
+// ---------------------------------------------------------------------------
+
+async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
+    rig.app
+        .submit_memory(
+            value,
+            &oml_app::types::SubmitRequest {
+                idempotency_key: format!("g-{body}"),
+                claim_key: None,
+                verb: None,
+                kind: oml_app::domain::MemoryKind::Guardrail,
+                body: body.to_owned(),
+                workarea: None,
+                derives_from: Vec::new(),
+                severity: Some(oml_app::domain::guardrail::Severity::Must),
+                rule: None,
+            },
+        )
+        .await
+        .expect("the agent proposes a guardrail")
+        .receipt
+        .memory_id
+}
+
+async fn laptop_key(rig: &Rig, cookie: &str) -> String {
+    let (_, _, page) = act(
+        rig,
+        cookie,
+        "/web",
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    value_of(&page)
+}
+
+#[tokio::test]
+async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the_page_offers_none()
+{
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
+    assert!(!page.contains("guardrail_scope"), "no scope field: {page}");
+    laptop_key(&rig, &cookie).await;
+    let laptop = key_named(&rig, "alice-laptop").await;
+    assert_eq!(
+        laptop.guardrail_scope,
+        oml_app::domain::guardrail::GuardrailScope::Ancestors
+    );
+    let (status, _, body) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "issue_key"),
+            ("name", "narrow"),
+            ("role", "writer"),
+            ("guardrail_scope", "workarea"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a field the action does not define: {body}"
+    );
+}
+
+#[tokio::test]
+async fn the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    assert!(page.contains("Guardrails"), "{page}");
+    assert!(
+        page.contains("Held, not in force"),
+        "the person's own held guardrail by key and version: {page}"
+    );
+    // Approved by the person's reviewer key, it is in force.
+    act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let serve_id = format!("srv_{}", id.simple());
+    let (status, _, page) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve_id),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    assert!(
+        page.contains("[must] Run the tests before every commit."),
+        "{page}"
+    );
+    assert!(page.contains("universe.alice"), "{page}");
+    // No page act writes, supersedes or retires a guardrail (d17).
+    let (status, _, body) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[("action", "write_guardrail"), ("text", "Push freely.")],
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}: {body}");
+}
+
+#[tokio::test]
+async fn the_review_page_shows_a_held_guardrails_load_warning() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    let (status, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("Run the tests before every commit."),
+        "{page}"
+    );
+    assert!(
+        page.contains("every key that reads this workarea will load this rule"),
+        "{page}"
+    );
+}
