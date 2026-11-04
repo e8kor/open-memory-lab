@@ -6,6 +6,8 @@ from typing import Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 
 from ..models.recall_request_kinds_item import RecallRequestKindsItem
+from ..models.recall_request_match import RecallRequestMatch
+from ..models.recall_request_search import RecallRequestSearch
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RecallRequest")
@@ -38,6 +40,11 @@ class RecallRequest:
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
+            search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
+                omitted, the tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not serve is
+                request.validation with details.field /search and details.served.
+            match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
+                hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
     """
 
     query: str
@@ -47,6 +54,8 @@ class RecallRequest:
     include_text: bool | Unset = True
     include_unreviewed: bool | Unset = False
     max_tokens: int | Unset = UNSET
+    search: RecallRequestSearch | Unset = UNSET
+    match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -72,6 +81,14 @@ class RecallRequest:
 
         max_tokens = self.max_tokens
 
+        search: str | Unset = UNSET
+        if not isinstance(self.search, Unset):
+            search = self.search.value
+
+        match: str | Unset = UNSET
+        if not isinstance(self.match, Unset):
+            match = self.match.value
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -91,6 +108,10 @@ class RecallRequest:
             field_dict["include_unreviewed"] = include_unreviewed
         if max_tokens is not UNSET:
             field_dict["max_tokens"] = max_tokens
+        if search is not UNSET:
+            field_dict["search"] = search
+        if match is not UNSET:
+            field_dict["match"] = match
 
         return field_dict
 
@@ -123,6 +144,20 @@ class RecallRequest:
 
         max_tokens = d.pop("max_tokens", UNSET)
 
+        _search = d.pop("search", UNSET)
+        search: RecallRequestSearch | Unset
+        if isinstance(_search, Unset):
+            search = UNSET
+        else:
+            search = RecallRequestSearch(_search)
+
+        _match = d.pop("match", UNSET)
+        match: RecallRequestMatch | Unset
+        if isinstance(_match, Unset):
+            match = UNSET
+        else:
+            match = RecallRequestMatch(_match)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -131,6 +166,8 @@ class RecallRequest:
             include_text=include_text,
             include_unreviewed=include_unreviewed,
             max_tokens=max_tokens,
+            search=search,
+            match=match,
         )
 
         return recall_request
