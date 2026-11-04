@@ -63,12 +63,7 @@ fn an_edge_between_two_terms_must_carry_an_oml_label() {
 
 #[test]
 fn an_oml_hierarchy_label_joins_two_terms_only() {
-    for label in [
-        OmlLabel::IsA,
-        OmlLabel::PartOf,
-        OmlLabel::ReplacedBy,
-        OmlLabel::Consider,
-    ] {
+    for label in [OmlLabel::IsA, OmlLabel::PartOf] {
         let label = label.as_str();
         assert_eq!(
             check_label(label, MemoryKind::Term, MemoryKind::Term),
@@ -82,6 +77,17 @@ fn an_oml_hierarchy_label_joins_two_terms_only() {
         assert_eq!(to.field(), EdgeField::To);
         assert_eq!(to.field().as_str(), "to_artifact_id");
         assert_eq!(to.code(), "request.validation");
+    }
+}
+
+#[test]
+fn a_successor_pointer_is_never_proposed_apart_from_its_deprecation() {
+    for label in [OmlLabel::ReplacedBy, OmlLabel::Consider] {
+        let refusal = check_label(label.as_str(), MemoryKind::Term, MemoryKind::Term).unwrap_err();
+        assert_eq!(refusal, LabelRefusal::SuccessorOutsideDeprecation);
+        assert_eq!(refusal.field(), EdgeField::Label);
+        assert_eq!(refusal.field().as_str(), "label");
+        assert_eq!(refusal.code(), "request.validation");
     }
 }
 
