@@ -3814,3 +3814,82 @@ async fn oml_events_tail_alias_reads_get_v2_events() {
         );
     }
 }
+
+/// `oml_workarea` serves the workarea read's policy, live proposals and
+/// ratified brief, each brief member as the claim item every tool returns,
+/// with its text, and no fourth tool is added (ADR-0046 d3, d9; ADR-0039
+/// d8).
+#[tokio::test]
+async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_claim_items() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let ((writer, dreamer, _reader, crew), admin) =
+        crew_and_admin(&router, &["writer", "reader"]).await;
+    let artifact = ratified(&router, &writer, &dreamer).await;
+    let mut curators = Vec::new();
+    for name in ["dora", "dan"] {
+        let (status, key) = send(
+            &router,
+            "POST",
+            "/v2/keys",
+            Some(&admin),
+            Some(&format!("issue-{name}")),
+            Some(&json!({
+                "role": "dreamer", "name": name, "principal": name,
+                "grants": [{"workarea": crew, "role": "dreamer"}, {"workarea": crew, "role": "reader"}],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        curators.push(key["value"].as_str().expect("value").to_owned());
+    }
+    let (status, edge) = send(
+        &router,
+        "POST",
+        "/v2/edges",
+        Some(&curators[0]),
+        Some("brief-1"),
+        Some(&json!({"kind": "brief", "from_artifact_id": artifact, "to_workarea_id": crew})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edge}");
+    let id = edge["edge_id"].as_str().expect("edge id");
+    let (status, ratified_edge) = send(
+        &router,
+        "POST",
+        &format!("/v2/edges/{id}/ratify"),
+        Some(&curators[1]),
+        Some("brief-2"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ratified_edge}");
+    let (status, proposal) = send(
+        &router,
+        "POST",
+        &format!("/v2/workareas/{crew}/transitions"),
+        Some(&curators[0]),
+        Some("t-1"),
+        Some(&json!({"to": "committed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+
+    let result = call_tool(&router, &writer, 1, "oml_workarea", json!({})).await;
+    let node = &result["structuredContent"];
+    assert_eq!(
+        node["policy"],
+        json!({"k": 1, "required_roles": ["dreamer"]}),
+        "{result}"
+    );
+    assert_eq!(
+        node["pending_transitions"][0]["transition_id"],
+        proposal["transition_id"]
+    );
+    let item = &node["brief"]["items"][0];
+    assert_eq!(item["artifact_id"], artifact.as_str(), "{result}");
+    assert_eq!(item["text"], QUOTE, "{result}");
+    assert_eq!(node["brief"]["budget"]["max_tokens"], 400);
+    drop_db(&db).await;
+}

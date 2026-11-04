@@ -167,7 +167,20 @@ where
             "oml_get" => Self::tool_get(st, presented, args).await,
             "oml_supersede" => Self::tool_supersede(st, presented, args).await,
             "oml_my_work" => Self::tool_my_work(st, presented, args).await,
-            "oml_workarea_info" => Self::tool_workarea_info(st, presented, args).await,
+            // The v0.3.0 shape: the fields v0.5.2 added to `oml_workarea`
+            // stay off the old name (ADR-0039 d12; ADR-0046 d9).
+            "oml_workarea_info" => {
+                Self::tool_workarea_info(st, presented, args)
+                    .await
+                    .map(|mut node| {
+                        if let Some(obj) = node.as_object_mut() {
+                            for added in ["policy", "pending_transitions", "brief"] {
+                                obj.remove(added);
+                            }
+                        }
+                        node
+                    })
+            }
             _ => Self::tool_events_tail(st, presented, args).await,
         }
     }
