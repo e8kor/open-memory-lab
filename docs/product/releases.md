@@ -169,3 +169,5 @@ which part is still decided, not built.
 | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
+| [ADR-0047](../adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md) project knowledge and the code skeleton | proposed | Planned, not assigned; gated on its evaluation harness and on ADR-0030. |
+| [ADR-0048](../adr/ADR-0048-hybrid-search-for-every-memory-filters-keywords-and-meaning-fused-under-one-budget.md) hybrid search | proposed | Planned, not assigned. |
