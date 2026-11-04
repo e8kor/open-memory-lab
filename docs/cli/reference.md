@@ -404,12 +404,28 @@ them into `propose` and `ratify` run under different keys.
 | `oml workareas tree [--root <workarea>] [--status]` | The tenant tree from `universe` down, or from `--root`, with status and crew per node. The verb as built takes `--root` and not `--status`, and reads every page of `GET /v2/workareas/{workarea}/tree`; `--json` prints their items as one page. Under a key with reader effective access, a node it cannot read is absent. |
 | `oml workareas show <workarea>` | One node, by id or name: name, id, path (derived), status, crew record, edges, policy snapshot in force. |
 | `oml workareas crew set <workarea> --crew <crew>` | Journalled crew-metadata update: point the workarea at another crew record. Allowed on `validated` areas — freeze covers claims and promotions, not crew metadata. |
-| `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. |
-| `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. |
+| `oml workareas relate propose <a> <b> --label <relates_to\|continues\|derived_from\|mirrors>` | Propose an edge. Requires dreamer(propose) on ≥1 endpoint and reader on both. *Designed, not built: workarea edges are not in v0.5.2.* |
+| `oml workareas relate ratify <edge-id>` | Ratify under a different key with dreamer(review) on **both** endpoints; ratifier ≠ proposer, refused otherwise. *Designed, not built.* |
 | `oml workareas re-parent <workarea> --new-parent <target> [--apply]` | Journalled admin act; the server performs the single-transaction descendant path rewrite. Mass-reach act: defaults to `--dry-run` showing the paths that would be rewritten and the grants whose derived paths change; `--apply` performs the rewrite. |
-| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. |
-| `oml workareas status ratify <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. |
-| `oml workareas status pending` | Transitions awaiting a ratifier. |
+| `oml workareas status propose <workarea> --to <committed\|validated>` | Propose the next forward rung; the proposal is itself journalled (`workarea.status_proposed`). The ladder has no skips: `--to validated` is proposable only from `committed`, and a rung-skipping or out-of-ladder proposal is refused as `workarea.transition_refused` — the same code that refuses proposing `validated` while any child is not `validated`. Backward transitions do not exist; there is no flag for them. *Built for v0.5.2, not released*; a user root is refused `validated` once user roots are built ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d3). |
+| `oml workareas status ratify <workarea> <transition-id>` | Second, non-proposing dreamer or admin ratifies; the journal records the transition with its policy snapshot. The [freeze transcript](sessions.md#4-freezing-a-workarea) shows the full ceremony. *Built for v0.5.2, not released* ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3). |
+| `oml workareas status pending <workarea>` | The workarea's live proposals and the review policy in force, read from `GET /v2/workareas/{workarea}`; `--json` prints `{workarea_id, status, policy, pending_transitions}`. *Built for v0.5.2, not released* ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3). |
+
+## `oml edges` — claim links and the brief
+
+*Built for v0.5.2, not released · [releases](../product/releases.md) · [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4, d7, proposed*
+
+The `/v2/edges` family for `kind` claim and `kind` brief ([HTTP API](../api/http-api.md#edges)).
+Each edge is a two-party ceremony: one key proposes, a key with another principal ratifies. An
+edge confers no access. No agent tool proposes one in v0.5.2; an `oml_write` field for it is
+planned.
+
+| Verb | Does |
+|---|---|
+| `oml edges propose claim <from> <to> --label <label>` | Propose a link from one claim to another, both readable to the key, under dreamer on at least one endpoint. The label is open; `supports`, `contradicts`, `relates_to` and `continues` are recommended, and `oml:` labels join terms only. |
+| `oml edges propose brief <artifact> <workarea>` | Propose a promoted claim into a workarea's brief, under dreamer on the workarea; a held claim is refused. |
+| `oml edges ratify <edge-id>` | Ratify a pending edge of either kind under a key that did not propose it (`review.ratifier_is_proposer` otherwise). A ratified brief edge puts its claim in the workarea's brief, which the workarea read and the session-start hook serve. |
+| `oml edges list --kind <claim\|brief> [--workarea <workarea>] [--artifact <artifact-id>] [--limit <n>] [--cursor <cursor>]` | One page of one kind's edges, pending and ratified, newest first; `--workarea` is required for `brief`. |
 
 ## `oml crews` — crew records
 
