@@ -24,9 +24,9 @@ use oml_app::domain::oauth::{
 };
 use oml_app::domain::vocab_edges::{ClaimEdge, DerivesFrom, EdgeState, lineage_artifacts};
 use oml_app::domain::{
-    EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
-    WorkareaStatus, event_types, key_fingerprint, next_envelope, sha256_digest_string, sign,
-    verify_chain,
+    ChainHead, EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role,
+    SignedEnvelope, WorkareaStatus, event_types, key_fingerprint, next_envelope,
+    sha256_digest_string, sign, verify_chain,
 };
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
@@ -5722,6 +5722,154 @@ pub async fn ratifying_an_edge_already_ratified_writes_nothing_and_is_refused_ed
     );
 }
 
+/// A tenant's pending edge `a -> b` between two held versions, and the
+/// journal head after its proposal.
+async fn pending_edge_world<S: JournalStore>(
+    store: &S,
+    seed: u64,
+) -> (EdgeWorld, ClaimEdgeRecord, ChainHead) {
+    let mut world = EdgeWorld::new(store, seed).await;
+    let root = world.root;
+    let base = u128::from(seed) << 16;
+    let a = world
+        .hold(store, root, Uuid::from_u128(base | 0xA), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(base | 0xB), "bob", &[])
+        .await;
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(base | 0xE), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    (world, edge, head)
+}
+
+/// Asserts a refused ratification wrote nothing: `world`'s journal head is
+/// still `head` and `edge` reads back exactly as proposed, pending.
+async fn assert_ratification_wrote_nothing<S: JournalStore>(
+    store: &S,
+    world: &EdgeWorld,
+    edge: &ClaimEdgeRecord,
+    head: ChainHead,
+) {
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "the journal head is unchanged"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        Some(edge.clone()),
+        "the edge is still pending, as proposed"
+    );
+}
+
+/// Ratifying an edge id the tenant does not hold, another tenant's or one
+/// no tenant holds, finds no pending edge of the commit's tenant: the
+/// commit writes nothing, its event included, and is refused by name, and
+/// the other tenant's edge stays pending (postgres-schema.md `claim_edges`,
+/// tenant-keyed; ADR-0021 d5).
+pub async fn ratifying_an_edge_the_tenant_does_not_hold_writes_nothing_and_is_refused_edge_not_pending<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut owner, edge, owner_head) = pending_edge_world(store, 340).await;
+    let mut other = EdgeWorld::new(store, 341).await;
+    let other_ratifier = other.ratifier(store, Uuid::from_u128(0x341D)).await;
+    let other_head = store
+        .chain_head(other.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    assert_eq!(
+        other
+            .ratify(store, edge.edge_id, other_ratifier.key_id)
+            .await,
+        Err(StoreError::EdgeNotPending {
+            edge_id: edge.edge_id
+        }),
+        "another tenant's edge is refused by name"
+    );
+    assert_eq!(
+        store.chain_head(other.rig.tenant_id).await.expect("head"),
+        Some(other_head),
+        "the ratifying tenant's journal head is unchanged"
+    );
+    assert_ratification_wrote_nothing(store, &owner, &edge, owner_head).await;
+
+    let owner_ratifier = owner.ratifier(store, Uuid::from_u128(0x340D)).await;
+    let owner_head = store
+        .chain_head(owner.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    let unknown = Uuid::from_u128(0x340F);
+    assert_eq!(
+        owner.ratify(store, unknown, owner_ratifier.key_id).await,
+        Err(StoreError::EdgeNotPending { edge_id: unknown }),
+        "an edge id no tenant holds is refused by name"
+    );
+    assert_ratification_wrote_nothing(store, &owner, &edge, owner_head).await;
+}
+
+/// Ratifying an edge with its proposer's own key is refused by the store
+/// and writes nothing, its event included: the proposer never ratifies its
+/// own edge (ADR-0012 R2's backstop, postgres-schema.md
+/// `claim_edges_ratifier_is_not_proposer`).
+pub async fn ratifying_an_edge_with_its_proposers_key_writes_nothing_and_is_refused<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let (mut world, edge, head) = pending_edge_world(store, 342).await;
+
+    let refused = world
+        .ratify(store, edge.edge_id, edge.proposer_key_id)
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "the proposer's key is refused by the store, got {refused:?}"
+    );
+    assert_ratification_wrote_nothing(store, &world, &edge, head).await;
+}
+
+/// Ratifying with a key another tenant holds is refused by the store and
+/// writes nothing, its event included: a ratifier is a key of the edge's
+/// own tenant (postgres-schema.md `claim_edges`, the tenant-keyed foreign
+/// key into `api_keys`).
+pub async fn ratifying_with_another_tenants_key_writes_nothing_and_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let (mut world, edge, _) = pending_edge_world(store, 343).await;
+    let mut other = EdgeWorld::new(store, 344).await;
+    let foreign = other.ratifier(store, Uuid::from_u128(0x344D)).await;
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+
+    let refused = world.ratify(store, edge.edge_id, foreign.key_id).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "another tenant's key is refused by the store, got {refused:?}"
+    );
+    assert_ratification_wrote_nothing(store, &world, &edge, head).await;
+}
+
 /// A tenant with four terms on its root, and a ratifier.
 async fn term_world<S: JournalStore>(
     store: &S,
@@ -6040,6 +6188,13 @@ where
         &new_store().await,
     )
     .await;
+    ratifying_an_edge_the_tenant_does_not_hold_writes_nothing_and_is_refused_edge_not_pending(
+        &new_store().await,
+    )
+    .await;
+    ratifying_an_edge_with_its_proposers_key_writes_nothing_and_is_refused(&new_store().await)
+        .await;
+    ratifying_with_another_tenants_key_writes_nothing_and_is_refused(&new_store().await).await;
     the_ratified_term_edges_of_a_label_list_each_by_its_endpoints_claim_keys(&new_store().await)
         .await;
     a_pending_or_other_label_edge_is_absent_from_the_ratified_term_edges(&new_store().await).await;
