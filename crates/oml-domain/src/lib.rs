@@ -27,13 +27,16 @@
 //! the `oml:` register (ADR-0021 d1, d2; ADR-0027 d7); `vocab_edges` holds
 //! claim-edge states, classification validation, cycle refusal, the lineage
 //! closure without `oml:about`, retirement and the recall terms match
-//! (ADR-0021 d5; ADR-0027 d6–d11).
+//! (ADR-0021 d5; ADR-0027 d6–d11); `claim_edges` holds the label check at a
+//! claim-edge proposal and the ratifier check at its ratification (ADR-0008
+//! d5; ADR-0021 d5; ADR-0012).
 
 #![forbid(unsafe_code)]
 
 pub mod access;
 pub mod budget;
 pub mod chain;
+pub mod claim_edges;
 pub mod envelope;
 pub mod guardrail;
 pub mod jcs;
