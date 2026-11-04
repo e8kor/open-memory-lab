@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.severity import Severity
 from ..models.submit_request_kind import SubmitRequestKind
 from ..models.submit_request_verb import SubmitRequestVerb
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.guardrail_rule import GuardrailRule
+
 
 T = TypeVar("T", bound="SubmitRequest")
 
@@ -33,7 +38,16 @@ class SubmitRequest:
                 derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
                 conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
-            kind (SubmitRequestKind | Unset):  Default: SubmitRequestKind.MEMORY.
+            kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (proposed ADR-0037 d10; planned
+                for v0.5.1). Default: SubmitRequestKind.MEMORY.
+            severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
+                orders the set first; required on kind guardrail except a retirement, refused on every other kind
+                (request.validation, details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+            rule (GuardrailRule | Unset): A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and
+                an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
+                (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
+                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (proposed ADR-0037 d8, d10; planned
+                for v0.5.1).
             workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
                 any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
                 bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
@@ -46,6 +60,8 @@ class SubmitRequest:
     verb: SubmitRequestVerb | Unset = UNSET
     claim_key: str | Unset = UNSET
     kind: SubmitRequestKind | Unset = SubmitRequestKind.MEMORY
+    severity: Severity | Unset = UNSET
+    rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -62,6 +78,14 @@ class SubmitRequest:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind.value
+
+        severity: str | Unset = UNSET
+        if not isinstance(self.severity, Unset):
+            severity = self.severity.value
+
+        rule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rule, Unset):
+            rule = self.rule.to_dict()
 
         workarea: str | Unset
         if isinstance(self.workarea, Unset):
@@ -86,6 +110,10 @@ class SubmitRequest:
             field_dict["claim_key"] = claim_key
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if severity is not UNSET:
+            field_dict["severity"] = severity
+        if rule is not UNSET:
+            field_dict["rule"] = rule
         if workarea is not UNSET:
             field_dict["workarea"] = workarea
         if derives_from is not UNSET:
@@ -95,6 +123,8 @@ class SubmitRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.guardrail_rule import GuardrailRule
+
         d = dict(src_dict)
         body = d.pop("body")
 
@@ -114,6 +144,20 @@ class SubmitRequest:
         else:
             kind = SubmitRequestKind(_kind)
 
+        _severity = d.pop("severity", UNSET)
+        severity: Severity | Unset
+        if isinstance(_severity, Unset):
+            severity = UNSET
+        else:
+            severity = Severity(_severity)
+
+        _rule = d.pop("rule", UNSET)
+        rule: GuardrailRule | Unset
+        if isinstance(_rule, Unset):
+            rule = UNSET
+        else:
+            rule = GuardrailRule.from_dict(_rule)
+
         def _parse_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
@@ -128,6 +172,8 @@ class SubmitRequest:
             verb=verb,
             claim_key=claim_key,
             kind=kind,
+            severity=severity,
+            rule=rule,
             workarea=workarea,
             derives_from=derives_from,
         )

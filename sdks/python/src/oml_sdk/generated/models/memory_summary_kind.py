@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class MemorySummaryKind(StrEnum):
     DERIVED_FACT = "derived_fact"
+    GUARDRAIL = "guardrail"
     MEMORY = "memory"
     STEERING = "steering"
     TERM = "term"

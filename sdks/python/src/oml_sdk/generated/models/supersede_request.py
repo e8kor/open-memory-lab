@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.severity import Severity
 from ..models.supersede_request_kind import SupersedeRequestKind
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.guardrail_rule import GuardrailRule
+
 
 T = TypeVar("T", bound="SupersedeRequest")
 
@@ -34,6 +39,14 @@ class SupersedeRequest:
                 lineage.md).
             derives_from (list[str] | Unset): The superseded target is included implicitly.
             reason (str | Unset):
+            severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
+                orders the set first; required on kind guardrail except a retirement, refused on every other kind
+                (request.validation, details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+            rule (GuardrailRule | Unset): A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and
+                an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
+                (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
+                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (proposed ADR-0037 d8, d10; planned
+                for v0.5.1).
     """
 
     body: str
@@ -42,6 +55,8 @@ class SupersedeRequest:
     kind: SupersedeRequestKind | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     reason: str | Unset = UNSET
+    severity: Severity | Unset = UNSET
+    rule: GuardrailRule | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
@@ -64,6 +79,14 @@ class SupersedeRequest:
 
         reason = self.reason
 
+        severity: str | Unset = UNSET
+        if not isinstance(self.severity, Unset):
+            severity = self.severity.value
+
+        rule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rule, Unset):
+            rule = self.rule.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -81,11 +104,17 @@ class SupersedeRequest:
             field_dict["derives_from"] = derives_from
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if severity is not UNSET:
+            field_dict["severity"] = severity
+        if rule is not UNSET:
+            field_dict["rule"] = rule
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.guardrail_rule import GuardrailRule
+
         d = dict(src_dict)
         body = d.pop("body")
 
@@ -109,6 +138,20 @@ class SupersedeRequest:
 
         reason = d.pop("reason", UNSET)
 
+        _severity = d.pop("severity", UNSET)
+        severity: Severity | Unset
+        if isinstance(_severity, Unset):
+            severity = UNSET
+        else:
+            severity = Severity(_severity)
+
+        _rule = d.pop("rule", UNSET)
+        rule: GuardrailRule | Unset
+        if isinstance(_rule, Unset):
+            rule = UNSET
+        else:
+            rule = GuardrailRule.from_dict(_rule)
+
         supersede_request = cls(
             body=body,
             workarea=workarea,
@@ -116,6 +159,8 @@ class SupersedeRequest:
             kind=kind,
             derives_from=derives_from,
             reason=reason,
+            severity=severity,
+            rule=rule,
         )
 
         return supersede_request
