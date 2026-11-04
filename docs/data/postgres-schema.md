@@ -363,6 +363,34 @@ CREATE TABLE workarea_edges (
     CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
 
+-- Decided, not built: status-ladder proposals (ADR-0009 d3), the build's reading on
+-- architecture/workareas.md. Several pending rows may share a workarea; ratification
+-- re-checks from_status against workareas.status and refuses a stale row.
+CREATE TABLE workarea_transitions (
+    id                 uuid   PRIMARY KEY,           -- the events' transition_id
+    tenant_id          uuid   NOT NULL,
+    workarea_id        uuid   NOT NULL,
+    from_status        text   NOT NULL
+        CHECK (from_status IN ('development', 'committed')),
+    to_status          text   NOT NULL
+        CHECK (to_status IN ('committed', 'validated')),
+    state              text   NOT NULL CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id    uuid   NOT NULL,
+    proposer_principal text   NOT NULL,              -- R2 is checked on the principal too
+    ratifier_key_id    uuid,
+    proposed_seq       bigint NOT NULL,              -- seq of workarea.status_proposed
+    ratified_seq       bigint,                       -- seq of workarea.status_transition
+    UNIQUE (tenant_id, id),
+    FOREIGN KEY (tenant_id, workarea_id) REFERENCES workareas (tenant_id, id),
+    FOREIGN KEY (tenant_id, proposer_key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, ratifier_key_id) REFERENCES api_keys (tenant_id, id),
+    CHECK ((from_status, to_status) IN (('development', 'committed'),
+                                        ('committed', 'validated'))),
+    CHECK ((state = 'ratified') = (ratifier_key_id IS NOT NULL)),
+    CHECK ((state = 'ratified') = (ratified_seq IS NOT NULL)),
+    CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
+);
+
 CREATE TABLE claim_edges (
     id              uuid PRIMARY KEY,
     tenant_id       uuid NOT NULL,
@@ -1256,6 +1284,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
 | `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
+| `workarea_transitions` (decided, not built) | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
