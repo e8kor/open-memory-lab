@@ -16,7 +16,11 @@
 //! holds the pure core of connections — the connect code, PKCE, the redirect
 //! allowlist, client identity, the fetch-address allow-list, discovery, token
 //! formats, rotation with reuse detection and the connection lifecycle
-//! (ADR-0031, proposed).
+//! (ADR-0031, proposed). `vocab` holds the CURIE grammar, the prefix
+//! registry, `term_status` and the `oml:` register (ADR-0021 d1, d2;
+//! ADR-0027 d7); `vocab_edges` holds claim-edge states, classification
+//! validation, cycle refusal, the lineage closure without `oml:about`,
+//! retirement and the recall terms match (ADR-0021 d5; ADR-0027 d6–d11).
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +34,8 @@ pub mod ladder;
 pub mod model;
 pub mod name;
 pub mod oauth;
+pub mod vocab;
+pub mod vocab_edges;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,
