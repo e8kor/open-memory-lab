@@ -460,6 +460,7 @@ CREATE TABLE claim_edges (
         CONSTRAINT claim_edges_state CHECK (state IN ('pending', 'ratified')),
     proposer_key_id uuid NOT NULL,
     ratifier_key_id uuid,
+    created_at      timestamptz(6) NOT NULL DEFAULT now(),  -- its claim_edge.proposed's at
     UNIQUE (tenant_id, id),
     FOREIGN KEY (tenant_id, src_artifact_id) REFERENCES memories (tenant_id, id),
     FOREIGN KEY (tenant_id, dst_artifact_id) REFERENCES memories (tenant_id, id),
@@ -476,12 +477,15 @@ ALTER TABLE claim_edges
     ALTER COLUMN id SET STATISTICS 0, ALTER COLUMN tenant_id SET STATISTICS 0,
     ALTER COLUMN src_artifact_id SET STATISTICS 0, ALTER COLUMN dst_artifact_id SET STATISTICS 0,
     ALTER COLUMN label SET STATISTICS 0, ALTER COLUMN state SET STATISTICS 0,
-    ALTER COLUMN proposer_key_id SET STATISTICS 0, ALTER COLUMN ratifier_key_id SET STATISTICS 0;
+    ALTER COLUMN proposer_key_id SET STATISTICS 0, ALTER COLUMN ratifier_key_id SET STATISTICS 0,
+    ALTER COLUMN created_at SET STATISTICS 0;
 
 CREATE INDEX claim_edges_src ON claim_edges (tenant_id, src_artifact_id);
 CREATE INDEX claim_edges_dst ON claim_edges (tenant_id, dst_artifact_id);
 CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
     WHERE state = 'ratified';                -- the cycle refusal's read (ADR-0021)
+CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id DESC);
+                                             -- the graph read, newest first
 ```
 
 - **Keys.** Each key into `memories` and `api_keys` carries `tenant_id`, so an edge naming
@@ -492,6 +496,9 @@ CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
   ([ADR-0012](../adr/ADR-0012-admission-and-review.md)); the principal and lineage rule is
   the ratification transaction's. `claim_edges_ratified_has_ratifier` makes a row ratified
   exactly when it names a ratifier. Each refuses with `23514`.
+- **Order.** `created_at` is the `at` of the edge's `claim_edge.proposed` event, and
+  `GET /v2/claim-edges` lists by it newest first, then by `id` descending, as every list
+  endpoint does ([http-api.md](../api/http-api.md#pagination)).
 - **States.** `pending` and `ratified` only. A `rejected` state and a `term_curie` column belong
   to ADR-0027, which is not accepted; the domain's `EdgeState::Rejected` is not stored.
 - **Fence.** Row-level security is enabled and forced, under the `tenant_isolation` policy

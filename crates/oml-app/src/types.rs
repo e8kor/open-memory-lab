@@ -1558,6 +1558,10 @@ pub struct ClaimEdgeRecord {
     pub proposer_principal: String,
     /// The ratifying key; `None` while the edge is pending.
     pub ratifier_key_id: Option<Uuid>,
+    /// The `at` of its `claim_edge.proposed` event, which the store refuses
+    /// any other value for: the listing's order key (http-api.md
+    /// pagination).
+    pub created_at: EventTime,
 }
 
 /// `GET /v2/claim-edges`'s predicates, re-applied on every page; `None`
@@ -1574,10 +1578,13 @@ pub struct ClaimEdgeFilter {
     pub workarea_id: Option<Uuid>,
 }
 
-/// Where a claim-edge page resumes: the id of the last edge the previous
-/// page served, in edge-id order (http-api.md pagination).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where a claim-edge page resumes: the `created_at` and id of the last
+/// edge the previous page served, in the order `created_at` descending,
+/// then `edge_id` descending, as [`ListingPosition`] is (http-api.md
+/// pagination: newest first on every list endpoint).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimEdgePosition {
+    pub created_at: EventTime,
     pub edge_id: Uuid,
 }
 
