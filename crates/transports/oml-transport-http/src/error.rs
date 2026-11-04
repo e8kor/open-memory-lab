@@ -1092,7 +1092,7 @@ mod ladder_tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod claim_edge_tests {
     use super::*;
     use oml_app::domain::claim_edges::{EdgeField, LabelRefusal};
     use oml_app::domain::vocab::OmlLabel;

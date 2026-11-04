@@ -45,8 +45,7 @@ use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, JournalStore, MetadataFold, OutboxRow,
     StoreError,
 };
-use oml_app::types::{AppError, BootstrapRequest, KeyRecord, PROVIDER_TENANT};
-ClaimEdgeRecord,
+use oml_app::types::{AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, PROVIDER_TENANT};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
