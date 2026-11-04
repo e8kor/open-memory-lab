@@ -74,6 +74,12 @@ pub enum StoreError {
     /// (errors.md; ADR-0010 R2).
     #[error("transition {transition_id}'s ratifier is its proposer")]
     RatifierIsProposer { transition_id: Uuid },
+    /// A claim-edge ratification's compare-and-set found `edge_id` no
+    /// longer pending, ratified by a commit before it, or not an edge the
+    /// tenant holds: the commit wrote nothing, its event included
+    /// (postgres-schema.md `claim_edges`; ADR-0021 d5).
+    #[error("claim edge {edge_id} is not a pending edge of this tenant")]
+    EdgeNotPending { edge_id: Uuid },
     /// A commit's idempotency record found its scope already recorded: a
     /// concurrent attempt under the same Idempotency-Key committed first,
     /// and this commit wrote nothing (http-api.md idempotency).
@@ -373,6 +379,22 @@ pub enum MetadataFold {
     /// ratification's check (ADR-0012; errors.md
     /// `review.ratifier_is_proposer`).
     ClaimEdgeProposed(ClaimEdgeRecord),
+    /// `review.ratify` with `subject_kind: "claim_edge"`: the edge turns
+    /// ratified and names `ratifier_key_id` (event-catalog.md, the
+    /// claim-edge family). The store compare-and-sets that the edge is
+    /// still a pending edge of the commit's tenant; on a lost
+    /// compare-and-set it writes nothing, the event included, and refuses
+    /// with [`StoreError::EdgeNotPending`], as [`Self::TipSuperseded`]
+    /// refuses with [`StoreError::TipMoved`]. It refuses a ratifier key the
+    /// tenant does not hold and one equal to the proposer's
+    /// (`claim_edges_ratifier_is_not_proposer`); R2 against the proposer's
+    /// principal and the endpoints' closures is the use case's (ADR-0012).
+    /// The edge is already in every closure it joins, pending, so the fold
+    /// widens none (audit-and-lineage.md, pending and ratified alike).
+    ClaimEdgeRatified {
+        edge_id: Uuid,
+        ratifier_key_id: Uuid,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -878,6 +900,28 @@ pub trait JournalStore: Send + Sync {
         after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send;
+
+    /// The tenant's ratified claim edges labelled `label` whose endpoints
+    /// are both of kind `term`, each as its (source, target) endpoints'
+    /// `claim_key`s, a term's CURIE (ontologies.md), in that pair's byte
+    /// order ascending; a pending edge, an edge of another label and an
+    /// edge with any other kind at an end are absent. The read behind the
+    /// ADR-0021 d5 cycle refusal: the application parses each with
+    /// `Curie::parse` and builds the `TermEdge`s it checks the candidate
+    /// against.
+    ///
+    /// The use case reads the chain head before it calls this, and seals its
+    /// ratification on that head. A commit that changes these edges between
+    /// the read and the ratification's commit moves the head, so the head
+    /// compare-and-set refuses the ratification with
+    /// [`StoreError::SeqConflict`] and the transport's head retry re-reads
+    /// the edges: the cycle check is a transaction-time check with no lock
+    /// of its own (ADR-0021 d5; ADR-0002, one chain head).
+    fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> impl Future<Output = Result<Vec<(String, String)>, StoreError>> + Send;
 }
 
 /// The web pages' rows (ADR-0045 d2, d4, d5; postgres-schema.md "web"):
