@@ -19,7 +19,7 @@ use oml_app::domain::oauth::{
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, VerifyError, WorkareaStatus, verify_chain,
+    SignedEnvelope, VerifyError, WorkareaStatus, ratifier_is_proposer, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
@@ -1743,11 +1743,28 @@ async fn apply_fold(
             supersede_tip(tx, tenant_id, successor, replaced, at).await?;
         }
         MetadataFold::TransitionProposed(p) => {
-            // The schema refuses a step other than one rung forward, a
-            // ratified row with no ratifier or no seq, and a node or key of
-            // another tenant (0016_workarea_transitions.sql); the record's
-            // state is written as carried, so a record that is not pending
-            // meets those checks rather than being coerced.
+            // The proposer principal must be the one the proposing key's
+            // row holds, or the ratifying commit's R2 check would compare
+            // against a principal no key holds (ADR-0010 R2). The schema
+            // refuses a step other than one rung forward, a ratified row
+            // with no ratifier or no seq, and a node or key of another
+            // tenant (0016_workarea_transitions.sql); the record's state is
+            // written as carried, so a record that is not pending meets
+            // those checks rather than being coerced.
+            let principal: Option<String> = sqlx::query_scalar(
+                "SELECT principal FROM api_keys WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(p.proposer_key_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if principal.as_deref() != Some(p.proposer_principal.as_str()) {
+                return Err(StoreError::Backend(format!(
+                    "transition {}'s proposer principal is not its proposing key's",
+                    p.transition_id
+                )));
+            }
             sqlx::query(
                 "INSERT INTO workarea_transitions (id, tenant_id, workarea_id, from_status, \
                  to_status, state, proposer_key_id, proposer_principal, ratifier_key_id, \
@@ -1788,16 +1805,20 @@ async fn apply_fold(
     Ok(())
 }
 
-/// `workarea.status_transition`'s fold. The node row is locked and read
-/// first, under the chain lock the commit already holds, so nothing moves
-/// it between the guard and the write (workareas.md, ratification
-/// re-checks). The row turns `ratified` only while it is pending on this
-/// node with this `to` and its `from` is the node's status, and the node
-/// then takes `to` only from that `from`; a guard that matches no row
-/// refuses the commit, which writes nothing, never a silent no-op. The
-/// schema refuses a ratifier that is the proposing key or a key the tenant
-/// does not hold, and a universe root moved off `committed` (ADR-0009 d1,
-/// d3).
+/// `workarea.status_transition`'s fold, under the chain lock the commit
+/// already holds. The node row and the proposal row are locked and read
+/// first, so nothing moves either between the re-checks and the writes
+/// (workareas.md, ratification re-checks). A row that is not a proposal on
+/// this node with this `to`, and a ratifier key the tenant does not hold,
+/// are defects; a row already ratified or whose `from` is no longer the
+/// node's status is [`StoreError::TransitionStale`]; a ratifier that is the
+/// proposing key or holds the proposer's principal, read from its key row
+/// here, is [`StoreError::RatifierIsProposer`]; and a step to `validated`
+/// that finds a direct child not `validated` is
+/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
+/// which writes nothing. The schema still refuses a ratifier that is the
+/// proposing key and a universe root moved off `committed` (ADR-0009 d1,
+/// d3, d4; ADR-0010 R2).
 async fn ratify_transition(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -1807,10 +1828,9 @@ async fn ratify_transition(
     to: WorkareaStatus,
     ratifier_key_id: Uuid,
 ) -> Result<(), StoreError> {
-    let guard = || {
+    let defect = || {
         StoreError::Backend(format!(
-            "transition {transition_id} is not a pending proposal on workarea {workarea_id} \
-             to {} from the node's status",
+            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
             to.as_str()
         ))
     };
@@ -1822,41 +1842,93 @@ async fn ratify_transition(
     .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
-    let Some(from) = status else {
-        return Err(guard());
+    let Some(current) = status else {
+        return Err(defect());
     };
-    let ratified = sqlx::query(
-        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $5, \
-         ratified_seq = $6 \
-         WHERE tenant_id = $1 AND id = $2 AND workarea_id = $3 AND to_status = $4 \
-         AND state = 'pending' AND from_status = $7",
+    let row: Option<(Uuid, String, String, String, Uuid, String)> = sqlx::query_as(
+        "SELECT workarea_id, from_status, to_status, state, proposer_key_id, \
+         proposer_principal FROM workarea_transitions \
+         WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
     )
     .bind(tenant_id)
     .bind(transition_id)
-    .bind(workarea_id)
-    .bind(to.as_str())
-    .bind(ratifier_key_id)
-    .bind(seq)
-    .bind(&from)
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
-    if ratified.rows_affected() != 1 {
-        return Err(guard());
+    let Some((row_workarea, from, row_to, state, proposer_key_id, proposer_principal)) = row else {
+        return Err(defect());
+    };
+    if row_workarea != workarea_id || row_to != to.as_str() {
+        return Err(defect());
     }
-    let moved = sqlx::query(
-        "UPDATE workareas SET status = $3 WHERE tenant_id = $1 AND id = $2 AND status = $4",
+    if state != TransitionState::Pending.as_str() || from != current {
+        let from = WorkareaStatus::parse(&from).ok_or_else(|| {
+            StoreError::Backend(format!("transition {transition_id} has from {from:?}"))
+        })?;
+        return Err(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from,
+            to,
+        });
+    }
+    let ratifier_principal: Option<String> =
+        sqlx::query_scalar("SELECT principal FROM api_keys WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_id)
+            .bind(ratifier_key_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(backend)?;
+    let Some(ratifier_principal) = ratifier_principal else {
+        return Err(StoreError::Backend(format!(
+            "key {ratifier_key_id} is not held by this tenant"
+        )));
+    };
+    if ratifier_is_proposer(
+        proposer_key_id,
+        &proposer_principal,
+        ratifier_key_id,
+        &ratifier_principal,
+    ) {
+        return Err(StoreError::RatifierIsProposer { transition_id });
+    }
+    if to == WorkareaStatus::Validated {
+        // Under the chain lock every child create and reparent waits for
+        // this commit, so the read sees the subtree as it is (ADR-0009 d4).
+        let short: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM workareas WHERE tenant_id = $1 AND parent_id = $2 \
+             AND status <> 'validated' LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(backend)?;
+        if short.is_some() {
+            return Err(StoreError::ChildrenNotValidated {
+                transition_id,
+                workarea_id,
+            });
+        }
+    }
+    sqlx::query(
+        "UPDATE workarea_transitions SET state = 'ratified', ratifier_key_id = $3, \
+         ratified_seq = $4 WHERE tenant_id = $1 AND id = $2",
     )
     .bind(tenant_id)
-    .bind(workarea_id)
-    .bind(to.as_str())
-    .bind(&from)
+    .bind(transition_id)
+    .bind(ratifier_key_id)
+    .bind(seq)
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
-    if moved.rows_affected() != 1 {
-        return Err(guard());
-    }
+    sqlx::query("UPDATE workareas SET status = $3 WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .bind(to.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
     Ok(())
 }
 

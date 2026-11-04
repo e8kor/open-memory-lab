@@ -24,6 +24,7 @@ use oml_domain::oauth::{
 use oml_domain::{
     ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
     event_types,
+    ratifier_is_proposer,
 };
 
 use crate::ports::{
@@ -632,16 +633,23 @@ fn one_rung(from: WorkareaStatus, to: WorkareaStatus) -> bool {
     )
 }
 
-/// `workarea.status_proposed`'s fold: what the schema refuses, the double
-/// refuses — a node or proposing key the tenant does not hold, a step other
-/// than one rung forward, a record that is not pending, and an id already
-/// held (0016_workarea_transitions.sql).
+/// `workarea.status_proposed`'s fold: what the store refuses, the double
+/// refuses — a node or proposing key the tenant does not hold, a proposer
+/// principal other than the one that key's row holds, a step other than
+/// one rung forward, a record that is not pending, and an id already held
+/// (0016_workarea_transitions.sql; ADR-0010 R2).
 fn propose_transition_fold(
     state: &mut TenantState,
     seq: u64,
     proposal: TransitionRecord,
 ) -> Result<(), StoreError> {
     require_held(state, proposal.proposer_key_id, proposal.workarea_id)?;
+    if key_principal(state, proposal.proposer_key_id)? != proposal.proposer_principal {
+        return Err(StoreError::Backend(format!(
+            "transition {}'s proposer principal is not its proposing key's",
+            proposal.transition_id
+        )));
+    }
     if !one_rung(proposal.from, proposal.to) {
         return Err(StoreError::Backend(format!(
             "a transition is one rung forward, never {} to {}",
@@ -667,12 +675,17 @@ fn propose_transition_fold(
     Ok(())
 }
 
-/// `workarea.status_transition`'s fold, as the store's guarded updates
-/// apply it: the row must be pending on this node with this `to`, the
-/// node's status must still be the row's `from`, the ratifier a key of the
-/// tenant other than the proposing key, and a universe root never leaves
-/// `committed`; anything else refuses the commit, which writes nothing
-/// (ADR-0009 d1, d3).
+/// `workarea.status_transition`'s fold, as the ratifying transaction
+/// applies it once the chain lock is held: a row that is not a proposal on
+/// this node with this `to`, a ratifier key the tenant does not hold, and a
+/// universe root moved off `committed` are defects; a row already ratified
+/// or whose `from` is no longer the node's status is
+/// [`StoreError::TransitionStale`]; a ratifier that is the proposing key or
+/// holds the proposer's principal is [`StoreError::RatifierIsProposer`];
+/// and a step to `validated` with a direct child not `validated` is
+/// [`StoreError::ChildrenNotValidated`]. Any refusal refuses the commit,
+/// which writes nothing (ADR-0009 d1, d3, d4; ADR-0010 R2; workareas.md,
+/// ratification re-checks).
 fn ratify_transition_fold(
     state: &mut TenantState,
     transition_id: Uuid,
@@ -680,31 +693,44 @@ fn ratify_transition_fold(
     to: WorkareaStatus,
     ratifier_key_id: Uuid,
 ) -> Result<(), StoreError> {
-    let guard = || {
+    let defect = || {
         StoreError::Backend(format!(
-            "transition {transition_id} is not a pending proposal on workarea {workarea_id} \
-             to {} from the node's status",
+            "transition {transition_id} is not a proposal on workarea {workarea_id} to {}",
             to.as_str()
         ))
     };
     let Some((_, row)) = state.transitions.get(&transition_id) else {
-        return Err(guard());
+        return Err(defect());
     };
     let Some(node) = state.workareas.get(&workarea_id) else {
-        return Err(guard());
+        return Err(defect());
     };
-    if row.workarea_id != workarea_id
-        || row.to != to
-        || row.state != TransitionState::Pending
-        || node.status != row.from
-    {
-        return Err(guard());
+    if row.workarea_id != workarea_id || row.to != to {
+        return Err(defect());
+    }
+    if row.state != TransitionState::Pending || node.status != row.from {
+        return Err(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from: row.from,
+            to: row.to,
+        });
     }
     require_held(state, ratifier_key_id, workarea_id)?;
-    if ratifier_key_id == row.proposer_key_id {
-        return Err(StoreError::Backend(format!(
-            "transition {transition_id}'s ratifier is never its proposing key"
-        )));
+    let ratifier_principal = key_principal(state, ratifier_key_id)?;
+    if ratifier_is_proposer(
+        row.proposer_key_id,
+        &row.proposer_principal,
+        ratifier_key_id,
+        ratifier_principal,
+    ) {
+        return Err(StoreError::RatifierIsProposer { transition_id });
+    }
+    if to == WorkareaStatus::Validated && child_not_validated(state, workarea_id) {
+        return Err(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        });
     }
     if node.parent_id.is_none() && to != WorkareaStatus::Committed {
         return Err(StoreError::Backend(
@@ -719,6 +745,34 @@ fn ratify_transition_fold(
         row.ratifier_key_id = Some(ratifier_key_id);
     }
     Ok(())
+}
+
+/// The principal the tenant's key row `key_id` holds, revoked or not.
+fn key_principal(state: &TenantState, key_id: Uuid) -> Result<&str, StoreError> {
+    state
+        .keys_by_hash
+        .values()
+        .find(|k| k.key_id == key_id)
+        .map(|k| k.principal.as_str())
+        .ok_or_else(|| StoreError::Backend(format!("key {key_id} is not held by this tenant")))
+}
+
+/// Whether any direct child of `workarea_id`, named or not, stands on a
+/// rung other than `validated` (ADR-0009 d4).
+fn child_not_validated(state: &TenantState, workarea_id: Uuid) -> bool {
+    state
+        .workareas
+        .values()
+        .filter(|w| w.parent_id == Some(workarea_id))
+        .map(|w| w.status)
+        .chain(
+            state
+                .unnamed_workareas
+                .values()
+                .filter(|w| w.parent_id == Some(workarea_id))
+                .map(|w| w.status),
+        )
+        .any(|status| status != WorkareaStatus::Validated)
 }
 
 /// Names the tenant at its genesis, as the `tenants` row does: a tenant
