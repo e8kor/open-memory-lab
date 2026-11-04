@@ -318,6 +318,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
                     deny: Vec::new(),
                 }],
                 connect_code: true,
+                guardrail_scope: None,
             },
         )
         .await

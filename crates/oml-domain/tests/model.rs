@@ -162,3 +162,13 @@ fn nfc_normalizes_decomposed_text() {
     assert_eq!(nfc("Accra Metals \u{00E9}"), "Accra Metals \u{00E9}");
     assert_eq!(nfc(""), "");
 }
+
+/// Kind `guardrail` is proposed ADR-0037 d1's: a kind the domain names, not
+/// yet in `openapi.yaml`'s submit enum, which changes with its route
+/// (d14).
+#[test]
+fn guardrail_is_a_claim_kind_whose_name_parses_back() {
+    assert_eq!(MemoryKind::Guardrail.as_str(), "guardrail");
+    assert_eq!(MemoryKind::parse("guardrail"), Some(MemoryKind::Guardrail));
+    assert_eq!(MemoryKind::parse("Guardrail"), None, "names are exact");
+}

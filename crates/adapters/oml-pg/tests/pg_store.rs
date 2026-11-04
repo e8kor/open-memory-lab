@@ -2372,8 +2372,14 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
-            // (ADR-0031 d7).
-            (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id' - 'credential'",
+            // (ADR-0031 d7); 0016 adds guardrail_scope, folded as ancestors
+            // (proposed ADR-0037 d4).
+            (true, "api_keys") => {
+                "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'guardrail_scope'"
+            }
+            // 0016 adds a guardrail's severity and rule, null on every other
+            // kind (proposed ADR-0037 d10).
+            (true, "memories") => "to_jsonb(t) - 'severity' - 'rule'",
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };

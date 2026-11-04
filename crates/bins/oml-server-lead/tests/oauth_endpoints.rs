@@ -588,6 +588,7 @@ async fn issue_connector(rig: &Rig) -> String {
                     deny: Vec::new(),
                 }],
                 connect_code: true,
+                guardrail_scope: None,
             },
         )
         .await

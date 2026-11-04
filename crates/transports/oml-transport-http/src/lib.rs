@@ -451,6 +451,8 @@ where
             body: text,
             workarea,
             derives_from: req.derives_from,
+            severity: None,
+            rule: None,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
@@ -735,6 +737,8 @@ where
             reason: req.reason,
             workarea: optional_reference("/workarea", req.workarea.as_deref())?,
             refuse_vocabulary_target,
+            severity: None,
+            rule: None,
         };
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
@@ -1007,6 +1011,9 @@ where
             crew,
             grants,
             connect_code: req.connect_code,
+            // Not yet on the wire (proposed ADR-0037 d14): every key this
+            // route issues takes the issuance default, ancestors.
+            guardrail_scope: None,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
@@ -2448,9 +2455,18 @@ fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
 }
 
 /// The submit body's kind, stored as sent (http-api.md submit; ADR-0025
-/// d8); an unknown one is refused, never coerced to `memory`.
+/// d8); an unknown one is refused, never coerced to `memory`. Kind
+/// `guardrail` is outside this route's contract until its fields are on the
+/// wire (proposed ADR-0037 d14), so it is refused by name, never stored
+/// without its severity.
 fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
-    MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
+    match MemoryKind::parse(kind) {
+        Some(MemoryKind::Guardrail) => Err(ApiError::validation(
+            "kind guardrail is not on this route yet: its severity and rule are not in the request body, so it is refused, never stored without them",
+        )),
+        Some(kind) => Ok(kind),
+        None => Err(ApiError::validation(format!("unknown kind {kind:?}"))),
+    }
 }
 
 /// The recall `kinds` filter: absent is no filter, and a sent one names at

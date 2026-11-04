@@ -49,6 +49,7 @@ async fn agent() -> (Router, String) {
                 crew: None,
                 grants: grants.to_vec(),
                 connect_code: false,
+                guardrail_scope: None,
             },
         )
         .await

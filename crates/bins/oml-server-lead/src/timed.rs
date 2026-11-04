@@ -147,6 +147,18 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn guardrail_rows(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        author_key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "guardrail_rows",
+            self.inner.guardrail_rows(tenant_id, nodes, author_key_id),
+        )
+    }
+
     fn recall_own_held(
         &self,
         tenant_id: Uuid,

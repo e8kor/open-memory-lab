@@ -346,6 +346,20 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TermRetirement => ApiError::validation(
             "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
+        AppError::GuardrailSeverityRequired => ApiError::validation(
+            "a guardrail carries a severity, never, must or should, unless it retires",
+        )
+        .with_details(json!({ "field": "/severity" })),
+        AppError::GuardrailFieldRefused { field } => ApiError::validation(format!(
+            "{field} is a guardrail's field, refused on any other kind and on a retirement"
+        ))
+        .with_details(json!({ "field": format!("/{field}") })),
+        // Raised only from the agent plugin, whose oml_write names the
+        // target `replaces` (proposed ADR-0037 d10, amending ADR-0039 d3).
+        AppError::GuardrailTarget => ApiError::validation(
+            "a guardrail is written and superseded on the HTTP API: oml_write does not supersede a guardrail",
+        )
+        .with_details(json!({ "field": "/replaces" })),
         // Raised only from the agent plugin, whose oml_write names the
         // target `replaces` (ADR-0039 d3).
         AppError::VocabularyTarget(kind) => ApiError::validation(format!(

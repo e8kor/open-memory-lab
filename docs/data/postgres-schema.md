@@ -293,6 +293,26 @@ Three invariants live in transaction logic, not DDL:
 A superseded version keeps `state = 'promoted'` with `is_tip = false`
 ([audit-and-lineage](../architecture/audit-and-lineage.md) owns the tip semantics).
 
+### Guardrail columns
+
+**Status:** built in `migrations/0016_guardrails.sql` for the proposed
+[ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+(d2, d8, d10, d14); the record binds nothing before its acceptance.
+
+```sql
+ALTER TABLE memories
+    ADD COLUMN severity text CHECK (severity IN ('never', 'must', 'should')),
+    ADD COLUMN rule     jsonb,  -- the oml-gr/1 rule as admitted; the submission journals its digest
+    ADD CONSTRAINT memories_guardrail_fields_check
+        CHECK ((severity IS NULL OR (kind = 'guardrail' AND NOT retirement))
+               AND (severity IS NOT NULL OR kind <> 'guardrail' OR retirement)
+               AND (rule IS NULL OR severity IS NOT NULL));
+```
+
+Every guardrail version but a retirement carries a severity, and no other row carries either
+column. The build stores the rule inline beside the body, as it stores the body; d14's sealing of
+the rule under the version's DEK waits for the encrypted body store.
+
 ## workareas and edges
 
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
@@ -477,6 +497,11 @@ references, always bypass row security"
 A provider-level key (`tenant_id` NULL) matches no such reference, and carries no grant
 ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)).
 Bans are checked at admission; a ban's reach is previewable (`--dry-run`) before it is imposed.
+
+`api_keys.guardrail_scope text NOT NULL DEFAULT 'ancestors' CHECK (guardrail_scope IN
+('workarea', 'ancestors'))`, built in `migrations/0016_guardrails.sql`, holds the scope the key's
+issuance set (proposed ADR-0037 d4). A key issued before it holds `ancestors`, as its
+`key.issued` without the field folds; no journal event is rewritten.
 
 ## Keys into tenant tables
 

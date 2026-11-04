@@ -76,6 +76,7 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                     deny: Vec::new(),
                 }],
                 connect_code: false,
+                guardrail_scope: None,
             },
         )
         .await
