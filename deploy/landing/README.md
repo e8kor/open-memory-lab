@@ -2,14 +2,14 @@
 
 `index.html` is the public landing page of the maintainer's server, `https://memory.doublegate.io/`.
 It is one self-contained file: inline CSS, the OML mark inline, no external assets and no
-tracking. Caddy serves it for `/` alone and passes every other path to the lead.
+tracking. Caddy serves `index.html`, `privacy.html` and `terms.html` for `/`, `/privacy` and `/terms` alone and passes every other path to the lead.
 
 ```caddyfile
 memory.doublegate.io {
-	@landing path /
+	@landing path / /privacy /terms
 	handle @landing {
 		root * /srv/data/www/memory
-		rewrite * /index.html
+		try_files {path}.html /index.html
 		file_server
 	}
 	handle {
