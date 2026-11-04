@@ -32,6 +32,29 @@ implementation milestone where it changes what the repository holds.
 Entries for the guardrails record and its build, kept apart from the released revisions until
 the release that carries them, newest first.
 
+### 2026-11-04 — Guardrails S3, S4 and S5: the hooks, the export and the prompt (implementation, ADR-0037, proposed)
+
+An implementation milestone on the v0.5.1 branch; the record stays proposed and binds nothing,
+and `info.version` is unchanged (d18 Q9).
+
+- **The leaf crate** (d18 Q10). `oml-guardrail` holds the `oml-gr/1` grammar, the matcher, the
+  check, the rule cache's codec and the frame renderer; `oml-domain` re-exports it and `oml-cli`
+  links it and no other inward crate ([workspace plan](engineering/workspace-plan.md)).
+- **S3** (d6, d7). `oml hook guardrails` on SessionStart and SubagentStart: one `GET
+  /v1/guardrails`, the set in its own frame with provenance, conflicts and the caller's held
+  rows, nothing over the cap and the user told, the key redacted, every failure a
+  `systemMessage`; at SessionStart alone the 30-day sweep and the 0600 rule cache. `GET
+  /v1/guardrails` also names `scope_path`, the header's workarea.
+- **S4** (d8, d9). `oml hook pre-tool-use`: deny or ask from the cache, never allow, no request;
+  a broken cache denies every call; no cache decides nothing and warns; a bad `session_id`
+  exits 2. The plugin's `hooks.json` carries both entries, and `check_plugin.py` holds them.
+- **S5** (d7, d11). `oml guardrails show` and `oml guardrails export --format agents-md|claude-md
+  [--check]`; the MCP prompt `guardrails` beside the three tools. Recall refuses `kinds:
+  ["guardrail"]` naming `/kinds` (d18 Q7). The SDKs' generated layers are regenerated.
+- **Not built:** S6 (user roots and the pages, after v0.5.0); the export's refusal inside an
+  in-progress subtree (ADR-0030) and the freeze (d12, ADR-0036); rotation's scope and the
+  simulation refusal; no recorded Claude Code session yet shows the hooks running (FR-51).
+
 ### 2026-11-04 — ADR-0037's ten open questions answered by the maintainer
 
 [ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
