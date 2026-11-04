@@ -22,9 +22,8 @@ use oml_domain::oauth::{
     connection_transition,
 };
 use oml_domain::{
-    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
-    event_types,
-    ratifier_is_proposer,
+    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
+    WorkareaStatus, event_types, ratifier_is_proposer,
 };
 
 use crate::ports::{
@@ -39,8 +38,7 @@ use crate::types::{
     DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
     ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WorkareaRecord, WorkareaRef,
-    TransitionRecord, TransitionState,
+    TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal

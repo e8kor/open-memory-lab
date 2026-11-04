@@ -46,9 +46,8 @@ use oml_pg::{
 };
 use oml_port_contracts::{
     ChainRig, auth_code_hash, authorization_request, connect_code, connect_grant, connector_key,
-    handle_hash, held_memory, key_record, name, run_connection_store_suite,
+    handle_hash, held_memory, key_record, name, pending_transition, run_connection_store_suite,
     run_journal_store_suite, test_signing_key, token_pair, workarea_record,
-    pending_transition,
 };
 use serde_json::{Value, json};
 use sqlx::migrate::Migrate as _;

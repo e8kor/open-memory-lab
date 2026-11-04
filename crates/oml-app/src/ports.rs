@@ -15,7 +15,9 @@ use uuid::Uuid;
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
-use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint};
+use oml_domain::{
+    ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
+};
 
 use crate::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,

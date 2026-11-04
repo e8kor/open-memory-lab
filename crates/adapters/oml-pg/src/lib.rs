@@ -31,8 +31,8 @@ use oml_app::types::{
     DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
     PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
-    TokenPair, TokenRecord, UnnamedRows, WorkareaRecord, WorkareaRef,
-    TransitionRecord, TransitionState,
+    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord,
+    WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
