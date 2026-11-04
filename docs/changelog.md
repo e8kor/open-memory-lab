@@ -37,6 +37,13 @@ routes, the `/v2/edges` family for `kind` claim and brief, and the workarea read
 `pending_transitions` and `brief`. The entries below were kept apart until this release, newest
 first.
 
+### 2026-11-04 — Release v0.5.3: v0.5.2 published without macOS
+
+The v0.5.2 tag's release never published: its macOS CLI job waited for a runner GitHub did not
+assign, and a release waits for every target. The macOS targets are paused in CI and the release
+([paused targets](engineering/ci-and-toolchain.md#paused-targets)), and the same content ships as
+v0.5.3. No contract changed, so `info.version` stays `0.5.2-design`.
+
 ### 2026-11-04 — Release v0.5.2: ADR-0046 accepted
 
 The maintainer accepted [ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) on 2026-11-04 with release v0.5.2. ADR-0008, ADR-0009,

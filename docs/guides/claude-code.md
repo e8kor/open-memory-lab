@@ -25,7 +25,7 @@ this page links them rather than restating them.
 ## 1. Install the CLI
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.2/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.3/scripts/install/install.sh | sh
 ```
 
 It writes one file, `~/.local/bin/oml`, and prints what it checked. On Windows and for the
