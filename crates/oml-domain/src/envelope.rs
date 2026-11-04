@@ -55,6 +55,9 @@ pub mod event_types {
     pub const REVIEW_REJECT: &str = "review.reject";
     /// The act that finds the review policy satisfied.
     pub const REVIEW_RATIFY: &str = "review.ratify";
+    /// A dreamer(propose) key proposes a labelled claim↔claim edge; pending,
+    /// it confers nothing (event-catalog.md, claim-edge family).
+    pub const CLAIM_EDGE_PROPOSED: &str = "claim_edge.proposed";
     /// Ratified content becomes readable by others.
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
     /// A promoted supersession takes the tip from the version it replaces.
