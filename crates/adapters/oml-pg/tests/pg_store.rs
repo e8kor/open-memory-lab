@@ -5408,10 +5408,13 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
         .execute(&mut *tx)
         .await
         .expect("tenant");
+    // Every build stored the root `committed` and every other node
+    // `development`, as 0017's workareas_universe_committed then holds.
     for (w, parent, w_name) in [(universe, None, "universe"), (crew, Some(universe), "crew")] {
         sqlx::query(
             "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status) \
-             VALUES ($1, $2, $3, $4, text2ltree($5), 'development')",
+             VALUES ($1, $2, $3, $4, text2ltree($5), \
+                     CASE WHEN $3::uuid IS NULL THEN 'committed' ELSE 'development' END)",
         )
         .bind(w)
         .bind(tenant)
@@ -5820,10 +5823,12 @@ async fn dreamer_pg(
             default_workarea: None,
             crew: None,
             connect_code: false,
+            user: None,
             grants: vec![oml_app::types::GrantRequest {
                 node: node.into(),
                 role: Role::Dreamer,
                 deny: Vec::new(),
+                covers: oml_app::domain::access::Covers::Subtree,
             }],
         },
     )

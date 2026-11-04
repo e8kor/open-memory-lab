@@ -8,10 +8,10 @@
 use std::collections::BTreeSet;
 
 use oml_domain::access::{
-    AccessRefusal, CrewKind, EdgeLabelsRefusal, EffectiveAccess, Grant, KeyDenial, LabelledGrant,
-    MemberProfile, ProfileClause, ProfileMismatch, Verb, VerbRefusal, check_member_profile,
-    check_profile_amendment, effective_access, effective_roles, effective_verbs, my_edge_labels,
-    resolve, resolve_verb,
+    AccessRefusal, Covers, CrewKind, EdgeLabelsRefusal, EffectiveAccess, Grant, KeyDenial,
+    LabelledGrant, MemberProfile, ProfileClause, ProfileMismatch, Verb, VerbRefusal,
+    check_member_profile, check_profile_amendment, effective_access, effective_roles,
+    effective_verbs, my_edge_labels, resolve, resolve_verb,
 };
 use oml_domain::vocab::{OmlLabel, PrefixRegistry};
 use oml_domain::{HeldBy, Role};
@@ -88,6 +88,7 @@ fn plain(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
         node,
         role,
         deny: deny.to_vec(),
+        covers: Covers::Subtree,
     }
 }
 

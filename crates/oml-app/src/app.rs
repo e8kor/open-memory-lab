@@ -20,10 +20,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::access::{
-    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
-    tail_visible,
-    LabelledGrant, Verb, VerbRefusal, effective_access, resolve_verb,
+    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
+    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_issuance, effective_access,
+    effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::brief::{brief_cut, brief_order};
 use oml_domain::budget::{budget_tokens, cut, hit_order};
@@ -64,25 +63,22 @@ use crate::ports::{
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
-    Bearer, BootstrapRequest, BootstrapResult, ClientAuthentication, ClientDescription, ClientKind,
-    ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeRatification, ClaimEdgeRecord,
-    ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeQuery, ClaimEdgeSelection,
-    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
-    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
-    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
-    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
-    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts,
-    RefreshForm, RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
-    VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    TransitionRecord, TransitionState,
-    TransitionView,
-    ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeRecord, ProposeClaimEdge,
-    ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeQuery,
-    Brief, BriefEdgePage, BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView, EdgeRatification, ProposeBriefEdge,
+    Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage, BriefEdgeProposalOutcome,
+    BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView, ClaimEdgeFilter, ClaimEdgePage,
+    ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeQuery,
+    ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection, ClientAuthentication,
+    ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
+    ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued, ConnectCodeRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, GrantRecord,
+    HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord,
+    ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage, MemoryRecord,
+    MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, ProposeBriefEdge,
+    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb,
+    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow,
+    TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows,
+    Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
     WorkareaStatusView,
 };
 
@@ -1746,6 +1742,7 @@ where
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
             name: user.name.clone(),
+            status: WorkareaStatus::Development,
             crew: None,
             crew_id: None,
             user_root: true,
@@ -1772,7 +1769,7 @@ where
             "workarea_id": workarea.workarea_id.to_string(),
             "parent_id": workarea.parent_id.map(|p| p.to_string()),
             "name": workarea.name.as_str(),
-            "status": workarea.status(),
+            "status": workarea.status.as_str(),
             "crew_id": workarea.crew_id.map(|c| c.to_string()),
             "prefix": Value::Null,
             "user_root": workarea.user_root,
