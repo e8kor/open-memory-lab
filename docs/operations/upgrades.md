@@ -236,10 +236,10 @@ ADR-0039 d12's reading, which the maintainer has not decided. Rolling back means
 server, CLI and plugin together; the two migrations stay, as every migration does, and no
 v0.3 binary has been run on the v0.4.0 schema yet.
 
-**oml.doublegate.io**, the maintainer's deployment, runs a v0.3 release. Its upgrade is these
-steps, the server, the CLI and the plugin together, with the plugin configured and the
-permission rules replaced. It has not run; it waits for the maintainer, and its date is recorded
-here when it does.
+**The maintainer's deployment** ran these steps on 2026-11-04: the server, the CLI and the
+plugin together, with the plugin configured and `oauth.issuer` set. The same day it moved from
+`oml.doublegate.io` to `memory.doublegate.io`, with no redirect from the old name: the issuer moved
+with it, and the clients were set to the new URL.
 
 ## Version skew: one minor, as policy
 
