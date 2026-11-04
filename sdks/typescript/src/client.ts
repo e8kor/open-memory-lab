@@ -111,6 +111,8 @@ const READ_RECALL: readonly string[] = [
   "include_text",
   "include_unreviewed",
   "max_tokens",
+  "search",
+  "match",
 ];
 const READ_LISTING: readonly string[] = [
   "own",
