@@ -552,3 +552,79 @@ async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_
     assert_eq!(items[0]["artifact_id"], id.as_str());
     assert_eq!(items[0]["severity"], "must");
 }
+
+/// One JSON-RPC request to `/mcp`; its `result`.
+async fn rpc(router: &Router, token: &str, method: &str, params: Value) -> Value {
+    let (status, body) = send(
+        router,
+        "POST",
+        "/mcp",
+        Some(token),
+        None,
+        Some(&json!({"jsonrpc": "2.0", "id": 7, "method": method, "params": params})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{method}: {body}");
+    body["result"].clone()
+}
+
+#[tokio::test]
+async fn the_prompt_renders_the_hook_text() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    submit_guardrail(
+        &router,
+        &t,
+        "g-1",
+        json!({"kind": "guardrail", "severity": "never", "rule": deny_push(),
+               "body": "Never push to main.", "workarea": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+
+    let init = rpc(&router, &t.writer, "initialize", json!({})).await;
+    assert_eq!(
+        init["capabilities"]["prompts"],
+        json!({"listChanged": false}),
+        "{init}"
+    );
+    let listed = rpc(&router, &t.writer, "prompts/list", json!({})).await;
+    let names: Vec<&str> = listed["prompts"]
+        .as_array()
+        .expect("prompts")
+        .iter()
+        .filter_map(|p| p["name"].as_str())
+        .collect();
+    assert_eq!(names, ["guardrails"], "{listed}");
+
+    let got = rpc(
+        &router,
+        &t.writer,
+        "prompts/get",
+        json!({"name": "guardrails"}),
+    )
+    .await;
+    let text = got["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a text message: {got}"));
+    let (_, set) = send(
+        &router,
+        "GET",
+        "/v1/guardrails",
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    let frame = oml_guardrail::render_frame(
+        &set,
+        &oml_guardrail::FrameOptions {
+            origin: "this server",
+            checked: false,
+            whole_over_cap: false,
+        },
+    )
+    .expect("the set renders");
+    assert_eq!(text, frame.text);
+    assert_eq!(got["messages"][0]["role"], "user");
+}
