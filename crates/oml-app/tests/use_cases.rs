@@ -6,6 +6,7 @@
 //! structure reads (ADR-0026 d4–d6, d8, d9, d11, d15).
 
 use oml_app::App;
+use oml_app::cursor::CursorError;
 use oml_app::domain::access::{Covers, admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::claim_edges::{EdgeField, LabelRefusal};
@@ -32,10 +33,10 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     AppError, AuthorizationRecord, AuthorizeOutcome, AuthorizeParams, BootstrapRequest,
-    BootstrapResult, ClaimEdgeRecord, ClientAuthentication, ClientKind, CodeEntryOutcome,
-    ConfirmAction, ConfirmOutcome, ConfirmationView, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, ExchangeForm, GrantRequest,
-    IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken, NamingRefusal,
+    BootstrapResult, ClaimEdgePage, ClaimEdgeQuery, ClaimEdgeRecord, ClientAuthentication,
+    ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationView, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, ExchangeForm,
+    GrantRequest, IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken, NamingRefusal,
     ProposeClaimEdge, RecallRequest, RecallResult, RefreshForm, SubmitRequest, SubmitVerb,
     SupersedeRequest, TokenPair, TransitionState, TransitionView, Verdict, VerdictRequest,
     VersionRef,
@@ -11412,4 +11413,264 @@ async fn of_two_ratifications_racing_to_close_an_is_a_cycle_one_commits_and_the_
         .expect("read")
         .expect("the edge");
     assert_eq!(edge.state, EdgeState::Pending);
+}
+
+// ---------------------------------------------------------------------------
+// The claim-edge read: GET /v2/claim-edges behind its use case (http-api.md,
+// claim edges and pagination; ADR-0008 d5)
+// ---------------------------------------------------------------------------
+
+fn edges_of(artifact_id: Uuid) -> ClaimEdgeQuery {
+    ClaimEdgeQuery {
+        workarea: None,
+        artifact_id: Some(artifact_id),
+    }
+}
+
+fn edges_in(workarea: Reference) -> ClaimEdgeQuery {
+    ClaimEdgeQuery {
+        workarea: Some(workarea),
+        artifact_id: None,
+    }
+}
+
+fn edge_ids(page: &ClaimEdgePage) -> Vec<Uuid> {
+    page.items.iter().map(|e| e.edge_id).collect()
+}
+
+#[tokio::test]
+async fn the_claim_edges_read_lists_pending_and_ratified_edges_of_a_readable_artifact() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let ratified = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    f.app
+        .ratify_claim_edge(&rita.value, ratified, None)
+        .await
+        .expect("ratify");
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let page = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(page.next_cursor, None);
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|e| serde_json::to_value(e).expect("serializes"))
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "edge_id": ratified.to_string(),
+                "from_artifact_id": f.b.to_string(),
+                "to_artifact_id": f.a.to_string(),
+                "label": "acme:refutes",
+                "state": "ratified",
+                "proposer_key_id": f.pat.key_id.to_string(),
+                "ratifier_key_id": rita.key_id.to_string(),
+            }),
+            json!({
+                "edge_id": f.edge_id.to_string(),
+                "from_artifact_id": f.a.to_string(),
+                "to_artifact_id": f.b.to_string(),
+                "label": "acme:supports",
+                "state": "pending",
+                "proposer_key_id": f.pat.key_id.to_string(),
+                "ratifier_key_id": null,
+            }),
+        ],
+        "newest first, each as openapi.yaml's ClaimEdge"
+    );
+}
+
+#[tokio::test]
+async fn an_edge_with_an_endpoint_outside_read_scope_is_absent_from_the_read() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let erin = agent(&f.app, admin, "erin", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("far-u", "u")).await;
+    // A curator reading both workareas joins a to the row rory cannot read.
+    let quinn = issue_with(
+        &f.app,
+        admin,
+        Role::Dreamer,
+        "quinn",
+        vec![
+            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reader),
+            grant(elsewhere, Role::Reader),
+        ],
+    )
+    .await;
+    let hidden = proposed(&f.app, &quinn.value, f.a, unseen, "acme:supports").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let of_a = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&of_a), vec![f.edge_id]);
+    let in_crew = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&in_crew), vec![f.edge_id]);
+    let of_unseen = f
+        .app
+        .claim_edges(&rory.value, edges_of(unseen), None, 10)
+        .await
+        .expect("the read");
+    assert!(of_unseen.items.is_empty(), "{:?}", of_unseen.items);
+
+    // The key that reads both ends is served the edge.
+    let by_quinn = f
+        .app
+        .claim_edges(&quinn.value, edges_of(f.a), None, 10)
+        .await
+        .expect("the read");
+    assert_eq!(edge_ids(&by_quinn), vec![hidden, f.edge_id]);
+}
+
+#[tokio::test]
+async fn a_page_cursor_resumes_after_the_last_edge() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let erin = agent(&f.app, admin, "erin", elsewhere).await;
+    let eve = issue(&f.app, admin, Role::Dreamer, "eve", elsewhere).await;
+    let unseen = promoted(&f.app, &erin.value, &eve.value, &submit_req("pg-u", "u")).await;
+    let quinn = issue_with(
+        &f.app,
+        admin,
+        Role::Dreamer,
+        "quinn",
+        vec![
+            grant(f.crew, Role::Dreamer),
+            grant(f.crew, Role::Reader),
+            grant(elsewhere, Role::Reader),
+        ],
+    )
+    .await;
+    // Newest first: fourth, the edge rory cannot read, second, the fixture's.
+    let second = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    proposed(&f.app, &quinn.value, f.a, unseen, "acme:supports").await;
+    let fourth = proposed(&f.app, &f.pat.value, f.a, f.b, "acme:cites").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let query = edges_of(f.a);
+
+    let first = f
+        .app
+        .claim_edges(&rory.value, query.clone(), None, 2)
+        .await
+        .expect("the first page");
+    assert_eq!(
+        edge_ids(&first),
+        vec![fourth, second],
+        "the page reads past the edge it filters out to fill its limit"
+    );
+    let cursor = first.next_cursor.expect("another page");
+    let next = f
+        .app
+        .claim_edges(&rory.value, query, Some(&cursor), 2)
+        .await
+        .expect("the next page");
+    assert_eq!(edge_ids(&next), vec![f.edge_id]);
+    assert_eq!(next.next_cursor, None, "the listing is exhausted");
+}
+
+#[tokio::test]
+async fn a_cursor_minted_for_another_filter_is_refused_request_validation() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+    let cursor = f
+        .app
+        .claim_edges(&rory.value, edges_of(f.a), None, 1)
+        .await
+        .expect("the first page")
+        .next_cursor
+        .expect("another page");
+
+    for other in [
+        edges_of(f.b),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery {
+            workarea: Some(f.crew.into()),
+            artifact_id: Some(f.a),
+        },
+    ] {
+        let err = f
+            .app
+            .claim_edges(&rory.value, other, Some(&cursor), 1)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Cursor(CursorError::OtherFilter)),
+            "{err:?}"
+        );
+    }
+    // Under its own filter it resumes.
+    f.app
+        .claim_edges(&rory.value, edges_of(f.a), Some(&cursor), 1)
+        .await
+        .expect("its own filter resumes");
+}
+
+#[tokio::test]
+async fn an_admin_key_reading_claim_edges_is_refused_access_verb_ceiling() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    for query in [
+        edges_of(f.a),
+        edges_in(f.crew.into()),
+        ClaimEdgeQuery::default(),
+    ] {
+        let err = f.app.claim_edges(admin, query, None, 10).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Admin,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_workarea_named_by_its_name_reads_as_by_its_id() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    proposed(&f.app, &f.pat.value, f.b, f.a, "acme:refutes").await;
+    let rory = issue(&f.app, admin, Role::Reader, "rory", f.crew).await;
+
+    let by_id = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), None, 1)
+        .await
+        .expect("by id");
+    let by_name = f
+        .app
+        .claim_edges(&rory.value, edges_in(by_name("crew")), None, 1)
+        .await
+        .expect("by name");
+    assert_eq!(edge_ids(&by_name), edge_ids(&by_id));
+    assert_eq!(by_id.items.len(), 1);
+    // The cursor binds the resolved node, so either spelling resumes it.
+    let cursor = by_name.next_cursor.expect("another page");
+    let rest = f
+        .app
+        .claim_edges(&rory.value, edges_in(f.crew.into()), Some(&cursor), 1)
+        .await
+        .expect("resumes by id");
+    assert_eq!(edge_ids(&rest), vec![f.edge_id]);
 }
