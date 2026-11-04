@@ -1362,11 +1362,12 @@ where
     /// `derives_from` hides (http-api.md get; ADR-0025 d3). The path is the
     /// ancestry's names from the root, joined with `.` (ADR-0025 d14).
     ///
-    /// Not set-wise yet: each ancestor, the replaced version and the path
-    /// are read for this one row, so recall, get and every listing issue
-    /// those reads once per served row, against ADR-0024 d4 ("never N+1").
-    /// Only the rows themselves hydrate set-wise (`JournalStore::memories`).
-    /// The cost is unmeasured (FR-7, FR-25).
+    /// Not set-wise yet: each ancestor and the replaced version are read for
+    /// this one row, so recall, get and every listing issue those reads once
+    /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
+    /// path once per workarea ([`Self::served_in`]). Only the rows
+    /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
+    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (FR-7, FR-25).
     ///
     /// A version in `universe` is served to every key outside its authoring
     /// key set without its source: no principal, no `derives_from`, its
@@ -1376,13 +1377,32 @@ where
     async fn served(
         &self,
         caller: &Caller,
+        memory: MemoryRecord,
+    ) -> Result<ServedMemory, AppError> {
+        self.served_in(caller, memory, &mut BTreeMap::new()).await
+    }
+
+    /// [`Self::served`] with the workarea ancestries already read, by node:
+    /// a use case serving many rows reads each workarea's ancestry once
+    /// (ADR-0024 d4; ADR-0049 d12).
+    async fn served_in(
+        &self,
+        caller: &Caller,
         mut memory: MemoryRecord,
+        ancestries: &mut BTreeMap<Uuid, Option<Vec<WorkareaRecord>>>,
     ) -> Result<ServedMemory, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let ancestry = self
-            .journal
-            .workarea_ancestry(tenant_id, memory.workarea_id)
-            .await?;
+        let ancestry = match ancestries.get(&memory.workarea_id) {
+            Some(read) => read.clone(),
+            None => {
+                let read = self
+                    .journal
+                    .workarea_ancestry(tenant_id, memory.workarea_id)
+                    .await?;
+                ancestries.insert(memory.workarea_id, read.clone());
+                read
+            }
+        };
         // `universe` is the one node with no parent.
         let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
             && memory.author_key_id != caller.key.key_id;
@@ -4414,9 +4434,10 @@ where
             .map(|m| (m.memory_id, m))
             .collect();
         let mut served_ids: Vec<Uuid> = steering.iter().map(|m| m.memory_id).collect();
+        let mut ancestries = BTreeMap::new();
         let mut served_steering = Vec::with_capacity(steering.len());
         for m in steering {
-            served_steering.push(self.served(&caller, m).await?);
+            served_steering.push(self.served_in(&caller, m, &mut ancestries).await?);
         }
         let mut hits = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
@@ -4442,7 +4463,7 @@ where
             if admitted && !m.retirement && kinds.contains(&m.kind) {
                 served_ids.push(m.memory_id);
                 hits.push(RecallHit {
-                    served: self.served(&caller, m).await?,
+                    served: self.served_in(&caller, m, &mut ancestries).await?,
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),

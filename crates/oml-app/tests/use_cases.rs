@@ -13434,3 +13434,55 @@ async fn steering_stays_first_and_unranked_under_every_pipeline() {
         }
     }
 }
+
+/// A recall reads each served workarea's ancestry once, however many of its
+/// hits it serves: the path and the universe test of every hit in one
+/// workarea come from one read, so serving more hits adds no ancestry reads
+/// (retrieval.md; ADR-0024 d4, "never N+1"; ADR-0049 d12).
+#[tokio::test]
+async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it_serves() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    for i in 0..6 {
+        promoted(
+            &app,
+            &writer.value,
+            &dreamer.value,
+            &submit_into(
+                &format!("a{i}"),
+                &format!("the canary rollout step {i}"),
+                crew,
+            ),
+        )
+        .await;
+    }
+    let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let reads = |k: usize| {
+        let (app, store, key) = (&app, &store, reader.value.clone());
+        async move {
+            let before = store.ancestry_reads();
+            let recall = app
+                .recall(
+                    key.as_str(),
+                    &RecallRequest {
+                        k,
+                        search: Some("keyword-any".to_owned()),
+                        ..recall_req("canary")
+                    },
+                )
+                .await
+                .expect("recall");
+            assert_eq!(recall.hits.len(), k);
+            store.ancestry_reads() - before
+        }
+    };
+    assert_eq!(
+        reads(6).await,
+        reads(1).await,
+        "six hits read what one hit reads"
+    );
+}

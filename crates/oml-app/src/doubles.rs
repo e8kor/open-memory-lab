@@ -204,6 +204,9 @@ pub struct MemStore {
     miss_next_lookup: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
+    /// How many ancestries `workarea_ancestry` has read, across every
+    /// handle.
+    ancestry_reads: Arc<AtomicU64>,
     /// The tenants whose partitions `create_tenant_partitions` created, in
     /// creation order: a held memory's row needs its tenant's partition, as
     /// the list-partitioned `memories` refuses a row no partition holds
@@ -405,6 +408,13 @@ impl MemStore {
     #[must_use]
     pub fn name_lookups(&self) -> u64 {
         self.name_lookups.load(Ordering::SeqCst)
+    }
+
+    /// How many ancestries `workarea_ancestry` has read on any handle, so a
+    /// test can show a use case reads one per workarea, not one per row.
+    #[must_use]
+    pub fn ancestry_reads(&self) -> u64 {
+        self.ancestry_reads.load(Ordering::SeqCst)
     }
 
     /// Holds `events` as one tenant's chain in the state migration 0006
@@ -2489,6 +2499,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         workarea_id: Uuid,
     ) -> Result<Option<Vec<WorkareaRecord>>, StoreError> {
+        self.ancestry_reads.fetch_add(1, Ordering::SeqCst);
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
