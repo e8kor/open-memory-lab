@@ -14,7 +14,7 @@ exactly two settings, the server's address and a key, and the server works out e
 from the key. Since v0.4.1 the Claude Code plugin and the other tools' configurations default the
 address to the maintainer's public server, `https://memory.doublegate.io`, so with a key from that
 server the key is the only setting.
-
+The commands on this page are for v0.5.0; the default server dates from v0.4.1 and sign-in from v0.5.0
 The commands on this page are for v0.4.0, with the v0.4.1 default marked where it applies
 ([releases](../product/releases.md)).
 
