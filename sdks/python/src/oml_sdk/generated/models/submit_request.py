@@ -38,16 +38,15 @@ class SubmitRequest:
                 derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a
                 conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
-            kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (proposed ADR-0037 d10; planned
-                for v0.5.1). Default: SubmitRequestKind.MEMORY.
+            kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
+                Default: SubmitRequestKind.MEMORY.
             severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
                 orders the set first; required on kind guardrail except a retirement, refused on every other kind
-                (request.validation, details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+                (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
             rule (GuardrailRule | Unset): A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
-                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (proposed ADR-0037 d8, d10; planned
-                for v0.5.1).
+                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
             workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
                 any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
                 bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared

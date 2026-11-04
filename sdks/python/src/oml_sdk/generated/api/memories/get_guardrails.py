@@ -85,7 +85,7 @@ def sync_detailed(
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
     and any parameter other than workarea, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; proposed ADR-0037 d4, d5, d7; planned for v0.5.1).
+    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
         workarea (str | Unset):
@@ -129,7 +129,7 @@ def sync(
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
     and any parameter other than workarea, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; proposed ADR-0037 d4, d5, d7; planned for v0.5.1).
+    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
         workarea (str | Unset):
@@ -168,7 +168,7 @@ async def asyncio_detailed(
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
     and any parameter other than workarea, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; proposed ADR-0037 d4, d5, d7; planned for v0.5.1).
+    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
         workarea (str | Unset):
@@ -210,7 +210,7 @@ async def asyncio(
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
     and any parameter other than workarea, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; proposed ADR-0037 d4, d5, d7; planned for v0.5.1).
+    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
 
     Args:
         workarea (str | Unset):

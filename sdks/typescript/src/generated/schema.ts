@@ -97,7 +97,7 @@ export interface paths {
         };
         /**
          * The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
-         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workarea, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; proposed ADR-0037 d4, d5, d7; planned for v0.5.1).
+         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workarea, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
          */
         get: operations["getGuardrails"];
         put?: never;
@@ -840,7 +840,7 @@ export interface components {
             /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
             claim_key?: string;
             /**
-             * @description guardrail requires severity and admits rule (proposed ADR-0037 d10; planned for v0.5.1).
+             * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
              * @default memory
              * @enum {string}
              */
@@ -900,13 +900,13 @@ export interface components {
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
             /**
-             * @description On kind guardrail alone, except a retirement version (proposed ADR-0037 d2).
+             * @description On kind guardrail alone, except a retirement version (ADR-0037 d2).
              * @enum {string}
              */
             severity?: "never" | "must" | "should";
-            /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (proposed ADR-0037 d8). */
+            /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8). */
             rule?: unknown;
-            /** @description On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (proposed ADR-0037 d10). */
+            /** @description On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10). */
             load_warning?: string;
             /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
@@ -1282,11 +1282,11 @@ export interface components {
             connections?: components["schemas"]["Connection"][];
         };
         /**
-         * @description A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+         * @description A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
          * @enum {string}
          */
         Severity: "never" | "must" | "should";
-        /** @description A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (proposed ADR-0037 d8, d10; planned for v0.5.1). */
+        /** @description A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1). */
         GuardrailRule: {
             /** @enum {string} */
             rule: "oml-gr/1";
@@ -1304,11 +1304,11 @@ export interface components {
             effect: "deny" | "ask";
         };
         /**
-         * @description Which applicable guardrails the key loads: workarea, the scope node's alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope (proposed ADR-0037 d4; planned for v0.5.1).
+         * @description Which applicable guardrails the key loads: workarea, the scope node's alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope (ADR-0037 d4; since v0.5.1).
          * @enum {string}
          */
         GuardrailScope: "workarea" | "ancestors";
-        /** @description The guardrails in force at the scope node under the key's reader access and guardrail scope (proposed ADR-0037 d3, d4, d5, d7). */
+        /** @description The guardrails in force at the scope node under the key's reader access and guardrail scope (ADR-0037 d3, d4, d5, d7). */
         GuardrailSet: {
             scope_node: string;
             /** @description The scope node's derived path, root first; the hook's header names it. */

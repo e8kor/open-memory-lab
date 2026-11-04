@@ -41,12 +41,11 @@ class SupersedeRequest:
             reason (str | Unset):
             severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
                 orders the set first; required on kind guardrail except a retirement, refused on every other kind
-                (request.validation, details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+                (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
             rule (GuardrailRule | Unset): A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
-                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (proposed ADR-0037 d8, d10; planned
-                for v0.5.1).
+                submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
     """
 
     body: str

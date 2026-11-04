@@ -27,7 +27,7 @@ class ServedGuardrail:
         depth (int): The node's depth from the root, the root at 0.
         severity (Severity): A guardrail's severity: never and must bind, should is the reviewed default, and it orders
             the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation,
-            details.field /severity; proposed ADR-0037 d2, d10; planned for v0.5.1).
+            details.field /severity; ADR-0037 d2, d10; since v0.5.1).
         text (str):
         rule (Any): Its oml-gr/1 rule, or null.
         tokens (int):

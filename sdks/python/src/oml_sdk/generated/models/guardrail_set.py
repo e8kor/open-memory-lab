@@ -17,8 +17,8 @@ T = TypeVar("T", bound="GuardrailSet")
 
 @_attrs_define
 class GuardrailSet:
-    """The guardrails in force at the scope node under the key's reader access and guardrail scope (proposed ADR-0037 d3,
-    d4, d5, d7).
+    """The guardrails in force at the scope node under the key's reader access and guardrail scope (ADR-0037 d3, d4, d5,
+    d7).
 
         Attributes:
             scope_node (str):
@@ -26,7 +26,7 @@ class GuardrailSet:
             guardrail_scope (GuardrailScope): Which applicable guardrails the key loads: workarea, the scope node's alone;
                 ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in
                 key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope
-                (proposed ADR-0037 d4; planned for v0.5.1).
+                (ADR-0037 d4; since v0.5.1).
             set_digest (str): Opaque; a client only compares it.
             over_cap (bool): More than twelve apply; the set is still served whole.
             guardrails (list[ServedGuardrail]): Ordered by severity, depth from the root, promoted_at and artifact_id; never

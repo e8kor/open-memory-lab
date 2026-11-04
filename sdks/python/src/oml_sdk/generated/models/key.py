@@ -55,7 +55,7 @@ class Key:
         guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
             alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
             journalled in key.issued; no request changes it, and any other value is request.validation, details.field
-            /guardrail_scope (proposed ADR-0037 d4; planned for v0.5.1).
+            /guardrail_scope (ADR-0037 d4; since v0.5.1).
         connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
             most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
             (ADR-0031 d11).

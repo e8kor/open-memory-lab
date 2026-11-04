@@ -50,11 +50,10 @@ class Memory:
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
-        severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (proposed
-            ADR-0037 d2).
-        rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (proposed ADR-0037 d8).
+        severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
+        rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
-            workarea will load the rule once it binds (proposed ADR-0037 d10).
+            workarea will load the rule once it binds (ADR-0037 d10).
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
             its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
             source (ADR-0044 d9).
