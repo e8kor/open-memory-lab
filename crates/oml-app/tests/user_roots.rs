@@ -210,6 +210,8 @@ fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
         include_text: true,
         include_unreviewed: false,
         max_tokens: None,
+        search: None,
+        match_mode: oml_app::search::MatchMode::Any,
     }
 }
 

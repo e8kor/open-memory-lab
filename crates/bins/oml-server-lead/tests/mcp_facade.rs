@@ -3420,10 +3420,13 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     )
     .await;
     assert_eq!(recalled["mode"], "recall", "{recalled}");
-    assert_eq!(fields(&recalled), ["budget", "hits", "mode", "steering"]);
+    assert_eq!(
+        fields(&recalled),
+        ["budget", "hits", "mode", "search", "steering"]
+    );
     let hit = &recalled["hits"][0];
     assert_eq!(hit["artifact_id"], stored.as_str(), "{recalled}");
-    assert_eq!(fields(hit), with(&["score"]));
+    assert_eq!(fields(hit), with(&["matched", "score"]));
     assert_eq!(hit["text"], QUOTE);
 
     for (id, token, args) in [(3, &writer, json!({})), (4, &reader, json!({"own": false}))] {

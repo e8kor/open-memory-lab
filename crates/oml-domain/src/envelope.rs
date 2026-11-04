@@ -84,6 +84,9 @@ pub mod event_types {
     /// and, for a search, a digest of the query, never either text
     /// (ADR-0045 d21).
     pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
+    /// An admin key set the tenant's default search pipeline, or cleared
+    /// it to follow the deployment's (ADR-0049 d4).
+    pub const SEARCH_DEFAULT_SET: &str = "search.default_set";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

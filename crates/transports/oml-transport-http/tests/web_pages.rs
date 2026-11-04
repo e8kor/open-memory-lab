@@ -1884,6 +1884,8 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
                 include_text: true,
                 include_unreviewed: false,
                 max_tokens: None,
+                search: None,
+                match_mode: oml_app::search::MatchMode::Any,
             },
         )
         .await

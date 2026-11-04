@@ -11,6 +11,7 @@
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
+use oml_app::domain::budget::hit_order;
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
@@ -24,8 +25,11 @@ use oml_app::domain::{
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
+    JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
     claim_subject,
+};
+use oml_app::search::{
+    Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
 };
 use oml_app::types::{AdminSearch, AdminState, PinOutcome, QueueDepth, WebEntry, WebSessionRecord};
 use oml_app::types::{
@@ -33,8 +37,8 @@ use oml_app::types::{
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
-    PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
-    TokenPair, TokenRecord, UnnamedRows, WorkareaRecord, WorkareaRef,
+    PROVIDER_TENANT, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
+    UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -472,27 +476,129 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
 
+/// The candidate scope every search statement but `keyword-all`'s reads,
+/// binding `$1` the tenant, `$2` the promoted nodes, `$3` the kinds, `$4`
+/// the own held author keys and `$5` their nodes: promoted served tips on
+/// the readable nodes, and the own held rows of the keys on theirs, never a
+/// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
+/// fence beneath it (ADR-0034 d11).
+const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
+       AND m.kind = ANY($3::text[]) \
+       AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
+         OR (m.status = 'held' AND m.author_key_id = ANY($4::uuid[]) \
+             AND m.workarea_id = ANY($5::uuid[])))";
+
+/// The `keyword-any` statement (ADR-0048 S1): the query's `simple` lexemes
+/// joined by OR on the existing GIN index, `ts_rank` normalization 0, ties
+/// by id; `$6` the query, `$7` `k`, `$8` whether every term must match.
+fn keyword_any_sql() -> String {
+    format!(
+        "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
+                    tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
+         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), q.tq, 0) AS score, \
+                ARRAY(SELECT t FROM unnest(q.terms) t \
+                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', m.claim))) ORDER BY t) AS matched \
+         FROM memories m CROSS JOIN q \
+         WHERE {SEARCH_SCOPE} \
+           AND to_tsvector('simple', m.claim) @@ q.tq \
+           AND (NOT $8 OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $6)) \
+         ORDER BY score DESC, m.id ASC \
+         LIMIT $7"
+    )
+}
+
+/// The `bm25` statement (ADR-0048 S2): each query word of the normalised
+/// query (identifier parts beside the whole) in its exact form and its
+/// English stem; BM25 with k1 1.2 and b 0.75 whose row count, average
+/// length and document frequencies are computed in this statement over the
+/// candidate scope alone, so a row the key cannot read never moves another
+/// row's rank (ADR-0048 d3). A row's length is its count of distinct
+/// lexemes. `$6` the query, `$7` `k`, `$8` whether every word must match.
+fn bm25_sql() -> String {
+    format!(
+        "WITH words AS (SELECT DISTINCT w FROM unnest(tsvector_to_array(to_tsvector('simple', oml_search_text($6)))) w), \
+         forms AS (SELECT DISTINCT words.w, f FROM words \
+                   CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', words.w), '{{}}'::text[]), words.w)) f), \
+         docs AS (SELECT m.id, m.body_bytes, oml_search_vector(m.claim) AS v FROM memories m WHERE {SEARCH_SCOPE}), \
+         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg(length(d.v)), 1), 1)::float8 AS avgdl FROM docs d), \
+         tf AS (SELECT d.id, u.lexeme, GREATEST(cardinality(u.positions), 1)::float8 AS tf, length(d.v)::float8 AS dl \
+                FROM docs d CROSS JOIN LATERAL unnest(d.v) u \
+                WHERE u.lexeme IN (SELECT f FROM forms)), \
+         df AS (SELECT lexeme, count(*)::float8 AS df FROM tf GROUP BY lexeme), \
+         matched AS (SELECT tf.id, array_agg(DISTINCT forms.w ORDER BY forms.w) AS words \
+                     FROM tf JOIN forms ON forms.f = tf.lexeme GROUP BY tf.id), \
+         scored AS (SELECT tf.id, sum(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
+                                   * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS score \
+                    FROM tf JOIN df USING (lexeme) CROSS JOIN stats s GROUP BY tf.id) \
+         SELECT d.id, d.body_bytes, sc.score::float4 AS score, mt.words AS matched \
+         FROM scored sc JOIN docs d USING (id) JOIN matched mt USING (id) \
+         WHERE (NOT $8 OR cardinality(mt.words) = (SELECT count(*) FROM words)) \
+         ORDER BY score DESC, d.id ASC \
+         LIMIT $7"
+    )
+}
+
+/// The `trigram` statement (ADR-0048 S3): `pg_trgm` word similarity of the
+/// query to the normalised text above 0.3, the threshold `SET LOCAL` gives
+/// `<%`, which the `memories_search_trgm` index serves. `$6` the query, `$7`
+/// `k`.
+fn trigram_sql() -> String {
+    format!(
+        "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
+         FROM memories m \
+         WHERE {SEARCH_SCOPE} AND $6 <% oml_search_text(m.claim) \
+         ORDER BY score DESC, m.id ASC \
+         LIMIT $7"
+    )
+}
+
+/// The `did_you_mean` statement (ADR-0049 d6): words of rows in the
+/// candidate scope alone, similar to a query word of four or more letters
+/// that is not an English stop word, above `pg_trgm` similarity 0.4. `$6`
+/// the words, `$7` the limit.
+fn suggest_sql() -> String {
+    format!(
+        "WITH q AS (SELECT w FROM unnest($6::text[]) w \
+                    WHERE char_length(w) >= 4 AND ts_lexize('english_stem', w) <> '{{}}'::text[]), \
+         vocab AS (SELECT DISTINCT v FROM memories m \
+                   CROSS JOIN LATERAL unnest(tsvector_to_array(to_tsvector('simple', oml_search_text(m.claim)))) v \
+                   WHERE {SEARCH_SCOPE}) \
+         SELECT v FROM (SELECT vocab.v, max(similarity(vocab.v, q.w)) AS s FROM vocab CROSS JOIN q \
+                        WHERE vocab.v <> q.w AND similarity(vocab.v, q.w) > 0.4 GROUP BY vocab.v) x \
+         ORDER BY s DESC, v ASC \
+         LIMIT $7"
+    )
+}
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
     pool: PgPool,
     owner_url: Option<OwnerUrl>,
+    /// Whether `pg_trgm` was found by the last probe, at connect and after
+    /// each migration: the trigram retriever is served only then (ADR-0049
+    /// d8). Shared by every clone of the store, as the database is.
+    trigram: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PgStore {
     /// Connects a pool to `database_url` (no migration side effect; call
-    /// [`Self::migrate`] where bootstrap wants it). The store creates no
-    /// tenant's partitions until [`Self::with_owner_url`] gives it the
-    /// owner's URL.
+    /// [`Self::migrate`] where bootstrap wants it), with
+    /// [`Self::with_search_probe`] run, so the trigram retriever is served
+    /// where `pg_trgm` exists. The store creates no tenant's partitions until
+    /// [`Self::with_owner_url`] gives it the owner's URL.
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(4)
             .connect(database_url)
             .await?;
-        Ok(Self {
+        Self {
             pool,
             owner_url: None,
-        })
+            trigram: std::sync::Arc::default(),
+        }
+        .with_search_probe()
+        .await
     }
 
     #[must_use]
@@ -500,7 +606,48 @@ impl PgStore {
         Self {
             pool,
             owner_url: None,
+            trigram: std::sync::Arc::default(),
         }
+    }
+
+    /// The store with the retrievers its database can run: the trigram
+    /// retriever only where `pg_trgm` is installed (ADR-0049 d8). Without
+    /// the probe the store serves the keyword and BM25 retrievers alone.
+    pub async fn with_search_probe(self) -> Result<Self, sqlx::Error> {
+        self.probe_search().await?;
+        Ok(self)
+    }
+
+    async fn probe_search(&self) -> Result<(), sqlx::Error> {
+        let trigram: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        self.trigram
+            .store(trigram, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Creates the trigram index on `owner` once `pg_trgm` exists, for a
+    /// database whose extension an operator created after 0020 ran without
+    /// it (ADR-0049 d8). Idempotent; a database without the extension is
+    /// left as it is.
+    pub async fn ensure_trigram_index(owner: &PgPool) -> Result<(), sqlx::Error> {
+        let present: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
+        )
+        .fetch_one(owner)
+        .await?;
+        if present {
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS memories_search_trgm ON memories \
+                 USING gin (oml_search_text(claim) gin_trgm_ops)",
+            )
+            .execute(owner)
+            .await?;
+        }
+        Ok(())
     }
 
     /// The owner's URL, which the store opens a connection to for each
@@ -554,7 +701,12 @@ impl PgStore {
     /// use (postgres-schema.md "Privileges"). A migration that grants, run
     /// without `oml.serving_role`, fails at `current_setting` (`42704`).
     pub async fn migrate_as(&self, owner: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-        MIGRATOR.run(owner).await
+        MIGRATOR.run(owner).await?;
+        // 0020 may have created pg_trgm; the trigram index is created here
+        // too, for a database whose extension an operator created later.
+        Self::ensure_trigram_index(owner).await?;
+        self.probe_search().await?;
+        Ok(())
     }
 
     /// [`Self::migrate_as`] over an owner connection opened at `owner_url`
@@ -834,12 +986,15 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     })
 }
 
-/// A recall candidate from a row of `id`, `body_bytes` and `score`.
-fn candidate_from_row(row: &PgRow) -> Result<RecallCandidate, StoreError> {
-    Ok(RecallCandidate {
+/// A recall candidate from a row of `id`, `body_bytes` and `score`, and
+/// `matched` when the statement selects it.
+fn candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
+    let matched: Option<Vec<String>> = row.try_get("matched").ok();
+    Ok(Candidate {
         memory_id: row.try_get("id").map_err(backend)?,
         body_bytes: unsigned(row, "body_bytes")?,
         score: row.try_get("score").map_err(backend)?,
+        matched: matched.unwrap_or_default(),
     })
 }
 
@@ -1323,6 +1478,14 @@ async fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::SearchDefaultSet { pipeline } => {
+            sqlx::query("UPDATE tenants SET search_default = $2 WHERE id = $1")
+                .bind(tenant_id)
+                .bind(pipeline)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+        }
         MetadataFold::WorkareaCreated(w) => {
             // No status transition is built, so the status stored is the one
             // the workarea read serves: the universe root's permanent
@@ -2036,6 +2199,186 @@ async fn append_event(
 // The port implementation
 // ---------------------------------------------------------------------------
 
+impl PgStore {
+    /// `keyword-all`: the v0.5.0 statements, [`RECALL_FTS`] and
+    /// [`RECALL_OWN_HELD`], unchanged, their lists merged under the total
+    /// order of hits and cut to `k`, as the core merged them before
+    /// (ADR-0049 d7). Every term matched, so `matched` is the terms.
+    async fn keyword_all(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        kinds: &[&str],
+        query: RetrievalQuery<'_>,
+        terms: &[String],
+    ) -> Result<Vec<Candidate>, StoreError> {
+        let k = i64::try_from(query.k).unwrap_or(i64::MAX);
+        let mut rows = sqlx::query(RECALL_FTS)
+            .bind(tenant_id)
+            .bind(&scope.promoted_nodes)
+            .bind(query.query)
+            .bind(kinds)
+            .bind(k)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+        if let Some(own) = &scope.own_held {
+            rows.extend(
+                sqlx::query(RECALL_OWN_HELD)
+                    .bind(tenant_id)
+                    .bind(&own.author_key_ids)
+                    .bind(&own.nodes)
+                    .bind(query.query)
+                    .bind(kinds)
+                    .bind(k)
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(backend)?,
+            );
+        }
+        let mut candidates = rows
+            .iter()
+            .map(candidate_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        for c in &mut candidates {
+            c.matched = terms.to_vec();
+        }
+        hit_order(&mut candidates, |c| (c.score, c.memory_id));
+        candidates.truncate(query.k);
+        Ok(candidates)
+    }
+}
+
+impl Retriever for PgStore {
+    fn retrievers(&self) -> Vec<RetrieverKind> {
+        let mut served = vec![
+            RetrieverKind::KeywordAll,
+            RetrieverKind::KeywordAny,
+            RetrieverKind::Bm25,
+        ];
+        if self.trigram.load(std::sync::atomic::Ordering::SeqCst) {
+            served.push(RetrieverKind::Trigram);
+        }
+        served
+    }
+
+    async fn retrieve(
+        &self,
+        tenant_id: Uuid,
+        kind: RetrieverKind,
+        scope: &CandidateScope,
+        query: RetrievalQuery<'_>,
+    ) -> Result<Retrieved, StoreError> {
+        if !self.retrievers().contains(&kind) {
+            return Err(StoreError::Backend(format!(
+                "this store serves no {} retriever (pg_trgm absent)",
+                kind.as_str()
+            )));
+        }
+        let kinds = hit_kinds(&scope.kinds);
+        let (authors, held_nodes) = scope
+            .own_held
+            .as_ref()
+            .map_or((Vec::new(), Vec::new()), |own| {
+                (own.author_key_ids.clone(), own.nodes.clone())
+            });
+        let k = i64::try_from(query.k).unwrap_or(i64::MAX);
+        let all = query.match_mode == MatchMode::All;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The terms as the retriever reads them: the query's `simple`
+        // lexemes, of the normalised query for bm25 and trigram.
+        let terms_sql = match kind {
+            RetrieverKind::KeywordAll | RetrieverKind::KeywordAny => {
+                "SELECT tsvector_to_array(to_tsvector('simple', $1))"
+            }
+            RetrieverKind::Bm25 | RetrieverKind::Trigram => {
+                "SELECT tsvector_to_array(to_tsvector('simple', oml_search_text($1)))"
+            }
+        };
+        let terms: Vec<String> = sqlx::query_scalar(terms_sql)
+            .bind(query.query)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let candidates = match kind {
+            RetrieverKind::KeywordAll => {
+                self.keyword_all(&mut tx, tenant_id, scope, &kinds, query, &terms)
+                    .await?
+            }
+            RetrieverKind::Trigram if all => Vec::new(),
+            RetrieverKind::KeywordAny | RetrieverKind::Bm25 | RetrieverKind::Trigram => {
+                if kind == RetrieverKind::Trigram {
+                    sqlx::query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3")
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                }
+                let sql = match kind {
+                    RetrieverKind::KeywordAny => keyword_any_sql(),
+                    RetrieverKind::Bm25 => bm25_sql(),
+                    _ => trigram_sql(),
+                };
+                let mut statement = sqlx::query(&sql)
+                    .bind(tenant_id)
+                    .bind(&scope.promoted_nodes)
+                    .bind(&kinds)
+                    .bind(&authors)
+                    .bind(&held_nodes)
+                    .bind(query.query)
+                    .bind(k);
+                if kind != RetrieverKind::Trigram {
+                    statement = statement.bind(all);
+                }
+                statement
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(candidate_from_row)
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        tx.commit().await.map_err(backend)?;
+        Ok(Retrieved { terms, candidates })
+    }
+
+    async fn suggest(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        words: &[String],
+        limit: usize,
+    ) -> Result<Vec<String>, StoreError> {
+        if !self.trigram.load(std::sync::atomic::Ordering::SeqCst) || words.is_empty() {
+            return Ok(Vec::new());
+        }
+        let kinds = hit_kinds(&scope.kinds);
+        let (authors, held_nodes) = scope
+            .own_held
+            .as_ref()
+            .map_or((Vec::new(), Vec::new()), |own| {
+                (own.author_key_ids.clone(), own.nodes.clone())
+            });
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let found: Vec<String> = sqlx::query_scalar(&suggest_sql())
+            .bind(tenant_id)
+            .bind(&scope.promoted_nodes)
+            .bind(&kinds)
+            .bind(&authors)
+            .bind(&held_nodes)
+            .bind(words)
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(found)
+    }
+}
+
 impl JournalStore for PgStore {
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         // Everything networked happened before BEGIN (ADR-0024): the events
@@ -2275,74 +2618,17 @@ impl JournalStore for PgStore {
         rows.iter().map(memory_from_row).collect()
     }
 
-    async fn recall_fts(
-        &self,
-        tenant_id: Uuid,
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> Result<Vec<RecallCandidate>, StoreError> {
-        let k = i64::try_from(k).unwrap_or(i64::MAX);
-        let kinds = hit_kinds(kinds);
+    async fn tenant_search_default(&self, tenant_id: Uuid) -> Result<Option<String>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // Served tips only, never a retirement version, so neither a
-        // replaced version nor a retired claim is a hit (retrieval.md R3 at
-        // the store; ADR-0025 d8), within the readable set alone — an empty
-        // array matches nothing (ADR-0025 d1); the 'simple' configuration
-        // matches the GIN expression index each tenant's partition holds
-        // (0009). The score is ts_rank with
-        // normalization 0 as float4, ties broken by id. A candidate carries
-        // no body: the served rows hydrate after the cuts (ADR-0025 d7).
-        let rows = sqlx::query(RECALL_FTS)
-            .bind(tenant_id)
-            .bind(readable)
-            .bind(query)
-            .bind(&kinds)
-            .bind(k)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(backend)?;
+        let value: Option<Option<String>> =
+            sqlx::query_scalar("SELECT search_default FROM tenants WHERE id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        rows.iter().map(candidate_from_row).collect()
-    }
-
-    async fn recall_own_held(
-        &self,
-        tenant_id: Uuid,
-        author_key_ids: &[Uuid],
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> Result<Vec<RecallCandidate>, StoreError> {
-        let k = i64::try_from(k).unwrap_or(i64::MAX);
-        let kinds = hit_kinds(kinds);
-        let mut tx = self.pool.begin().await.map_err(backend)?;
-        set_tenant(&mut tx, tenant_id).await?;
-        // The PoC form of held text containment: the statement hard-codes
-        // the held state and the author key set, so no other key's held text
-        // is matched whatever the query (retrieval.md; ADR-0025 d5). The
-        // designed form reads `held_fts`, rows that exist only while held,
-        // behind an RLS author policy over `oml.own_key_ids` set from the
-        // authenticated key and its rotation chain; that table is decided,
-        // not built, because the PoC stores bodies inline. Never a steering
-        // row or a retirement version, never off the readable nodes, and the
-        // score is the same ts_rank as recall_fts, so the two lists merge
-        // under one order (ADR-0025 d4).
-        let rows = sqlx::query(RECALL_OWN_HELD)
-            .bind(tenant_id)
-            .bind(author_key_ids)
-            .bind(readable)
-            .bind(query)
-            .bind(&kinds)
-            .bind(k)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(backend)?;
-        tx.commit().await.map_err(backend)?;
-        rows.iter().map(candidate_from_row).collect()
+        Ok(value.flatten())
     }
 
     async fn steering_in_force(

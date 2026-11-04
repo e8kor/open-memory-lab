@@ -161,6 +161,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         PinnedFetcher,
         traffic,
         config.web_pages(),
+        Some(config.search.clone()),
     )
     .await?;
     match &start.fork_check {

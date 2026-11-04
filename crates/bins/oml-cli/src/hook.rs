@@ -557,8 +557,9 @@ pub const FAILURE_LINE: &str =
 /// The session-start line that asks Claude to recall for itself (ADR-0038
 /// d3).
 pub const RECALL_HINT: &str = "Before non-trivial work, on a project term you do not know and \
-                               after a failed command, call oml_read with 2-4 exact keywords; \
-                               try other words before concluding OML holds nothing.";
+                               after a failed command, call oml_read with the words a note would \
+                               use or a question; try other words before concluding OML holds \
+                               nothing.";
 /// The framing line every injected context sets over stored entries
 /// (ADR-0029 d6).
 pub const FRAMING: &str =
@@ -1540,7 +1541,7 @@ mod tests {
     #[test]
     fn the_session_start_recall_line_names_oml_read() {
         assert!(
-            RECALL_HINT.contains("call oml_read with 2-4 exact keywords"),
+            RECALL_HINT.contains("call oml_read with the words a note would"),
             "{RECALL_HINT}"
         );
         assert!(!RECALL_HINT.contains("oml_recall"), "{RECALL_HINT}");

@@ -1,6 +1,6 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question - before non-trivial work, on a project term you do not know, and after a command or test fails, recall with 2-4 exact keywords such as an identifier, an error code or a file name. Covers the oml_write, oml_read and oml_workarea tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question - before non-trivial work, on a project term you do not know, and after a command or test fails, recall with the words a note would use or a question, such as an identifier, an error code or a file name. Covers the oml_write, oml_read and oml_workarea tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
@@ -58,10 +58,11 @@ and `access.not_found` when it cannot read the workarea at all.
 ## Recall before you act
 
 Call `oml_read` with a `query` before non-trivial work, when the task names a project term
-you do not know, and after a command or test fails. Pass 2-4 exact keywords the memory would
-contain, such as an identifier, an error code, a module or a file name, never a whole
-question; every word must match, without stemming, so try other words once before concluding
-nothing is stored. Recall returns approved memories, with `k` bounding the hits and
+you do not know, and after a command or test fails. Pass the words the memory would contain,
+such as an identifier, an error code, a module or a file name, or a question. Any word may
+match, an identifier matches by its parts, a word by its stem and a misspelling by its letters,
+and each hit's `matched` lists the words it holds; send `match: "all"` when every word must
+match. Try other words once before concluding nothing is stored. Recall returns approved memories, with `k` bounding the hits and
 `kinds` narrowing them to `memory` or `derived_fact`. Rows under `steering` are standing
 instructions from the crew. They come before the hits and are not ranked, so read them first.
 

@@ -361,6 +361,49 @@ async fn the_request_line_carries_the_resolved_key_the_target_workarea_and_the_r
     );
 }
 
+/// A recall's line names the search pipeline that ranked it, from the
+/// build's closed set, and never the query (ADR-0049 d8).
+#[tokio::test]
+async fn a_recall_line_names_its_search_pipeline_and_never_the_query() {
+    let store = MemStore::new();
+    let app = observed(&store);
+    let boot = tenant(&app).await;
+    let writer = key(&app, &boot, "agent-7", false).await;
+    let router = state(&store, app).into_router();
+
+    let (guard, captured) = Captured::start();
+    for body in [
+        json!({"query": "zebra quartz"}),
+        json!({"query": "zebra quartz", "search": "keyword-all"}),
+    ] {
+        let (status, _, answer) = send(
+            &router,
+            Request::post("/v1/memories/recall")
+                .header(header::AUTHORIZATION, format!("Bearer {}", writer.value))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&answer)
+        );
+    }
+    drop(guard);
+
+    let lines = captured.events("http_request");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["search"], "keyword-any");
+    assert_eq!(lines[1]["search"], "keyword-all");
+    for line in &lines {
+        assert!(line.get("search_fallback").is_none(), "{line}");
+        assert!(!line.to_string().contains("zebra"), "{line}");
+    }
+}
+
 #[tokio::test]
 async fn a_probe_answered_200_writes_no_line_and_an_unmatched_path_logs_unmatched_without_a_replaced_id()
  {

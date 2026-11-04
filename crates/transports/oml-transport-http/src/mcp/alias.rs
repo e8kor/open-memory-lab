@@ -255,7 +255,20 @@ where
             .await,
         )
         .await?;
-        Ok(recall_output(&result))
+        // The v0.3.0 output shape, unchanged until the alias is removed:
+        // no `search` and no hit's `matched` (ADR-0039 d12, ADR-0049 d6).
+        let mut out = recall_output(&result);
+        if let Some(obj) = out.as_object_mut() {
+            obj.remove("search");
+            if let Some(hits) = obj.get_mut("hits").and_then(Value::as_array_mut) {
+                for hit in hits {
+                    if let Some(hit) = hit.as_object_mut() {
+                        hit.remove("matched");
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// `oml_get`: one `GET /v1/memories/{artifact_id}`. The item is the

@@ -6,8 +6,10 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod search;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use search::SearchSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;
@@ -24,7 +26,7 @@ use oml_domain::access::{
     admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
 };
-use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::budget::{budget_tokens, cut};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_qualified, unresolved_value,
@@ -67,6 +69,11 @@ use crate::types::{
     SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
     TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
     VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
+};
+
+use crate::search::{
+    CandidateScope, FUSION_DEPTH, Fusion, MatchMode, OwnHeldScope, Pipeline, RetrievalQuery,
+    SearchConfig, fuse, query_terms,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -121,6 +128,8 @@ pub struct App<J, S, C, I, Sc> {
     /// Told what each request resolved, for its log line; it decides
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
+    /// The pipelines this deployment serves and its default (ADR-0049 d4).
+    search: SearchConfig,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -457,7 +466,12 @@ impl RecordedVerdict {
 /// the vocabulary filter is unbuilt, and a request that sends either is
 /// refused before it reaches a recall (retrieval.md, the read log; ADR-0025
 /// d9, d16).
-fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<String, AppError> {
+fn recall_query_digest(
+    query: &str,
+    req: &RecallRequest,
+    scope: Uuid,
+    pipeline: Pipeline,
+) -> Result<String, AppError> {
     let mut kinds: Vec<&str> = req.kinds.iter().map(|kind| kind.as_str()).collect();
     kinds.sort_unstable();
     kinds.dedup();
@@ -471,6 +485,11 @@ fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<
         "terms": [],
         "expand_terms": "none",
         "scope": scope.to_string(),
+        "search": pipeline.as_str(),
+        "match": match req.match_mode {
+            MatchMode::Any => "any",
+            MatchMode::All => "all",
+        },
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
@@ -739,7 +758,22 @@ where
             oauth_issuer: None,
             connect_code_failures: AtomicU64::new(0),
             observer: Arc::new(NoObserver),
+            search: SearchConfig::default(),
         }
+    }
+
+    /// The app serving the search pipelines `search` names (configuration.md
+    /// `search.*`; ADR-0049 d4). The composition checks the store serves
+    /// their retrievers before it serves (`SearchConfig::require_supported`).
+    #[must_use]
+    pub fn with_search(self, search: SearchConfig) -> Self {
+        Self { search, ..self }
+    }
+
+    /// The deployment's search settings.
+    #[must_use]
+    pub fn search_config(&self) -> &SearchConfig {
+        &self.search
     }
 
     /// The app that tells `observer` what each request resolved: the key
@@ -3601,30 +3635,29 @@ where
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
-        let mut candidates = self
-            .journal
-            .recall_fts(key.tenant_id, &hit_nodes, &query, &kinds, req.k)
+        // The candidate scope is the core's, never an adapter's: the
+        // readable hit nodes, the kinds, and the own held rows only when
+        // asked — the own key set is the calling key alone until rotation is
+        // built (roles-and-keys.md#own), on the readable set, which already
+        // excludes the key's global denials (ADR-0025 d4; ADR-0049 d2).
+        let candidate_scope = CandidateScope {
+            promoted_nodes: hit_nodes.clone(),
+            kinds: kinds.clone(),
+            own_held: req.include_unreviewed.then(|| OwnHeldScope {
+                author_key_ids: vec![key.key_id],
+                nodes: readable.clone(),
+            }),
+        };
+        let pipeline = self
+            .pipeline_for(key.tenant_id, req.search.as_deref())
             .await?;
-        if req.include_unreviewed {
-            // The own key set is the calling key alone until rotation is
-            // built (roles-and-keys.md#own); the readable set already
-            // excludes the key's global denials.
-            candidates.extend(
-                self.journal
-                    .recall_own_held(
-                        key.tenant_id,
-                        &[key.key_id],
-                        &readable,
-                        &query,
-                        &kinds,
-                        req.k,
-                    )
-                    .await?,
-            );
-        }
-        // One total order over both lists, then the k cut, then the budget
-        // cut over the counts `body_bytes` gives without any body read.
-        hit_order(&mut candidates, |c| (c.score, c.memory_id));
+        let (mut candidates, terms, fallback) = self
+            .run_pipeline(key.tenant_id, pipeline, &candidate_scope, &query, req)
+            .await?;
+        self.observer.search(pipeline.as_str(), fallback);
+        // The k cut, then the budget cut over the counts `body_bytes` gives
+        // without any body read; steering is never cut and spent first
+        // (ADR-0025 d7).
         candidates.truncate(req.k);
         let steering_counts: Vec<u64> = steering
             .iter()
@@ -3638,6 +3671,26 @@ where
         if let Some(budget) = &budget {
             candidates.truncate(budget.hits_served);
         }
+        // Spellings only when no hit holds every term, only from a pipeline
+        // with a trigram list, and only from rows the scope admits
+        // (ADR-0049 d6).
+        let did_you_mean =
+            if pipeline.suggests() && !candidates.iter().any(|c| c.matched.len() >= terms.len()) {
+                let unmatched: Vec<String> = terms
+                    .iter()
+                    .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
+                    .cloned()
+                    .collect();
+                if unmatched.is_empty() {
+                    Vec::new()
+                } else {
+                    self.journal
+                        .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
+                        .await?
+                }
+            } else {
+                Vec::new()
+            };
 
         let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
         let mut rows: BTreeMap<Uuid, MemoryRecord> = self
@@ -3678,6 +3731,8 @@ where
                 hits.push(RecallHit {
                     served: self.served(&caller, m).await?,
                     score: candidate.score,
+                    matched: candidate.matched.clone(),
+                    via: candidate.via.clone(),
                 });
             }
         }
@@ -3686,8 +3741,100 @@ where
             hits,
             budget,
             served_ids,
-            query_digest: recall_query_digest(&query, req, scope)?,
+            query_digest: recall_query_digest(&query, req, scope, pipeline)?,
+            pipeline,
+            terms,
+            fallback,
+            did_you_mean,
         })
+    }
+
+    /// The pipeline a recall runs: the request's `search` when it names a
+    /// served one, else the tenant's journalled default while the
+    /// deployment still serves it, else the deployment's (ADR-0049 d4). A
+    /// name the deployment does not serve, unknown or disabled, is refused
+    /// naming the field, never replaced by another pipeline.
+    async fn pipeline_for(
+        &self,
+        tenant_id: Uuid,
+        requested: Option<&str>,
+    ) -> Result<Pipeline, AppError> {
+        if let Some(name) = requested {
+            return Pipeline::parse(name)
+                .filter(|p| self.search.serves(*p))
+                .ok_or_else(|| AppError::SearchUnavailable {
+                    name: name.to_owned(),
+                    served: self.served_pipelines(),
+                });
+        }
+        let tenant_default = self
+            .journal
+            .tenant_search_default(tenant_id)
+            .await?
+            .and_then(|name| Pipeline::parse(&name))
+            .filter(|p| self.search.serves(*p));
+        Ok(tenant_default.unwrap_or_else(|| self.search.default_pipeline()))
+    }
+
+    /// The served pipeline names, comma-separated, for a refusal's text.
+    fn served_pipelines(&self) -> String {
+        self.search
+            .enabled()
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Runs `pipeline` over the scope: each retriever's list, read
+    /// `FUSION_DEPTH` deep when the lists are fused, then the core's fusion
+    /// (ADR-0049 d3). Under `match: all` every retriever keeps only rows
+    /// with every term; when that leaves nothing, the any-term lists are
+    /// served and `fallback` says so (d5). The hits come back in the total
+    /// order of hits, uncut.
+    async fn run_pipeline(
+        &self,
+        tenant_id: Uuid,
+        pipeline: Pipeline,
+        scope: &CandidateScope,
+        query: &str,
+        req: &RecallRequest,
+    ) -> Result<(Vec<crate::search::Fused>, Vec<String>, bool), AppError> {
+        let depth = match pipeline.fusion() {
+            Fusion::Single => req.k,
+            Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
+        };
+        let mut modes = vec![req.match_mode];
+        if req.match_mode == MatchMode::All && pipeline != Pipeline::KeywordAll {
+            modes.push(MatchMode::Any);
+        }
+        let mut last = (Vec::new(), Vec::new());
+        for (attempt, mode) in modes.into_iter().enumerate() {
+            let mut lists = Vec::with_capacity(pipeline.retrievers().len());
+            for &kind in pipeline.retrievers() {
+                let list = self
+                    .journal
+                    .retrieve(
+                        tenant_id,
+                        kind,
+                        scope,
+                        RetrievalQuery {
+                            query,
+                            match_mode: mode,
+                            k: depth,
+                        },
+                    )
+                    .await?;
+                lists.push((kind, list));
+            }
+            let fused = fuse(&lists, pipeline.fusion());
+            let terms = query_terms(&lists);
+            if !fused.is_empty() {
+                return Ok((fused, terms, attempt > 0));
+            }
+            last = (fused, terms);
+        }
+        Ok((last.0, last.1, false))
     }
 
     /// Get one memory: the authoring key sees its own rows in every state,

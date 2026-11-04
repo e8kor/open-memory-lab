@@ -364,6 +364,8 @@ where
                         include_text: true,
                         include_unreviewed: true,
                         max_tokens: None,
+                        search: None,
+                        match_mode: oml_app::search::MatchMode::Any,
                     },
                 )
                 .await

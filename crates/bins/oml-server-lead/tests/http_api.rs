@@ -4387,7 +4387,8 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
         return;
     };
     let router = &rig.router;
-    // ts_rank grows with the occurrences of the one query term.
+    // ts_rank grows with the occurrences of the one query term, under the
+    // keyword pipeline these budget and order laws pin (ADR-0049 d4).
     let best = promoted_over_http(router, &agent, &dreamer, "p1", "canary canary canary").await;
     let worst = promoted_over_http(router, &agent, &dreamer, "p2", "canary").await;
     let row = remember(router, &agent, "h1", "canary canary", None).await;
@@ -4395,7 +4396,7 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_unreviewed": true}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(
@@ -4436,17 +4437,22 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let with = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "k": 2, "include_unreviewed": true}),
+        json!({"query": "canary", "search": "keyword-any", "k": 2, "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&with), vec![json!(row), json!(two)], "{with}");
-    let without = recall_ok(router, &agent, json!({"query": "canary", "k": 2})).await;
+    let without = recall_ok(
+        router,
+        &agent,
+        json!({"query": "canary", "search": "keyword-any", "k": 2}),
+    )
+    .await;
     assert_eq!(hit_ids(&without), vec![json!(two), json!(one)], "{without}");
 
     let filled = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_unreviewed": true, "max_tokens": tokens(held_text)}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true, "max_tokens": tokens(held_text)}),
     )
     .await;
     assert_eq!(hit_ids(&filled), vec![json!(row)], "{filled}");
@@ -4500,7 +4506,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_unreviewed": true}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
@@ -4566,7 +4572,7 @@ async fn include_unreviewed_never_widens_the_workareas_served() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
 
-    let query = json!({"query": "canary", "include_unreviewed": true});
+    let query = json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true});
     let (status, recall) = recall_over_http(router, &agent, Some(quotes), query.clone()).await;
     assert_eq!(status, StatusCode::OK, "{recall}");
     assert_eq!(
@@ -4644,7 +4650,8 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
 }
 
 /// A crew with one promoted steering row and three promoted memories that
-/// rank by their `canary` count, 3, 2 and 1, the second the largest body:
+/// rank by their `canary` count, 3, 2 and 1, under `keyword-any`'s `ts_rank`,
+/// the second the largest body:
 /// (rig, reader, steering id, hit ids in rank order, steering tokens, hit
 /// tokens in rank order).
 async fn budget_rig() -> Option<(Rig, String, Value, Vec<Value>, u64, Vec<u64>)> {
@@ -4695,7 +4702,7 @@ async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
     let recall = recall_ok(
         router,
         &reader,
-        json!({"query": "canary", "max_tokens": max}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": max}),
     )
     .await;
     assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
@@ -4722,7 +4729,7 @@ async fn max_tokens_keeps_the_longest_rank_prefix_and_reports_the_budget() {
     let recall = recall_ok(
         router,
         &reader,
-        json!({"query": "canary", "max_tokens": all}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": all}),
     )
     .await;
     assert_eq!(hit_ids(&recall), hits, "{recall}");
@@ -4742,7 +4749,7 @@ async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
     let recall = recall_ok(
         &rig.router,
         &reader,
-        json!({"query": "canary", "max_tokens": s - 1}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": s - 1}),
     )
     .await;
     assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
@@ -4806,9 +4813,9 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
 
     // With and without a budget, with and without bodies.
     for body in [
-        json!({"query": "canary", "include_unreviewed": true}),
-        json!({"query": "canary", "include_unreviewed": true, "include_text": false}),
-        json!({"query": "canary", "include_unreviewed": true, "max_tokens": 100}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true, "include_text": false}),
+        json!({"query": "canary", "search": "keyword-any", "include_unreviewed": true, "max_tokens": 100}),
     ] {
         let recall = recall_ok(router, &agent, body).await;
         let served: Vec<(Value, Value)> = recall["steering"]
@@ -4841,7 +4848,7 @@ async fn the_same_budgeted_recall_answers_identically_twice() {
     let Some((rig, reader, _steering, hits, s, t)) = budget_rig().await else {
         return;
     };
-    let body = json!({"query": "canary", "max_tokens": s + t[0] + t[2]});
+    let body = json!({"query": "canary", "search": "keyword-any", "max_tokens": s + t[0] + t[2]});
     let first = recall_ok(&rig.router, &reader, body.clone()).await;
     let second = recall_ok(&rig.router, &reader, body).await;
     assert_eq!(hit_ids(&first), vec![hits[0].clone()], "{first}");
@@ -4856,13 +4863,18 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
     let Some((rig, reader, _steering, hits, _s, _t)) = budget_rig().await else {
         return;
     };
-    let recall = recall_ok(&rig.router, &reader, json!({"query": "canary"})).await;
+    let recall = recall_ok(
+        &rig.router,
+        &reader,
+        json!({"query": "canary", "search": "keyword-any"}),
+    )
+    .await;
     assert!(recall.get("budget").is_none(), "{recall}");
     assert_eq!(hit_ids(&recall), hits, "nothing is cut: {recall}");
     let budgeted = recall_ok(
         &rig.router,
         &reader,
-        json!({"query": "canary", "max_tokens": 10_000}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": 10_000}),
     )
     .await;
     assert!(budgeted["budget"].is_object(), "{budgeted}");
@@ -4880,9 +4892,9 @@ async fn max_tokens_with_include_text_false_is_request_validation() {
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
     for body in [
-        json!({"query": "canary", "max_tokens": 500, "include_text": false}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": 500, "include_text": false}),
         // max_tokens is an integer ≥ 1 that RFC 8785 digests exactly.
-        json!({"query": "canary", "max_tokens": 0}),
+        json!({"query": "canary", "search": "keyword-any", "max_tokens": 0}),
         json!({"query": "canary", "max_tokens": 9_007_199_254_740_992_u64}),
         json!({"query": "canary", "max_tokens": -1}),
         json!({"query": "canary", "max_tokens": "500"}),
@@ -4920,12 +4932,13 @@ async fn query_digest_changes_when_max_tokens_or_include_unreviewed_change() {
     // Every member is present with its default applied, the scope the
     // resolved node, include_text and include_unreviewed under their
     // v0.3.0 member names, so a digest logged before v0.4.0 compares with
-    // one logged after (retrieval.md, the read log; ADR-0025 d9).
+    // one logged after, and the search pipeline that ran and match since
+    // v0.5.3 (retrieval.md, the read log; ADR-0025 d9, ADR-0049 d6).
     let base = digest(json!({"query": "canary"})).await;
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
-         \"k\":8,\"kinds\":[],\"max_tokens\":null,\"query\":\"canary\",\
-         \"scope\":\"{crew}\",\"terms\":[]}}"
+         \"k\":8,\"kinds\":[],\"match\":\"any\",\"max_tokens\":null,\"query\":\"canary\",\
+         \"scope\":\"{crew}\",\"search\":\"bm25-trigram\",\"terms\":[]}}"
     );
     assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
     assert_eq!(
@@ -7203,8 +7216,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        42,
-        "the 29 routed operations, whoami, the six OAuth operations and the six web routes"
+        44,
+        "the 31 routed operations, whoami, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -8005,6 +8018,170 @@ async fn user_roots_ride_the_wire() {
     .await;
     assert_eq!(own["principal"], "curator", "{own}");
     assert_eq!(own["derives_from"], json!([source["artifact_id"]]), "{own}");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// Search pipelines (ADR-0049)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_words() {
+    let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let quote = promoted_over_http(
+        router,
+        &agent,
+        &dreamer,
+        "q1",
+        "The hook lives in useInvoiceFilters.ts and deploys nightly",
+    )
+    .await;
+    // Any word, an identifier's part, a stem and a misspelling all find it
+    // under the shipped default; v0.5.0's every-word recall found none.
+    for query in [
+        "invoice filters",
+        "deployed",
+        "nightly zebra",
+        "useInvoiceFiltrs",
+    ] {
+        let recall = recall_ok(router, &reader, json!({"query": query})).await;
+        assert_eq!(hit_ids(&recall), vec![json!(quote)], "{query}: {recall}");
+        assert_eq!(recall["search"]["pipeline"], "bm25-trigram", "{recall}");
+        assert_eq!(recall["search"]["match"], "any", "{recall}");
+        assert_eq!(recall["search"]["fallback"], Value::Null, "{recall}");
+        let matched = &recall["hits"][0]["matched"];
+        assert!(matched["of"].as_u64().is_some(), "{recall}");
+        assert!(
+            matched["via"].as_array().is_some_and(|v| !v.is_empty()),
+            "{recall}"
+        );
+    }
+    let all = recall_ok(
+        router,
+        &reader,
+        json!({"query": "nightly zebra", "match": "all"}),
+    )
+    .await;
+    assert_eq!(all["search"]["fallback"], "any_term", "{all}");
+    assert_eq!(hit_ids(&all), vec![json!(quote)], "{all}");
+    let named = recall_ok(
+        router,
+        &reader,
+        json!({"query": "nightly zebra", "search": "keyword-any"}),
+    )
+    .await;
+    assert_eq!(named["search"]["pipeline"], "keyword-any", "{named}");
+    assert_eq!(
+        named["hits"][0]["matched"],
+        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"]}),
+        "{named}"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn a_search_the_deployment_does_not_serve_is_refused_naming_search() {
+    let Some((rig, admin, _crew, _agent, _dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    for name in ["hybrid", "keyword-all"] {
+        let (status, refusal) =
+            recall_over_http(router, &reader, None, json!({"query": "x", "search": name})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refusal}");
+        assert_eq!(refusal["error"]["code"], "request.validation", "{refusal}");
+        assert_eq!(refusal["error"]["details"]["field"], "/search", "{refusal}");
+        assert_eq!(
+            refusal["error"]["details"]["served"],
+            json!(["keyword-any", "bm25", "bm25-trigram"]),
+            "{refusal}"
+        );
+    }
+    let (status, refusal) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "x", "match": "most"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refusal}");
+    assert_eq!(refusal["error"]["details"]["field"], "/match", "{refusal}");
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-hybrid")
+            .body(json!({"pipeline": "hybrid"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["field"], "/search", "{refused}");
+
+    drop_db(&rig.db_name).await;
+}
+
+#[tokio::test]
+async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it() {
+    let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    promoted_over_http(router, &agent, &dreamer, "q1", "deploys nightly").await;
+
+    let (status, _, settings) = send(router, "GET", "/v2/search", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert_eq!(
+        settings,
+        json!({
+            "enabled": ["keyword-any", "bm25", "bm25-trigram"],
+            "deployment_default": "bm25-trigram",
+            "tenant_default": null,
+            "effective": "bm25-trigram",
+        })
+    );
+    let (status, _, refused) = send(router, "GET", "/v2/search", Call::auth(&reader)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+
+    let (status, _, set) = send(
+        router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-any")
+            .body(json!({"pipeline": "keyword-any"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["tenant_default"], "keyword-any");
+    assert_eq!(set["effective"], "keyword-any");
+    let recall = recall_ok(router, &reader, json!({"query": "deployed"})).await;
+    assert_eq!(recall["search"]["pipeline"], "keyword-any", "{recall}");
+    assert_eq!(
+        recall["hits"],
+        json!([]),
+        "no stems under keyword-any: {recall}"
+    );
+
+    let (status, _, cleared) = send(
+        router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-clear")
+            .body(json!({"pipeline": null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["tenant_default"], Value::Null);
+    let recall = recall_ok(router, &reader, json!({"query": "deployed"})).await;
+    assert_eq!(recall["search"]["pipeline"], "bm25-trigram", "{recall}");
+    assert_eq!(recall["hits"].as_array().map(Vec::len), Some(1), "{recall}");
 
     drop_db(&rig.db_name).await;
 }
