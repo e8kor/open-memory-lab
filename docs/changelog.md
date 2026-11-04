@@ -179,7 +179,7 @@ An implementation milestone and one proposed record. The status ladder of
 d5, built on two branches before the v0.4.0 rewrite, are replayed onto v0.4.1 on `feat/v0.5.2`
 in the domain, the use cases and the Postgres store. No route, tool or CLI verb serves them, so
 `info.version` stays `0.4.0-design`.
-[ADR-0046](adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md),
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md),
 proposed, reconciles both with the proposed user roots (ADR-0044) and ADR-0039's three tools, and
 leaves the brief and eight other points to the maintainer.
 
