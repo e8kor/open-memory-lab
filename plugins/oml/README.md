@@ -9,6 +9,8 @@ you store it.
 
 ## Install
 
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 ```sh
 export OML_URL=http://127.0.0.1:8080        # the server, without /mcp
 export OML_API_KEY=oml_...                  # this agent's one key
@@ -94,6 +96,8 @@ the conversation. See the
 
 ## The `oml` CLI
 
+*Available since v0.1.0; per-platform archives since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The session-start hook below and key issuance need the `oml` CLI on your `PATH`. From the first
 release that carries them, each release attaches it as `oml-cli-X.Y.Z-<target>.tar.gz`, or `.zip`
 on Windows, with a signature bundle beside each archive. Verify the archive, then extract it:
@@ -139,6 +143,8 @@ the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-
 
 ## Every session starts from memory
 
+*Available since v0.2.2 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It reads the
 workarea's steering, your key's ten newest submissions and the memories that match the name of
@@ -176,6 +182,8 @@ still held until a different identity reviews it, so nothing it records is share
 
 ## Other MCP clients
 
+*Available since v0.1.0; the agent kit since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape
 works:
 
@@ -199,6 +207,8 @@ Its README, [kit/README.md](../../kit/README.md), cites each tool's documentatio
 that documentation does not settle as unverified.
 
 ## What is served today
+
+*Eight tools since v0.2.0; three task-shaped tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares twelve tools.
 This release serves the eight above. The other four are not served yet: `oml_attach`,

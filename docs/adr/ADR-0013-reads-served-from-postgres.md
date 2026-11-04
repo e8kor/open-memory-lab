@@ -9,6 +9,8 @@ answers: why reads are served from Postgres as the one serving tier; why every r
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
+**Release:** partly in v0.1.0 and v0.2.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The mechanics of the serving tier
 (index layout, query shapes, the read-log schema) are owned by
 [architecture/retrieval.md](../architecture/retrieval.md); the simulation predicate's channel is

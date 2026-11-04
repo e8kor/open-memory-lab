@@ -9,6 +9,8 @@ answers: why the implementation is pure Rust; what named trigger would admit Sca
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 The implementation language has to be priced against OML's workload and trust

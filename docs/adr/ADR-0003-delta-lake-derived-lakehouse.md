@@ -9,6 +9,8 @@ answers: why the Delta lakehouse is derived and never the authority; why one out
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The table layouts, the transaction
 protocol column by column, and the maintenance schedule are owned by
 [architecture/storage.md](../architecture/storage.md) and

@@ -9,6 +9,8 @@ answers: what the documentation set commits — the two tiers, the honesty disci
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
+**Release:** in force since spec-v0.1; no release ships it ([releases](../product/releases.md#decisions))
+
 ## Context
 
 OML's documentation set describes a system that is decided

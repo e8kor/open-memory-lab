@@ -12,6 +12,8 @@ profile.** Standalone and docker are first-class profiles of their own under
 [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md), which also supersedes the
 every-replica-signs portion of d4 with cluster-mode lead/follower roles (ADR-0023 d13).
 
+**Release:** partly in v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 Two rules anchor the deployment. The first: *the service is a set of workloads

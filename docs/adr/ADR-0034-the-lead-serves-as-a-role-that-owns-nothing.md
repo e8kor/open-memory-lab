@@ -9,6 +9,8 @@ answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role sp
 
 **Status:** accepted design · 2026-11-03
 
+**Release:** partly in v0.3.1; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0007 (d2), naming `_sqlx_migrations` as the one table without row-level security
 (d6); no other decision here amends a record
 

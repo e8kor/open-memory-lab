@@ -9,6 +9,8 @@ answers: what the tenancy model isolates; who holds which key in the custody map
 
 **Status:** design draft for review · decided, not built
 
+**Release:** tenant derivation and row security since v0.1.0; the owner and serving split since v0.3.1 ([releases](../product/releases.md)).
+
 This page owns decision **D6**: the tenancy model, the controls on privileged services, the key
 custody map, and the threat model — written against hostile co-tenants from the start, not
 retrofitted onto a single-operator assumption. The signing chain and commit protocol this page
@@ -23,6 +25,8 @@ object store, the same oml-server replicas, who wants to read, corrupt, imperson
 another tenant. Every control below is judged against that attacker first.
 
 ## Tenancy model
+
+*Available since v0.1.0; the owner and serving split and per-tenant FTS partitions since v0.3.1 · [releases](../product/releases.md)*
 
 Tenancy is first-class, not a column added later.
 
@@ -170,6 +174,8 @@ keyring mechanism itself is RS-12.
 
 ## Signing-key rotation
 
+*Not scheduled · [releases](../product/releases.md)*
+
 The custody map gives the signing key to exactly one process; this section says how the
 deployment changes that key. There are two paths — scheduled and under suspicion — and the
 difference between them is the whole point.
@@ -301,6 +307,8 @@ remains. Nothing in this table is built or measured; every control is a design c
 
 ## serve_id binding as anti-replay
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 The review ceremony's serve record is a security mechanism, not an ergonomic one, so its properties
 are restated here (the ceremony itself is declared in [cli/reference.md](../cli/reference.md), the
 policy it executes in [admission.md](admission.md)).
@@ -325,6 +333,8 @@ independence axis and reciprocal-approval statistics ([roles-and-keys.md](roles-
 that pattern visible over time, they do not prevent a single instance.
 
 ## Bans are enforced at admission
+
+*Not scheduled · [releases](../product/releases.md)*
 
 A ban is a journalled admin act against an author or source, and it is **checked at admission** —
 the first step of the pipeline, before quarantine, scanning or review spend a cycle

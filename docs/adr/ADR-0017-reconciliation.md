@@ -9,6 +9,8 @@ answers: why reconciliation is an incremental journalled fold from the journal a
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The comparison procedure, the finding
 schema and the repair flows are owned by
 [architecture/reconciliation.md](../architecture/reconciliation.md); this record decides and gives

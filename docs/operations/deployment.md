@@ -9,6 +9,8 @@ answers: what runs where and how many of each; what state and credentials each w
 
 **Status:** design draft for review · decided, not built
 
+**Release:** standalone and docker since v0.1.0, the interim chart since v0.3.0, the server archive since v0.3.1 ([releases](../product/releases.md)).
+
 This page is the single declaration site for D15: what runs where, how many of
 each, what state and credentials each workload holds, and how the three install
 profiles differ. The guarantees the workloads implement are declared elsewhere
@@ -173,6 +175,8 @@ create a tenant, issue its first admin key, create workareas, issue crew keys.
 
 ### The interim chart: the current build on Kubernetes
 
+*Available since v0.3.0 · [releases](../product/releases.md)*
+
 **Built** — `deploy/helm/oml`, decided in the proposed
 [ADR-0033](../adr/ADR-0033-interim-helm-chart.md). CI job `chart` installs it on kind; no other
 cluster is recorded running it. The chart holds the one server binary the build has,
@@ -279,7 +283,9 @@ loses the deployment's identity, and the lead then refuses readiness (the fork-c
 
 ## The server archive
 
-Built, not yet released: no tag has run the jobs that produce it. A release attaches
+*Available since v0.3.1 · [releases](../product/releases.md)*
+
+A release attaches
 `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
 `aarch64-unknown-linux-gnu`, holding `oml-server-lead` with the README and licence; the `oml` CLI
 is a separate archive ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
@@ -302,6 +308,8 @@ old binary, and the lead started; [upgrades](upgrades.md) fixes the order when m
 runs. An archive that does not verify is not installed.
 
 ## The standalone profile
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 One host, no orchestrator
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d2–d5).
@@ -362,6 +370,8 @@ root operator key (shown once, journalled as issued-without-value): oml_8Wkd****
 ```
 
 ## The docker profile
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 One compose file
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d7). The
@@ -424,6 +434,8 @@ Follower scale-out, when read load calls for it:
 
 ## The lake-writer singleton and its two fences
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Exactly one lake-writer drains the outbox (declared in
 [storage](../architecture/storage.md)). No profile's supervisor can promise
 "exactly one" by itself: a Kubernetes Deployment with `replicas: 1` still
@@ -459,6 +471,8 @@ run per object-store backend (`file://`, pinned MinIO, S3) under
 [FR-22](../product/roadmap.md).
 
 ## The lead lease
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Cluster mode gives `oml-server` two roles
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d13–d17):
@@ -508,6 +522,8 @@ unanchored-tail window therefore also covers follower-written rows awaiting
 the lead's anchor — the exact split is [RS-13](../product/roadmap.md).
 
 ## The reconciler: three schedulers, one binary
+
+*Not scheduled · [releases](../product/releases.md)*
 
 The reconciler's work is a bounded incremental pass
 ([reconciliation](../architecture/reconciliation.md)) that must never overlap

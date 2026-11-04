@@ -9,6 +9,8 @@ answers: what the journal records and never records; what an evidence export con
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the signed journal since v0.1.0; the evidence export and erasure not scheduled ([releases](../product/releases.md)).
+
 This page owns the evidence story and decision D4: what the journal records and what it never
 records, what an evidence export contains, how lineage is represented and queried, and what
 erasure actually does — including the full inventory of every copy class a memory's content can
@@ -27,6 +29,8 @@ claim compliance with any regulation, and the one place a regulation is named �
 designed answer and an open edge, not as a box ticked.
 
 ## What the journal records
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 The journal is the system of record: a per-tenant, signed, hash-chained, append-only sequence of
 events in PostgreSQL ([storage](storage.md) owns the chain-head serialization, the synchronous
@@ -76,6 +80,8 @@ Two further exclusions, each with its reason:
   erasure FR in the [roadmap](../product/roadmap.md).
 
 ## The evidence export
+
+*Not scheduled · [releases](../product/releases.md)*
 
 `oml audit export` produces a signed bundle ([CLI reference](../cli/reference.md) owns the verb
 and its flags). Each section of the bundle answers a question an auditor actually asks, and each
@@ -237,6 +243,8 @@ A superseded version is not deleted — it remains readable as history behind th
 its own decision trail, until demoted or erased by its own journalled act.
 
 ## Erasure: crypto-shredding
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Bodies and attachments are encrypted under per-artifact data-encryption keys (DEKs) wrapped by a
 key-encryption key in KMS or a Secret ([security](security.md) owns key custody; the

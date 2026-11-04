@@ -29,6 +29,22 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — Every record and feature page names the release that built it or is planned to
+
+A documentation change with no decision or surface change. [Releases](product/releases.md), a new
+client page, is the one declaration site for when each feature and decision record shipped, read
+from the tags v0.1.0 to v0.3.1, and for the plan the maintainer made on 2026-11-03: v0.4.0 (the API
+rewrite, plugin setup, turn context, OAuth by connect code, the librarian, the quick start, a
+documentation upgrade), v0.5.0 (guardrails, workarea transitions, claim edges, the workarea brief),
+v0.6.0 (in-progress workareas) and what is parked. Every record carries a **Release:** line under
+its Status line, and the [register](adr/index.md) a Release column; neither restates the page.
+
+- **Pages touched:** the new page, `mkdocs.yml`, [llms.txt](llms.txt), every record, the register,
+  the architecture, API, CLI reference and operations pages, `README.md`, `plugins/oml/README.md`
+  and this page. The CLI reference and the deployment page no longer say that no tag has run the
+  per-platform archive jobs; v0.3.1 ran them.
+- **No surface change:** `info.version` stays `0.3.0-design`; no record's decision moves.
+
 ### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
 
 An implementation milestone with no decision or surface change: each tag also ships the oml and
