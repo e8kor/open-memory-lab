@@ -48,11 +48,11 @@ decided; the other reading keeps no aliases, and then v0.4.0 answers only the ne
 
 ## Upgrading from v0.3.x as a user of Claude Code
 
-1. Install the v0.4.0 CLI: `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.0/scripts/install/install.sh | sh`.
+1. Install the v0.4.1 CLI: `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh`.
 2. `oml login <url>` once. It rewrites the credentials file with `url` and `api_key`; a v0.3 file's
    `server` and `key` are read until then, through v0.4.x.
 3. `oml setup claude-code`. It finds the `open-memory-lab` marketplace you added, pinned at a v0.3
-   tag or at none, removes it, adds it at `v0.4.0` and installs again each plugin the removal
+   tag or at none, removes it, adds it at the CLI's own tag, `v0.4.1`, and installs again each plugin the removal
    uninstalled, then configures the plugin; a marketplace from another source, such as a local
    checkout, is refused as `setup.marketplace`, nothing changed
    ([CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start)).
