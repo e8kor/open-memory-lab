@@ -559,13 +559,15 @@ impl RecordedVerdict {
 
 /// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
 /// JSON of the method, the route template, no path parameters and the body
-/// as sent (http-api.md idempotency, claim edges).
+/// as sent, `kind: claim` included, since ADR-0039 d9 merges the claim-edge
+/// and workarea-edge families into `/v2/edges` (http-api.md idempotency).
 fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError> {
     let doc = json!({
         "method": "POST",
-        "route": "/v2/claim-edges",
+        "route": "/v2/edges",
         "path_params": {},
         "body": {
+            "kind": "claim",
             "from_artifact_id": req.from_artifact_id.to_string(),
             "to_artifact_id": req.to_artifact_id.to_string(),
             "label": req.label,
@@ -581,7 +583,7 @@ fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError>
 fn claim_edge_ratify_request_digest(edge_id: Uuid) -> Result<String, AppError> {
     let doc = json!({
         "method": "POST",
-        "route": "/v2/claim-edges/{edge_id}/ratify",
+        "route": "/v2/edges/{edge_id}/ratify",
         "path_params": { "edge_id": edge_id.to_string() },
         "body": Value::Null,
     });
@@ -5151,7 +5153,7 @@ where
         }
     }
 
-    /// `GET /v2/claim-edges` (http-api.md claim edges and pagination;
+    /// `GET /v2/edges?kind=claim` (http-api.md edges and pagination;
     /// ADR-0008 d5): one page of the tenant's claim edges, pending and
     /// ratified, newest first, narrowed to `query`'s workarea, by id or name
     /// (ADR-0026), whose subtree holds either endpoint, and its version at
