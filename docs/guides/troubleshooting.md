@@ -63,24 +63,30 @@ leaves the old file as it was.
 
 Work down the list; each step assumes the ones above it hold.
 
-1. **Both settings set.** The plugin serves no tools until `url` and `api_key` are both set;
-   exported `OML_URL` and `OML_API_KEY` do not reach it since v0.4.0. Inside Claude Code run
-   `/plugin configure oml@open-memory-lab`, or from a shell `oml setup claude-code`, which hands
-   the pair to `claude plugin configure oml@open-memory-lab --values-stdin`
+1. **The key set.** The plugin serves no tools until `api_key` is set, and `url` names
+   your server; exported `OML_URL` and `OML_API_KEY` do not reach it since v0.4.0. Inside Claude
+   Code run `/plugin configure oml@open-memory-lab`, or from a shell `oml setup claude-code`,
+   which hands the pair to `claude plugin configure oml@open-memory-lab --values-stdin`
    ([Claude Code](claude-code.md)).
-2. **`url` without `/mcp`.** The plugin appends `/mcp` itself; a `url` ending in `/mcp` points at
+2. **The right server.** Since v0.4.1 a `url` left unset is the maintainer's public server,
+   `https://memory.doublegate.io`. A key from another server is refused there with `401
+   auth.invalid`, and that server's operator has seen it: set `url` to your server and ask your
+   administrator to replace the key. `oml setup claude-code` given no URL prints that it used the
+   public server, and on a refusal that the key went there
+   ([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) d7).
+3. **`url` without `/mcp`.** The plugin appends `/mcp` itself; a `url` ending in `/mcp` points at
    `/mcp/mcp`.
-3. **An agent key.** `oml setup claude-code` refuses an `admin` or `operator` key as
+4. **An agent key.** `oml setup claude-code` refuses an `admin` or `operator` key as
    `setup.admin_key`. Issue an agent key with `oml keys issue-agent --out`
    ([CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
-4. **Claude Code 2.1.285 or later.** `claude plugin configure --values-stdin` needs it; an
+5. **Claude Code 2.1.285 or later.** `claude plugin configure --values-stdin` needs it; an
    older `claude --version` is refused as `setup.claude_code_version`, nothing installed.
-5. **The marketplace.** `refused: setup.marketplace — Claude Code already holds a marketplace
+6. **The marketplace.** `refused: setup.marketplace — Claude Code already holds a marketplace
    named open-memory-lab from <source>` means one from a local checkout or another source.
    `claude plugin marketplace remove open-memory-lab` removes it and the plugins installed from
    it; then run `oml setup claude-code` again.
-6. **Reloaded.** Run `/reload-plugins` or restart Claude Code after configuring.
-7. **The permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
+7. **Reloaded.** Run `/reload-plugins` or restart Claude Code after configuring.
+8. **The permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
    nothing. Allow `mcp__plugin_oml_oml__oml_read` and
    `mcp__plugin_oml_oml__oml_workarea` ([upgrading](upgrading.md)).
 

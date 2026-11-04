@@ -7,7 +7,7 @@ answers: how a user points the oml plugin at a server and gives it a key inside 
 
 # ADR-0040 — The plugin takes its server URL and its key through Claude Code's plugin configuration, keeps the key in the keychain, and falls back to `OML_URL` and `OML_API_KEY` only in its hooks
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
 
 **Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 

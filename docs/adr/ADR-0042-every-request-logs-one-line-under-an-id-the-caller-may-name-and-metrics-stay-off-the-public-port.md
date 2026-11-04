@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port
 tier: engineering
-status: proposed · 2026-11-04
+status: accepted design · 2026-11-04
 answers: what the lead logs for each HTTP request and each MCP call, in which format and with which fields; which inbound X-Request-Id, X-Correlation-Id and traceparent it accepts, what it returns, and what an honoured id may never be used for; where the client IP comes from behind a proxy; which fields are personal data, how long logs are kept and who enforces it; how /metrics is served without reaching the public internet and which metrics v0.4.1 builds; how OTLP trace export is turned on and what it carries; which per-stage timings a log line records and which stay unmeasured
 -->
 
 # ADR-0042 — Every request logs one line under an id the caller may name, metrics stay off the public port, and trace export is opt-in
 
-**Status:** proposed · 2026-11-04
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.1 ([releases](../product/releases.md#decisions))
 
 ## Context
 
@@ -237,8 +237,10 @@ Decided, not built.
 - **d13 — OTLP trace export is in v0.4.1 and off unless `server.otlp_endpoint` names a
   collector.** Set to an `http` or `https` base URL, the lead exports spans as OTLP over HTTP
   with protobuf to `<endpoint>/v1/traces`, through the `opentelemetry`, `opentelemetry_sdk`,
-  `opentelemetry-otlp` and `tracing-opentelemetry` crates, all pure Rust and compiled into
-  every release binary. A value that is not such a URL stops the process at start. Only OML's
+  `opentelemetry-proto` and `tracing-opentelemetry` crates, posting with a client of its own
+  rather than `opentelemetry-otlp`, whose builder reads `OTEL_EXPORTER_OTLP_HEADERS` and
+  `OTEL_EXPORTER_OTLP_COMPRESSION` whatever it is given; all pure Rust and compiled into the
+  server binaries, never into the CLI. A value that is not such a URL stops the process at start. Only OML's
   setting turns it on: the exporter is configured explicitly from the setting, the `OTEL_*`
   environment variables are not read, and a test asserts that `OTEL_EXPORTER_OTLP_ENDPOINT`
   alone exports nothing, since a second configuration surface is what

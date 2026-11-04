@@ -11,14 +11,20 @@ answers: the three ways to start with Open Memory Lab, each led by one command: 
 
 There are three ways in, one for each role. Each starts with one command. Every client needs
 exactly two settings, the server's address and a key, and the server works out everything else
-from the key.
+from the key. Since v0.4.1 the Claude Code plugin and the other tools' configurations default the
+address to the maintainer's public server, `https://memory.doublegate.io`, so with a key from that
+server the key is the only setting.
 
-The commands on this page are for v0.4.0 ([releases](../product/releases.md)).
+The commands on this page are for v0.4.0, with the v0.4.1 default marked where it applies
+([releases](../product/releases.md)).
 
-## Use OML: you have a server address and a key
+## Use OML: you have a key, and perhaps a server address
 
-You need Claude Code on your machine, and two things from your administrator: the server's
-address, such as `https://oml.example.com`, and an agent key.
+You need Claude Code on your machine and an agent key from your administrator. With a key from
+the maintainer's public server, that is all; in Claude Code run `/plugin marketplace add
+e8kor/open-memory-lab` and `/plugin install oml@open-memory-lab`, paste the key, and leave the
+URL as it is (since v0.4.1). For your own server you also need its address, such as
+`https://oml.example.com`:
 
 ```sh
 curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
@@ -33,7 +39,8 @@ oml setup claude-code
    stored, never the key.
 3. `oml setup claude-code` installs the OML plugin in Claude Code at the same release and hands it
    the same two settings. It refuses an administrator's key. Run `/reload-plugins` in Claude
-   Code, or restart it.
+   Code, or restart it. Since v0.4.1, given a key file and no address, as in `oml setup
+   claude-code --key-file <file>`, it uses the public server and says so before it sends the key.
 
 Ask your agent to remember something. The answer is **held**: the agent can read it back at once,
 and everyone else in the workarea finds it only after a reviewer approves it. The target is about
@@ -99,7 +106,10 @@ conversation ([CLI reference](../cli/reference.md#the-oml-admin-plugin)).
 ## What every path has in common
 
 - **Two settings.** The address and the key. The command line reads them from its flags, then
-  from `OML_URL` and `OML_API_KEY`, then from the file `oml login` wrote.
+  from `OML_URL` and `OML_API_KEY`, then from the file `oml login` wrote, and needs both: apart
+  from `oml setup claude-code`, no command has a default address, so an administrator's command
+  never reaches the public server unasked. A key sent to the wrong server is refused there, and
+  that server's operator has seen it.
 - **Held first.** Nothing an agent saves reaches anyone else until a different identity approves
   it. That is the point of OML, and it is why a fact your agent just stored does not show up for
   a teammate yet.

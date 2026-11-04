@@ -2264,24 +2264,26 @@ async fn the_session_start_hook_reads_the_plugin_options_before_oml_url_and_oml_
     crew.lab.stop().await;
 }
 
-/// One plugin option set alone means the plugin is not configured: the hook
-/// sends nothing, even with a whole environment pair, and names the unset
-/// option (ADR-0040 d3).
+/// The plugin's URL option set alone means the plugin is not configured:
+/// the hook sends nothing, even with a whole environment pair, and names the
+/// unset key option (ADR-0040 d3). The key option alone is the default
+/// server's pair, which the resolver's unit tests prove without reaching it
+/// (ADR-0043 d3).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_session_start_hook_sends_nothing_when_one_plugin_option_is_set_alone() {
+async fn the_session_start_hook_sends_nothing_when_the_plugin_url_option_is_set_alone() {
     let Some(crew) = Crew::start().await else {
         return;
     };
     crew.lab.take_requests();
     let (code, stdout, stderr) = crew.hook(
-        &[("CLAUDE_PLUGIN_OPTION_API_KEY", crew.agent.as_str())],
+        &[("CLAUDE_PLUGIN_OPTION_URL", crew.lab.server.as_str())],
         &session("startup", "/home/op/src/accra-metals"),
     );
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(stdout, "", "no context");
     assert!(crew.lab.take_requests().is_empty(), "nothing was sent");
     assert!(
-        stderr.contains("CLAUDE_PLUGIN_OPTION_URL is not set"),
+        stderr.contains("CLAUDE_PLUGIN_OPTION_API_KEY is not set"),
         "{stderr}"
     );
     assert!(!stderr.contains(&crew.agent), "no key value: {stderr}");

@@ -281,37 +281,54 @@ fn setup_claude_code_with_print_or_without_claude_runs_nothing_and_prints_a_conf
     }
 }
 
+/// `--key-file` beside `--api-key` is refused before anything is sent. A
+/// key file without `--url` is no longer refused: it goes to the default
+/// server (ADR-0043 d4), which `setup.rs`'s unit tests prove without
+/// reaching it.
 #[test]
-fn setup_claude_code_refuses_key_file_beside_api_key_and_key_file_without_url_before_anything_is_sent()
- {
+fn setup_claude_code_refuses_key_file_beside_api_key_before_anything_is_sent() {
     let dir = scratch("key-file-pair");
     let bin = fake_claude(&dir, "2.1.312");
     let file = key_file(&dir);
-    for (args, names) in [
-        (
-            vec![
-                "--url",
-                "{url}",
-                "--api-key",
-                KEY,
-                "setup",
-                "claude-code",
-                "--key-file",
-                &file,
-            ],
-            "--api-key",
-        ),
-        (vec!["setup", "claude-code", "--key-file", &file], "--url"),
-    ] {
-        let out = run(&dir, "writer", Some(&bin), &args);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
-        assert!(
-            stderr.contains("--key-file") && stderr.contains(names),
-            "{args:?}: {stderr}"
-        );
-        assert_eq!(log(&dir), "", "{args:?}: no claude command ran");
-    }
+    let args = [
+        "--url",
+        "{url}",
+        "--api-key",
+        KEY,
+        "setup",
+        "claude-code",
+        "--key-file",
+        &file,
+    ];
+    let out = run(&dir, "writer", Some(&bin), &args);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("--key-file") && stderr.contains("--api-key"),
+        "{stderr}"
+    );
+    assert_eq!(log(&dir), "", "no claude command ran");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// A URL named without a key takes no default and is refused naming
+/// `--api-key`, with nothing sent and no default-server line, since the
+/// default fills only a missing URL (ADR-0043 d4).
+#[test]
+fn setup_claude_code_refuses_a_url_named_without_a_key_and_says_nothing_of_the_default() {
+    let dir = scratch("url-alone");
+    let bin = fake_claude(&dir, "2.1.312");
+    let out = run(
+        &dir,
+        "writer",
+        Some(&bin),
+        &["--url", "{url}", "setup", "claude-code"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--api-key"), "{stderr}");
+    assert!(!stderr.contains("memory.doublegate.io"), "{stderr}");
+    assert_eq!(log(&dir), "", "no claude command ran");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
 

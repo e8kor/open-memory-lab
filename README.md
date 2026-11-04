@@ -61,8 +61,12 @@ reaches the rest of the crew once someone other than its author has approved it.
 
 ## Quickstart
 
-Your administrator gives you two things: the server's address and an agent key. With those, and
-Claude Code on your machine, three lines connect your agent:
+With a key from the maintainer's public server, `https://memory.doublegate.io`, the key is all you
+need (since v0.4.1): in Claude Code, run `/plugin marketplace add e8kor/open-memory-lab` and
+`/plugin install oml@open-memory-lab`, paste the key and leave the URL as it is.
+
+For your own server, your administrator gives you two things: the server's address and an agent
+key. With those, and Claude Code on your machine, three lines connect your agent:
 
 ```sh
 curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
@@ -145,7 +149,9 @@ refuses an administrator's key. To do the same by hand inside Claude Code:
 ```
 
 The install asks for two settings, `url` and `api_key`; Claude Code keeps the key in the system
-keychain. The plugin adds three tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that
+keychain. Since v0.4.1 `url` defaults to `https://memory.doublegate.io`; for your own server,
+enter its address. Left at the default, a key from another server is refused there and the plugin
+serves no tools. The plugin adds three tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that
 tells the agent when to search, save and revise, and a read-only librarian.
 
 Claude Code asks before each tool call until you allow it. To stop the question on reads and keep
@@ -179,8 +185,8 @@ the [claude.ai and mobile guide](docs/guides/claude-ai-and-mobile.md).
 <summary><b>Codex, Cursor, Gemini CLI, VS Code and Claude Desktop</b></summary>
 
 Each release carries a kit with a configuration for each of these tools. Each reads the key
-from `OML_API_KEY`, and the server's address from `OML_URL` where the tool can read a variable
-there; elsewhere the address is the one edit. See [other tools](docs/guides/other-harnesses.md).
+from `OML_API_KEY` and, since v0.4.1, names `https://memory.doublegate.io/mcp`; for your own
+server, that address is the one edit. See [other tools](docs/guides/other-harnesses.md).
 </details>
 
 <details>

@@ -7,7 +7,7 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
 
 **Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 

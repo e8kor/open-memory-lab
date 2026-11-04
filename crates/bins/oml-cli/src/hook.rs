@@ -177,9 +177,12 @@ pub struct Pair {
 /// The server and key as one pair from one source, or the stderr line
 /// saying why there is none (ADR-0040 d3). The plugin's two options are the
 /// pair when either is set and non-empty, else `OML_URL` and `OML_API_KEY`;
-/// an empty variable counts as unset. One option set alone is a plugin not
-/// configured: the unset one is named and the environment pair is not
-/// tried, so a key never goes to a URL from another source (ADR-0039 d15).
+/// an empty variable counts as unset. The key option alone is paired with
+/// the plugin's default server, where its tools send the same key
+/// (ADR-0043 d3); the URL option alone is a plugin not configured: the key
+/// option is named and the environment pair is not tried, so a key never
+/// goes to a URL from another source (ADR-0039 d15). The environment pair
+/// takes no default.
 /// It reads those four variables and nothing else, never the CLI's
 /// credentials file, which may hold an admin key.
 ///
@@ -204,6 +207,13 @@ fn resolve_pair_for(var: &dyn Fn(&str) -> Option<String>, nothing: &str) -> Resu
     let set = |name: &str| var(name).filter(|v| !v.is_empty());
     let (option_url, option_key) = (set(OPTION_URL), set(OPTION_API_KEY));
     let (url, key, url_var, key_var) = if option_url.is_some() || option_key.is_some() {
+        // The key option alone is the plugin's default server: Claude Code
+        // fills `url` with its default for the tools, and exports only the
+        // values the user saved to a hook (ADR-0043 d3).
+        let option_url = match (&option_url, &option_key) {
+            (None, Some(_)) => Some(crate::setup::DEFAULT_URL.to_owned()),
+            _ => option_url,
+        };
         (option_url, option_key, OPTION_URL, OPTION_API_KEY)
     } else {
         (set("OML_URL"), set("OML_API_KEY"), "OML_URL", "OML_API_KEY")
@@ -1331,22 +1341,54 @@ mod tests {
         assert_eq!(resolved, pair(OPT_URL, OPT_KEY));
     }
 
-    /// One option set alone is a plugin not configured: the hook fails open
-    /// naming the unset option, and takes neither value of the environment
-    /// pair to complete it (ADR-0040 d3; ADR-0029 d5).
+    /// The plugin's URL option alone is a plugin not configured: the hook
+    /// fails open naming the key option, and takes neither value of the
+    /// environment pair to complete it (ADR-0040 d3; ADR-0029 d5).
     #[test]
-    fn one_plugin_option_alone_fails_open_without_borrowing_from_the_environment() {
-        for (set, unset_name) in [
-            ((OPTION_API_KEY, OPT_KEY), OPTION_URL),
-            ((OPTION_URL, OPT_URL), OPTION_API_KEY),
-        ] {
-            let (resolved, _) = resolve(&[set, ("OML_URL", ENV_URL), ("OML_API_KEY", ENV_KEY)]);
-            assert_eq!(resolved, not_set(unset_name));
+    fn the_plugin_url_option_alone_fails_open_without_borrowing_from_the_environment() {
+        let (resolved, _) = resolve(&[
+            (OPTION_URL, OPT_URL),
+            ("OML_URL", ENV_URL),
+            ("OML_API_KEY", ENV_KEY),
+        ]);
+        assert_eq!(resolved, not_set(OPTION_API_KEY));
+    }
+
+    /// The plugin's key option alone is the plugin's default server and that
+    /// key, the pair its tools send, since Claude Code fills `url` with its
+    /// default for the tools and exports only saved values to a hook; the
+    /// environment pair beside it is ignored (ADR-0043 d3).
+    #[test]
+    fn a_plugin_configured_with_its_key_alone_is_the_default_server_and_that_key() {
+        for url in [None, Some("")] {
+            let mut vars = vec![
+                (OPTION_API_KEY, OPT_KEY),
+                ("OML_URL", ENV_URL),
+                ("OML_API_KEY", ENV_KEY),
+            ];
+            if let Some(url) = url {
+                vars.push((OPTION_URL, url));
+            }
+            let (resolved, _) = resolve(&vars);
+            assert_eq!(
+                resolved,
+                pair(crate::setup::DEFAULT_URL, OPT_KEY),
+                "{url:?}"
+            );
         }
     }
 
+    /// The environment pair takes no default: `OML_API_KEY` without
+    /// `OML_URL` sends nothing and names `OML_URL`, so a caller that is not
+    /// the plugin never reaches the public server unasked (ADR-0043 d3).
+    #[test]
+    fn the_environment_key_alone_takes_no_default_server() {
+        let (resolved, _) = resolve(&[("OML_API_KEY", ENV_KEY)]);
+        assert_eq!(resolved, not_set("OML_URL"));
+    }
+
     /// An option set to the empty string counts as unset: with both empty
-    /// the environment pair is used, and with one empty beside the other
+    /// the environment pair is used, and with the key empty beside the URL
     /// the plugin is not configured; an empty `OML_` variable is unset too
     /// (ADR-0040 d3).
     #[test]
@@ -1360,12 +1402,12 @@ mod tests {
         ]);
         assert_eq!(resolved, pair(ENV_URL, ENV_KEY));
         let (resolved, _) = resolve(&[
-            (OPTION_URL, ""),
-            (OPTION_API_KEY, OPT_KEY),
+            (OPTION_URL, OPT_URL),
+            (OPTION_API_KEY, ""),
             env_pair[0],
             env_pair[1],
         ]);
-        assert_eq!(resolved, not_set(OPTION_URL));
+        assert_eq!(resolved, not_set(OPTION_API_KEY));
         let (resolved, _) = resolve(&[("OML_URL", ENV_URL), ("OML_API_KEY", "")]);
         assert_eq!(resolved, not_set("OML_API_KEY"));
     }
@@ -1505,14 +1547,14 @@ mod tests {
     }
 
     /// The failure hook resolves its server and key as the session-start
-    /// hook does: one plugin option set alone names the unset option, the
-    /// environment pair beside it is not borrowed, and the line says nothing
-    /// was recalled (ADR-0038 d4, ADR-0040 d3).
+    /// hook does: the plugin's URL option set alone names the key option,
+    /// the environment pair beside it is not borrowed, and the line says
+    /// nothing was recalled (ADR-0038 d4, ADR-0040 d3, ADR-0043 d3).
     #[test]
-    fn the_tool_failure_hook_refuses_one_plugin_option_set_alone() {
+    fn the_tool_failure_hook_refuses_the_plugin_url_option_set_alone() {
         let var = |name: &str| match name {
             "OML_FAILURE_RECALL" => Some("1".to_owned()),
-            "CLAUDE_PLUGIN_OPTION_API_KEY" => Some("option-key-0123".to_owned()),
+            "CLAUDE_PLUGIN_OPTION_URL" => Some("http://127.0.0.1:9".to_owned()),
             "OML_URL" => Some("http://127.0.0.1:9".to_owned()),
             "OML_API_KEY" => Some("environment-pair-key".to_owned()),
             _ => None,
@@ -1521,7 +1563,7 @@ mod tests {
         assert_eq!(
             refused,
             Err(Some(
-                "CLAUDE_PLUGIN_OPTION_URL is not set, so nothing was recalled".to_owned()
+                "CLAUDE_PLUGIN_OPTION_API_KEY is not set, so nothing was recalled".to_owned()
             ))
         );
     }
@@ -1560,13 +1602,13 @@ mod tests {
         );
     }
 
-    /// One plugin option set alone is a plugin not configured: the hook
-    /// names the unset option and does not fall back to a whole environment
-    /// pair (ADR-0040 d3).
+    /// The plugin's URL option set alone is a plugin not configured: the
+    /// hook names the key option and does not fall back to a whole
+    /// environment pair (ADR-0040 d3, ADR-0043 d3).
     #[test]
-    fn the_session_start_hook_refuses_one_plugin_option_set_alone() {
+    fn the_session_start_hook_refuses_the_plugin_url_option_set_alone() {
         let var = |name: &str| match name {
-            "CLAUDE_PLUGIN_OPTION_API_KEY" => Some("option-key-0123".to_owned()),
+            "CLAUDE_PLUGIN_OPTION_URL" => Some("http://127.0.0.1:9".to_owned()),
             "OML_URL" => Some("http://127.0.0.1:9".to_owned()),
             "OML_API_KEY" => Some("environment-pair-key".to_owned()),
             _ => None,
@@ -1576,10 +1618,10 @@ mod tests {
             panic!("refused with a line: {refused:?}");
         };
         assert!(
-            line.starts_with("CLAUDE_PLUGIN_OPTION_URL is not set"),
+            line.starts_with("CLAUDE_PLUGIN_OPTION_API_KEY is not set"),
             "{line}"
         );
-        assert!(!line.contains("option-key-0123"), "{line}");
+        assert!(!line.contains("environment-pair-key"), "{line}");
     }
 
     /// A recall hit and a steering item print their `text`, the v0.4.0

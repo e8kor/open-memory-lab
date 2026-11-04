@@ -16,6 +16,36 @@ pub const PLUGIN: &str = "oml@open-memory-lab";
 /// The marketplace's GitHub repository.
 pub const MARKETPLACE: &str = "e8kor/open-memory-lab";
 
+/// The maintainer's public server, which every integration a release ships
+/// connects to unless told otherwise: the oml plugin's `url` default and the
+/// agent kit's configurations, which `scripts/check_plugin.py` and
+/// `scripts/check_agent_kit.py` hold equal to this (ADR-0043 d1). Among the
+/// CLI's verbs only `oml setup claude-code` takes it (d4, d5).
+pub const DEFAULT_URL: &str = "https://memory.doublegate.io";
+
+/// What the verb prints to stderr before it sends a key named without a URL
+/// to [`DEFAULT_URL`] (ADR-0043 d4).
+pub const DEFAULT_NOTICE: &str = "no URL was given beside the key, so it goes to \
+    https://memory.doublegate.io, the maintainer's public server; pass --url to name another \
+    (ADR-0043 d4)";
+
+/// What the verb prints to stderr when [`DEFAULT_URL`] refuses a key it was
+/// given no URL for, before the refusal itself (ADR-0043 d4, d7).
+pub const DEFAULT_REFUSED: &str = "the key went to https://memory.doublegate.io, the default \
+    server, which does not know a key from another server; pass --url with the server that \
+    issued it";
+
+/// The URL `oml setup claude-code` pairs with a key: the one named beside
+/// it, or else [`DEFAULT_URL`] with the line to print before anything is
+/// sent (ADR-0043 d4).
+#[must_use]
+pub fn url_beside_key(named: Option<&str>) -> (String, Option<&'static str>) {
+    named.map_or_else(
+        || (DEFAULT_URL.to_owned(), Some(DEFAULT_NOTICE)),
+        |url| (url.to_owned(), None),
+    )
+}
+
 /// The first Claude Code with `claude plugin configure --values-stdin`
 /// (ADR-0040 d5).
 pub const MIN_CLAUDE_CODE: (u32, u32, u32) = (2, 1, 285);
@@ -276,6 +306,41 @@ mod tests {
             Some(vec!["oml-admin@open-memory-lab".to_owned()])
         );
         assert_eq!(other_plugins("{}"), None);
+    }
+
+    /// A key named without a URL goes to the maintainer's public server,
+    /// and the verb says so before anything is sent; a URL named beside the
+    /// key is the one used, with nothing said (ADR-0043 d1, d4).
+    #[test]
+    fn a_key_named_without_a_url_goes_to_the_default_server_and_says_so_first() {
+        assert_eq!(DEFAULT_URL, "https://memory.doublegate.io");
+        let (url, said) = url_beside_key(None);
+        assert_eq!(url, DEFAULT_URL);
+        let said = said.expect("a line before whoami");
+        assert!(
+            said.contains(DEFAULT_URL) && said.contains("--url"),
+            "{said}"
+        );
+        let (url, said) = url_beside_key(Some("https://oml.example.com"));
+        assert_eq!((url.as_str(), said), ("https://oml.example.com", None));
+    }
+
+    /// A refusal from the default server names where the key went and the
+    /// flag that names another server (ADR-0043 d4, d7).
+    #[test]
+    fn a_refusal_from_the_default_server_names_where_the_key_went_and_url() {
+        assert!(
+            DEFAULT_REFUSED.contains(DEFAULT_URL) && DEFAULT_REFUSED.contains("--url"),
+            "{DEFAULT_REFUSED}"
+        );
+    }
+
+    /// The printed configure line saves the URL the key was checked against,
+    /// the default included (ADR-0043 d4).
+    #[test]
+    fn the_printed_configure_line_saves_the_default_url_when_it_was_used() {
+        let lines = printed("0.4.1", DEFAULT_URL, Some("/home/you/agent.key"));
+        assert!(lines[2].contains(DEFAULT_URL), "{}", lines[2]);
     }
 
     #[test]

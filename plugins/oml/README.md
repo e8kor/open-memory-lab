@@ -9,24 +9,12 @@ you store it.
 
 ## Install
 
-*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0; the default server since v0.4.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
-With the `oml` CLI ([below](#the-oml-cli)), one command installs the plugin at the CLI's own
-release and configures it, refusing an administrator's key:
-
-```sh
-oml login https://oml.example.com      # once: checks the key, then stores the pair
-oml setup claude-code
-```
-
-With a key file from `oml keys issue-agent --out`, run the line it printed instead,
-`oml setup claude-code --url <url> --key-file <file>`. Then run `/reload-plugins`, or restart
-Claude Code. The [Claude Code guide](../../docs/guides/claude-code.md) walks the whole path.
-
-Without the CLI: the plugin takes two settings: `url`, your server without `/mcp`, such as
-`https://oml.example.com`, and `api_key`, this agent's own key. Claude Code keeps the key in the
-system keychain, never in `settings.json`, and neither setting has a default, so the key goes
-only to the server you name.
+The plugin takes two settings: `url`, the server without `/mcp`, and `api_key`, this agent's own
+key. Since v0.4.1 `url` defaults to the maintainer's public server, `https://memory.doublegate.io`,
+so with a key from that server the key is the only thing to enter. Claude Code keeps the key in
+the system keychain, never in `settings.json`.
 
 In a Claude Code session, add the marketplace and install the plugin; the install opens a dialog
 for the two settings, and the key field is masked:
@@ -36,12 +24,38 @@ for the two settings, and the key field is masked:
 /plugin install oml@open-memory-lab
 ```
 
-Run `/plugin configure oml@open-memory-lab` to change either setting later.
+Paste the key and leave `url` empty or at its default for the public server; for your own
+server, enter its address. Run `/plugin configure
+oml@open-memory-lab` to change either setting later, then `/reload-plugins`.
 
-From a shell, `claude plugin install` opens no dialog, so pipe the settings to `claude plugin
-configure --values-stdin`. This path needs Claude Code 2.1.285 or later. With the key in the
-owner-only file that `oml keys issue-agent --out` writes, `jq` reads the file and the key never
-enters a command line or your shell history:
+The default costs you something if your key is from another server: left unchanged, `url` sends
+that key to the maintainer's server, which refuses it with `401 auth.invalid`, so the plugin
+serves no tools and the session-start hook loads nothing. The operator of that server has then
+seen the key; ask your administrator to replace it.
+
+With the `oml` CLI ([below](#the-oml-cli)), one command installs the plugin at the CLI's own
+release and configures it, refusing an administrator's key:
+
+```sh
+oml setup claude-code --key-file "$HOME/.config/oml/keys/crew-agent-7"
+```
+
+Without `--url` it pairs the key with `https://memory.doublegate.io` and says so before it sends
+anything. For your own server, run the line `oml keys issue-agent --out` printed, `oml setup
+claude-code --url <url> --key-file <file>`, or log in first:
+
+```sh
+oml login https://oml.example.com      # once: checks the key, then stores the pair
+oml setup claude-code
+```
+
+The [Claude Code guide](../../docs/guides/claude-code.md) walks the whole path.
+
+From a shell without the CLI, `claude plugin install` opens no dialog, so pipe the settings to
+`claude plugin configure --values-stdin`. This path needs Claude Code 2.1.285 or later. With the
+key in the owner-only file that `oml keys issue-agent --out` writes, `jq` reads the file and the
+key never enters a command line or your shell history; for the public server, `u` is
+`https://memory.doublegate.io`:
 
 ```sh
 claude plugin marketplace add e8kor/open-memory-lab
@@ -51,8 +65,9 @@ jq -n --arg u 'https://oml.example.com' --rawfile k "$HOME/.config/oml/keys/crew
   | claude plugin configure oml@open-memory-lab --values-stdin
 ```
 
-Until both settings are set the plugin serves no tools. The session-start hook below reads the
-same two settings.
+Until `api_key` is set the plugin serves no tools. The session-start hook below reads the same
+two settings, and with `api_key` set and `url` left at its default it reaches the same default
+server the tools do.
 
 ### One release, or offline
 
@@ -168,9 +183,10 @@ sends two requests with the agent's key, both to that one server: `GET
 the workarea's steering and at most 800 budget tokens of matching memories. It adds what comes
 back to the session as stored data to check. After a compaction it also asks Claude to record the
 summary's durable facts with `oml_write`. The hook reads its server and key from the plugin's two
-settings, the ones the tools use; with neither set, it reads `OML_URL` and `OML_API_KEY`, for a
-hook run outside the plugin, and never one value from each, nor the CLI's own credentials. With
-no whole pair it sends nothing, and it prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
+settings, the ones the tools use, `url` at its default when only `api_key` is set; with neither
+set, it reads `OML_URL` and `OML_API_KEY`, for a hook run outside the plugin, with no default
+server, and never one value from each, nor the CLI's own credentials. With no whole pair it sends
+nothing, and it prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
@@ -260,8 +276,8 @@ that documentation does not settle as unverified.
 Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
 you configure the plugin once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
-by default for a third-party marketplace), then set `url` to the old `OML_URL` and `api_key` to
-the old key, in the dialog or through the shell path under "Install". The session-start hook
+by default for a third-party marketplace), then set `url` to the old `OML_URL`, since from 0.4.1
+an unset `url` is the maintainer's public server, and `api_key` to the old key, in the dialog or through the shell path under "Install". The session-start hook
 reads the same two settings first, so the exported variables can then leave your shell profile,
 unless the `oml` CLI or another client still reads them.
 

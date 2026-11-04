@@ -167,3 +167,4 @@ nav:
       - ADR-0040: adr/ADR-0040-plugin-setup-in-claude-code.md
       - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md
       - ADR-0042: adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md
+      - ADR-0043: adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md
