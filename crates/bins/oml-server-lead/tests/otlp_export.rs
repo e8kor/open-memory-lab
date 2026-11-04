@@ -151,6 +151,7 @@ async fn otel_exporter_otlp_endpoint_alone_exports_nothing() {
     // What main composes without the setting: no exporter, no tracer.
     let buf = Buf::default();
     let sink = buf.clone();
+    undecided();
     let guard = tracing::subscriber::set_default(exporting_subscriber(move || sink.clone(), None));
     whoami(&router(Traffic::new(TrustedProxies::default()))).await;
     drop(guard);
@@ -169,6 +170,7 @@ async fn set_spans_go_to_v1_traces_as_protobuf_with_no_auth_header_under_the_cal
     let export = Export::start(&Endpoint::parse(&url).expect("a base URL")).expect("starts");
     let buf = Buf::default();
     let sink = buf.clone();
+    undecided();
     let guard = tracing::subscriber::set_default(exporting_subscriber(
         move || sink.clone(),
         Some(export.tracer()),
@@ -232,4 +234,37 @@ async fn set_spans_go_to_v1_traces_as_protobuf_with_no_auth_header_under_the_cal
             "{personal} in {keys:?}"
         );
     }
+}
+
+/// The process-wide subscriber while tests capture: it records nothing and
+/// answers every callsite "sometimes", so a test thread with no subscriber of
+/// its own never caches a callsite as unwanted for a thread that captures.
+struct Undecided;
+
+static UNDECIDED: std::sync::Once = std::sync::Once::new();
+
+impl tracing::Subscriber for Undecided {
+    fn register_callsite(
+        &self,
+        _: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        false
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, _: &tracing::Event<'_>) {}
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+fn undecided() {
+    UNDECIDED.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(Undecided);
+    });
 }

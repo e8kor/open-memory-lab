@@ -62,6 +62,33 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
     }
 }
 
+/// The process-wide subscriber while tests capture: it records nothing and
+/// answers every callsite "sometimes", so a test thread with no subscriber of
+/// its own never caches a callsite as unwanted for a thread that captures.
+struct Undecided;
+
+static UNDECIDED: std::sync::Once = std::sync::Once::new();
+
+impl tracing::Subscriber for Undecided {
+    fn register_callsite(
+        &self,
+        _: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        false
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, _: &tracing::Event<'_>) {}
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 impl Captured {
     /// Captures this thread's lines until the guard drops.
     pub fn start() -> (tracing::subscriber::DefaultGuard, Self) {
@@ -73,6 +100,9 @@ impl Captured {
             .with_span_list(false)
             .with_writer(captured.clone())
             .finish();
+        UNDECIDED.call_once(|| {
+            let _ = tracing::subscriber::set_global_default(Undecided);
+        });
         (tracing::subscriber::set_default(subscriber), captured)
     }
 
