@@ -9,7 +9,7 @@ answers: which MCP tools the agent plugin exposes over streamable HTTP and how e
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answer unlisted through v0.5.0 ([releases](../product/releases.md)).
+**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answered unlisted through v0.5.0 and were removed in v0.5.1 ([releases](../product/releases.md)).
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
@@ -463,14 +463,14 @@ hooks loads the set at every session start instead. A guardrail is never written
 - **`oml_relate_propose` and `oml_vocab` are designed**, in
   [mcp-tools.designed.json](mcp-tools.designed.json), which is never served;
   a call to either is -32602 naming that file.
-- **The eight v0.3.0 tool names are not in `tools/list`.** They are hidden
-  aliases: a `tools/call` naming one answers with its v0.3.0 inputs, output
-  shape and refusal codes through v0.5.0, and v0.5.1 removes them, as
-  [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 reads its
-  alias window, a reading the maintainer has not decided. Their sections
-  [below](#the-v030-tools-not-listed) are their contracts for that window.
-  Claude Code offers the model only what `tools/list` names, so the window
-  serves raw MCP clients. Each maps to its successor:
+- **The eight v0.3.0 tool names were removed in v0.5.1.** Through v0.5.0
+  they were hidden aliases, unlisted but answering with their v0.3.0 inputs,
+  output shapes and refusal codes
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12). Since
+  v0.5.1 a `tools/call` naming one is JSON-RPC -32602 with the
+  `Unknown tool` message, as for any name the server does not serve. Their
+  sections [below](#the-v030-tools-removed-in-v051) keep their contracts as
+  a historical record. Each maps to its successor:
 
 | v0.3.0 | v0.4.0 |
 |---|---|
@@ -662,16 +662,18 @@ from one that does not exist. Example:
 }
 ```
 
-## The v0.3.0 tools, not listed
+## The v0.3.0 tools, removed in v0.5.1
 
 None of these is in `tools/list`
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2). The eight
-served in v0.3.0 are hidden aliases, each mapped to its successor in
-[What left the catalog](#what-left-the-catalog); `oml_attach` and `oml_graph`,
-listed in v0.3.0 and never served, answer -32602 naming their successors.
-Where a section below names a sibling old tool, read its successor.
+served in v0.3.0 were removed in v0.5.1: each now answers JSON-RPC -32602
+with the `Unknown tool` message, and its successor is in
+[What left the catalog](#what-left-the-catalog). `oml_attach` and
+`oml_graph`, listed in v0.3.0 and never served, answer -32602 naming their
+successors. The sections below are the v0.3.0 contracts, kept as the
+historical mapping; where one names a sibling old tool, read its successor.
 
-**The alias window.** Through v0.4.x a `tools/call` naming one of the eight
+**The alias window, closed in v0.5.1.** Through v0.5.0 a `tools/call` naming one of the eight
 takes the v0.3.0 input below, `scope` and `include_own_held` included and
 `claim_key` required, and answers the v0.3.0 output below with the v0.3.0
 refusal codes: the facade translates `scope` to the ring's `workarea` and
@@ -684,9 +686,8 @@ tool, its successor (`oml_write`, `oml_read`, `oml_workarea`, or
 and the call's `request_id`: ids only, never the key's value
 ([observability](../operations/observability.md), structured logging). The
 operator sees which keys still call an old name, so whose clients to move
-before the removal. **v0.5.1 removes
-the eight**, and a call to one is then -32602 like any tool not served
-(d12).
+before the removal. **v0.5.1 removed the eight**: a call to one is -32602
+like any tool not served, and no call logs `mcp_alias_called` (d12).
 
 ### `oml_remember`
 

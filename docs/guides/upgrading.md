@@ -39,18 +39,19 @@ the [changelog](../changelog.md). The names a user meets:
 | `oml bootstrap claim … --token <secret>` | `oml bootstrap claim … --token-stdin` |
 | plugin read from exported `OML_URL`, `OML_API_KEY` | plugin settings `url` and `api_key`, the key in the keychain |
 
-**The alias window.** Through v0.4.x the eight old MCP tool names and the old CLI verbs and flags
-still answer, hidden: each old MCP call logs `mcp_alias_called` naming the calling key, and each
-old CLI verb prints one stderr line naming its successor. v0.5.1 removes them. `OML_CLI_SERVER`
-and `OML_CLI_KEY` are not read at all; a missing setting names the variable to rename. HTTP and
-the SDKs keep no aliases. The window is ADR-0039 d12's reading, which the maintainer has not
-decided; the other reading keeps no aliases, and then v0.4.0 answers only the new names.
+**The alias window, closed in v0.5.1.** Through v0.5.0 the eight old MCP tool names and the old
+CLI verbs and flags still answered, hidden: each old MCP call logged `mcp_alias_called` naming the
+calling key, and each old CLI verb printed one stderr line naming its successor. v0.5.1 removed
+them. An old tool name now answers JSON-RPC -32602 `Unknown tool` like any name the server does
+not serve, and an old verb or flag is the CLI's usage error, exit `2`, with nothing sent.
+`OML_CLI_SERVER` and `OML_CLI_KEY` are not read at all; a missing setting names the variable to
+rename. HTTP and the SDKs kept no aliases (ADR-0039 d12).
 
 ## Upgrading from v0.3.x as a user of Claude Code
 
 1. Install the v0.5.0 CLI: `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh`.
 2. `oml login <url>` once. It rewrites the credentials file with `url` and `api_key`; a v0.3 file's
-   `server` and `key` are read until then, through v0.5.0.
+   `server` and `key` were read through v0.5.0 and are not read since v0.5.1.
 3. `oml setup claude-code`. It finds the `open-memory-lab` marketplace you added, pinned at a v0.3
    tag or at none, removes it, adds it at the CLI's own tag, `v0.5.0`, and installs again each plugin the removal
    uninstalled, then configures the plugin; a marketplace from another source, such as a local
@@ -74,8 +75,10 @@ decided; the other reading keeps no aliases, and then v0.4.0 answers only the ne
    session-start hook runs on.
 3. Move scripts to the new verbs, and enrollment to `--token-stdin`, which keeps the secret out of
    argv and shell history.
-4. To find the clients that still call an old tool before v0.5.1, read `mcp_alias_called` in the server log:
-   it names each key still calling an old tool.
+4. Since v0.5.1 no log line names the clients that still call an old tool, since `mcp_alias_called`
+   was removed with the old names: such a call logs `mcp_call` with `tool` `unknown` and
+   `error_code` `-32602`, under the calling key's `key_id`
+   ([observability](../operations/observability.md)).
 5. Check with `oml doctor`.
 
 Rolling back means the v0.3 server, CLI and plugin together. The two migrations stay, and no

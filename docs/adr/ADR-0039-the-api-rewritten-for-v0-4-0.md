@@ -229,6 +229,12 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       `oml_read` and `oml_workarea`. v0.5.1 rewrites those tests on the three tools and then
       removes the eight names, the four verbs, `--server`, `--key` and a v0.3.0 credentials file's
       `server` and `key` (d15) together.
+    - **Removed in v0.5.1 (2026-11-04).** The facade tests drive `oml_write`, `oml_read` and
+      `oml_workarea`, and then the window closed: each of the eight names answers JSON-RPC -32602
+      with the `Unknown tool` message, as any tool not served does; `mcp_alias_called` and the
+      `mcp_call` line's `alias_of` field are gone; the four verbs, `--server` and `--key` are the
+      CLI's usage errors, exit 2, with nothing sent; and a v0.3.0 credentials file's `server`
+      and `key` are not read.
 
 - **d13 — The breaking changes are these, and each has its migration.**
 

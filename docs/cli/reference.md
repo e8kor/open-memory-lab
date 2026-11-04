@@ -158,8 +158,9 @@ unset. The key is never printed, in a refusal or anywhere else.
 no key, so it takes the URL of the first source that sets one, and writes `url` and `api_key`,
 nothing else, to the credentials file
 ([owner-only](#installing-oml-and-what-differs-on-windows)). `OML_CLI_CREDENTIALS` selects the
-file, so a second server is a second file. A v0.3.0 file's `server` and `key` are read as `url`
-and `api_key` through v0.5.0, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
+file, so a second server is a second file. A v0.3.0 file's `server` and `key` were read as `url`
+and `api_key` through v0.5.0 and are not read since v0.5.1, and its `key_id`, `tenant_id` and
+`root_workarea_id` are ignored:
 `oml audit verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`.
 
 `oml doctor` checks the pair alone and refuses nothing: it reports which source set the URL and
@@ -170,9 +171,9 @@ same source also holds the key. A URL without its key is a `warn` (exit `0`) nam
 setting; no URL in the first source sends nothing and is a `fail` (exit `1`).
 
 The v0.3.0 names follow [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12. `--server`
-and `--key` still answer, hidden, each printing one stderr line naming `--url` or `--api-key`,
-until v0.5.1 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
-is missing and either is set, the failure names the variable to rename.
+and `--key` answered, hidden, through v0.5.0 and were removed in v0.5.1: each is now an unexpected
+argument, exit `2`, with nothing sent. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a
+start setting is missing and either is set, the failure names the variable to rename.
 
 ## `oml login` and `oml doctor` — storing and checking the pair
 
@@ -474,14 +475,14 @@ arguments choose is refused by name before anything is sent (exit `2`), as `oml_
 | `oml read [--own\|--all] [--workarea <workarea>] [--state <state>] [--kind <kind>] [--since <instant>] [--until <instant>] [--limit <n>] [--cursor <cursor>]` | List, `GET /v1/memories`, one page of summaries, newest first. `--own`, the default, lists this key's own rows in every state; `--all` lists the promoted tips of the workarea's subtree. Each listing flag is refused beside an artifact id or `--query`. |
 | `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` | One page of `GET /v2/events`: the journal's events within the key's reader access on the workarea, the key's default when omitted, digest-only, with the head seq and the `next_after_seq` to pass back as `--after-seq`. A feed for audit, not a verification surface: `oml audit verify-chain` reads the chain export. |
 
-**The v0.3.0 verbs.** `oml submit`, `oml recall`, `oml supersede` and `oml review verdict` still
-answer, hidden from `--help`, until v0.5.1 removes them
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12). Each runs its successor with
-the same request and the same output and prints one stderr line naming it: `oml submit --claim
-<text>` runs `oml write <text>`, `oml recall --query` runs `oml read --query`, `oml supersede
---target <id> --claim <text>` runs `oml write <text> --replaces <id>`, and `oml review verdict
---memory <id> --approve|--reject` runs `oml review approve` or `oml review reject` against the
-serve of that memory.
+**The v0.3.0 verbs.** `oml submit`, `oml recall`, `oml supersede` and `oml review verdict`
+answered, hidden from `--help`, through v0.5.0 and were removed in v0.5.1
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12): each is now an unrecognized
+subcommand, exit `2`, with nothing sent. Their successors: `oml submit --claim <text>` is
+`oml write <text>`, `oml recall --query` is `oml read --query`, `oml supersede --target <id>
+--claim <text>` is `oml write <text> --replaces <id>`, and `oml review verdict --memory <id>
+--approve|--reject` is `oml review approve` or `oml review reject` against the serve of that
+memory.
 
 ## `oml review` — the review ceremony
 

@@ -218,8 +218,8 @@ What the request line costs per request, and how many bytes it writes, is unmeas
 
 One `mcp_call` line per `/mcp` POST that carries a JSON-RPC message, written before that
 request's `http_request` line and under its `request_id`, `correlation_id` and `trace_id`, with
-`tenant_id`, `key_id`, `rpc_method`, `tool` (an unrecognized name logs `unknown`), `alias_of`,
-`mode`, `outcome`, `error_code`, `duration_ms` and, on `initialize` only, `client_name` and
+`tenant_id`, `key_id`, `rpc_method`, `tool` (an unrecognized name logs `unknown`, a v0.3.0
+tool name among them since v0.5.1), `mode`, `outcome`, `error_code`, `duration_ms` and, on `initialize` only, `client_name` and
 `client_version` from `clientInfo`, cut and replaced as `user_agent` is. `rpc_method` is
 `initialize`, `ping`, `tools/list`, `tools/call`, one of the four MCP notifications, or `unknown`.
 A POST refused before its message is read, for its credential or its `MCP-Protocol-Version`,
