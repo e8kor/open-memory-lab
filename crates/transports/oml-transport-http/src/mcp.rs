@@ -33,7 +33,8 @@ use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signe
 use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
-use crate::{ApiState, bearer, finish, json_response, new_request_id};
+use crate::traffic::Rid;
+use crate::{ApiState, bearer, finish, json_response};
 
 /// The MCP specification revision this facade answers `initialize` with.
 /// A client asking for another revision is answered with this one, which the
@@ -206,8 +207,12 @@ where
     I: IdGen + 'static,
     Sc: Scanner + 'static,
 {
-    pub(crate) async fn mcp(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    pub(crate) async fn mcp(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         // No anonymous call, `tools/list` included: the key or the access
         // token is resolved before any message is read (mcp-plugin.md
         // "Authentication"), and a `401` carries the challenge (ADR-0031 d2).
