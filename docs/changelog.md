@@ -34,6 +34,42 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-03 — Claim edges are built as internals, with no route or tool (implementation)
+
+An implementation milestone; no decision changes. The code now builds the claim edges of
+[ADR-0008](adr/ADR-0008-workarea-algebra.md) d5 and
+[ADR-0021](adr/ADR-0021-ai-human-ontologies.md) d5 behind `oml-app` use cases, as the substrate
+the v0.5.0 brief's ratified edges read. No HTTP route or MCP tool reaches them: the proposed
+ADR-0039 rewrites both surfaces in v0.3.2, so `GET` and `POST /v2/claim-edges` and
+`POST /v2/claim-edges/{edge_id}/ratify` stay [http-api](api/http-api.md)'s contract, implemented
+behind the use cases and not served. `info.version` stays `0.3.0-design`.
+
+- **The table** (ADR-0034 d1, d11, d12). Migration `0017_claim_edges.sql` builds `claim_edges` as
+  [postgres-schema](data/postgres-schema.md#claim_edges) states it: pending or ratified, its keys
+  carrying `tenant_id`, R2's key inequality and a ratified row's ratifier as `CHECK`s, row security
+  forced, no `DELETE` granted, not partitioned and with statistics target 0 on every column.
+- **The proposal** (ADR-0008 d5, ADR-0021 d5, ADR-0012). A dreamer key holding reader on both
+  endpoints' workareas, each endpoint in its read scope, and dreamer on at least one, proposes an
+  edge journalled `claim_edge.proposed`; the same commit widens the lineage closure of every
+  version the edge connects, and of each version deriving from one, so R2 counts a pending edge.
+  `oml:about` is refused `request.validation` until classification (ADR-0027) is built, and
+  `oml:replaced_by` and `oml:consider` belong to a deprecation's verdict (ADR-0021 d3).
+- **The ratification** (ADR-0012 R2, ADR-0021 d5). A dreamer key that is not `held_by: service`,
+  holding dreamer on both endpoints' workareas, ratifies a pending edge, journalled `review.ratify`
+  with `subject_kind: "claim_edge"`, `k: 1` and empty `verdict_event_ids`, under a compare-and-set
+  on the pending state. It is refused `review.ratifier_is_proposer` for the proposer's key or
+  principal, `review.author_in_lineage` for a key or principal in either endpoint's closure,
+  `review.serve_invalid` with `details.reason` `consumed` for a decided edge, and
+  `vocab.cycle_refused` for an `oml:is_a` edge closing a cycle; each journals nothing.
+- **The page.** A reader key reads claim edges newest first under a cursor bound to its key and
+  filter, served only when both endpoints are in its read scope; an admin key is refused
+  `access.verb_ceiling`. Neither `claim_edge.*` nor an edge's `review.ratify` reaches the events
+  tail.
+- **Not built:** the routes and tools (ADR-0039), a `rejected` state, `oml:about` and the brief's
+  read of ratified edges, which another branch designs.
+- **No surface change:** no HTTP operation, error code or event type.
+- **Pages touched:** [postgres-schema](data/postgres-schema.md) and this page.
+
 ### 2026-11-03 — The status ladder (implementation)
 
 An implementation milestone; no decision changes. The code now builds the accepted
