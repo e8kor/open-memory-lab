@@ -50,6 +50,64 @@ use uuid::Uuid;
 /// `oml.serving_role` set) before serving.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");
 
+/// Stores each workarea's status as the one v0.5.1 and earlier served — the
+/// universe root `committed`, every other node `development`, derived from
+/// `parent_id` whatever the column held — on a database where migration 0017
+/// is not yet applied, and returns the rows it changed. A v0.1.0 build stored
+/// every node `development`, its root included, and later builds never read
+/// the column back, so a deployment created then holds a root 0017's
+/// `workareas_universe_committed` refuses (docs/operations/upgrades.md
+/// "Upgrading from v0.5.1 or earlier"). 0017 keeps its released bytes, so a
+/// database that applied it keeps its checksum; this runs before it instead,
+/// in one transaction, under each tenant's row-level-security context as the
+/// 0003 startup policy enumerates them. The served status does not change, so
+/// nothing is journalled. A fresh database, or one past 0017, is left alone,
+/// and a second run changes nothing.
+pub async fn align_pre_0017_statuses(owner: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx = owner.begin().await?;
+    let pending: bool = sqlx::query_scalar(
+        "SELECT to_regclass('_sqlx_migrations') IS NOT NULL \
+            AND to_regclass('workareas') IS NOT NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if !pending {
+        return Ok(0);
+    }
+    let past_0017: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version >= 17)")
+            .fetch_one(&mut *tx)
+            .await?;
+    if past_0017 {
+        return Ok(0);
+    }
+    sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
+        .fetch_all(&mut *tx)
+        .await?;
+    let mut aligned = 0;
+    for tenant in tenants {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await?;
+        aligned += sqlx::query(
+            "UPDATE workareas \
+                SET status = CASE WHEN parent_id IS NULL THEN 'committed' ELSE 'development' END \
+              WHERE tenant_id = $1 \
+                AND status <> CASE WHEN parent_id IS NULL THEN 'committed' ELSE 'development' END",
+        )
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    }
+    tx.commit().await?;
+    Ok(aligned)
+}
+
 const FORK_CHECK_PAGE: usize = 1024;
 
 /// A fork-check refusal (ADR-0002 d7): a verification failure here means the
@@ -608,14 +666,24 @@ impl PgStore {
     /// migration grants this store's login the DML the adapter's statements
     /// use (postgres-schema.md "Privileges"). A migration that grants, run
     /// without `oml.serving_role`, fails at `current_setting` (`42704`).
-    pub async fn migrate_as(&self, owner: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-        MIGRATOR.run(owner).await
+    ///
+    /// Before 0017 is applied, [`align_pre_0017_statuses`] stores each
+    /// workarea's status as the one v0.5.1 and earlier served, so 0017's
+    /// `workareas_universe_committed` holds over a database whose root a
+    /// v0.1.0 build stored `development` (docs/operations/upgrades.md
+    /// "Upgrading from v0.5.1 or earlier"). Returns the rows it aligned.
+    pub async fn migrate_as(&self, owner: &PgPool) -> Result<u64, sqlx::migrate::MigrateError> {
+        let aligned = align_pre_0017_statuses(owner)
+            .await
+            .map_err(sqlx::migrate::MigrateError::Execute)?;
+        MIGRATOR.run(owner).await?;
+        Ok(aligned)
     }
 
     /// [`Self::migrate_as`] over an owner connection opened at `owner_url`
     /// by [`Self::connect_owner`] and closed before this returns (ADR-0034
     /// d4), with no boot check run around it.
-    pub async fn migrate(&self, owner_url: &str) -> Result<(), sqlx::migrate::MigrateError> {
+    pub async fn migrate(&self, owner_url: &str) -> Result<u64, sqlx::migrate::MigrateError> {
         let owner = self.connect_owner(owner_url).await?;
         let applied = self.migrate_as(&owner).await;
         owner.close().await;

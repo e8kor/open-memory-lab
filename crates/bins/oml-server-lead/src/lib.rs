@@ -374,7 +374,13 @@ pub async fn split_boot(store: &PgStore, owner_url: &str) -> Result<SplitRoles, 
 
 async fn split_boot_on(store: &PgStore, owner: &PgPool) -> Result<SplitRoles, SplitBootError> {
     role_split_preflight(owner, store.pool()).await?;
-    store.migrate_as(owner).await?;
+    let aligned = store.migrate_as(owner).await?;
+    if aligned > 0 {
+        tracing::info!(
+            aligned,
+            "stored the status v0.5.1 served on workareas whose column disagreed, before 0017"
+        );
+    }
     role_split_postflight(owner, store.pool()).await?;
     Ok(SplitRoles {
         owner: current_user(owner).await?,
