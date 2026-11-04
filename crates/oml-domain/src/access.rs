@@ -138,24 +138,37 @@ pub fn check_issuance(
     Ok(())
 }
 
+/// Whether a global per-key denial names the node whose ancestry is
+/// `ancestry`, or an ancestor of it — deny-wins (workareas.md).
+fn globally_denied(denials: &[KeyDenial], ancestry: &[Uuid]) -> bool {
+    denials.iter().any(|d| ancestry.contains(&d.node))
+}
+
+/// Whether `grant` survives at the node whose ancestry is `ancestry`: it is
+/// on the node or an ancestor, and its own deny list names neither
+/// (workareas.md, per-grant attenuation).
+fn survives(grant: &Grant, ancestry: &[Uuid]) -> bool {
+    ancestry.contains(&grant.node) && !grant.deny.iter().any(|d| ancestry.contains(d))
+}
+
 /// `effective_roles(N)` (workareas.md, effective access; ADR-0025 d1):
 /// every grant on N or an ancestor of N, less each grant whose own deny list
 /// names N or an ancestor of N, unioned; the empty set when any global
 /// denial names N or an ancestor of N. `ancestry` runs from N to the root;
-/// an empty ancestry — an unknown node — confers nothing.
+/// an empty ancestry — an unknown node — confers nothing. It is
+/// [`effective_access`]'s `roles` where no grant is narrowed (ADR-0027 d5).
 #[must_use]
 pub fn effective_roles(
     grants: &[Grant],
     denials: &[KeyDenial],
     ancestry: &[Uuid],
 ) -> BTreeSet<Role> {
-    if denials.iter().any(|d| ancestry.contains(&d.node)) {
+    if globally_denied(denials, ancestry) {
         return BTreeSet::new();
     }
     grants
         .iter()
-        .filter(|g| ancestry.contains(&g.node))
-        .filter(|g| !g.deny.iter().any(|d| ancestry.contains(d)))
+        .filter(|g| survives(g, ancestry))
         .map(|g| g.role)
         .collect()
 }
@@ -186,27 +199,20 @@ pub enum AccessRefusal {
 /// [`effective_roles`] are `effective` (roles-and-keys.md; ADR-0025 d1):
 /// verb ceiling, allowed, grant refused, not found. Step 1 reads only the
 /// key's role, so a caller may also check it through
-/// [`admissible_grant_roles`] before it resolves the node.
+/// [`admissible_grant_roles`] before it resolves the node. It is
+/// [`resolve_verb`] where no grant is narrowed (ADR-0027 d5).
 pub fn resolve(
     key_role: Role,
     effective: &BTreeSet<Role>,
     needed: Role,
 ) -> Result<(), AccessRefusal> {
-    if !admissible_grant_roles(key_role).contains(&needed) {
-        return Err(AccessRefusal::VerbCeiling {
-            role: key_role,
-            needed,
-        });
-    }
-    if effective.contains(&needed) {
-        Ok(())
-    } else if effective.contains(&Role::Reader) {
-        Err(AccessRefusal::GrantRefused {
-            needed_role: needed,
-        })
-    } else {
-        Err(AccessRefusal::NotFound)
-    }
+    refusal_order(key_role, effective, None, Verb::Needs(needed)).map_err(|refusal| match refusal {
+        VerbRefusal::VerbCeiling { role, needed } => AccessRefusal::VerbCeiling { role, needed },
+        VerbRefusal::GrantRefused { needed_role, .. } => {
+            AccessRefusal::GrantRefused { needed_role }
+        }
+        VerbRefusal::NotFound => AccessRefusal::NotFound,
+    })
 }
 
 /// The verbs each effective grant role confers, in table order
@@ -247,7 +253,13 @@ pub fn effective_verbs(effective: &BTreeSet<Role>, held_by: HeldBy) -> Vec<&'sta
 // ---- Narrowed dreamer grants: `edge_labels` (ADR-0027 d5) ----
 //
 // Kept beside `Grant`, `effective_roles`, `resolve` and `AccessRefusal`
-// rather than inside them, so that their callers are unchanged.
+// rather than inside them, so that their callers are unchanged, and computed
+// by the same steps: `effective_roles` and `resolve` are `effective_access`
+// and `resolve_verb` where no grant is narrowed, which keeps ADR-0008's one
+// access computation. A narrowed grant never reaches them, since
+// `LabelledGrant::unnarrowed` is `None` for it: a caller still on the plain
+// functions refuses a narrowed dreamer's verbs instead of conferring the
+// whole dreamer row.
 
 /// A refused `edge_labels` on a grant request (roles-and-keys.md, narrowed
 /// dreamer grants; ADR-0027 d5). Every variant answers `request.validation`,
@@ -315,9 +327,17 @@ impl LabelledGrant {
         })
     }
 
+    /// The grant as [`Grant`] says it, for [`effective_roles`], [`resolve`]
+    /// and [`TailCaller`], where it is not narrowed; `None` for a narrowed
+    /// grant, which those cannot read without dropping its `edge_labels`.
+    /// A narrowed grant is always a dreamer grant, so leaving it out fails
+    /// closed: where it is the only dreamer grant, they refuse every
+    /// dreamer-class verb, the claim edges its labels list included, and they
+    /// confer every other role as [`effective_access`] does
+    /// (roles-and-keys.md, narrowed dreamer grants; ADR-0027 d5).
     #[must_use]
-    pub fn grant(&self) -> &Grant {
-        &self.grant
+    pub fn unnarrowed(&self) -> Option<&Grant> {
+        self.edge_labels.is_none().then_some(&self.grant)
     }
 
     /// The narrowed set, in the register's order; `None` for a grant that
@@ -361,8 +381,9 @@ pub struct EffectiveAccess {
 
 /// Effective access at the node whose ancestry, from the node to the root,
 /// is `ancestry` (roles-and-keys.md, narrowed dreamer grants; ADR-0027 d5).
-/// `roles` is [`effective_roles`] over the same grants. Of the dreamer
-/// grants that survive at N — on N or an ancestor, not masked at N by their
+/// `roles` is computed as [`effective_roles`] computes it, narrowed grants
+/// included: narrowing cuts verbs out of a grant, never its role. Of the
+/// dreamer grants that survive at N — on N or an ancestor, not masked at N by their
 /// own deny list — dreamer is unnarrowed if any carries no `edge_labels`, and
 /// otherwise narrowed to the union of their lists. A narrowed grant
 /// attenuates only itself, so an unnarrowed grant beside it widens it, and a
@@ -373,13 +394,12 @@ pub fn effective_access(
     denials: &[KeyDenial],
     ancestry: &[Uuid],
 ) -> EffectiveAccess {
-    if denials.iter().any(|d| ancestry.contains(&d.node)) {
+    if globally_denied(denials, ancestry) {
         return EffectiveAccess::default();
     }
     let surviving: Vec<&LabelledGrant> = grants
         .iter()
-        .filter(|g| ancestry.contains(&g.grant.node))
-        .filter(|g| !g.grant.deny.iter().any(|d| ancestry.contains(d)))
+        .filter(|g| survives(&g.grant, ancestry))
         .collect();
     let roles = surviving.iter().map(|g| g.grant.role).collect();
     let dreamer: Vec<&LabelledGrant> = surviving
@@ -473,6 +493,18 @@ pub fn resolve_verb(
     access: &EffectiveAccess,
     verb: Verb<'_>,
 ) -> Result<(), VerbRefusal> {
+    refusal_order(key_role, &access.roles, access.edge_labels.as_ref(), verb)
+}
+
+/// The one refusal order [`resolve`] and [`resolve_verb`] answer:
+/// `edge_labels` is the narrowed set at the node, `None` where dreamer is
+/// unnarrowed or absent (roles-and-keys.md; ADR-0025 d1; ADR-0027 d5).
+fn refusal_order(
+    key_role: Role,
+    roles: &BTreeSet<Role>,
+    edge_labels: Option<&BTreeSet<OmlLabel>>,
+    verb: Verb<'_>,
+) -> Result<(), VerbRefusal> {
     let needed = verb.needed_role();
     if !admissible_grant_roles(key_role).contains(&needed) {
         return Err(VerbRefusal::VerbCeiling {
@@ -480,19 +512,19 @@ pub fn resolve_verb(
             needed,
         });
     }
-    let narrowing_admits = match (&access.edge_labels, verb) {
+    let narrowing_admits = match (edge_labels, verb) {
         (Some(listed), Verb::ClaimEdge(label)) => {
             OmlLabel::parse(label).is_some_and(|l| listed.contains(&l))
         }
         (Some(_), Verb::Needs(role)) => role != Role::Dreamer,
         (None, _) => true,
     };
-    if access.roles.contains(&needed) && narrowing_admits {
+    if roles.contains(&needed) && narrowing_admits {
         Ok(())
-    } else if access.roles.contains(&Role::Reader) {
+    } else if roles.contains(&Role::Reader) {
         Err(VerbRefusal::GrantRefused {
             needed_role: needed,
-            edge_labels: access.edge_labels.clone(),
+            edge_labels: edge_labels.cloned(),
         })
     } else {
         Err(VerbRefusal::NotFound)
