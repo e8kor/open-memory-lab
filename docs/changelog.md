@@ -34,6 +34,20 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.4.0 (ADR-0041 d3, implementation)
+
+The installers install the release they are cut with (d3), and `check_release.py`,
+`check_plugin.py` and `check_chart.py` hold that release equal to the workspace version, so the
+workspace, `Chart.yaml`'s `version` and `appVersion`, both `plugin.json` files and the two
+installers' defaults move from 0.3.1 to 0.4.0 together. `oml setup claude-code` installs the
+plugin from the marketplace at the CLI's own tag, so a 0.4.0 CLI installs the 0.4.0 plugin, the
+first with the `url` and `api_key` options. No tag is cut and nothing is released: until v0.4.0
+is tagged, an install without `--version` fails naming the 404, and `install-smoke` keeps
+installing 0.3.1, the newest published release.
+
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (d3's
+  status) and this page.
+
 ### 2026-11-04 — The quick start's two verbs: `oml setup claude-code` and `oml quickstart` (ADR-0041 d7, d9, implementation)
 
 The quick start ([ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md), proposed)

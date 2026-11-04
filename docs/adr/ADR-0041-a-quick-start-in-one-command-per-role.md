@@ -173,7 +173,7 @@ through them. Where each item stands is under [Consequences](#consequences).
     | Item | Status |
     |---|---|
     | d1, d2 | Built. `install.sh` was run against v0.3.1 on Linux x86_64 with cosign, without it, and with `latest`. `install.ps1` runs only in `install-smoke` on Windows. |
-    | d3 | Built: both scripts default to the workspace version. |
+    | d3 | Built. Both scripts default to 0.4.0, the release being cut, which is now the workspace version, so `oml setup claude-code` installs the plugin of the same release. Until the v0.4.0 tag exists, a run without `--version` fails naming the 404, as d3 says. |
     | d4 | Decided, not built: the redirect is set up at the v0.4.0 tag. |
     | d5 | Decided, not built: the install page is in the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md). |
     | d6 | Built with ADR-0039's `oml login` and `oml doctor`; nothing was added to them. |
