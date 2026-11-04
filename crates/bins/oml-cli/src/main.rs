@@ -3108,6 +3108,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut ready = None;
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
+    let mut default_node: Option<Value> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -3115,6 +3116,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            // The default workarea's brief and waiting transitions, which a
+            // session start and a ratifier depend on (ADR-0046 d9).
+            if let Some(Ok(v)) = &me
+                && let Some(id) = v["default_workarea"]["id"].as_str()
+                && let Ok(segment) = segment(id)
+            {
+                default_node = client
+                    .get(&format!("/v2/workareas/{segment}"))
+                    .ok()
+                    .map(|(_, n)| n);
+            }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
                 .ok()
@@ -3161,6 +3173,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "readyz": probe_json(&ready),
             "whoami": whoami,
             "chain_head_seq": head_seq,
+            "default_workarea": default_node.as_ref().map(|n| json!({
+                "path": n["path"],
+                "brief_items": n["brief"]["items"].as_array().map_or(0, Vec::len),
+                "brief_truncated": n["brief"]["budget"]["truncated"],
+                "pending_transitions": n["pending_transitions"].as_array().map_or(0, Vec::len),
+            })),
             "oauth_discovery": oauth,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
@@ -3198,6 +3216,32 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             ),
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
+        }
+        if let Some(n) = &default_node {
+            let items = n["brief"]["items"].as_array().map_or(0, Vec::len);
+            if items == 0 {
+                println!(
+                    "brief       : empty: no ratified brief edge on {}; a dreamer proposes one with oml edges propose brief",
+                    field(n, "path")
+                );
+            } else {
+                println!(
+                    "brief       : {items} item(s) on {}{}",
+                    field(n, "path"),
+                    if n["brief"]["budget"]["truncated"] == true {
+                        ", more cut by brief.max_tokens"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            let waiting = n["pending_transitions"].as_array().map_or(0, Vec::len);
+            if waiting > 0 {
+                println!(
+                    "transitions : {waiting} waiting for a second identity; oml workareas status pending {}",
+                    field(n, "path")
+                );
+            }
         }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
