@@ -76,6 +76,10 @@ pub enum LadderRefusal {
     /// At ratification, the proposal's `from` is no longer the node's status.
     #[error("the proposal's from is no longer the node's status")]
     Stale,
+    /// To `validated` on a user root, which climbs to `committed` at most
+    /// (ADR-0046 d1).
+    #[error("a user root climbs to committed and is never validated")]
+    UserRoot,
 }
 
 impl LadderRefusal {
@@ -89,20 +93,31 @@ impl LadderRefusal {
             LadderRefusal::Universe => "universe",
             LadderRefusal::ChildrenNotValidated => "children_not_validated",
             LadderRefusal::Stale => "stale",
+            LadderRefusal::UserRoot => "user_root",
         }
     }
 }
 
+/// What a node is to the ladder: the universe root, which takes no
+/// transition; a user root, which climbs to `committed` at most (ADR-0044
+/// d1; ADR-0046 d1); or any other node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LadderNode {
+    Universe,
+    UserRoot,
+    Ordinary,
+}
+
 /// Whether a proposal of `current` → `to` is admitted on a node: the
-/// universe first, then the rung order, then the preconditions
-/// (ADR-0009 d3, d4).
+/// universe first, then the rung order, then a user root's ceiling, then
+/// the preconditions (ADR-0009 d3, d4; ADR-0046 d1).
 pub fn propose_check(
-    is_universe: bool,
+    node: LadderNode,
     current: WorkareaStatus,
     to: WorkareaStatus,
     children: &[WorkareaStatus],
 ) -> Result<(), LadderRefusal> {
-    if is_universe {
+    if node == LadderNode::Universe {
         return Err(LadderRefusal::Universe);
     }
     match to.rung().cmp(&current.rung()) {
@@ -113,6 +128,9 @@ pub fn propose_check(
         }
         std::cmp::Ordering::Greater => {}
     }
+    if node == LadderNode::UserRoot && to == WorkareaStatus::Validated {
+        return Err(LadderRefusal::UserRoot);
+    }
     transition_preconditions(current, to, children)
 }
 
@@ -122,7 +140,7 @@ pub fn propose_check(
 /// (workareas.md, ratification re-checks; ADR-0009 d3, d4).
 pub fn ratify_check(
     proposal_from: WorkareaStatus,
-    is_universe: bool,
+    node: LadderNode,
     current: WorkareaStatus,
     to: WorkareaStatus,
     children: &[WorkareaStatus],
@@ -130,7 +148,7 @@ pub fn ratify_check(
     if proposal_from != current {
         return Err(LadderRefusal::Stale);
     }
-    propose_check(is_universe, current, to, children)
+    propose_check(node, current, to, children)
 }
 
 /// The preconditions of a one-rung step, the one place each lands. Today
@@ -167,6 +185,14 @@ pub fn ratifier_is_proposer(
     proposer_key == ratifier_key || proposer_principal == ratifier_principal
 }
 
+/// Whether a ratification's two keys name one user: `same_user` on the
+/// ratification event (ADR-0046 d2). A key that names no user, a tenant
+/// key, is never the same user as any key.
+#[must_use]
+pub fn same_user(proposer_user: Option<Uuid>, ratifier_user: Option<Uuid>) -> bool {
+    matches!((proposer_user, ratifier_user), (Some(p), Some(r)) if p == r)
+}
+
 /// An operation a frozen area may refuse (workareas.md, refusal matrix).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrozenOp {
@@ -174,6 +200,8 @@ pub enum FrozenOp {
     Write,
     /// A promotion of a claim in the area.
     Promote,
+    /// A reject verdict on a held row in the area, which promotes nothing.
+    Reject,
     /// A reassignment of a claim into the area.
     ReassignIn,
     /// A reassignment of a claim out of the area.
@@ -192,7 +220,8 @@ pub enum FrozenOp {
 
 /// Whether `status` refuses `op` because the area is frozen
 /// (`workarea.frozen`): a `validated` area admits exactly demote, erasure
-/// and crew-metadata update, and every other status refuses none of these
+/// and crew-metadata update, and admits a reject verdict, which promotes
+/// nothing (ADR-0046 d10), and every other status refuses none of these
 /// operations by status (ADR-0009 d5). A status transition is not one of
 /// these operations: [`propose_check`] and [`ratify_check`] alone refuse it,
 /// as `workarea.transition_refused` with `backward` or `same` from
@@ -202,6 +231,6 @@ pub fn frozen_refuses(status: WorkareaStatus, op: FrozenOp) -> bool {
     status == WorkareaStatus::Validated
         && !matches!(
             op,
-            FrozenOp::Demote | FrozenOp::Erase | FrozenOp::CrewUpdate
+            FrozenOp::Demote | FrozenOp::Erase | FrozenOp::CrewUpdate | FrozenOp::Reject
         )
 }

@@ -10023,6 +10023,7 @@ async fn a_second_dreamer_ratifies_and_the_workarea_becomes_committed_with_the_p
             "transition_id": proposal.transition_id.to_string(),
             "proposed_by_key_id": boot.admin_key.key_id.to_string(),
             "ratified_by_key_id": dora.key_id.to_string(),
+            "same_user": false,
             "policy_snapshot": { "k": 1, "required_roles": ["dreamer"] },
         })
     );
@@ -11842,6 +11843,7 @@ async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_wit
             "edge_id": f.edge_id.to_string(),
             "verdict_event_ids": [],
             "ratifier_key_id": rita.key_id.to_string(),
+            "same_user": false,
             "policy_snapshot": {
                 "k": 1,
                 "required_roles": ["dreamer"],
