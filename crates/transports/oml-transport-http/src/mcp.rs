@@ -28,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use oml_app::app::Caller;
+use oml_app::domain::guardrail::{FrameOptions, render_frame};
 use oml_app::domain::oauth::{ChallengeCause, Issuer, TokenKind, mcp_challenge, token_kind};
 use oml_app::domain::sha256_digest_string;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
@@ -104,6 +105,17 @@ const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
+
+/// The one prompt `prompts/list` names (proposed ADR-0037 d11): prompts are
+/// user-controlled, so it reaches a session only when a person runs it.
+fn guardrails_prompt_listing() -> Value {
+    json!({
+        "name": "guardrails",
+        "title": "OML guardrails",
+        "description": "The reviewed rules in force for this key's default workarea, as text: instructions, not enforcement.",
+        "arguments": [],
+    })
+}
 
 /// The served catalog, in catalog order: docs/api/mcp-tools.json's tools.
 #[must_use]
@@ -322,13 +334,36 @@ where
                 &id,
                 &json!({
                     "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": { "tools": { "listChanged": false } },
+                    "capabilities": {
+                        "tools": { "listChanged": false },
+                        // One user-controlled prompt, guardrails (proposed
+                        // ADR-0037 d11).
+                        "prompts": { "listChanged": false },
+                    },
                     "serverInfo": { "name": "oml-server", "version": env!("CARGO_PKG_VERSION") },
                     "instructions": SERVER_INSTRUCTIONS,
                 }),
             ),
             "ping" => rpc_result(&id, &json!({})),
             "tools/list" => rpc_result(&id, &json!({ "tools": served_catalog() })),
+            "prompts/list" => rpc_result(&id, &json!({ "prompts": [guardrails_prompt_listing()] })),
+            "prompts/get" => {
+                if request.params.get("name").and_then(Value::as_str) != Some("guardrails") {
+                    call.rpc_error(INVALID_PARAMS);
+                    return rpc_error(
+                        &id,
+                        INVALID_PARAMS,
+                        "prompts/get names one prompt: guardrails",
+                    );
+                }
+                match Self::guardrails_prompt(st, presented).await {
+                    Ok(result) => rpc_result(&id, &result),
+                    Err(message) => {
+                        call.rpc_error(INVALID_PARAMS);
+                        rpc_error(&id, INVALID_PARAMS, &message)
+                    }
+                }
+            }
             "tools/call" => match serde_json::from_value::<ToolCall>(request.params) {
                 Err(_) => {
                     call.rpc_error(INVALID_PARAMS);
@@ -341,6 +376,36 @@ where
                 rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}"))
             }
         }
+    }
+
+    /// The prompt `guardrails`: the hook's frame of the set at the key's
+    /// default workarea, from the same read and the same renderer, with no
+    /// line marked checked, since no cache stands behind it (proposed
+    /// ADR-0037 d11). A refusal of the read is the prompt's error.
+    async fn guardrails_prompt(st: &Self, presented: Presented<'_>) -> Result<Value, String> {
+        let headers = ring_headers(presented);
+        let set =
+            ring_outcome(Self::guardrails_inner(st, &[], &headers, presented.connection).await)
+                .await
+                .map_err(|refusal| {
+                    refusal["error"]["message"]
+                        .as_str()
+                        .unwrap_or("the guardrail read was refused")
+                        .to_owned()
+                })?;
+        let frame = render_frame(
+            &set,
+            &FrameOptions {
+                origin: "this server",
+                checked: false,
+                whole_over_cap: false,
+            },
+        )
+        .map_err(ToOwned::to_owned)?;
+        Ok(json!({
+            "description": "The OML guardrails in force for this key's default workarea",
+            "messages": [{ "role": "user", "content": { "type": "text", "text": frame.text } }],
+        }))
     }
 
     /// What `Authorization: Bearer` presents, resolved: a key value

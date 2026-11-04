@@ -792,6 +792,15 @@ command -v oml >/dev/null 2>&1 || exit 0; oml hook tool-failure || exit 0
 command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0
 ```
 
+## `oml guardrails show` and `oml guardrails export`
+
+*Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d7, d11; built on its branch, not released · [releases](../product/releases.md)*
+
+| Verb | Does |
+|---|---|
+| `oml guardrails show [--workarea <workarea>]` | One `GET /v1/guardrails` under the stored key; prints the frame `oml hook guardrails` prints, every line even over the cap of twelve, and exits `1` over it. An admin key reads no content and is refused by the server. |
+| `oml guardrails export --format agents-md\|claude-md --out <path> [--check] [--workarea <workarea>]` | Writes the promoted set as text for a harness without the plugin's hooks. Its first line names the origin, the scope node by path and id, the guardrail scope, the count and the `set_digest`, and says "text, not enforcement; do not edit". `claude-md` writes the whole file, meant for `.claude/rules/`, with no `paths` frontmatter, so Claude Code loads it unconditionally; `agents-md` replaces the text between the one pair of `<!-- oml:guardrails -->` markers in the named file and refuses, exit `2` with nothing written, any other count. `--check` writes nothing and exits `1` when the live `set_digest` differs from the file's. The copy is outside OML: a retirement or an erasure does not reach it until it is exported again. |
+
 ## `oml hook guardrails` and `oml hook pre-tool-use`
 
 *Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d6–d9; built on its branch, not released · [releases](../product/releases.md)*

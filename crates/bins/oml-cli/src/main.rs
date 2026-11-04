@@ -109,6 +109,12 @@ enum Command {
         #[command(subcommand)]
         command: TenantsCommand,
     },
+    /// The guardrails in force for this key: their text, or an export for
+    /// a harness without the plugin's hooks (proposed ADR-0037 d7, d11).
+    Guardrails {
+        #[command(subcommand)]
+        command: GuardrailsCommand,
+    },
     /// Key issuance (show-once ceremony).
     Keys {
         #[command(subcommand)]
@@ -220,6 +226,35 @@ struct SetupClaudeCodeArgs {
     /// the key file, or OML_API_KEY without one.
     #[arg(long)]
     print: bool,
+}
+
+#[derive(Subcommand)]
+enum GuardrailsCommand {
+    /// Print the set as the hook's frame, every line even over the cap of
+    /// twelve, and exit 1 over it (proposed ADR-0037 d7).
+    Show {
+        /// The scope node, by id or name; omitted, the key's default.
+        #[arg(long)]
+        workarea: Option<String>,
+    },
+    /// Write the promoted set, text only, for a harness without the
+    /// plugin's hooks: claude-md a whole .claude/rules/ file, agents-md the
+    /// text between the one pair of <!-- oml:guardrails --> markers in the
+    /// named file (proposed ADR-0037 d11).
+    Export {
+        /// agents-md | claude-md
+        #[arg(long, value_parser = ["agents-md", "claude-md"])]
+        format: String,
+        /// The file to write.
+        #[arg(long)]
+        out: PathBuf,
+        /// Write nothing; exit 1 when the live set differs from the file's.
+        #[arg(long)]
+        check: bool,
+        /// The scope node, by id or name; omitted, the key's default.
+        #[arg(long)]
+        workarea: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1374,6 +1409,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: AuditCommand::VerifyChain(args),
         } => run_verify_chain(cli, &stored, args),
 
+        Command::Guardrails { command } => run_guardrails(cli, &stored, command),
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
         Command::Quickstart(args) => run_quickstart(args),
@@ -1381,6 +1417,51 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: SetupCommand::ClaudeCode(args),
         } => run_setup_claude_code(cli, &stored, args),
         Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
+    }
+}
+
+/// `oml guardrails show` and `oml guardrails export`: one `GET
+/// /v1/guardrails` under the stored key, rendered by `oml-guardrail` as the
+/// hook renders it (proposed ADR-0037 d7, d11).
+fn run_guardrails(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &GuardrailsCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let workarea = match command {
+        GuardrailsCommand::Show { workarea } | GuardrailsCommand::Export { workarea, .. } => {
+            workarea
+        }
+    };
+    let path = match workarea {
+        Some(w) => format!("/v1/guardrails?workarea={}", encode(w)),
+        None => "/v1/guardrails".to_owned(),
+    };
+    let (_, set) = client.get(&path)?;
+    let origin = hook::origin(client.server());
+    match command {
+        GuardrailsCommand::Show { .. } => {
+            let (text, over) =
+                oml_cli::guardrails::show_text(&set, &origin).map_err(CliError::local)?;
+            println!("{text}");
+            Ok(if over {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+        GuardrailsCommand::Export {
+            format, out, check, ..
+        } => {
+            let exported = oml_cli::guardrails::export(&set, &origin, format, out, *check)
+                .map_err(CliError::local)?;
+            Ok(if exported {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
     }
 }
 
