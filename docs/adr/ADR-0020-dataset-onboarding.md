@@ -9,6 +9,8 @@ answers: how big-data datasets onboard through an import manifest (explicitly po
 
 **Status:** accepted design · 2026-10-29 · explicitly post-v1 ([critical path](../product/critical-path.md) M5)
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists, and nothing here is on the v1 build.
 It is recorded now because a few of its reservations are cheap in v1 and expensive later; those
 reservations are listed in the consequences.

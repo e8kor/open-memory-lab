@@ -9,6 +9,8 @@ answers: why there is one versioned JSON HTTP API, and why MCP over streamable H
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The contract itself — routes, payloads,
 pagination, the OpenAPI document — is owned by [api/http-api.md](../api/http-api.md); the MCP tool
 list with examples by [api/mcp-plugin.md](../api/mcp-plugin.md); the error taxonomy by

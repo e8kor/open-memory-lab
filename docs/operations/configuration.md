@@ -9,6 +9,8 @@ answers: what the configuration surface is; how file and env compose; which sett
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the boot file and environment since v0.1.0; journalled settings not scheduled ([releases](../product/releases.md)).
+
 This page is the single declaration site for the configuration surface that
 [deployment](deployment.md) commits to: one file plus environment variables,
 read identically by every binary in every profile. It declares the file
@@ -114,7 +116,7 @@ credential to configure, which is the custody design, not an omission
 
 | Boot group | `oml-server` (lead) | `oml-server` (follower) | `oml-lakewriter` | `oml-reconciler` | `oml-indexer` | bootstrap |
 |---|---|---|---|---|---|---|
-| `postgres.*` (service role URL) | yes | yes (read role) | yes | yes (read-only role) | yes | owner role URL instead |
+| `postgres.*` (service role URL) | yes, and `postgres.owner_url` until the bootstrap workload is built (ADR-0034 d4) | yes (read role) | yes | yes (read-only role) | yes | owner role URL instead |
 | `object_store.*` | yes (quarantine + bodies) | serving reads | yes (lake prefixes) | yes (read, digest verification) | no | no |
 | `kms.*` | yes (wrap + decrypt) | decrypt only, serving path | wrap/encrypt only — never decrypt | no | per [security](../architecture/security.md) | keyring mint (`kms-file` profiles) |
 | `server.role`, signing-key location | lead only | `role: follower`, no key material | n/a | n/a | n/a | n/a |
@@ -139,8 +141,8 @@ design states no number it has not committed to
 
 | Key | Scope | Default | Semantics |
 |---|---|---|---|
-| `postgres.url` | deployment | none — required | The service-role connection; per-workload roles in [deployment](deployment.md) |
-| `postgres.owner_url` | deployment | none — required at install and upgrade | The owner/migration role the bootstrap workload uses to run `sqlx migrate` (forward-only, `NNNN_name`) on first install **and on every upgrade**; no service workload holds it (C6, [security](../architecture/security.md), [postgres-schema](../data/postgres-schema.md)) |
+| `postgres.url` | deployment | none — required | The serving-role connection: a role that owns nothing and holds only the DML the adapter's statements use; per-workload roles in [deployment](deployment.md) ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d3) |
+| `postgres.owner_url` (`OML_POSTGRES__OWNER_URL`) | deployment | none — required | The owner role, which owns the database and what the migrations create and runs `sqlx migrate` (forward-only, `NNNN_name`) on first install **and on every upgrade**. Designed for the bootstrap workload alone; until that workload is built the lead holds it, migrates under it at boot, closes that pool and opens an owner connection afterwards only for a new tenant's partition. A lead whose two URLs log in as one role, or with no owner URL, refuses to start with `postgres.role_split` (C6, [security](../architecture/security.md), [postgres-schema](../data/postgres-schema.md#privileges), ADR-0034 d4, d5) |
 | `object_store.uri` | deployment | none — required | `s3://…` or `file:///…`; the standalone local-fs constraint is enforced at startup ([deployment](deployment.md)) |
 | `kms.adapter` | deployment | per profile payload | `aws` or `file` ([deployment](deployment.md), [security](../architecture/security.md)) |
 | `kms.keyring_path` | deployment | per profile payload | `kms-file` profiles only; custody and backup consequences in [deployment](deployment.md); mechanism [RS-12](../product/roadmap.md) |

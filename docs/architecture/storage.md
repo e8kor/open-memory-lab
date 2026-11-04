@@ -9,6 +9,8 @@ answers: where the transactional commit point is; how the per-tenant signed hash
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the commit point and the signed chain since v0.1.0; the lake and attachments not scheduled ([releases](../product/releases.md)).
+
 This page is the single declaration site for the transactional commit point and
 per-tenant hash chain (D1), the derived Delta lakehouse and the outbox protocol
 that feeds it (D2, with the pure-Rust delta-rs writer as D5), and attachment
@@ -23,6 +25,8 @@ the read path that deliberately never touches the lake is declared in
 [retrieval.md](retrieval.md).
 
 ## The commit point (D1)
+
+*Available since v0.1.0; the durability domain's replication not scheduled · [releases](../product/releases.md)*
 
 PostgreSQL is the system of record and the only transactional commit point.
 One Postgres transaction commits, atomically:
@@ -157,6 +161,8 @@ order is proven by `seq` alone
 ([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## The lake and the outbox protocol (D2, D5)
+
+*Not scheduled; outbox rows are written since v0.1.0 · [releases](../product/releases.md)*
 
 Delta Lake is the derived body lakehouse. Its purpose is narrowed and named:
 **reconciliation, lineage, metadata analytics, and future journalled
@@ -326,6 +332,8 @@ claim itself awaits FR-3's conformance test
 ([roadmap](../product/roadmap.md)).
 
 ## Attachments (D3)
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Files, images and PDFs are content-addressed encrypted objects.
 

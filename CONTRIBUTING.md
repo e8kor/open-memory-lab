@@ -50,6 +50,8 @@ failure.
 - TypeScript SDK: `cd sdks/typescript && npm ci && npm test`
 - The generated SDK layers are rebuilt with `python3 scripts/generate_sdks.py`, never edited by hand.
 - `python3 scripts/check_plugin.py` checks that the plugin and its skill name the tools the server serves.
+- `python3 scripts/check_agent_kit.py` builds the release's plugin archive and agent kit and checks
+  that each kit configuration reaches `/mcp` with a key from the environment.
 
 ### Documentation
 

@@ -9,6 +9,8 @@ answers: which typed error codes exist, their family, HTTP status and retryabili
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the codes of the served operations arrived with them; see each operation on the [HTTP API](http-api.md) ([releases](../product/releases.md)).
+
 This page declares the typed, fail-closed error taxonomy of the [HTTP API](http-api.md) (D13).
 Every refusal the service makes is one of the codes below — a closed vocabulary: a new refusal
 reason is a design change, never an ad-hoc string. The machine-readable form is the
@@ -228,7 +230,7 @@ existed.
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
 | `system.internal` | 500 | A defect. `request_id` is the handle for the operator. | — |
-| `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
+| `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`); or a tenant's creation lost the lock contest for its FTS partition's DDL, a lock timeout or a deadlock, before any commit, journalling nothing and spending no enrollment token (`details.reason` `partition_lock_timeout`, [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d11). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
 
 Review *unavailability* — a workarea whose policy cannot currently be satisfied by any eligible
 reviewer — is deliberately **not** an API error: submissions still land `held`, wait, and expire

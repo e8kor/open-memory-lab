@@ -9,6 +9,8 @@ answers: how a simulation fences counterfactual memory mechanically; how taint p
 
 **Status:** design draft for review · decided, not built
 
+**Release:** not scheduled ([releases](../product/releases.md)).
+
 A simulation is a fenced provenance channel: a way to inject, alter and replay memories so that a
 crew can be tested against a counterfactual world, without those counterfactuals ever becoming part
 of what the rest of the tenant believes. The fence is mechanical, not procedural — a row in a

@@ -9,6 +9,8 @@ answers: why review capacity is external crews rather than provider model calls;
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 Every memory is a claim under test: held on arrival, visible to others only after a non-author

@@ -45,6 +45,29 @@ proposed ADR-0039, the v0.3.2 API rewrite, it supports or contradicts.
 - **Pages touched:** the two pages, `mkdocs.yml`, `llms.txt` and this page.
 - **Not built:** the candidates are inputs to ADR-0039 and to the proposed records each names.
 
+### 2026-11-03 — Every record and feature page names the release that built it or is planned to
+
+A documentation change with no decision or surface change. [Releases](product/releases.md), a new
+client page, is the one declaration site for when each feature and decision record shipped, read
+from the tags v0.1.0 to v0.3.1, and for the plan the maintainer made on 2026-11-03: v0.4.0 (the API
+rewrite, plugin setup, turn context, OAuth by connect code, the librarian, the quick start, a
+documentation upgrade), v0.5.0 (guardrails, workarea transitions, claim edges, the workarea brief),
+v0.6.0 (in-progress workareas) and what is parked. Every record carries a **Release:** line under
+its Status line, and the [register](adr/index.md) a Release column; neither restates the page.
+
+- **Pages touched:** the new page, `mkdocs.yml`, [llms.txt](llms.txt), every record, the register,
+  the architecture, API, CLI reference and operations pages, `README.md`, `plugins/oml/README.md`
+  and this page. The CLI reference and the deployment page no longer say that no tag has run the
+  per-platform archive jobs; v0.3.1 ran them.
+- **No surface change:** `info.version` stays `0.3.0-design`; no record's decision moves.
+
+### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
+
+An implementation milestone with no decision or surface change: each tag also ships the oml and
+oml-admin plugins as an offline marketplace archive and as a marketplace pinned to the tag, and an
+agent kit of MCP configurations for other agent tools, signed and summed with the binaries
+([release artifacts](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+
 ### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
 
 An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the
@@ -141,8 +164,8 @@ decided on 2026-10-31 that the `oml` CLI ships as release artifacts of its own.
 
 ### 2026-10-31 — The lead serves as a role that owns nothing (ADR-0034, proposed)
 
-[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31,
-records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
+[ADR-0034](adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), proposed on 2026-10-31 and accepted
+by the maintainer on 2026-11-03 with release v0.3.1, records what the maintainer decided that day on M0 spike 3's findings: `FORCE ROW LEVEL SECURITY`
 fences table reads only, an owner/serving role split keeps the `pg_stats` view and DDL from every
 workload, and `_sqlx_migrations` is ADR-0007 d2's one named exemption, reachable by the owner
 alone. After the spike's first pinned PostgreSQL 17.11 run, the maintainer added that the FTS
@@ -164,7 +187,8 @@ back-pointer at acceptance; it binds nothing before then.
 - **Pages touched:** the record, its [register](adr/index.md) row, `mkdocs.yml`, `llms.txt`,
   the roadmap and this page.
   security.md, configuration.md, deployment.md, upgrades.md, postgres-schema.md, retrieval.md,
-  the critical path and ADR-0007 change at the record's acceptance.
+  the critical path and ADR-0007 change at the record's acceptance, and did on 2026-11-03 with
+  the register's D6 cell, FR-25's exit criterion and errors.md's `system.unavailable` row.
 - **Not built.**
 
 ### 2026-10-31 — Names as keys (implementation)

@@ -11,6 +11,8 @@ answers: how the restore ceremony runs and why it is a ceremony — the erased-c
 run; the ceremony is rehearsed under [FR-23](../product/roadmap.md) before any
 claim about it is made.
 
+**Release:** not scheduled ([releases](../product/releases.md)).
+
 This page owns the restore ceremony [deployment](deployment.md) defers to it.
 The reason a restore is a ceremony and not a routine act is the dual hazard
 stated there: **restoring a Postgres backup resurrects erased content

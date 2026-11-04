@@ -242,6 +242,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
+      - run: python scripts/check_agent_kit.py
 
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md

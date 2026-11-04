@@ -11,6 +11,8 @@ answers: what each dependency failure does to each client-facing operation; whic
 consequence derived from the architecture pages, not an observed behavior;
 nothing has failed because nothing has run.
 
+**Release:** not scheduled for the dependencies the build does not run ([releases](../product/releases.md)).
+
 This page is the dependency-failure matrix: for each dependency a deployment
 runs on, what each client-facing operation does while that dependency is
 unavailable. Every cell gives one of three honest answers:

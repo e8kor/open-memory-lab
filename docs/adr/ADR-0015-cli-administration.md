@@ -9,6 +9,8 @@ answers: why the CLI is the whole administration surface, why a web console is d
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0028](ADR-0028-agent-key-issuance.md)
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. The verb-by-verb contract is owned by
 [cli/reference.md](../cli/reference.md) and the ceremony transcripts by
 [cli/sessions.md](../cli/sessions.md); this record decides that the CLI is the whole

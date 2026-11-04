@@ -9,6 +9,8 @@ answers: what the admission pipeline does between capture and release; what a re
 
 **Status:** design draft for review · decided, not built
 
+**Release:** capture, scan, hold, non-author review and ratification since v0.1.0 ([releases](../product/releases.md)).
+
 Admission is the pipeline every write crosses before anyone but its author can read it:
 
 > capture → quarantine → deterministic scan → non-author review → ratification → journal → release.
@@ -27,6 +29,8 @@ Nothing below exists as code. Every mechanism is a design commitment with its ex
 tracked in the [roadmap](../product/roadmap.md).
 
 ## Lifecycle
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 The durable state column on a memory row takes four values: `held`, `promoted`, `demoted`,
 `erased` (the row shape is in the [Postgres schema](../data/postgres-schema.md)). *Scanned*
@@ -150,6 +154,8 @@ into the submission envelope by digest; their storage protocol is
 
 ## The deterministic scan
 
+*Available since v0.1.0, as the marker scanner · [releases](../product/releases.md)*
+
 The scan runs in the same call as capture — before the commit transaction, never inside it
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
 the writer learns the scan outcome synchronously, and a veto means the submission is refused
@@ -180,6 +186,8 @@ a deterministic finding doubles as a routing mechanism: the shipped vocabulary d
 human verdict on exactly those findings, and no parallel human-gate machinery exists.
 
 ## The rule-set registry
+
+*Not scheduled · [releases](../product/releases.md)*
 
 The scan's rules ship as a versioned **rule set**, and one identifier names the exact rule set a
 deployment runs: `ruleset_vN`. The identifier is pinned per deployment and journalled in every
@@ -235,6 +243,8 @@ the journalled policy act, including to zero
 ([ontologies](ontologies.md) owns the zero-human conditions).
 
 ## Review policy objects
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Each workarea carries a review policy object: a journalled record, versioned by the journal
 like everything else, snapshotted into every ratification event so an auditor can read a
@@ -296,6 +306,8 @@ review; reviewer keys record verdicts and nothing else) — are recorded in
 
 ## Fail closed
 
+*Available since v0.1.0; held-item expiry not scheduled · [releases](../product/releases.md)*
+
 When review is unavailable, nothing promotes. Concretely:
 
 - A workarea whose policy no live key can satisfy (no dreamer key with review capability in
@@ -325,6 +337,8 @@ the alternative, failing open, converts a capacity problem into a trust problem,
 the product.
 
 ## Reopening a rejection
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Rejection is journalled, never silent, and not necessarily final. A non-author — a
 dreamer(review) key whose key and principal do not appear in the row's lineage closure — may

@@ -9,12 +9,47 @@ you store it.
 
 ## Install
 
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 ```sh
 export OML_URL=http://127.0.0.1:8080        # the server, without /mcp
 export OML_API_KEY=oml_...                  # this agent's one key
 claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
 ```
+
+### One release, or offline
+
+From the first release that carries them, each release attaches the plugins in two more forms,
+each signed with cosign and listed in `SHA256SUMS`. To install exactly one release, pin the
+marketplace to its tag:
+
+```sh
+claude plugin marketplace add e8kor/open-memory-lab#vX.Y.Z
+```
+
+or verify `oml-marketplace-X.Y.Z.json`, whose sources are this repository at that tag and its
+commit, and add it from a directory:
+
+```sh
+v=X.Y.Z
+base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
+curl -fsSLO "$base/oml-marketplace-$v.json" -O "$base/oml-marketplace-$v.json.sigstore.json"
+cosign verify-blob \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
+  --bundle "oml-marketplace-$v.json.sigstore.json" "oml-marketplace-$v.json" \
+  && mkdir -p oml-marketplace/.claude-plugin \
+  && cp "oml-marketplace-$v.json" oml-marketplace/.claude-plugin/marketplace.json \
+  && claude plugin marketplace add ./oml-marketplace
+```
+
+With no network, take `oml-claude-plugins-X.Y.Z.tar.gz` (or `.zip`) instead: verify it the same
+way, extract it, and run `claude plugin marketplace add ./oml-claude-plugins-X.Y.Z`. Claude Code
+reads the plugins from that directory in place, so keep it where you extracted it. Every form
+names the marketplace `open-memory-lab`, so `claude plugin install oml@open-memory-lab` installs
+from whichever you added, and you hold one of them at a time. See
+[release artifacts](../../docs/engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance).
 
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
 it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
@@ -61,6 +96,8 @@ the conversation. See the
 
 ## The `oml` CLI
 
+*Available since v0.1.0; per-platform archives since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The session-start hook below and key issuance need the `oml` CLI on your `PATH`. From the first
 release that carries them, each release attaches it as `oml-cli-X.Y.Z-<target>.tar.gz`, or `.zip`
 on Windows, with a signature bundle beside each archive. Verify the archive, then extract it:
@@ -106,6 +143,8 @@ the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-
 
 ## Every session starts from memory
 
+*Available since v0.2.2 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It reads the
 workarea's steering, your key's ten newest submissions and the memories that match the name of
@@ -143,6 +182,8 @@ still held until a different identity reviews it, so nothing it records is share
 
 ## Other MCP clients
 
+*Available since v0.1.0; the agent kit since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape
 works:
 
@@ -158,7 +199,16 @@ works:
 }
 ```
 
+Each release, from the first that carries it, also attaches `oml-agent-kit-X.Y.Z.tar.gz` (and
+`.zip`), signed like the archives above: the configuration in each tool's own form for OpenAI
+Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop, an `AGENTS.md` block with this
+plugin's skill, and a Gemini CLI session-start hook running the same `oml hook session-start`.
+Its README, [kit/README.md](../../kit/README.md), cites each tool's documentation and marks what
+that documentation does not settle as unverified.
+
 ## What is served today
+
+*Eight tools since v0.2.0; three task-shaped tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The catalog in [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares twelve tools.
 This release serves the eight above. The other four are not served yet: `oml_attach`,

@@ -12,6 +12,8 @@ run, because no version has ever shipped; this spec is `0.3.0-design`
 ([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
 future N → N+1.
 
+**Release:** forward-only migrations since v0.1.0; the role split since v0.3.1 ([releases](../product/releases.md)).
+
 This page owns the upgrade discipline: who runs migrations, in what order the
 binaries move, how much version skew a rolling update may hold, and what
 rollback does and does not mean. The workloads being upgraded are placed in
@@ -43,6 +45,13 @@ first install and on every upgrade**. The reasons, one per clause:
   standalone invocation that re-runs only the migration step has no named
   verb yet — performed by the bootstrap workload is the commitment; the verb
   is a CLI-reference question, tracked in the [roadmap](../product/roadmap.md).
+
+The bootstrap workload is decided, not built. Until it is, the lead runs the
+migrations at boot under `postgres.owner_url`, closes that pool and serves
+under `postgres.url`, the serving role, which owns nothing; it refuses to
+start, with `postgres.role_split`, when the two URLs log in as one role
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+d4, d5). Step 2 below is then the lead's own boot at step 5.
 
 The forward-only rule forces the **expand-contract discipline**: every
 migration in version N+1 must leave a schema that version N binaries still
@@ -101,6 +110,81 @@ In standalone there is no rolling anything — the supervisor stops all four
 children and starts the new ones; the order above collapses to "bootstrap
 step, then `oml standalone up`". The write-refusal window is the whole
 restart, stated plainly: a one-host profile upgrades with a one-host outage.
+
+## Splitting a single-role install (the upgrade to v0.3.1)
+
+*Available since v0.3.1 · [releases](../product/releases.md)*
+
+A build before v0.3.1 migrated and served under one Postgres role, which
+owned every table. v0.3.1 refuses that role on both URLs, so an install made
+before it is split once, in one outage, by moving ownership to a new owner
+role ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+d7). The old build cannot run once ownership moves, so it stays stopped from
+the second step to the last. A superuser runs every statement, connected to
+the install's database.
+
+**Which role becomes which.** A role that is not a superuser keeps its URL,
+`postgres.url`, and becomes the serving role; a new role, which the operator
+names, becomes the owner. A superuser cannot serve (d5): it stays the
+administrator, both roles are created, and `postgres.url` moves to the
+serving one. The payloads that own their cluster call the roles `oml_owner`
+and `oml_server` (d2).
+
+1. **Back up, as a superuser.** `pg_dump` errors when its role cannot bypass
+   row security ([pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html)),
+   so the backup step 1 of the upgrade order requires is taken as a
+   superuser, with the keyring copy in `kms-file` profiles.
+2. **Stop the old build.**
+3. **Create the roles, each with `LOGIN` and no other attribute** (d2): not
+   superuser, `CREATEDB`, `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, and the
+   serving role a member of no role. The lead checks the serving role at boot
+   and refuses it, with `serving_role_privileged`, when it holds any of them.
+
+   ```sql
+   CREATE ROLE <owner> LOGIN PASSWORD '…';
+   -- the kept role, when it holds an attribute d2 refuses:
+   ALTER ROLE <role> NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+   ```
+
+4. **Move ownership to the owner.** For a kept role that is not a superuser,
+   check first which databases it owns, since `REASSIGN OWNED` moves every
+   database the role owns on the cluster
+   ([REASSIGN OWNED](https://www.postgresql.org/docs/17/sql-reassign-owned.html)):
+
+   ```sql
+   SELECT datname FROM pg_database WHERE datdba = '<role>'::regrole;
+   REASSIGN OWNED BY <role> TO <owner>;
+   -- the kept role connected as the database's owner; once ownership moves it
+   -- holds CONNECT only if granted, and d2 grants the serving role CONNECT:
+   GRANT CONNECT ON DATABASE <database> TO <role>;
+   -- when the kept role was granted CREATE on the database, which d2 refuses it:
+   REVOKE CREATE ON DATABASE <database> FROM <role>;
+   ```
+
+   For a superuser, which `REASSIGN OWNED` refuses as the bootstrap role, run
+   `ALTER … OWNER TO <owner>` on the database and on each table, function and
+   type in `public`, `ALTER DOMAIN oml_name OWNER TO <owner>` among them;
+   indexes, TOAST tables and owned sequences follow their table. Skip the
+   members of an extension (`pg_depend` `deptype` `'e'`): the `ltree`
+   extension stays the superuser's with its members, since PostgreSQL has no
+   `ALTER EXTENSION … OWNER TO`, and on such an install that superuser runs
+   any `ALTER EXTENSION ltree UPDATE`, outside the migrations.
+5. **Set the owner URL** beside the serving one:
+   `OML_POSTGRES__OWNER_URL` (`postgres.owner_url`) logs in as the owner,
+   and `OML_POSTGRES__URL` (`postgres.url`) as the serving role, both on the
+   same database.
+6. **Start v0.3.1.** The lead migrates under the owner URL, whose migration
+   `0007_role_split.sql` grants the serving role its privileges, then serves.
+   The split succeeded when its log carries `event` `role_split_booted` with
+   both role names, `owner_role` and `serving_role`, and `/readyz` answers
+   200; a refusal names its reason with `postgres.role_split` before any
+   listener binds (d5).
+
+Until v0.3.1 starts, rollback reverses the move (`REASSIGN OWNED BY <owner>
+TO <role>`, or the same `ALTER … OWNER TO` back) and restarts the old build;
+after it starts, the way back is the backup and [restore](restore.md). The
+live host's split is not run; it waits for the maintainer, and its output is
+recorded in ADR-0034 d7 with the date.
 
 ## Version skew: one minor, as policy
 

@@ -9,6 +9,8 @@ answers: where reads are served from and in what order; how bodies are decrypted
 
 **Status:** design draft for review · decided, not built
 
+**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0 ([releases](../product/releases.md)).
+
 This page is the single declaration site for the read path (D12): where reads
 are served from, how the serving indexes are laid out, what order results come
 back in, how bodies are decrypted, how reads are logged, and which read-shaped
@@ -21,6 +23,8 @@ whose read predicate this page applies is declared in
 declared in [roles-and-keys.md](roles-and-keys.md).
 
 ## The rule: Postgres serves, the lake never does
+
+*Available since v0.1.0 · [releases](../product/releases.md)*
 
 Every client read — recall, fetch, FTS, vector search, graph and lineage
 reads — is served from PostgreSQL. **Delta Lake serves no client read.** The
@@ -57,7 +61,17 @@ workarea, and by no other key
 Two indexes over promoted rows, both in Postgres, both under tenant RLS:
 
 - **Full-text search**: `memories_fts`, a `tsvector` index over promoted claim
-  text.
+  text, per tenant: its table is list-partitioned by `tenant_id`, each
+  partition with its own index, which the owner role creates before the
+  tenant's first commit, so no index spans tenants. Every statement binds its
+  tenant, so a read reaches its tenant's partition alone, and row-level
+  security stays the fence. No function is marked `LEAKPROOF`, so an FTS read
+  scans its tenant's partition rather than using its index; its latency per
+  tenant size is unmeasured ([FR-25](../product/roadmap.md)). The built form
+  today is the PoC's `memories_claim_fts` over `memories`
+  ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+  d11, d13;
+  [postgres-schema](../data/postgres-schema.md#the-built-fts-index-per-tenant-partitions)).
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
 Of the rows they admit, the indexes hold every promoted version, superseded
@@ -121,6 +135,8 @@ Two consequences of the setting's scope:
 
 ### pgvector layout
 
+*Not scheduled · [releases](../product/releases.md)*
+
 `memory_embeddings` is **list-partitioned by `tenant_id`**, with a
 **per-partition HNSW index** and RLS on top of the partitioning. The
 partitioning is a performance and blast-radius choice layered under the
@@ -171,6 +187,8 @@ until the named backup retention window expires is stated honestly where the
 inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## The recall-ordering contract: steering rows first, unranked
+
+*Available since v0.2.0 · [releases](../product/releases.md)*
 
 A recall result has two segments, in this order:
 
@@ -243,6 +261,8 @@ ergonomics one — rows the budget cuts are never decrypted and never cross the
 wire.
 
 ## Own held rows in recall
+
+*Available since v0.2.0 · [releases](../product/releases.md)*
 
 A recall with `include_own_held: true`
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4) also takes
@@ -337,6 +357,8 @@ predicate fails toward invisibility.
 
 ## Token budgets
 
+*Available since v0.2.0 · [releases](../product/releases.md)*
+
 This section is the single declaration site for recall budgets
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d7).
 
@@ -398,6 +420,8 @@ budget; the budget object says so.
 
 ## Decrypt on serve
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Bodies are stored as per-artifact-DEK ciphertext everywhere at rest —
 Postgres, lake, object store ([storage.md](storage.md)). **Plaintext exists
 only on the serving path**: `oml-server` unwraps the artifact's DEK and
@@ -427,6 +451,8 @@ as [RS-14](../product/roadmap.md).
 
 ## Reads in cluster mode
 
+*Not scheduled · [releases](../product/releases.md)*
+
 In cluster mode ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md))
 a follower's hot path is recall and get, only — writes forward to the lead —
 and its reads follow one routing policy
@@ -450,6 +476,8 @@ and its reads follow one routing policy
   and is not part of v1.
 
 ## The read log
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Every read is logged: key, role, workarea, the memory ids served, timestamp,
 and for a recall the request digest. A recall logs exactly the artifact ids
@@ -510,6 +538,8 @@ regulation and article; there is no such citation today, so there is no such
 claim (D17).
 
 ## The simulation read predicate
+
+*Not scheduled · [releases](../product/releases.md)*
 
 Every read path — FTS, vector, fetch, graph — applies one predicate:
 

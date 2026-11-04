@@ -9,6 +9,8 @@ answers: what the system looks like end to end — context, containers, module s
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the first slice since v0.1.0, see each page; most containers are not scheduled ([releases](../product/releases.md)).
+
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory
 asserts a claim; every claim is held on arrival, scanned, reviewed by an identity that did not
 write it, and only then visible to others. This page is the map: the system in its context, the

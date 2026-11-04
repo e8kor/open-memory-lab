@@ -73,7 +73,7 @@ Tests the assumptions [commitments](commitments.md) C6 names. Cheap; do immediat
 
 | # | Scenario | Pass assertion |
 |---|---|---|
-| S3.1 | `FORCE ROW LEVEL SECURITY` on every tenant table; query as the table **owner** | the owner's reads are filtered too — FORCE binds the owner, which is the clause the design leans on |
+| S3.1 | `FORCE ROW LEVEL SECURITY` on every tenant table; query as the table **owner** | the owner's table reads are filtered too. FORCE does not bind the owner's `pg_stats` view or DDL, which the owner/serving role split keeps from every workload ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d1) |
 | S3.2 | Owner/migration-role split: migrations run under the owner role; application roles carry no `BYPASSRLS` | migrations succeed; no application role can read across the policy |
 | S3.3 | `SET LOCAL` tenant discipline in pooled transactions: interleave two tenants' transactions on one connection | the tenant setting never survives a commit or rollback; a query with no tenant set returns zero rows or a typed error (which one is recorded — it becomes the documented behaviour) |
 | S3.4 | Hostile cross-tenant probe: a session set to tenant A runs every read shape the fold tables use, hunting tenant B rows | zero rows, in every shape |
