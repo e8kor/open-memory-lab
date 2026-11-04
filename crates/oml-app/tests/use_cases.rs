@@ -15,11 +15,12 @@ use oml_app::domain::oauth::{
     ConnectCode, ConnectRefused, ConnectionState, Issuer, RefreshInvalid, Refusal, RevokedCause,
     Token, Validation, open_request,
 };
+use oml_app::domain::vocab::OmlLabel;
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
     EventDraft, EventTime, FrozenOp, HeldBy, KeySet, LadderRefusal, MemoryKind, MemoryStatus, Role,
-    Sha256Hash, SignedEnvelope, WorkareaStatus, derive_claim_key, event_types, next_envelope,
-    sha256_digest_string, sign, verify_chain,
+    Sha256Hash, SignedEnvelope, WorkareaStatus, canonical_bytes, derive_claim_key, event_types,
+    next_envelope, sha256_digest_string, sign, verify_chain,
 };
 use oml_app::doubles::{
     FixedClock, MarkerScanner, MemDocuments, MemSigner, MemStore, PlainSealer, SeqIdGen,
@@ -10756,4 +10757,592 @@ async fn an_oml_about_proposal_is_refused_request_validation_and_journals_nothin
         "{err:?}"
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+}
+
+// ---------------------------------------------------------------------------
+// Claim-edge ratification: R2 and the cycle refusal (ADR-0012, ADR-0021 d5)
+// ---------------------------------------------------------------------------
+
+/// A promoted term whose `claim_key` is `curie`, written by `writer` and
+/// approved by `dreamer` (ADR-0021 d2: a term's claim_key is its CURIE).
+async fn term(app: &TestApp, writer: &str, dreamer: &str, idem: &str, curie: &str) -> Uuid {
+    promoted(
+        app,
+        writer,
+        dreamer,
+        &SubmitRequest {
+            kind: MemoryKind::Term,
+            claim_key: curie.to_owned(),
+            ..submit_req(idem, &format!("{curie}: a term"))
+        },
+    )
+    .await
+}
+
+/// The id `propose_claim_edge` gave a proposal of `src -> dst` under `label`.
+async fn proposed(app: &TestApp, proposer: &str, src: Uuid, dst: Uuid, label: &str) -> Uuid {
+    app.propose_claim_edge(proposer, &edge_req(src, dst, label), None)
+        .await
+        .expect("propose")
+        .proposal
+        .edge_id
+}
+
+/// Commits `claim_edge.proposed` for `edge` on the tenant's head, as another
+/// writer would: the edge a label no standalone proposal admits needs, such
+/// as `oml:replaced_by`, declared only inside a deprecation (ADR-0021 d3).
+async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: u128) {
+    let head_seq = store
+        .chain_head(edge.tenant_id)
+        .await
+        .expect("head")
+        .expect("the tenant's chain")
+        .seq;
+    let head = store
+        .events_range(edge.tenant_id, head_seq, 1)
+        .await
+        .expect("read")
+        .pop()
+        .expect("the head event");
+    let edge = ClaimEdgeRecord {
+        created_at: head.envelope.at.clone(),
+        ..edge
+    };
+    let draft = EventDraft {
+        tenant_id: edge.tenant_id,
+        event_id: Uuid::from_u128(event_id),
+        event_type: event_types::CLAIM_EDGE_PROPOSED.to_owned(),
+        principal: edge.proposer_principal.clone(),
+        api_key_id: Some(edge.proposer_key_id),
+        at: head.envelope.at.clone(),
+        payload: json!({
+            "edge_id": edge.edge_id.to_string(),
+            "src_artifact_id": edge.src_artifact_id.to_string(),
+            "dst_artifact_id": edge.dst_artifact_id.to_string(),
+            "label": edge.label,
+            "proposer_key_id": edge.proposer_key_id.to_string(),
+        }),
+    };
+    let envelope = next_envelope(Some(&head), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        })
+        .await
+        .expect("commit the pending edge");
+}
+
+/// The tenant's journalled `review.ratify` events.
+async fn ratifications(store: &MemStore, tenant: Uuid) -> Vec<SignedEnvelope> {
+    journal(store, tenant)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == event_types::REVIEW_RATIFY)
+        .collect()
+}
+
+/// A tenant with two promoted claims by alice and bob, a pending
+/// `acme:supports` edge between them proposed by pat, and the keys around
+/// it.
+struct EdgeFixture {
+    store: MemStore,
+    app: TestApp,
+    boot: BootstrapResult,
+    crew: Uuid,
+    alice: IssuedKey,
+    bob: IssuedKey,
+    pat: IssuedKey,
+    a: Uuid,
+    b: Uuid,
+    edge_id: Uuid,
+}
+
+async fn edge_fixture() -> EdgeFixture {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let bob = agent(&app, admin, "bob", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let a = promoted(&app, &alice.value, &dana.value, &submit_req("rat-a", "a")).await;
+    let b = promoted(&app, &bob.value, &dana.value, &submit_req("rat-b", "b")).await;
+    let edge_id = proposed(&app, &pat.value, a, b, "acme:supports").await;
+    EdgeFixture {
+        store,
+        app,
+        boot,
+        crew,
+        alice,
+        bob,
+        pat,
+        a,
+        b,
+        edge_id,
+    }
+}
+
+/// The sorted closure a ratification of an edge between `a` and `b` checks,
+/// digested as `review.ratify` journals it: SHA-256 over the RFC 8785 JSON
+/// of its principals and key ids, each sorted.
+fn closure_digest(principals: &[&str], key_ids: &[Uuid]) -> String {
+    let mut principals: Vec<String> = principals.iter().map(|p| (*p).to_owned()).collect();
+    principals.sort();
+    let mut key_ids: Vec<String> = key_ids.iter().map(ToString::to_string).collect();
+    key_ids.sort();
+    let doc = json!({ "principals": principals, "key_ids": key_ids });
+    sha256_digest_string(&canonical_bytes(&doc).expect("jcs"))
+}
+
+#[tokio::test]
+async fn a_second_dreamer_ratifies_a_pending_edge_and_review_ratify_names_it_with_subject_kind_claim_edge()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+
+    let outcome = f
+        .app
+        .ratify_claim_edge(&rita.value, f.edge_id, Some("rat-1"))
+        .await
+        .expect("ratify");
+    assert!(!outcome.replayed);
+    assert_eq!(
+        serde_json::to_value(&outcome.edge).expect("serializes"),
+        json!({
+            "edge_id": f.edge_id.to_string(),
+            "from_artifact_id": f.a.to_string(),
+            "to_artifact_id": f.b.to_string(),
+            "label": "acme:supports",
+            "state": "ratified",
+            "proposer_key_id": f.pat.key_id.to_string(),
+            "ratifier_key_id": rita.key_id.to_string(),
+        }),
+        "the response is openapi.yaml's ClaimEdge, ratified"
+    );
+
+    let edge = f
+        .store
+        .claim_edge(f.boot.tenant_id, f.edge_id)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Ratified);
+    assert_eq!(edge.ratifier_key_id, Some(rita.key_id));
+
+    let events = journal(&f.store, f.boot.tenant_id).await;
+    let last = &events.last().expect("the chain").envelope;
+    assert_eq!(last.event_type, event_types::REVIEW_RATIFY);
+    assert_eq!(outcome.journal_seq, Some(last.seq));
+    assert_eq!(last.api_key_id, Some(rita.key_id));
+    assert_eq!(last.principal, "rita");
+    assert_eq!(
+        last.payload,
+        json!({
+            "subject_kind": "claim_edge",
+            "artifact_id": null,
+            "version": null,
+            "edge_id": f.edge_id.to_string(),
+            "verdict_event_ids": [],
+            "ratifier_key_id": rita.key_id.to_string(),
+            "policy_snapshot": {
+                "k": 1,
+                "required_roles": ["dreamer"],
+                "independence_axis": "principal",
+                "human_required": false,
+            },
+            "lineage_closure_digest": closure_digest(
+                &["alice", "bob"],
+                &[f.alice.key_id, f.bob.key_id],
+            ),
+        }),
+        "the event-catalog payload, nothing more"
+    );
+
+    // The same Idempotency-Key replays the record and journals nothing.
+    let replay = f
+        .app
+        .ratify_claim_edge(&rita.value, f.edge_id, Some("rat-1"))
+        .await
+        .expect("replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.edge, outcome.edge);
+    assert_eq!(
+        replay.journal_seq, None,
+        "the record holds the ClaimEdge alone"
+    );
+    assert_eq!(
+        journal(&f.store, f.boot.tenant_id).await.len(),
+        events.len()
+    );
+}
+
+#[tokio::test]
+async fn the_proposers_own_key_is_refused_review_ratifier_is_proposer() {
+    let f = edge_fixture().await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&f.pat.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn another_key_of_the_proposers_principal_is_refused_review_ratifier_is_proposer() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let pat_again = curator(&f.app, admin, "pat", f.crew).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&pat_again.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_ratifier_who_authored_either_endpoint_is_refused_review_author_in_lineage() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    // Dreamer keys of each endpoint's author: alice wrote the source, bob
+    // the target.
+    let alice_dreamer = curator(&f.app, admin, "alice", f.crew).await;
+    let bob_dreamer = curator(&f.app, admin, "bob", f.crew).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for ratifier in [&alice_dreamer, &bob_dreamer] {
+        let err = f
+            .app
+            .ratify_claim_edge(&ratifier.value, f.edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::AuthorInLineage),
+            "{}: {err:?}",
+            ratifier.principal
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_service_key_is_refused_claim_edge_ratify_with_access_verb_ceiling_even_for_an_unknown_edge()
+ {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let repair = f
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                ..issue_req(
+                    Role::Dreamer,
+                    "reconciler",
+                    vec![grant(f.crew, Role::Dreamer), grant(f.crew, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("issue a service key");
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for edge_id in [f.edge_id, Uuid::from_u128(0xDEAD)] {
+        let err = f
+            .app
+            .ratify_claim_edge(&repair.value, edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::VerbCeiling {
+                    role: Role::Dreamer,
+                    verb: "claim_edge.ratify",
+                }
+            ),
+            "refused before the edge is looked up: {err:?}"
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_unknown_edge_id_answers_access_not_found() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    // An edge whose endpoints rita cannot read answers as an absent one.
+    let elsewhere = workarea(&f.app, admin, "elsewhere", f.boot.root_workarea_id).await;
+    let outsider = curator(&f.app, admin, "otto", elsewhere).await;
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    let err = f
+        .app
+        .ratify_claim_edge(&rita.value, Uuid::from_u128(0xDEAD), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = f
+        .app
+        .ratify_claim_edge(&outsider.value, f.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+}
+
+/// A tenant with three promoted terms, `acme:x`, `acme:y` and `acme:z`,
+/// a proposer pat and two ratifiers, rita and ruth.
+struct TermFixture {
+    store: MemStore,
+    app: TestApp,
+    boot: BootstrapResult,
+    pat: IssuedKey,
+    rita: IssuedKey,
+    ruth: IssuedKey,
+    x: Uuid,
+    y: Uuid,
+    z: Uuid,
+}
+
+async fn term_fixture() -> TermFixture {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = agent(&app, admin, "alice", crew).await;
+    let dana = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let pat = curator(&app, admin, "pat", crew).await;
+    let rita = curator(&app, admin, "rita", crew).await;
+    let ruth = curator(&app, admin, "ruth", crew).await;
+    let x = term(&app, &alice.value, &dana.value, "t-x", "acme:x").await;
+    let y = term(&app, &alice.value, &dana.value, "t-y", "acme:y").await;
+    let z = term(&app, &alice.value, &dana.value, "t-z", "acme:z").await;
+    TermFixture {
+        store,
+        app,
+        boot,
+        pat,
+        rita,
+        ruth,
+        x,
+        y,
+        z,
+    }
+}
+
+fn is_cycle_refused(err: &AppError, label: OmlLabel) -> bool {
+    matches!(err, AppError::CycleRefused(refused) if refused.label == label)
+}
+
+#[tokio::test]
+async fn ratifying_an_is_a_edge_that_closes_a_cycle_is_refused_vocab_cycle_refused_and_journals_nothing()
+ {
+    let t = term_fixture().await;
+    let xy = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yz = proposed(&t.app, &t.pat.value, t.y, t.z, "oml:is_a").await;
+    let zx = proposed(&t.app, &t.pat.value, t.z, t.x, "oml:is_a").await;
+    t.app
+        .ratify_claim_edge(&t.rita.value, xy, None)
+        .await
+        .expect("x is_a y");
+    t.app
+        .ratify_claim_edge(&t.rita.value, yz, None)
+        .await
+        .expect("y is_a z");
+    let before = journal(&t.store, t.boot.tenant_id).await.len();
+
+    let err = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, zx, Some("cycle-1"))
+        .await
+        .unwrap_err();
+    assert!(is_cycle_refused(&err, OmlLabel::IsA), "{err:?}");
+    assert_eq!(journal(&t.store, t.boot.tenant_id).await.len(), before);
+    let edge = t
+        .store
+        .claim_edge(t.boot.tenant_id, zx)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Pending, "the refused edge waits");
+}
+
+#[tokio::test]
+async fn a_replaced_by_loop_is_refused_vocab_cycle_refused() {
+    let t = term_fixture().await;
+    let pending = |edge_id: u128, src, dst| ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(edge_id),
+        label: "oml:replaced_by".to_owned(),
+        ..pending_edge(t.boot.tenant_id, &t.pat, src, dst)
+    };
+    let xy = 0xED6E_0000_0000_0000_0000_0000_0000_0101;
+    let yx = 0xED6E_0000_0000_0000_0000_0000_0000_0102;
+    commit_pending_edge(&t.store, pending(xy, t.x, t.y), 0xEE01).await;
+    commit_pending_edge(&t.store, pending(yx, t.y, t.x), 0xEE02).await;
+    t.app
+        .ratify_claim_edge(&t.rita.value, Uuid::from_u128(xy), None)
+        .await
+        .expect("x replaced_by y");
+    let before = journal(&t.store, t.boot.tenant_id).await.len();
+
+    let err = t
+        .app
+        .ratify_claim_edge(&t.rita.value, Uuid::from_u128(yx), None)
+        .await
+        .unwrap_err();
+    assert!(is_cycle_refused(&err, OmlLabel::ReplacedBy), "{err:?}");
+    assert_eq!(journal(&t.store, t.boot.tenant_id).await.len(), before);
+}
+
+#[tokio::test]
+async fn an_is_a_loop_through_a_pending_edge_is_ratified_since_only_ratified_edges_count() {
+    let t = term_fixture().await;
+    let _xy_pending = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yx = proposed(&t.app, &t.pat.value, t.y, t.x, "oml:is_a").await;
+
+    let outcome = t
+        .app
+        .ratify_claim_edge(&t.rita.value, yx, None)
+        .await
+        .expect("a loop closed only by a pending edge is no cycle");
+    assert_eq!(outcome.edge.state, "ratified");
+}
+
+#[tokio::test]
+async fn a_relates_to_loop_carries_no_cycle_invariant() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let back = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:relates_to").await;
+    let forth = proposed(&f.app, &f.pat.value, f.a, f.b, "acme:relates_to").await;
+    let self_edge = proposed(&f.app, &f.pat.value, f.a, f.a, "acme:relates_to").await;
+
+    for edge_id in [back, forth, self_edge] {
+        f.app
+            .ratify_claim_edge(&rita.value, edge_id, None)
+            .await
+            .expect("an open label closes no cycle");
+    }
+    assert_eq!(ratifications(&f.store, f.boot.tenant_id).await.len(), 3);
+}
+
+#[tokio::test]
+async fn ratifying_a_ratified_edge_answers_review_serve_invalid_consumed_and_journals_nothing() {
+    let f = edge_fixture().await;
+    let admin = &f.boot.admin_key.value;
+    let rita = curator(&f.app, admin, "rita", f.crew).await;
+    let ruth = curator(&f.app, admin, "ruth", f.crew).await;
+    f.app
+        .ratify_claim_edge(&rita.value, f.edge_id, None)
+        .await
+        .expect("ratify");
+    let before = journal(&f.store, f.boot.tenant_id).await.len();
+
+    for key in [&rita, &ruth] {
+        let err = f
+            .app
+            .ratify_claim_edge(&key.value, f.edge_id, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::EdgeConsumed { edge_id } if edge_id == f.edge_id),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&f.store, f.boot.tenant_id).await.len(), before);
+
+    // A ratification that lost the store's compare-and-set answers alike.
+    let other = proposed(&f.app, &f.pat.value, f.b, f.a, "acme:supports").await;
+    f.store.refuse_next_commit_of(
+        event_types::REVIEW_RATIFY,
+        StoreError::EdgeNotPending { edge_id: other },
+    );
+    let err = f
+        .app
+        .ratify_claim_edge(&rita.value, other, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::EdgeConsumed { edge_id } if edge_id == other),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn of_two_ratifications_racing_to_close_an_is_a_cycle_one_commits_and_the_other_is_refused() {
+    let t = term_fixture().await;
+    let xy = proposed(&t.app, &t.pat.value, t.x, t.y, "oml:is_a").await;
+    let yx = proposed(&t.app, &t.pat.value, t.y, t.x, "oml:is_a").await;
+    let head = t
+        .store
+        .chain_head(t.boot.tenant_id)
+        .await
+        .expect("head")
+        .expect("the chain")
+        .seq;
+
+    // Ruth's ratification of y is_a x reads no ratified is_a edge, passes
+    // the cycle check, and loses the head to rita's ratification of x is_a
+    // y, which commits between ruth's read and ruth's commit.
+    t.store.refuse_next_commit_of(
+        event_types::REVIEW_RATIFY,
+        StoreError::SeqConflict {
+            expected_seq: head + 2,
+            found_seq: head + 1,
+        },
+    );
+    let lost = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, yx, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(lost, AppError::Store(StoreError::SeqConflict { .. })),
+        "{lost:?}"
+    );
+    t.app
+        .ratify_claim_edge(&t.rita.value, xy, None)
+        .await
+        .expect("rita's ratification commits");
+
+    // The transport's head retry runs ruth's call again: it re-reads the
+    // ratified edges and refuses.
+    let err = t
+        .app
+        .ratify_claim_edge(&t.ruth.value, yx, None)
+        .await
+        .unwrap_err();
+    assert!(is_cycle_refused(&err, OmlLabel::IsA), "{err:?}");
+
+    let ratified = ratifications(&t.store, t.boot.tenant_id).await;
+    assert_eq!(ratified.len(), 1, "one ratification commits");
+    assert_eq!(
+        ratified[0].envelope.payload["edge_id"],
+        json!(xy.to_string())
+    );
+    let edge = t
+        .store
+        .claim_edge(t.boot.tenant_id, yx)
+        .await
+        .expect("read")
+        .expect("the edge");
+    assert_eq!(edge.state, EdgeState::Pending);
 }
