@@ -43,13 +43,29 @@ disagreement found:
 - both of those jobs name musl-gcc as the C compiler of every musl target, in
   CC_<target> of the job's env: on the aarch64 runner the cc crate counts the
   musl target as a cross compile and would otherwise call
-  aarch64-linux-musl-gcc, which Ubuntu's musl-tools does not ship.
+  aarch64-linux-musl-gcc, which Ubuntu's musl-tools does not ship;
+- the installers, scripts/install/install.sh and install.ps1, name no release
+  file but their own OS's oml-cli archive, SHA256SUMS and SHA256SUMS's
+  signature bundle, which the signing job sums or signs; name only CLI targets
+  the release builds, and every one of their OS's; verify SHA256SUMS with
+  cosign verify-blob under the release workflow's identity; install the
+  workspace version by default; and ci.yml job install-smoke runs them on
+  Linux, macOS and Windows, then the installed `oml --version`
+  (docs/adr/ADR-0041-a-quick-start-in-one-command-per-role.md d1, d2, d8);
+- every installer URL a reader page shows (README.md, a plugin, SDK or kit
+  README, and docs/ outside adr/, atlas/ and changelog.md) fetches
+  scripts/install/ from raw.githubusercontent.com at the tag of the workspace
+  version, or at the placeholder vX.Y.Z, never at main or another tag, and the
+  README's Quickstart is the three lines the v0.4.0 documentation plan names:
+  the installer at that tag, `oml login` and `oml setup claude-code`
+  (ADR-0041 d4, d6, d7; docs/engineering/docs-upgrade-v0.4.0.md).
 
-Dependencies: stdlib + PyYAML.
+Dependencies: stdlib (Python 3.11 or later, for tomllib) + PyYAML.
 """
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -57,6 +73,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github/workflows/release.yml"
 CI = ROOT / ".github/workflows/ci.yml"
+CARGO = ROOT / "Cargo.toml"
 # Each CLI target and the GitHub-hosted runner of its own OS and architecture
 # (docs/engineering/ci-and-toolchain.md "Release artifacts").
 CLI_TARGETS = {
@@ -106,6 +123,26 @@ CHART_VERSION = re.compile(r"\bhelm\s+show\s+chart\s+deploy/helm/oml\b")
 COSIGN_SIGN_BLOB = re.compile(r"\bcosign\s+sign-blob\b[^\n]*\.tgz")
 RELEASE_CREATE = re.compile(r"\bgh\s+release\s+create\b")
 RELEASE_UPLOAD = re.compile(r"\bgh\s+release\s+upload\b")
+REPOSITORY = "e8kor/open-memory-lab"
+# Each installer, the CLI targets of its OS, and the release files it may
+# fetch, with its variables written {version} and {target}: its own archive,
+# SHA256SUMS, which the signing job writes over every archive, and
+# SHA256SUMS's cosign bundle (ADR-0041 d2).
+INSTALLERS = {
+    "scripts/install/install.sh": (
+        {t for t in CLI_TARGETS if not t.endswith("-windows-msvc")},
+        {"oml-cli-{version}-{target}.tar.gz", "SHA256SUMS", "SHA256SUMS.sigstore.json"},
+    ),
+    "scripts/install/install.ps1": (
+        {t for t in CLI_TARGETS if t.endswith("-windows-msvc")},
+        {"oml-cli-{version}-{target}.zip", "SHA256SUMS", "SHA256SUMS.sigstore.json"},
+    ),
+}
+# A release file an installer names: an archive, a bundle, an SBOM or SHA256SUMS.
+RELEASE_FILE = re.compile(r"[\w${}.-]*(?:\.tar\.gz|\.zip|\.sigstore\.json|\.cdx\.json)\b|\bSHA256SUMS[\w.-]*")
+SHELL_VAR = re.compile(r"\$\{?([A-Za-z_]\w*)\}?")
+TARGET_TRIPLE = re.compile(r"\b(?:x86_64|aarch64|i686|armv7|arm64)-(?:unknown|apple|pc)-[a-z]+(?:-[a-z]+)?\b")
+DEFAULT_VERSION = re.compile(r"(?:DEFAULT_VERSION=|\$DefaultVersion\s*=\s*)[\"']([^\"']+)[\"']")
 
 
 def main() -> int:
@@ -159,6 +196,8 @@ def main() -> int:
     check_binaries(errors, jobs)
     check_agents(errors, jobs)
     check_cli_matrix(errors, jobs)
+    check_installers(errors, jobs)
+    check_installer_lines(errors)
     return report(errors)
 
 
@@ -294,6 +333,105 @@ def check_cli_matrix(errors: list[str], jobs: dict) -> None:
         errors.append("ci.yml cli-matrix does not run the CLI's unit tests for its target")
 
 
+def check_installers(errors: list[str], jobs: dict) -> None:
+    """The installers fetch only signed release files, verify them under the release identity, and CI runs them."""
+    identities = [m.group(1) for j in jobs.values() for run in runs(j) if (m := re.search(r"identity='([^']+)'", run))]
+    if not identities:
+        errors.append("release.yml names no signing identity for the installers to verify against")
+        return
+    # The release identity up to its tag, with the repository filled in.
+    prefix = identities[0].replace("${{ github.repository }}", REPOSITORY).split("refs/tags/")[0] + "refs/tags/"
+    workspace = tomllib.loads(CARGO.read_text())["workspace"]["package"]["version"]
+    for path, (targets, allowed) in INSTALLERS.items():
+        file = ROOT / path
+        if not file.exists():
+            errors.append(f"{path} does not exist")
+            continue
+        text = file.read_text()
+        named = {SHELL_VAR.sub(lambda m: "{" + m.group(1).lower() + "}", f.rstrip(".")) for f in RELEASE_FILE.findall(text)}
+        for name in sorted(named - allowed):
+            errors.append(f"{path}: names {name}, which is not its OS's CLI archive, SHA256SUMS or SHA256SUMS's bundle")
+        for name in sorted(allowed - named):
+            errors.append(f"{path}: never names {name}, so it cannot check the archive against the signed SHA256SUMS")
+        triples = set(TARGET_TRIPLE.findall(text))
+        for t in sorted(triples - set(CLI_TARGETS)):
+            errors.append(f"{path}: names target {t}, which the release does not build")
+        for t in sorted(targets - triples):
+            errors.append(f"{path}: never names target {t}, so that platform gets no install")
+        if "cosign verify-blob" not in text:
+            errors.append(f"{path}: never runs cosign verify-blob")
+        # install.sh writes the identity in double quotes, so each backslash is doubled there.
+        if "token.actions.githubusercontent.com" not in text or prefix not in text.replace("\\\\", "\\"):
+            errors.append(f"{path}: does not verify against the release workflow's identity {prefix}<tag>")
+        default = DEFAULT_VERSION.search(text)
+        if not default:
+            errors.append(f"{path}: names no default version")
+        elif default.group(1) != workspace:
+            errors.append(f"{path}: installs {default.group(1)} by default, not the workspace version {workspace}")
+
+    job = yaml.safe_load(CI.read_text())["jobs"].get("install-smoke")
+    if job is None:
+        errors.append("ci.yml has no job install-smoke, so no installer has run against a release")
+        return
+    runners = {str(r.get("runner")) for r in matrix_rows(job)}
+    for os_name in ("ubuntu", "macos", "windows"):
+        if not any(r.startswith(os_name) for r in runners):
+            errors.append(f"ci.yml install-smoke has no {os_name} runner")
+    script = "\n".join(runs(job))
+    for needle in ("scripts/install/install.sh", "scripts/install/install.ps1", "--version"):
+        if needle not in script:
+            errors.append(f"ci.yml install-smoke never runs {needle}")
+
+
+# An installer URL on a reader page, and the tag it fetches the script at.
+INSTALLER_URL = re.compile(
+    r"https://raw\.githubusercontent\.com/" + re.escape(REPOSITORY) + r"/([^/\s]+)/scripts/install/install\.(?:sh|ps1)"
+)
+INSTALLER_LINE_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
+
+
+def reader_pages() -> list[Path]:
+    pages = [ROOT / "README.md", *sorted(ROOT.glob("plugins/*/README.md")), *sorted(ROOT.glob("sdks/*/README.md")),
+             ROOT / "kit" / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    return [p for p in pages if p.exists() and not any(p == e or e in p.parents for e in INSTALLER_LINE_EXEMPT)]
+
+
+def check_installer_lines(errors: list[str]) -> None:
+    """Each documented installer line fetches the script at the workspace version's tag, and the
+    README's Quickstart is the installer, oml login and oml setup claude-code (ADR-0041 d4, d6, d7)."""
+    workspace = tomllib.loads(CARGO.read_text())["workspace"]["package"]["version"]
+    tags = {f"v{workspace}", "vX.Y.Z"}
+    for page in reader_pages():
+        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            for tag in INSTALLER_URL.findall(line):
+                if tag not in tags:
+                    errors.append(
+                        f"{page.relative_to(ROOT)}:{number}: the installer is fetched at {tag}, not at "
+                        f"v{workspace} or vX.Y.Z (ADR-0041 d4)"
+                    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = re.search(r"^## Quickstart\n(.*?)(?=^## )", readme, re.M | re.S)
+    if not section:
+        errors.append("README.md has no Quickstart section")
+        return
+    blocks = re.findall(r"^```(?:sh|bash|console)\n(.*?)^```", section.group(1), re.M | re.S)
+    if not blocks:
+        errors.append("README.md's Quickstart shows no shell block")
+        return
+    lines = [ln.split("  #")[0].strip() for ln in blocks[0].replace("\\\n", " ").splitlines()]
+    lines = [ln for ln in lines if ln and not ln.startswith("#")]
+    wanted = [
+        ("the installer", lambda ln: INSTALLER_URL.search(ln) and f"/v{workspace}/" in ln and ln.endswith("| sh")),
+        ("oml login", lambda ln: ln.startswith("oml login ")),
+        ("oml setup claude-code", lambda ln: ln.startswith("oml setup claude-code")),
+    ]
+    if len(lines) != len(wanted) or not all(ok(ln) for (_, ok), ln in zip(wanted, lines)):
+        errors.append(
+            "README.md's Quickstart opens with " + repr(lines) + ", not exactly three lines: "
+            + ", ".join(name for name, _ in wanted) + f", the installer at v{workspace} (ADR-0041 d4, d6, d7)"
+        )
+
+
 def check_musl_cc(errors: list[str], where: str, job: dict) -> None:
     """The job's env names musl-gcc as the C compiler of every musl CLI target."""
     env = job.get("env", {})
@@ -400,7 +538,8 @@ def report(errors: list[str]) -> int:
             "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
             " attaches the signed chart, builds, sums and signs the CLI and server archives of every"
             " target, which ci.yml's cli-matrix builds and tests first, and sums and signs the Claude Code"
-            " plugin archive, the pinned marketplace and the agent kit"
+            " plugin archive, the pinned marketplace and the agent kit; the installers fetch only the"
+            " signed CLI archive, SHA256SUMS and its bundle, and ci.yml's install-smoke runs them"
         )
     return 1 if errors else 0
 

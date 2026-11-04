@@ -1,13 +1,18 @@
 //! The key tool's local half (ADR-0028; cli/reference.md `oml keys`): the
 //! reader grant the issuing verbs send beside a writer grant, the shell
-//! quoting of the two export lines `oml keys issue-agent` prints, and the
-//! owner-only file `--out` writes the key value to. Everything here runs on
+//! quoting of the two export lines `oml keys issue-agent` prints, the
+//! `claude plugin configure` and `oml setup claude-code` lines it adds with
+//! `--out`, the owner-only file
+//! `--out` writes the key value to, and what `--connect-code` prints for its
+//! answer (ADR-0031 d7). Everything here runs on
 //! the operator's machine; the server takes exactly the grants it is sent
 //! (ADR-0025 d2).
 
 use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+use serde_json::Value;
 
 /// The grants an issuing verb sends: each requested grant in order, and
 /// beside every writer grant a reader grant on the same workarea, unless
@@ -43,6 +48,35 @@ pub fn with_reader_beside_writers(
 #[must_use]
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// The line `oml keys issue-agent --out` prints beside its two export lines:
+/// `jq` reads the key file and pipes `url` and `api_key` into `claude plugin
+/// configure --values-stdin`, so the value reaches Claude Code's keychain
+/// without entering argv or a transcript (ADR-0040 d4, amending ADR-0028
+/// d1). `server` is the plugin's `url` option, without `/mcp`.
+#[must_use]
+pub fn configure_line(server: &str, key_file: &str) -> String {
+    format!(
+        "jq -n --arg u {} --rawfile k {} '{{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}}' \
+         | claude plugin configure oml@open-memory-lab --values-stdin",
+        sh_quote(server),
+        sh_quote(key_file),
+    )
+}
+
+/// The line `oml keys issue-agent --out` prints after the configure line:
+/// `oml setup claude-code` with the server as `--url` and the key file as
+/// `--key-file`, which installs the plugin at the CLI's own release and
+/// configures it from the same file, so the value never enters argv
+/// (ADR-0041 d7). `server` is the plugin's `url` option, without `/mcp`.
+#[must_use]
+pub fn setup_line(server: &str, key_file: &str) -> String {
+    format!(
+        "oml setup claude-code --url {} --key-file {}",
+        sh_quote(server),
+        sh_quote(key_file),
+    )
 }
 
 /// The file `oml keys issue-agent --out` writes the key value to: created
@@ -149,11 +183,238 @@ impl KeyFile {
     }
 }
 
+/// What a connect-code verb prints and exits with: each stdout line, each
+/// stderr line, and the exit code.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Printed {
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
+    pub exit: u8,
+}
+
+/// What `oml keys issue-agent --connect-code` prints for its `201`
+/// (cli/reference.md `--connect-code`; ADR-0031 d7). A fresh answer puts
+/// exactly two lines on stdout, the connector URL the server names (never
+/// the address the CLI used) and the code, and the key, the code's expiry and
+/// the next step on stderr. An answer without a code, the stored body an
+/// idempotent replay (`Idempotency-Replay: true`) returns among them, puts
+/// nothing on stdout, names the key and how to mint a code, and exits 2.
+/// With `json` the body goes to stdout as it came, and only the exit code and
+/// the missing code's stderr line still differ.
+#[must_use]
+pub fn connect_code_printed(answer: &Value, replayed: bool, json: bool) -> Printed {
+    let text = |v: &Value| v.as_str().unwrap_or("").to_owned();
+    let key_name = text(&answer["name"]);
+    let key_id = text(&answer["key_id"]);
+    let connect_code = &answer["connect_code"];
+    let code = connect_code["code"].as_str().filter(|_| !replayed);
+    let mut stdout = Vec::new();
+    if json {
+        stdout.push(serde_json::to_string_pretty(answer).unwrap_or_default());
+    }
+    let Some(code) = code else {
+        let why = if replayed {
+            "this answer is an idempotent replay, and the connect code went only to the first \
+             answer"
+        } else {
+            "the 201 carried no connect code"
+        };
+        return Printed {
+            stdout,
+            stderr: vec![format!(
+                "connector key {key_name} ({key_id}) was issued, but {why}; \
+                 `oml keys connect-code {key_name}` mints a new one (ADR-0031 d7)"
+            )],
+            exit: 2,
+        };
+    };
+    if json {
+        return Printed {
+            stdout,
+            stderr: Vec::new(),
+            exit: 0,
+        };
+    }
+    Printed {
+        stdout: vec![text(&connect_code["connector_url"]), code.to_owned()],
+        stderr: vec![
+            format!(
+                "connector key {key_name} ({key_id}) issued to {}: no value, and the connect \
+                 code above in its place, single use, shown this once and expiring at {}",
+                text(&answer["principal"]),
+                text(&connect_code["expires_at"]),
+            ),
+            NEXT_STEP.to_owned(),
+        ],
+        exit: 0,
+    }
+}
+
+/// The step after a connect code is printed (cli/reference.md
+/// `--connect-code`).
+const NEXT_STEP: &str = "next: add a custom connector with exactly the URL above at Customize > \
+     Connectors on claude.ai, and enter the code on the page that opens before it expires; give \
+     the code only to the person who will connect, for a page they reached by adding the \
+     connector themselves";
+
+/// What `oml keys connect-code <key>` prints for the `201` of
+/// `POST /v2/keys/{key}/connect-codes` (cli/reference.md; ADR-0031 d7, d8):
+/// as [`connect_code_printed`], the connector URL and the code on stdout and
+/// the expiry and the next step on stderr, and for an answer without a code,
+/// a replay's among them, nothing on stdout, the key named, and exit 2.
+#[must_use]
+pub fn minted_code_printed(key: &str, answer: &Value, replayed: bool, json: bool) -> Printed {
+    let text = |v: &Value| v.as_str().unwrap_or("").to_owned();
+    let code = answer["code"].as_str().filter(|_| !replayed);
+    let mut stdout = Vec::new();
+    if json {
+        stdout.push(serde_json::to_string_pretty(answer).unwrap_or_default());
+    }
+    let Some(code) = code else {
+        let why = if replayed {
+            "this answer is an idempotent replay, and the connect code went only to the first \
+             answer"
+        } else {
+            "the 201 carried no connect code"
+        };
+        return Printed {
+            stdout,
+            stderr: vec![format!(
+                "a connect code for connector key {key} was minted, but {why}; \
+                 `oml keys connect-code {key}` mints a new one (ADR-0031 d7)"
+            )],
+            exit: 2,
+        };
+    };
+    if json {
+        return Printed {
+            stdout,
+            stderr: Vec::new(),
+            exit: 0,
+        };
+    }
+    Printed {
+        stdout: vec![text(&answer["connector_url"]), code.to_owned()],
+        stderr: vec![
+            format!(
+                "connect code for connector key {key}: single use, shown this once, expiring at \
+                 {}; the key's earlier codes no longer connect",
+                text(&answer["expires_at"]),
+            ),
+            NEXT_STEP.to_owned(),
+        ],
+        exit: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::KeyFile;
+    use serde_json::{Value, json};
+
+    use super::{KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line};
+
+    /// A `201` of `POST /v2/keys` with `connect_code: true`, as openapi.yaml
+    /// `IssuedKey` and `ConnectCode` shape it; a replay omits the code.
+    fn issued(code: Option<&str>) -> Value {
+        let mut connect_code = json!({
+            "code_id": "cc_01J9ZK",
+            "expires_at": "2026-11-04T10:10:00Z",
+            "connector_url": "https://oml.example.com/mcp",
+        });
+        if let Some(code) = code {
+            connect_code["code"] = json!(code);
+        }
+        json!({
+            "key_id": "key_01J9ZK",
+            "name": "claude-mobile",
+            "role": "writer",
+            "principal": "crew/claude-mobile",
+            "default_workarea_id": "metals",
+            "grants": [],
+            "connect_code": connect_code,
+        })
+    }
+
+    #[test]
+    fn issue_agent_connect_code_prints_exactly_the_connector_url_and_the_code_on_stdout() {
+        let printed = connect_code_printed(&issued(Some("7KQ2-M9XD-4TPA")), false, false);
+        assert_eq!(
+            printed.stdout,
+            ["https://oml.example.com/mcp", "7KQ2-M9XD-4TPA"],
+            "{printed:?}"
+        );
+        assert_eq!(printed.exit, 0, "{printed:?}");
+        let stderr = printed.stderr.join("\n");
+        for part in [
+            "claude-mobile",
+            "key_01J9ZK",
+            "2026-11-04T10:10:00Z",
+            "Customize > Connectors",
+        ] {
+            assert!(stderr.contains(part), "stderr names {part}: {stderr}");
+        }
+        assert!(
+            !stderr.contains("7KQ2-M9XD-4TPA"),
+            "the code is on stdout alone: {stderr}"
+        );
+    }
+
+    #[test]
+    fn a_replayed_issuance_prints_no_code_names_the_key_and_exits_2() {
+        let printed = connect_code_printed(&issued(None), true, false);
+        assert!(printed.stdout.is_empty(), "{printed:?}");
+        assert_eq!(printed.exit, 2, "{printed:?}");
+        let stderr = printed.stderr.join("\n");
+        for part in [
+            "claude-mobile",
+            "key_01J9ZK",
+            "first answer",
+            "oml keys connect-code claude-mobile",
+        ] {
+            assert!(stderr.contains(part), "stderr names {part}: {stderr}");
+        }
+    }
+
+    #[test]
+    fn a_replayed_issuance_with_json_prints_the_body_as_it_came_and_exits_2() {
+        let body = issued(None);
+        let printed = connect_code_printed(&body, true, true);
+        let shown: Value =
+            serde_json::from_str(&printed.stdout.join("\n")).expect("one JSON document");
+        assert_eq!(shown, body, "{printed:?}");
+        assert_eq!(printed.exit, 2, "{printed:?}");
+        assert!(
+            printed.stderr.join("\n").contains("oml keys connect-code"),
+            "{printed:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_issuance_with_json_prints_the_201_alone_and_exits_0() {
+        let body = issued(Some("7KQ2-M9XD-4TPA"));
+        let printed = connect_code_printed(&body, false, true);
+        let shown: Value =
+            serde_json::from_str(&printed.stdout.join("\n")).expect("one JSON document");
+        assert_eq!(shown, body, "{printed:?}");
+        assert!(printed.stderr.is_empty(), "{printed:?}");
+        assert_eq!(printed.exit, 0, "{printed:?}");
+    }
+
+    #[test]
+    fn a_201_without_a_code_that_is_no_replay_prints_no_code_and_exits_2() {
+        let printed = connect_code_printed(&issued(None), false, false);
+        assert!(printed.stdout.is_empty(), "{printed:?}");
+        assert_eq!(printed.exit, 2, "{printed:?}");
+        assert!(
+            printed
+                .stderr
+                .join("\n")
+                .contains("oml keys connect-code claude-mobile"),
+            "{printed:?}"
+        );
+    }
 
     /// An empty directory of this test's own, under the OS temp directory.
     fn scratch(test: &str) -> PathBuf {
@@ -218,5 +479,75 @@ mod tests {
         );
         key_file.discard().expect("discarded");
         std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    /// The configure line pipes the key file through `jq` into `claude
+    /// plugin configure --values-stdin`, naming the server and the file,
+    /// each single-quoted, so the value never enters argv (ADR-0040 d4).
+    #[test]
+    fn the_configure_line_reads_the_key_file_into_claude_plugin_configure() {
+        assert_eq!(
+            configure_line(
+                "https://oml.example.com",
+                "/home/op/.config/oml/keys/crew-agent-7"
+            ),
+            "jq -n --arg u 'https://oml.example.com' --rawfile k \
+             '/home/op/.config/oml/keys/crew-agent-7' \
+             '{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}' \
+             | claude plugin configure oml@open-memory-lab --values-stdin"
+        );
+    }
+
+    /// The setup line runs `oml setup claude-code` with the server as `--url`
+    /// and the key file as `--key-file`, each single-quoted, so the value
+    /// never enters argv (ADR-0041 d7).
+    #[test]
+    fn the_setup_line_runs_setup_claude_code_with_the_url_and_the_key_file() {
+        assert_eq!(
+            setup_line(
+                "https://oml.example.com",
+                "/home/op/.config/oml/keys/crew-agent-7"
+            ),
+            "oml setup claude-code --url 'https://oml.example.com' --key-file \
+             '/home/op/.config/oml/keys/crew-agent-7'"
+        );
+    }
+
+    #[test]
+    fn keys_connect_code_prints_exactly_the_connector_url_and_the_code_on_stdout() {
+        let answer = json!({
+            "code_id": "cc_01J9ZK",
+            "code": "7KQ2-M9XD-4TPA",
+            "expires_at": "2026-11-04T10:10:00Z",
+            "connector_url": "https://oml.example.com/mcp",
+        });
+        let printed = minted_code_printed("claude-mobile", &answer, false, false);
+        assert_eq!(
+            printed.stdout,
+            ["https://oml.example.com/mcp", "7KQ2-M9XD-4TPA"]
+        );
+        assert_eq!(printed.exit, 0);
+        assert!(
+            printed.stderr[0].contains("claude-mobile"),
+            "{:?}",
+            printed.stderr
+        );
+    }
+
+    #[test]
+    fn keys_connect_code_prints_no_code_and_exits_2_on_a_replayed_answer() {
+        let answer = json!({
+            "code_id": "cc_01J9ZK",
+            "expires_at": "2026-11-04T10:10:00Z",
+            "connector_url": "https://oml.example.com/mcp",
+        });
+        let printed = minted_code_printed("claude-mobile", &answer, true, false);
+        assert!(printed.stdout.is_empty(), "{:?}", printed.stdout);
+        assert_eq!(printed.exit, 2);
+        assert!(
+            printed.stderr[0].contains("oml keys connect-code claude-mobile"),
+            "{:?}",
+            printed.stderr
+        );
     }
 }

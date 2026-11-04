@@ -25,7 +25,7 @@ contract are owned by [admission](../architecture/admission.md); the review cere
 by [CLI sessions](../cli/sessions.md). Everything here is decided, not built.
 
 One boundary this record draws deliberately: **declaring lineage is attribution, not an act of
-connection-establishment**, so submitting a claim whose `derives_from` names another author's
+connection-edge establishment**, so submitting a claim whose `derives_from` names another author's
 claim requires only writer effective access — no dreamer class is needed to cite what one has
 read. The integrity weight of the declaration lands on review instead, in two ways. First, every
 named ancestor expands the row's reviewer-exclusion set: R2 is enforced over the whole lineage

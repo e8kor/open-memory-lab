@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -29,29 +28,29 @@ class KeyIssueRequest:
             References use NameRef.
         grants (list[GrantRequest] | Unset): Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's
             reader grant beside a writer grant is sent here like any other (ADR-0028 d2).
-        default_workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
+        default_workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check
             that reads state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is
             refused (request.validation).
         held_by (KeyIssueRequestHeldBy | Unset): The issuing admin's journalled attestation (ADR-0021); never verified
             as fact.
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
             d4).
-        expiry (datetime.datetime | Unset):
         label (str | Unset): A free-text note; unique nowhere.
-        principal (str | Unset): Who acts — the attribution identity
-        tenant_id (str | Unset): A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4).
+        principal (str | Unset): Who acts — the attribution identity, shared across one identity's keys; free text.
+        connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
+            connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
+            held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
     """
 
     role: Role
     name: str
     grants: list[GrantRequest] | Unset = UNSET
-    default_workarea_id: str | Unset = UNSET
+    default_workarea: str | Unset = UNSET
     held_by: KeyIssueRequestHeldBy | Unset = UNSET
     crew: str | Unset = UNSET
-    expiry: datetime.datetime | Unset = UNSET
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
-    tenant_id: str | Unset = UNSET
+    connect_code: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -65,11 +64,11 @@ class KeyIssueRequest:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
 
-        default_workarea_id: str | Unset
-        if isinstance(self.default_workarea_id, Unset):
-            default_workarea_id = UNSET
+        default_workarea: str | Unset
+        if isinstance(self.default_workarea, Unset):
+            default_workarea = UNSET
         else:
-            default_workarea_id = self.default_workarea_id
+            default_workarea = self.default_workarea
 
         held_by: str | Unset = UNSET
         if not isinstance(self.held_by, Unset):
@@ -81,19 +80,11 @@ class KeyIssueRequest:
         else:
             crew = self.crew
 
-        expiry: str | Unset = UNSET
-        if not isinstance(self.expiry, Unset):
-            expiry = self.expiry.isoformat()
-
         label = self.label
 
         principal = self.principal
 
-        tenant_id: str | Unset
-        if isinstance(self.tenant_id, Unset):
-            tenant_id = UNSET
-        else:
-            tenant_id = self.tenant_id
+        connect_code = self.connect_code
 
         field_dict: dict[str, Any] = {}
 
@@ -105,20 +96,18 @@ class KeyIssueRequest:
         )
         if grants is not UNSET:
             field_dict["grants"] = grants
-        if default_workarea_id is not UNSET:
-            field_dict["default_workarea_id"] = default_workarea_id
+        if default_workarea is not UNSET:
+            field_dict["default_workarea"] = default_workarea
         if held_by is not UNSET:
             field_dict["held_by"] = held_by
         if crew is not UNSET:
             field_dict["crew"] = crew
-        if expiry is not UNSET:
-            field_dict["expiry"] = expiry
         if label is not UNSET:
             field_dict["label"] = label
         if principal is not UNSET:
             field_dict["principal"] = principal
-        if tenant_id is not UNSET:
-            field_dict["tenant_id"] = tenant_id
+        if connect_code is not UNSET:
+            field_dict["connect_code"] = connect_code
 
         return field_dict
 
@@ -140,14 +129,12 @@ class KeyIssueRequest:
 
                 grants.append(grants_item)
 
-        def _parse_default_workarea_id(data: object) -> str | Unset:
+        def _parse_default_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
                 return data
             return cast(str | Unset, data)
 
-        default_workarea_id = _parse_default_workarea_id(
-            d.pop("default_workarea_id", UNSET)
-        )
+        default_workarea = _parse_default_workarea(d.pop("default_workarea", UNSET))
 
         _held_by = d.pop("held_by", UNSET)
         held_by: KeyIssueRequestHeldBy | Unset
@@ -163,35 +150,22 @@ class KeyIssueRequest:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
-        _expiry = d.pop("expiry", UNSET)
-        expiry: datetime.datetime | Unset
-        if isinstance(_expiry, Unset):
-            expiry = UNSET
-        else:
-            expiry = datetime.datetime.fromisoformat(_expiry)
-
         label = d.pop("label", UNSET)
 
         principal = d.pop("principal", UNSET)
 
-        def _parse_tenant_id(data: object) -> str | Unset:
-            if isinstance(data, Unset):
-                return data
-            return cast(str | Unset, data)
-
-        tenant_id = _parse_tenant_id(d.pop("tenant_id", UNSET))
+        connect_code = d.pop("connect_code", UNSET)
 
         key_issue_request = cls(
             role=role,
             name=name,
             grants=grants,
-            default_workarea_id=default_workarea_id,
+            default_workarea=default_workarea,
             held_by=held_by,
             crew=crew,
-            expiry=expiry,
             label=label,
             principal=principal,
-            tenant_id=tenant_id,
+            connect_code=connect_code,
         )
 
         return key_issue_request

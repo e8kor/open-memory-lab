@@ -43,11 +43,16 @@ KIT_README = ROOT / "kit/README.md"
 MARKETPLACE = ROOT / ".claude-plugin/marketplace.json"
 DEFAULT_REPO = "e8kor/open-memory-lab"
 
-# Every kit configuration points here; kit/README.md says to replace the host.
-# Of the five tools, only Cursor documents a variable in the URL, so a
-# literal is the one form all of them read.
-MCP_URL = "http://127.0.0.1:8080/mcp"
+# The pair every client starts from (ADR-0039 d15): OML_URL, the server's
+# address without /mcp, and OML_API_KEY. A configuration reads OML_URL where
+# its tool documents expanding a variable inside a URL, Cursor (${env:NAME} in
+# `url`) and Gemini CLI ($VAR in every settings.json string), each fetched
+# 2026-11-04 as kit/README.md cites. Codex, VS Code and Claude Desktop's bridge
+# document no expansion in a URL, so theirs is the literal LITERAL_URL, the one
+# edit kit/README.md names.
+URL_VAR = "OML_URL"
 KEY_VAR = "OML_API_KEY"
+LITERAL_URL = "http://127.0.0.1:8080/mcp"
 # The stdio bridge Claude Desktop's config file needs for a remote server,
 # pinned to a release older than two weeks on 2026-11-03.
 MCP_REMOTE = "mcp-remote@0.15.2"
@@ -57,6 +62,7 @@ MCP_REMOTE = "mcp-remote@0.15.2"
 # connection, which the kit's tools do not have.
 AGENTS_SECTIONS = (
     None,  # the title and the paragraph before the first section
+    "Three tools, chosen by their arguments",
     "Name a workarea",
     "Check what a workarea allows",
     "Recall before you act",
@@ -116,17 +122,21 @@ def session_start_command() -> str:
 def kit_configs() -> dict:
     """Each kit path and its text."""
     bearer_env = f"Bearer ${{env:{KEY_VAR}}}"
+    cursor_url = f"${{env:{URL_VAR}}}/mcp"
+    gemini_url = f"${{{URL_VAR}}}/mcp"
     codex = (
         "# OpenAI Codex CLI: add to ~/.codex/config.toml, or to .codex/config.toml in a\n"
         "# trusted project. Codex sends the value of OML_API_KEY as the bearer token.\n"
+        "# Codex expands no variable in url: replace http://127.0.0.1:8080 with your\n"
+        "# server's address, keeping /mcp.\n"
         "[mcp_servers.oml]\n"
-        f'url = "{MCP_URL}"\n'
+        f'url = "{LITERAL_URL}"\n'
         f'bearer_token_env_var = "{KEY_VAR}"\n'
     )
-    cursor = {"mcpServers": {"oml": {"url": MCP_URL, "headers": {"Authorization": bearer_env}}}}
+    cursor = {"mcpServers": {"oml": {"url": cursor_url, "headers": {"Authorization": bearer_env}}}}
     gemini = {
         "mcpServers": {
-            "oml": {"httpUrl": MCP_URL, "headers": {"Authorization": f"Bearer ${{{KEY_VAR}}}"}}
+            "oml": {"httpUrl": gemini_url, "headers": {"Authorization": f"Bearer ${{{KEY_VAR}}}"}}
         },
         "hooks": {
             "SessionStart": [
@@ -143,7 +153,7 @@ def kit_configs() -> dict:
             ]
         },
     }
-    vscode = {"servers": {"oml": {"type": "http", "url": MCP_URL, "headers": {"Authorization": bearer_env}}}}
+    vscode = {"servers": {"oml": {"type": "http", "url": LITERAL_URL, "headers": {"Authorization": bearer_env}}}}
     desktop = {
         "mcpServers": {
             "oml": {
@@ -151,7 +161,7 @@ def kit_configs() -> dict:
                 "args": [
                     "-y",
                     MCP_REMOTE,
-                    MCP_URL,
+                    LITERAL_URL,
                     "--transport",
                     "http-only",
                     "--header",

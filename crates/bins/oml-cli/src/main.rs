@@ -10,18 +10,22 @@
 // as <role> must print as written rather than as markdown code.
 #![allow(rustdoc::invalid_html_tags)]
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
-use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
+use oml_cli::client::{CallOpts, CliError, Client, encode, new_idempotency_key, segment};
 use oml_cli::creds::{self, Credentials};
+use oml_cli::discovery;
 use oml_cli::hook;
-use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
+use oml_cli::issue::{
+    KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line, sh_quote,
+    with_reader_beside_writers,
+};
 use oml_cli::verify::parse_verifying_key;
 
 #[derive(Parser)]
@@ -31,17 +35,66 @@ use oml_cli::verify::parse_verifying_key;
     about = "Open Memory Lab administration — a lab client of the same HTTP API every agent speaks (ADR-0015)."
 )]
 struct Cli {
-    /// Server URL (falls back to the stored credentials).
-    #[arg(long, global = true, env = "OML_CLI_SERVER")]
+    /// The server's URL, without /mcp. One pair with --api-key: the pair
+    /// comes from the flags, else the environment, else the credentials
+    /// file, and a source setting one alone is refused (ADR-0039 d15).
+    #[arg(long, global = true, env = "OML_URL")]
+    url: Option<String>,
+    /// The API key value, paired with --url. argv is visible to other
+    /// processes, so prefer OML_API_KEY or the credentials file.
+    #[arg(
+        long = "api-key",
+        global = true,
+        env = "OML_API_KEY",
+        hide_env_values = true
+    )]
+    api_key: Option<String>,
+    /// The v0.3.0 spelling of --url, read through v0.4.x (ADR-0039 d12).
+    #[arg(long, global = true, hide = true)]
     server: Option<String>,
-    /// API key value (falls back to OML_CLI_KEY, then the stored credentials).
-    #[arg(long, global = true, env = "OML_CLI_KEY", hide_env_values = true)]
+    /// The v0.3.0 spelling of --api-key, read through v0.4.x (ADR-0039 d12).
+    #[arg(long, global = true, hide = true)]
     key: Option<String>,
     /// Emit the server's typed response as one JSON document on stdout.
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
     command: Command,
+    /// Each start setting by the source that set it, filled from the parsed
+    /// matches, which alone tell a flag from the environment.
+    #[arg(skip)]
+    start: Start,
+}
+
+/// The start settings each source set, an empty value setting nothing
+/// (ADR-0039 d15).
+#[derive(Debug, Default)]
+struct Start {
+    flag_url: Option<String>,
+    flag_key: Option<String>,
+    env_url: Option<String>,
+    env_key: Option<String>,
+}
+
+impl Start {
+    /// Splits `cli`'s `--url` and `--api-key` by where clap took each from;
+    /// the hidden `--server` and `--key` count as the flags they were
+    /// renamed to.
+    fn of(cli: &Cli, matches: &clap::ArgMatches) -> Self {
+        use clap::parser::ValueSource;
+        let set = |v: &Option<String>| v.clone().filter(|s| !s.is_empty());
+        let from = |id: &str, source: ValueSource| matches.value_source(id) == Some(source);
+        let pick = |id: &str, v: &Option<String>, source: ValueSource| {
+            if from(id, source) { set(v) } else { None }
+        };
+        Self {
+            flag_url: pick("url", &cli.url, ValueSource::CommandLine).or_else(|| set(&cli.server)),
+            flag_key: pick("api_key", &cli.api_key, ValueSource::CommandLine)
+                .or_else(|| set(&cli.key)),
+            env_url: pick("url", &cli.url, ValueSource::EnvVariable),
+            env_key: pick("api_key", &cli.api_key, ValueSource::EnvVariable),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -76,24 +129,58 @@ enum Command {
         #[command(subcommand)]
         command: CrewsCommand,
     },
-    /// Submit a claim (writer convenience for the demo).
-    Submit(SubmitArgs),
+    /// Write a claim, held until reviewed: a submission, or with --replaces
+    /// a new version of a claim or its retirement (ADR-0039 d3, d10).
+    Write(WriteArgs),
+    /// Read memories: fetch one by artifact id, recall with --query, or
+    /// list with neither (ADR-0039 d4, d10).
+    Read(ReadArgs),
+    /// Tail the journal's events within the key's reader access, digests
+    /// only (GET /v2/events; ADR-0039 d10).
+    Events(EventsArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// Recall promoted memories.
+    /// The v0.3.0 name of `oml write`, hidden until v0.5.0 (ADR-0039 d12).
+    #[command(hide = true)]
+    Submit(SubmitArgs),
+    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.0
+    /// (ADR-0039 d12).
+    #[command(hide = true)]
     Recall(RecallArgs),
-    /// Supersede a promoted claim with a successor (author only).
+    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.0
+    /// (ADR-0039 d12).
+    #[command(hide = true)]
     Supersede(SupersedeArgs),
     /// Evidence verbs.
     Audit {
         #[command(subcommand)]
         command: AuditCommand,
     },
+    /// Read an API key without echo, from the terminal or from stdin when
+    /// stdin is not one, check it through GET /v2/whoami, and only then
+    /// store the URL and the key, nothing else, owner-only (ADR-0039 d15).
+    Login {
+        /// The server's URL, without /mcp.
+        // Not `url`: clap would merge that id with the global --url.
+        #[arg(value_name = "URL")]
+        target: String,
+    },
     /// Each health signal with a verdict; exit 1 on any fail.
     Doctor,
+    /// Start OML on this machine with Docker: write the compose profile and
+    /// its owner-only .env into --dir, `docker compose up`, claim the lead,
+    /// issue an agent key and a reviewer key into owner-only files, check a
+    /// write end to end, and print the agent's key file and the oml login
+    /// line (ADR-0041 d9).
+    Quickstart(QuickstartArgs),
+    /// Install and configure an agent tool's OML plugin (ADR-0041 d7).
+    Setup {
+        #[command(subcommand)]
+        command: SetupCommand,
+    },
     /// Claude Code hooks of the agent plugin, run under the agent's own key.
     Hook {
         #[command(subcommand)]
@@ -101,25 +188,67 @@ enum Command {
     },
 }
 
+#[derive(Args)]
+struct QuickstartArgs {
+    /// Where the compose file, its .env, the admin credentials and the keys
+    /// are written; refused if a quickstart already wrote there.
+    #[arg(long, default_value = "oml")]
+    dir: PathBuf,
+    /// The port on 127.0.0.1 the lead is published on.
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+}
+
+#[derive(Subcommand)]
+enum SetupCommand {
+    /// Install the oml plugin at this CLI's own release through the claude
+    /// CLI and hand it the URL and key on stdin, refusing an admin or
+    /// operator key; with --print, or with no claude on PATH, print the
+    /// commands instead (ADR-0041 d7).
+    ClaudeCode(SetupClaudeCodeArgs),
+}
+
+#[derive(Args)]
+struct SetupClaudeCodeArgs {
+    /// The key file `oml keys issue-agent --out` wrote, read in place of
+    /// --api-key and paired with --url.
+    #[arg(long)]
+    key_file: Option<PathBuf>,
+    /// Run nothing: print the claude commands, whose configure line reads
+    /// the key file, or OML_API_KEY without one.
+    #[arg(long)]
+    print: bool,
+}
+
 #[derive(Subcommand)]
 enum HookCommand {
-    /// Print the SessionStart context from OML_URL and OML_API_KEY alone —
-    /// steering, this key's recent submissions, the matching memories — or
-    /// nothing; always exits 0 (ADR-0029).
+    /// Print the SessionStart context from the plugin's url and api_key
+    /// options, else OML_URL and OML_API_KEY — steering, this key's recent
+    /// submissions, the matching memories — or nothing; always exits 0
+    /// (ADR-0029, ADR-0040 d3).
     SessionStart,
+    /// Print memories matching a failed Bash command's error, from the
+    /// plugin's url and api_key options, else OML_URL and OML_API_KEY, only
+    /// with OML_FAILURE_RECALL=1; always exits 0 (ADR-0038, ADR-0040 d3).
+    ToolFailure,
+    /// Delete this session's failure-recall cache; prints nothing and
+    /// always exits 0 (ADR-0038).
+    SessionEnd,
 }
 
 #[derive(Subcommand)]
 enum BootstrapCommand {
     /// Exchange the single-use enrollment token for the first admin key and
-    /// store the credentials locally (0600).
+    /// store the URL and the key, nothing else, owner-only (0600).
     Claim {
         /// The name of the key the claim mints, unique in its namespace and
         /// never released (ADR-0026 d9, d12).
         key_name: String,
-        /// The enrollment token the lead printed at first boot.
-        #[arg(long)]
-        token: String,
+        /// Read the enrollment token the lead printed at first boot from
+        /// stdin, without echo on a terminal, so it never reaches argv or
+        /// shell history; required, since --token is gone (ADR-0039 d10).
+        #[arg(long, required = true)]
+        token_stdin: bool,
         /// Name for the tenant the ceremony creates.
         #[arg(long)]
         tenant_name: Option<String>,
@@ -140,7 +269,9 @@ enum KeysCommand {
     /// Issue a key; the value is printed exactly once.
     Issue(KeysIssueArgs),
     /// Issue the one key the agent plugin needs, in one POST /v2/keys, and
-    /// print the OML_URL and OML_API_KEY export lines it reads (ADR-0028 d1).
+    /// print the OML_URL and OML_API_KEY export lines, and with --out the
+    /// claude plugin configure line that reads the file (ADR-0028 d1,
+    /// ADR-0040 d4).
     IssueAgent(IssueAgentArgs),
     /// One key, by id or name, a revoked key's included: grants, denials,
     /// crew and epoch, never its value.
@@ -149,6 +280,25 @@ enum KeysCommand {
         // Not `key`: clap would merge that id with the global --key.
         #[arg(value_name = "KEY")]
         key_ref: String,
+    },
+    /// Mint a fresh connect code for a connector key, voiding its earlier
+    /// codes, and print the connector URL and the code (ADR-0031 d7, d8).
+    ConnectCode {
+        /// The connector key's id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+    },
+    /// End one connection of a connector key; journalled as
+    /// connection.revoked (ADR-0031 d11).
+    Disconnect {
+        /// The connector key's id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// The connection's id, as `oml keys show` lists it.
+        connection_id: String,
+        /// Why; the journal keeps its digest.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -213,6 +363,10 @@ struct IssueAgentArgs {
     /// and print a line that reads it back instead of the value.
     #[arg(long)]
     out: Option<PathBuf>,
+    /// Issue a connector key for a claude.ai custom connector: no value, and
+    /// a single-use connect code printed in its place (ADR-0031 d7).
+    #[arg(long)]
+    connect_code: bool,
 }
 
 #[derive(Subcommand)]
@@ -317,65 +471,178 @@ struct CrewsUpdateArgs {
 }
 
 #[derive(Args)]
-struct SubmitArgs {
-    /// The claim body text.
-    #[arg(long)]
-    claim: String,
-    /// Claim key; defaults to cli-<sha256 prefix of the body>.
-    #[arg(long)]
+struct WriteArgs {
+    /// The claim text.
+    text: String,
+    /// Claim key; omitted, the server derives `auto-<16 hex>` from the key
+    /// and the text (ADR-0039 d6). A new version takes its target's.
+    #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
-    #[arg(long, default_value = "memory")]
-    kind: String,
-    /// remember | learn (learn requires --derives-from).
-    #[arg(long, default_value = "remember")]
-    verb: String,
-    /// Lineage artifact ids; repeatable.
+    /// memory | derived_fact | steering | term | term_mapping |
+    /// vocab_release; omitted, memory, or with --replaces the target's.
+    #[arg(long)]
+    kind: Option<String>,
+    /// Lineage artifact ids; repeatable. Set, a submission is journalled
+    /// learn (ADR-0039 d3).
     #[arg(long = "derives-from")]
-    derives_from: Vec<Uuid>,
-    /// X-OML-Workarea override (workarea id or name).
+    derives_from: Vec<String>,
+    /// The workarea, by id or name; omitted, the key's default workarea, or
+    /// with --replaces the target's, which alone it may name.
     #[arg(long)]
     workarea: Option<String>,
+    /// The promoted tip this write replaces, by artifact id: a new version
+    /// of its claim, held like any write.
+    #[arg(long)]
+    replaces: Option<String>,
+    /// Propose retiring the --replaces claim; the text says why.
+    #[arg(long, requires = "replaces")]
+    retirement: bool,
+    /// Why the claim changes, journalled with the new version.
+    #[arg(long, requires = "replaces")]
+    reason: Option<String>,
+    /// The write's Idempotency-Key, so a re-run naming it replays the first
+    /// answer; omitted, a fresh one per run.
+    #[arg(long)]
+    idempotency_key: Option<String>,
+}
+
+#[derive(Args)]
+struct ReadArgs {
+    /// Fetch this one version, in any state the key may read.
+    #[arg(value_name = "ARTIFACT_ID")]
+    artifact_id: Option<String>,
+    /// Recall: ranked retrieval over promoted rows, steering first.
+    #[arg(long, conflicts_with = "artifact_id")]
+    query: Option<String>,
+    /// How many hits the recall returns, 1 to 100; omitted, 8.
+    #[arg(long, requires = "query")]
+    k: Option<u32>,
+    /// Recall only these kinds, memory or derived_fact; repeatable.
+    #[arg(long, requires = "query")]
+    kinds: Vec<String>,
+    /// Let the recall return this key's own held rows beside promoted hits.
+    #[arg(long, requires = "query")]
+    include_unreviewed: bool,
+    /// The subtree read, by id or name; omitted, the key's default
+    /// workarea, or for the own listing every workarea the key wrote in.
+    #[arg(long, conflicts_with = "artifact_id")]
+    workarea: Option<String>,
+    /// List this key's own rows in every state (the listing's default).
+    #[arg(long, conflicts_with_all = ["artifact_id", "query", "all"])]
+    own: bool,
+    /// List the promoted tips of the workarea's subtree instead.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    all: bool,
+    /// List only rows in this state: held, promoted, demoted, rejected or
+    /// erased.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    state: Option<String>,
+    /// List only rows of this kind.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    kind: Option<String>,
+    /// List versions written at or after this RFC 3339 instant.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    since: Option<String>,
+    /// List versions written before this RFC 3339 instant.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    until: Option<String>,
+    /// The listing's page size.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    limit: Option<u32>,
+    /// The next_cursor of the listing's previous page.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    cursor: Option<String>,
+}
+
+#[derive(Args)]
+struct EventsArgs {
+    /// Resume after this seq: pass back the previous page's next_after_seq.
+    #[arg(long)]
+    after_seq: Option<u64>,
+    /// The subtree tailed, by id or name; omitted, the key's default
+    /// workarea.
+    #[arg(long)]
+    workarea: Option<String>,
+    /// How many journal events one call scans.
+    #[arg(long)]
+    limit: Option<u32>,
 }
 
 #[derive(Subcommand)]
 enum ReviewCommand {
     /// Serve one held item (claims it for this key).
     Next,
-    /// Record a verdict against a served item.
+    /// Verdict: promote. Omitted, the serve is the one item this key has
+    /// claimed (ADR-0039 d10).
+    Approve {
+        /// The serve_id `oml review next` printed.
+        serve_id: Option<String>,
+        /// A note journalled with the verdict.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Verdict: reject, with the reason. Omitted, the serve is the one
+    /// item this key has claimed (ADR-0039 d10).
+    Reject {
+        /// The serve_id `oml review next` printed.
+        serve_id: Option<String>,
+        /// Why the item is rejected; required.
+        #[arg(long)]
+        reason: String,
+    },
+    /// The v0.3.0 verdict, hidden until v0.5.0 (ADR-0039 d12).
+    #[command(hide = true)]
     Verdict(VerdictArgs),
 }
 
+/// `oml submit`, read as `oml write` (ADR-0039 d12).
+#[derive(Args)]
+struct SubmitArgs {
+    #[arg(long)]
+    claim: String,
+    #[arg(long)]
+    claim_key: Option<String>,
+    #[arg(long)]
+    kind: Option<String>,
+    /// v0.3.0's explicit verb, which the HTTP API still honours.
+    #[arg(long)]
+    verb: Option<String>,
+    #[arg(long = "derives-from")]
+    derives_from: Vec<String>,
+    #[arg(long)]
+    workarea: Option<String>,
+}
+
+/// `oml review verdict`, read as `oml review approve` or `reject` with the
+/// serve the v0.3.0 verb derived from the memory (ADR-0039 d12).
 #[derive(Args)]
 struct VerdictArgs {
-    /// The served memory's artifact id.
     #[arg(long)]
     memory: Uuid,
     #[arg(long, conflicts_with = "reject")]
     approve: bool,
     #[arg(long)]
     reject: bool,
-    /// Required to reject.
     #[arg(long)]
     reason: Option<String>,
 }
 
+/// `oml recall`, read as `oml read --query` (ADR-0039 d12).
 #[derive(Args)]
 struct RecallArgs {
     #[arg(long)]
     query: String,
-    #[arg(long, default_value_t = 8)]
-    k: usize,
-    /// X-OML-Workarea override (workarea id or name).
+    #[arg(long)]
+    k: Option<u32>,
     #[arg(long)]
     workarea: Option<String>,
 }
 
+/// `oml supersede`, read as `oml write --replaces` (ADR-0039 d12).
 #[derive(Args)]
 struct SupersedeArgs {
-    /// The promoted artifact to supersede (must be the current tip).
     #[arg(long)]
     target: Uuid,
-    /// The successor claim body (the successor keeps the target's claim_key).
     #[arg(long)]
     claim: String,
 }
@@ -397,7 +664,8 @@ struct VerifyChainArgs {
     /// input, confirmed out of band (chain-format.md).
     #[arg(long = "signing-key", env = "OML_CLI_SIGNING_KEY")]
     signing_keys: Vec<String>,
-    /// Tenant, by id or name (defaults to the stored credentials' tenant).
+    /// Tenant, by id or name (defaults to the key's own, read through
+    /// GET /v2/whoami).
     #[arg(long)]
     tenant: Option<String>,
 }
@@ -417,24 +685,151 @@ fn parse_grant(s: &str) -> Result<(String, String), String> {
 // Context resolution
 // ---------------------------------------------------------------------------
 
-/// defaults < credentials file < flags/environment (clap already applied the
-/// env vars), mirroring the server's own precedence law.
+/// The first start source that sets either value, with the names it gives
+/// them; never printed with its values (ADR-0039 d15).
+struct Source<'a> {
+    /// The credentials file as a refusal names it; `None` for the flags and
+    /// the environment, whose value names stand alone.
+    file: Option<String>,
+    url_name: &'static str,
+    key_name: &'static str,
+    url: Option<&'a String>,
+    key: Option<&'a String>,
+}
+
+impl Source<'_> {
+    /// Where `name` was set, as doctor reports it: the flag or variable, or
+    /// the field and the file.
+    fn origin(&self, name: &str) -> String {
+        match &self.file {
+            Some(file) => format!("{name} in {file}"),
+            None => name.to_owned(),
+        }
+    }
+
+    /// Why a source that sets one value alone is refused, naming the other.
+    fn half(&self) -> String {
+        let (set, unset) = if self.url.is_some() {
+            (self.url_name, self.key_name)
+        } else {
+            (self.key_name, self.url_name)
+        };
+        match &self.file {
+            Some(file) => format!("{file} sets {set} without {unset}"),
+            None => format!("{set} is set without {unset}"),
+        }
+    }
+}
+
+/// Why no start source sets anything.
+const NO_PAIR: &str = "no URL and API key: pass --url and --api-key, set OML_URL and OML_API_KEY, \
+                       or run `oml bootstrap claim`";
+
+/// The flags, then the environment, then the credentials file: the first
+/// that sets either value, or `None` (ADR-0039 d15).
+fn first_source<'a>(cli: &'a Cli, stored: &'a Credentials) -> Option<Source<'a>> {
+    let file = creds::path().map_or_else(
+        |_| "the credentials file".to_owned(),
+        |p| format!("the credentials file {}", p.display()),
+    );
+    [
+        Source {
+            file: None,
+            url_name: "--url",
+            key_name: "--api-key",
+            url: cli.start.flag_url.as_ref(),
+            key: cli.start.flag_key.as_ref(),
+        },
+        Source {
+            file: None,
+            url_name: "OML_URL",
+            key_name: "OML_API_KEY",
+            url: cli.start.env_url.as_ref(),
+            key: cli.start.env_key.as_ref(),
+        },
+        Source {
+            file: Some(file),
+            url_name: "url",
+            key_name: "api_key",
+            url: stored.url.as_ref(),
+            key: stored.api_key.as_ref(),
+        },
+    ]
+    .into_iter()
+    .find(|s| s.url.is_some() || s.key.is_some())
+}
+
+/// The client of one URL-and-key pair, taken from the first source that sets
+/// either value: the flags, then the environment, then the credentials file.
+/// A source setting one alone is refused naming the other, so a key is never
+/// sent to a URL from another source (ADR-0039 d15).
 fn resolve(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
-    let server = cli
-        .server
+    match first_source(cli, stored) {
+        Some(Source {
+            url: Some(url),
+            key: Some(key),
+            ..
+        }) => Ok(Client::new(url.clone(), Some(key.clone()))),
+        Some(source) => Err(missing(&source.half())),
+        None => Err(missing(NO_PAIR)),
+    }
+}
+
+/// The client of `oml bootstrap claim`, which sends no key: the URL of the
+/// first source that sets one (ADR-0039 d15).
+fn resolve_url(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
+    let url = cli
+        .start
+        .flag_url
         .clone()
-        .or_else(|| stored.server.clone())
-        .ok_or_else(|| {
-            CliError::local(
-                "no server: pass --server, set OML_CLI_SERVER, or run `oml bootstrap claim`",
-            )
-        })?;
-    let key = cli.key.clone().or_else(|| stored.key.clone());
-    Ok(Client::new(server, key))
+        .or_else(|| cli.start.env_url.clone())
+        .or_else(|| stored.url.clone())
+        .ok_or_else(|| missing("no URL: pass --url or set OML_URL"))?;
+    Ok(Client::new(url, None))
+}
+
+/// A start setting is missing: `why`, the one-source rule, and each v0.3.0
+/// variable that is set, named for renaming and never read (ADR-0039 d12,
+/// d15).
+fn missing(why: &str) -> CliError {
+    CliError::local(missing_message(why))
+}
+
+/// [`missing`]'s message, which doctor prints as its next action.
+fn missing_message(why: &str) -> String {
+    let mut message = format!(
+        "{why}; a URL and its key come from one source, the flags, the environment or the \
+         credentials file (cli/reference.md \"Start settings\")"
+    );
+    for (old, new) in [
+        ("OML_CLI_SERVER", "OML_URL"),
+        ("OML_CLI_KEY", "OML_API_KEY"),
+    ] {
+        if std::env::var_os(old).is_some() {
+            let _ = write!(message, "; {old} is not read since v0.4.0: rename it {new}");
+        }
+    }
+    message
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let mut cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
+    cli.start = Start::of(&cli, &matches);
+    // The hook reads neither flag, so it names neither (ADR-0029 d4).
+    if !matches!(cli.command, Command::Hook { .. }) {
+        for (old, new, used) in [
+            ("--server", "--url", cli.server.is_some()),
+            ("--key", "--api-key", cli.key.is_some()),
+        ] {
+            if used {
+                eprintln!("warning: {old} is renamed {new}; v0.5.0 removes {old} (ADR-0039 d12)");
+            }
+        }
+    }
     match run(&cli) {
         Ok(code) => code,
         Err(CliError::Refused {
@@ -468,14 +863,34 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
-    // The hook reads OML_URL and OML_API_KEY alone, so it runs before the
-    // stored admin credentials are loaded, and ignores --server and --key
-    // (ADR-0029 d4).
-    if let Command::Hook {
-        command: HookCommand::SessionStart,
-    } = &cli.command
-    {
-        return Ok(run_session_start());
+    // The hooks read the plugin's options or OML_URL and OML_API_KEY
+    // themselves, so they run before the stored admin credentials are loaded,
+    // and ignore --url and --api-key (ADR-0029 d4, ADR-0040 d3).
+    if let Command::Hook { command } = &cli.command {
+        return Ok(match command {
+            HookCommand::SessionStart => run_hook(
+                "session-start",
+                hook::DEADLINE,
+                "no context was loaded",
+                |var, stdin| hook::session_start(var, stdin),
+            ),
+            HookCommand::ToolFailure => run_hook(
+                "tool-failure",
+                hook::FAILURE_DEADLINE,
+                "nothing was recalled",
+                |var, stdin| hook::tool_failure(var, stdin),
+            ),
+            HookCommand::SessionEnd => run_hook(
+                "session-end",
+                hook::SESSION_END_DEADLINE,
+                "the session cache was left",
+                |var, stdin| {
+                    hook::session_end(var, stdin)
+                        .map(|()| String::new())
+                        .map_err(Some)
+                },
+            ),
+        });
     }
     let stored = creds::load();
     match &cli.command {
@@ -483,12 +898,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command:
                 BootstrapCommand::Claim {
                     key_name,
-                    token,
+                    token_stdin: _,
                     tenant_name,
                     principal,
                 },
         } => {
-            let client = resolve(cli, &stored)?;
+            let client = resolve_url(cli, &stored)?;
+            let token = read_secret(&format!("enrollment token for {}", client.server()))?;
             let mut body = json!({ "enrollment_token": token, "name": key_name });
             if let Some(name) = tenant_name {
                 body["tenant_name"] = json!(name);
@@ -502,15 +918,11 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 &CallOpts {
                     auth: false,
                     idempotency: true,
-                    workarea: None,
                 },
             )?;
             let path = creds::store(&Credentials {
-                server: Some(client.server().to_owned()),
-                key: response["value"].as_str().map(ToOwned::to_owned),
-                key_id: response["key_id"].as_str().map(ToOwned::to_owned),
-                tenant_id: response["tenant_id"].as_str().map(ToOwned::to_owned),
-                root_workarea_id: response["root_workarea_id"].as_str().map(ToOwned::to_owned),
+                url: Some(client.server().to_owned()),
+                api_key: response["value"].as_str().map(ToOwned::to_owned),
             })
             .map_err(CliError::Local)?;
             if cli.json {
@@ -568,7 +980,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "grants": grants_json(&grants),
             });
             if let Some(wa) = &args.default_workarea {
-                body["default_workarea_id"] = json!(wa);
+                body["default_workarea"] = json!(wa);
             }
             if let Some(crew) = &args.crew {
                 body["crew"] = json!(crew);
@@ -648,6 +1060,66 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     Some(at) => println!("    revoked  : {at}"),
                     None => println!("    revoked  : no (live)"),
                 }
+                println!("    credential: {}", field(&response, "credential"));
+                // A connector key's connections, by id: the id is what
+                // `oml keys disconnect` names (ADR-0031 d11).
+                for c in response["connections"].as_array().into_iter().flatten() {
+                    println!(
+                        "    connection: {} {} {} -> {}",
+                        field(c, "connection_id"),
+                        field(c, "state"),
+                        field(c, "client_id"),
+                        field(c, "redirect_uri"),
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command: KeysCommand::ConnectCode { key_ref },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/keys/{}/connect-codes", segment(key_ref)?);
+            let (response, replayed) = client.post_replayable(&path, &json!({}), &write_opts())?;
+            let printed = minted_code_printed(key_ref, &response, replayed, cli.json);
+            for line in &printed.stdout {
+                println!("{line}");
+            }
+            for line in &printed.stderr {
+                eprintln!("{line}");
+            }
+            Ok(ExitCode::from(printed.exit))
+        }
+
+        Command::Keys {
+            command:
+                KeysCommand::Disconnect {
+                    key_ref,
+                    connection_id,
+                    reason,
+                },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!(
+                "/v2/keys/{}/connections/{}/revoke",
+                segment(key_ref)?,
+                segment(connection_id)?
+            );
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let (_, response) = client.post(&path, &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "connection {} of key {key_ref}: {} ({})",
+                    field(&response, "connection_id"),
+                    field(&response, "state"),
+                    field(&response, "revoked_cause"),
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -661,7 +1133,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "workarea_node_id": subtree });
+            let mut body = json!({ "workarea": subtree });
             if let Some(reason) = reason {
                 body["reason"] = json!(reason);
             }
@@ -687,7 +1159,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: WorkareasCommand::Create { parent, name, crew },
         } => {
             let client = resolve(cli, &stored)?;
-            let mut body = json!({ "parent_id": parent, "name": name });
+            let mut body = json!({ "parent": parent, "name": name });
             if let Some(crew) = crew {
                 body["crew"] = json!(crew);
             }
@@ -780,212 +1252,121 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Crews { command } => run_crews(cli, &stored, command),
 
+        Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
+        Command::Read(args) => run_read(cli, &stored, args),
+        Command::Events(args) => run_events(cli, &stored, args),
+        Command::Review { command } => run_review(cli, &stored, command),
+
+        // The v0.3.0 verbs run their successors, each naming it on one
+        // stderr line, until v0.5.0 removes them (ADR-0039 d12).
         Command::Submit(args) => {
-            let client = resolve(cli, &stored)?;
-            let claim_key = args.claim_key.clone().unwrap_or_else(|| {
-                let digest = hex::encode(Sha256::digest(args.claim.as_bytes()));
-                format!("cli-{}", &digest[..12])
-            });
-            let body = json!({
-                "verb": args.verb,
-                "claim_key": claim_key,
-                "kind": args.kind,
-                "body": args.claim,
-                "derives_from": args.derives_from,
-            });
-            let opts = CallOpts {
-                auth: true,
-                idempotency: true,
-                workarea: args.workarea.clone(),
-            };
-            let (_, response) = client.post("/v1/memories", &body, &opts)?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "accepted — {} (journal seq {})",
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-                println!("  artifact  : {}", field(&response, "artifact_id"));
-                println!("  claim_key : {}", field(&response, "claim_key"));
-                println!("  digest    : {}", field(&response, "plaintext_digest"));
-                println!("  workarea  : {}", field(&response, "workarea_id"));
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml submit", "oml write");
+            run_write(
+                cli,
+                &stored,
+                &Write {
+                    claim_key: args.claim_key.as_deref(),
+                    kind: args.kind.as_deref(),
+                    verb: args.verb.as_deref(),
+                    derives_from: &args.derives_from,
+                    workarea: args.workarea.as_deref(),
+                    ..Write::submission(&args.claim)
+                },
+            )
         }
-
-        Command::Review {
-            command: ReviewCommand::Next,
-        } => {
-            let client = resolve(cli, &stored)?;
-            let (status, response) = client.post("/v2/review/next", &json!({}), &write_opts())?;
-            if status == 204 {
-                if cli.json {
-                    print_json(&json!({ "serve": Value::Null }));
-                } else {
-                    println!("nothing in scope waits — the queue is empty (204).");
-                }
-                return Ok(ExitCode::SUCCESS);
-            }
-            if cli.json {
-                print_json(&response);
-            } else {
-                let item = &response["item"];
-                println!("serving 1 held item");
-                println!();
-                println!(
-                    "  artifact  {} @ v{}   kind: {}   writer: {}",
-                    field(item, "artifact_id"),
-                    item["version"],
-                    field(item, "kind"),
-                    field(item, "principal")
-                );
-                println!("  claim_key {}", field(item, "claim_key"));
-                println!(
-                    "  body      | {}",
-                    field(item, "body").replace('\n', "\n            | ")
-                );
-                println!();
-                println!(
-                    "  serve_id: {}  (expires {})",
-                    field(&response, "serve_id"),
-                    field(&response, "expires_at")
-                );
-                println!(
-                    "  verdict with: oml review verdict --memory {} --approve|--reject --reason …",
-                    field(item, "artifact_id")
-                );
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
-        Command::Review {
-            command: ReviewCommand::Verdict(args),
-        } => {
-            if !args.approve && !args.reject {
-                return Err(CliError::local("a verdict is one of --approve or --reject"));
-            }
-            let client = resolve(cli, &stored)?;
-            // The PoC serve binding round-trips the memory id
-            // (phase-4 transport: serve_id = "srv_" + simple uuid).
-            let serve_id = format!("srv_{}", args.memory.simple());
-            let verdict = if args.approve { "approve" } else { "reject" };
-            let mut body = json!({ "serve_id": serve_id, "verdict": verdict });
-            if let Some(reason) = &args.reason {
-                body["reason"] = json!(reason);
-            }
-            let (_, response) = client.post("/v2/review/verdicts", &body, &write_opts())?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "verdict recorded — {} is {} (journal seq {})",
-                    field(&response, "artifact_id"),
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
         Command::Recall(args) => {
-            let client = resolve(cli, &stored)?;
-            let opts = CallOpts {
-                auth: true,
-                idempotency: false, // read-shaped POST (http-api.md idempotency)
-                workarea: args.workarea.clone(),
-            };
-            let (_, response) = client.post(
-                "/v1/memories/recall",
-                &json!({ "query": args.query, "k": args.k, "include_bodies": true }),
-                &opts,
-            )?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                let hits = response["hits"].as_array().cloned().unwrap_or_default();
-                println!(
-                    "{} hit(s) — query digest {}",
-                    hits.len(),
-                    field(&response, "query_digest")
-                );
-                for hit in &hits {
-                    let memory = &hit["memory"];
-                    println!();
-                    println!(
-                        "  {}  {}  ({})",
-                        field(memory, "artifact_id"),
-                        field(memory, "claim_key"),
-                        field(memory, "state")
-                    );
-                    println!("    | {}", field(memory, "body").replace('\n', "\n    | "));
-                }
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml recall", "oml read --query");
+            run_read(
+                cli,
+                &stored,
+                &ReadArgs {
+                    artifact_id: None,
+                    query: Some(args.query.clone()),
+                    k: args.k,
+                    kinds: Vec::new(),
+                    include_unreviewed: false,
+                    workarea: args.workarea.clone(),
+                    own: false,
+                    all: false,
+                    state: None,
+                    kind: None,
+                    since: None,
+                    until: None,
+                    limit: None,
+                    cursor: None,
+                },
+            )
         }
-
         Command::Supersede(args) => {
-            let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
-                &format!("/v1/memories/{}/supersede", args.target),
-                &json!({ "body": args.claim }),
-                &write_opts(),
-            )?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "accepted — successor is {} (journal seq {})",
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-                println!("  artifact  : {}", field(&response, "artifact_id"));
-                println!("  claim_key : {}", field(&response, "claim_key"));
-                println!("  digest    : {}", field(&response, "plaintext_digest"));
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml supersede", "oml write --replaces");
+            let target = args.target.to_string();
+            run_write(
+                cli,
+                &stored,
+                &Write {
+                    replaces: Some(&target),
+                    ..Write::submission(&args.claim)
+                },
+            )
         }
 
         Command::Audit {
             command: AuditCommand::VerifyChain(args),
         } => run_verify_chain(cli, &stored, args),
 
+        Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Quickstart(args) => run_quickstart(args),
+        Command::Setup {
+            command: SetupCommand::ClaudeCode(args),
+        } => run_setup_claude_code(cli, &stored, args),
         Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
 }
 
-/// `oml hook session-start`: the hook document on stdout, or nothing, and at
-/// most one line on stderr; exit 0 whatever happened, so a session always
-/// starts (ADR-0029 d5). The hook runs on its own thread under
-/// `hook::DEADLINE`: returning from `main` ends the process even while that
-/// thread is stuck where no timeout reaches, as in a DNS lookup.
-fn run_session_start() -> ExitCode {
+/// One `oml hook` verb: the variables and stdin in, the hook document or
+/// why there is none out (`None` is silent).
+type HookVerb =
+    fn(&dyn Fn(&str) -> Option<String>, &mut dyn std::io::Read) -> Result<String, Option<String>>;
+
+/// `oml hook <verb>`: the hook document on stdout, or nothing, and at most
+/// one line on stderr; exit 0 whatever happened, so a session always starts
+/// and a failed command is never followed by a hook error (ADR-0029 d5,
+/// ADR-0038 d7). The hook runs on its own thread under `deadline`:
+/// returning from `main` ends the process even while that thread is stuck
+/// where no timeout reaches, as in a DNS lookup.
+fn run_hook(
+    verb: &'static str,
+    deadline: std::time::Duration,
+    nothing: &'static str,
+    hook: HookVerb,
+) -> ExitCode {
     use std::io::Write as _;
     let (done, outcome) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let var = |name: &str| std::env::var(name).ok();
-        let _ = done.send(hook::session_start(&var, &mut std::io::stdin().lock()));
+        let _ = done.send(hook(&var, &mut std::io::stdin().lock()));
     });
-    let reason = match outcome.recv_timeout(hook::DEADLINE) {
+    let reason = match outcome.recv_timeout(deadline) {
         Ok(Ok(document)) => {
             // A closed stream is not a reason to exit non-zero: writes are
             // not unwrapped, as println! would.
-            let _ = writeln!(std::io::stdout(), "{document}");
+            if !document.is_empty() {
+                let _ = writeln!(std::io::stdout(), "{document}");
+            }
             None
         }
         Ok(Err(reason)) => reason,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(format!(
-            "no answer within {} seconds, so no context was loaded",
-            hook::DEADLINE.as_secs()
+            "no answer within {} seconds, so {nothing}",
+            deadline.as_secs()
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Some("the hook stopped before it finished, so no context was loaded".to_owned())
+            Some(format!("the hook stopped before it finished, so {nothing}"))
         }
     };
     if let Some(reason) = reason {
-        let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
+        let _ = writeln!(std::io::stderr(), "oml hook {verb}: {reason}");
     }
     ExitCode::SUCCESS
 }
@@ -994,7 +1375,6 @@ fn write_opts() -> CallOpts {
     CallOpts {
         auth: true,
         idempotency: true,
-        workarea: None,
     }
 }
 
@@ -1016,8 +1396,395 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| json!({ "workarea_node_id": node, "role": role }))
+        .map(|(node, role)| json!({ "workarea": node, "role": role }))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml write, oml read, oml events, oml review (ADR-0039 d10)
+// ---------------------------------------------------------------------------
+
+/// The one stderr line a v0.3.0 verb prints before it runs its successor
+/// (ADR-0039 d12).
+fn renamed(old: &str, new: &str) {
+    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.0 removes `{old}` (ADR-0039 d12)");
+}
+
+/// One write, from `oml write`'s flags or a v0.3.0 verb's.
+struct Write<'a> {
+    text: &'a str,
+    claim_key: Option<&'a str>,
+    kind: Option<&'a str>,
+    /// v0.3.0's explicit verb: only `oml submit` sends one (ADR-0039 d12).
+    verb: Option<&'a str>,
+    derives_from: &'a [String],
+    workarea: Option<&'a str>,
+    replaces: Option<&'a str>,
+    retirement: bool,
+    reason: Option<&'a str>,
+    idempotency_key: Option<&'a str>,
+}
+
+impl<'a> Write<'a> {
+    fn of(args: &'a WriteArgs) -> Self {
+        Self {
+            text: &args.text,
+            claim_key: args.claim_key.as_deref(),
+            kind: args.kind.as_deref(),
+            verb: None,
+            derives_from: &args.derives_from,
+            workarea: args.workarea.as_deref(),
+            replaces: args.replaces.as_deref(),
+            retirement: args.retirement,
+            reason: args.reason.as_deref(),
+            idempotency_key: args.idempotency_key.as_deref(),
+        }
+    }
+
+    /// A submission of `text` and nothing else.
+    fn submission(text: &'a str) -> Self {
+        Self {
+            text,
+            claim_key: None,
+            kind: None,
+            verb: None,
+            derives_from: &[],
+            workarea: None,
+            replaces: None,
+            retirement: false,
+            reason: None,
+            idempotency_key: None,
+        }
+    }
+}
+
+/// `oml write`: one `POST /v1/memories`, or with `--replaces` one `POST
+/// /v1/memories/{replaces}/supersede`, as `oml_write` chooses by the fields
+/// present (ADR-0039 d3). Each flag outside its mode is refused by clap
+/// before anything is sent; an omitted field is the server's default, so
+/// the server derives the claim key and journals learn when lineage is
+/// named (ADR-0039 d3, d6).
+fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "body": write.text });
+    for (name, value) in [
+        ("claim_key", write.claim_key),
+        ("kind", write.kind),
+        ("verb", write.verb),
+        ("workarea", write.workarea),
+        ("reason", write.reason),
+    ] {
+        if let Some(value) = value {
+            body[name] = json!(value);
+        }
+    }
+    if !write.derives_from.is_empty() {
+        body["derives_from"] = json!(write.derives_from);
+    }
+    if write.retirement {
+        body["retirement"] = json!(true);
+    }
+    let path = match write.replaces {
+        Some(target) => format!("/v1/memories/{}/supersede", segment(target)?),
+        None => "/v1/memories".to_owned(),
+    };
+    let key = write
+        .idempotency_key
+        .map_or_else(new_idempotency_key, ToOwned::to_owned);
+    let (_, response) = client.post_keyed(&path, &body, &key)?;
+    if cli.json {
+        print_json(&response);
+    } else {
+        println!(
+            "accepted — {} (journal seq {})",
+            field(&response, "state"),
+            response["journal_seq"]
+        );
+        println!("  artifact  : {}", field(&response, "artifact_id"));
+        println!("  claim_key : {}", field(&response, "claim_key"));
+        println!("  digest    : {}", field(&response, "plaintext_digest"));
+        println!("  workarea  : {}", field(&response, "workarea_id"));
+        if response["replaces"].is_object() {
+            println!(
+                "  replaces  : {} @ v{}",
+                field(&response["replaces"], "artifact_id"),
+                response["replaces"]["version"]
+            );
+        }
+        if response["retirement"] == json!(true) {
+            println!("  retirement: proposed; the claim retires when the proposal is approved");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml read`, in `oml_read`'s three modes (ADR-0039 d4): with an artifact
+/// id one `GET /v1/memories/{artifact_id}`, with `--query` one `POST
+/// /v1/memories/recall` with the text, and with neither one `GET
+/// /v1/memories`, `own=true` unless `--all`. A flag outside the mode its
+/// arguments choose, `--query` beside an artifact id among them, is refused
+/// by clap, naming it, before anything is sent.
+fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let response = if let Some(id) = &args.artifact_id {
+        client.get(&format!("/v1/memories/{}", segment(id)?))?.1
+    } else if let Some(query) = &args.query {
+        let mut body = json!({ "query": query, "include_text": true });
+        if let Some(k) = args.k {
+            body["k"] = json!(k);
+        }
+        if let Some(workarea) = &args.workarea {
+            body["workarea"] = json!(workarea);
+        }
+        if !args.kinds.is_empty() {
+            body["kinds"] = json!(args.kinds);
+        }
+        if args.include_unreviewed {
+            body["include_unreviewed"] = json!(true);
+        }
+        let read = CallOpts {
+            auth: true,
+            idempotency: false, // read-shaped POST (http-api.md idempotency)
+        };
+        client.post("/v1/memories/recall", &body, &read)?.1
+    } else {
+        let limit = args.limit.map(|l| l.to_string());
+        let mut params = vec![("own", (!args.all).to_string())];
+        for (name, value) in [
+            ("workarea", args.workarea.as_ref()),
+            ("state", args.state.as_ref()),
+            ("kind", args.kind.as_ref()),
+            ("since", args.since.as_ref()),
+            ("until", args.until.as_ref()),
+            ("limit", limit.as_ref()),
+            ("cursor", args.cursor.as_ref()),
+        ] {
+            if let Some(value) = value {
+                params.push((name, value.clone()));
+            }
+        }
+        client
+            .get(&format!("/v1/memories?{}", query_string(&params)))?
+            .1
+    };
+    if cli.json {
+        print_json(&response);
+    } else if args.artifact_id.is_some() {
+        println!(
+            "{} @ v{}  {}  {}  {}",
+            field(&response, "artifact_id"),
+            response["version"],
+            field(&response, "kind"),
+            field(&response, "state"),
+            field(&response, "workarea_path")
+        );
+        println!("  claim_key {}", field(&response, "claim_key"));
+        println!("  | {}", field(&response, "text").replace('\n', "\n  | "));
+    } else if args.query.is_some() {
+        let hits = response["hits"].as_array().cloned().unwrap_or_default();
+        println!(
+            "{} hit(s) — query digest {}",
+            hits.len(),
+            field(&response, "query_digest")
+        );
+        for memory in response["steering"].as_array().into_iter().flatten() {
+            println!();
+            println!(
+                "  steering  {}  {}",
+                field(memory, "artifact_id"),
+                field(memory, "claim_key")
+            );
+            println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
+        }
+        for hit in &hits {
+            let memory = &hit["memory"];
+            println!();
+            println!(
+                "  {}  {}  ({})",
+                field(memory, "artifact_id"),
+                field(memory, "claim_key"),
+                field(memory, "state")
+            );
+            println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
+        }
+    } else {
+        for item in response["items"].as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  v{}  {}  {}  {}  {}",
+                field(item, "artifact_id"),
+                field(item, "claim_key"),
+                item["version"],
+                field(item, "state"),
+                field(item, "kind"),
+                field(item, "workarea_path"),
+                field(item, "created_at")
+            );
+        }
+        if let Some(cursor) = response["next_cursor"].as_str() {
+            println!("more: --cursor {cursor}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml events`: one `GET /v2/events` page within the key's reader access,
+/// each event digest-only (http-api.md events tail; ADR-0039 d10).
+fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut params = Vec::new();
+    if let Some(after) = args.after_seq {
+        params.push(("after_seq", after.to_string()));
+    }
+    if let Some(workarea) = &args.workarea {
+        params.push(("workarea", workarea.clone()));
+    }
+    if let Some(limit) = args.limit {
+        params.push(("limit", limit.to_string()));
+    }
+    let path = if params.is_empty() {
+        "/v2/events".to_owned()
+    } else {
+        format!("/v2/events?{}", query_string(&params))
+    };
+    let (_, page) = client.get(&path)?;
+    if cli.json {
+        print_json(&page);
+    } else {
+        for event in page["items"].as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  {}  {}",
+                event["seq"],
+                field(event, "event_type"),
+                field(event, "at"),
+                field(&event["payload"], "artifact_id")
+            );
+        }
+        println!(
+            "head seq {}; next --after-seq {}",
+            page["head_seq"], page["next_after_seq"]
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `name=value` pairs joined by `&`, each value [`encode`]d.
+fn query_string(params: &[(&str, String)]) -> String {
+    params
+        .iter()
+        .map(|(name, value)| format!("{name}={}", encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// The review ceremony: `next` serves one held item, and `approve` and
+/// `reject` record a verdict against the named serve or, with none, the one
+/// item this key has claimed (ADR-0039 d10, call map D5).
+fn run_review(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &ReviewCommand,
+) -> Result<ExitCode, CliError> {
+    match command {
+        ReviewCommand::Next => run_review_next(cli, stored),
+        ReviewCommand::Approve { serve_id, note } => {
+            run_verdict(cli, stored, "approve", serve_id.as_deref(), note.as_deref())
+        }
+        ReviewCommand::Reject { serve_id, reason } => {
+            run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason))
+        }
+        ReviewCommand::Verdict(args) => {
+            if !args.approve && !args.reject {
+                return Err(CliError::local("a verdict is one of --approve or --reject"));
+            }
+            // The v0.3.0 verb named the memory, and the PoC serve binding
+            // round-trips its id (serve_id = "srv_" + simple uuid).
+            let serve_id = format!("srv_{}", args.memory.simple());
+            let verdict = if args.approve { "approve" } else { "reject" };
+            renamed("oml review verdict", &format!("oml review {verdict}"));
+            run_verdict(
+                cli,
+                stored,
+                verdict,
+                Some(&serve_id),
+                args.reason.as_deref(),
+            )
+        }
+    }
+}
+
+/// `oml review next`: one `POST /v2/review/next`, which claims the item it
+/// serves for this key; 204 when nothing in scope waits.
+fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let (status, response) = client.post("/v2/review/next", &json!({}), &write_opts())?;
+    if status == 204 {
+        if cli.json {
+            print_json(&json!({ "serve": Value::Null }));
+        } else {
+            println!("nothing in scope waits — the queue is empty (204).");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if cli.json {
+        print_json(&response);
+    } else {
+        let item = &response["item"];
+        println!("serving 1 held item");
+        println!();
+        println!(
+            "  artifact  {} @ v{}   kind: {}   writer: {}",
+            field(item, "artifact_id"),
+            item["version"],
+            field(item, "kind"),
+            field(item, "principal")
+        );
+        println!("  claim_key {}", field(item, "claim_key"));
+        println!(
+            "  body      | {}",
+            field(item, "text").replace('\n', "\n            | ")
+        );
+        println!();
+        println!(
+            "  serve_id: {}  (expires {})",
+            field(&response, "serve_id"),
+            field(&response, "expires_at")
+        );
+        println!("  verdict with: oml review approve [--note …] | oml review reject --reason …");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One `POST /v2/review/verdicts`: `serve_id` only when named, so the server
+/// applies an unnamed verdict to the key's one claimed item and refuses it
+/// naming `serve_id` when the key holds none or several; a note or reason
+/// travels as `reason` (ADR-0039 d10).
+fn run_verdict(
+    cli: &Cli,
+    stored: &Credentials,
+    verdict: &str,
+    serve_id: Option<&str>,
+    reason: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "verdict": verdict });
+    if let Some(serve_id) = serve_id {
+        body["serve_id"] = json!(serve_id);
+    }
+    if let Some(reason) = reason {
+        body["reason"] = json!(reason);
+    }
+    let (_, response) = client.post("/v2/review/verdicts", &body, &write_opts())?;
+    if cli.json {
+        print_json(&response);
+    } else {
+        println!(
+            "verdict recorded — {} is {} (journal seq {})",
+            field(&response, "artifact_id"),
+            field(&response, "state"),
+            response["journal_seq"]
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,16 +1794,26 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// One `POST /v2/keys` for a writer key named `<key-name>`, with writer and
 /// reader grants on the workarea, that workarea as its default and the
 /// `--crew` when one is given, each reference as the operator spelled it,
-/// then exactly two lines on stdout: `export OML_URL=…` and `export
+/// then two lines on stdout: `export OML_URL=…` and `export
 /// OML_API_KEY=…`, the second reading the value back from the `--out` file
-/// when one is named. Every other line goes to stderr, and no key value
-/// reaches either stream once `--out` is given (cli/reference.md `oml keys
-/// issue-agent`; ADR-0028 d1; ADR-0026 d12).
+/// when one is named, and with `--out` a third, the `claude plugin configure
+/// --values-stdin` line that reads the same file (ADR-0040 d4). Every other
+/// line goes to stderr, and no key value reaches either stream once `--out`
+/// is given (cli/reference.md `oml keys issue-agent`; ADR-0028 d1; ADR-0026
+/// d12). With `--connect-code` the body carries `connect_code: true` and the
+/// answer is printed as [`connect_code_printed`] declares (ADR-0031 d7).
 fn run_issue_agent(
     cli: &Cli,
     stored: &Credentials,
     args: &IssueAgentArgs,
 ) -> Result<ExitCode, CliError> {
+    if args.connect_code && args.out.is_some() {
+        return Err(CliError::local(
+            "refused: --out with --connect-code, because a connector key has no value to write \
+             and its code is for a person to read and type within minutes; nothing was sent \
+             (ADR-0031 d7)",
+        ));
+    }
     if cli.json && args.out.is_some() {
         return Err(CliError::local(
             "refused: --out with --json, because the 201 body --json prints carries the key \
@@ -1057,14 +1834,17 @@ fn run_issue_agent(
         "name": args.key_name,
         "held_by": args.held_by,
         "principal": args.principal,
-        "default_workarea_id": args.workarea,
+        "default_workarea": args.workarea,
         "grants": grants_json(&grants),
     });
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
     }
-    let response = match client.post("/v2/keys", &body, &write_opts()) {
-        Ok((_, response)) => response,
+    if args.connect_code {
+        body["connect_code"] = json!(true);
+    }
+    let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
+        Ok(answer) => answer,
         Err(failure) => {
             // The empty file holds nothing either way, so it goes.
             if let Some(Err(e)) = key_file.map(KeyFile::discard) {
@@ -1074,6 +1854,14 @@ fn run_issue_agent(
                 // Sent, and no usable answer: a key may exist whose value
                 // nothing kept. Only a refusal, or a failure before sending,
                 // means no key exists (ADR-0028 d1).
+                CliError::Unanswered(why) if args.connect_code => CliError::Unanswered(format!(
+                    "{why}. A connector key named {name} for principal {principal} may have been \
+                     issued. If it was, its connect code is lost: `oml keys show {name}` answers \
+                     whether it exists, and `oml keys connect-code {name}` mints a new code \
+                     (ADR-0031 d7)",
+                    name = args.key_name,
+                    principal = args.principal,
+                )),
                 CliError::Unanswered(why) => CliError::Unanswered(format!(
                     "{why}. A key named {name} for principal {principal} may have been issued. If \
                      it was, its value is lost, since the server keeps only its hash and the CLI \
@@ -1088,6 +1876,16 @@ fn run_issue_agent(
             });
         }
     };
+    if args.connect_code {
+        let printed = connect_code_printed(&response, replayed, cli.json);
+        for line in &printed.stdout {
+            println!("{line}");
+        }
+        for line in &printed.stderr {
+            eprintln!("{line}");
+        }
+        return Ok(ExitCode::from(printed.exit));
+    }
     if cli.json {
         print_json(&response);
         return Ok(ExitCode::SUCCESS);
@@ -1104,17 +1902,26 @@ fn run_issue_agent(
     let value = response["value"]
         .as_str()
         .ok_or_else(|| lost("the 201 carried no value"))?;
-    let key_line = match key_file {
-        None => format!("export OML_API_KEY={}", sh_quote(value)),
+    let (key_line, configure) = match key_file {
+        None => (format!("export OML_API_KEY={}", sh_quote(value)), None),
         Some(file) => {
             let shown = file.shown().to_owned();
             file.write_value(value)
                 .map_err(|e| lost(&format!("writing {shown} failed ({e})")))?;
-            format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown))
+            (
+                format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown)),
+                Some([
+                    configure_line(client.server(), &shown),
+                    setup_line(client.server(), &shown),
+                ]),
+            )
         }
     };
     println!("export OML_URL={}", sh_quote(client.server()));
     println!("{key_line}");
+    for line in configure.iter().flatten() {
+        println!("{line}");
+    }
 
     let granted: Vec<String> = response["grants"]
         .as_array()
@@ -1134,8 +1941,8 @@ fn run_issue_agent(
     );
     match &args.out {
         Some(_) => eprintln!(
-            "the value is only in the key file (0600); delete it once the key is in the \
-             environment that needs it"
+            "the value is only in the key file (0600); delete it once `claude plugin \
+             configure` has succeeded and no shell still reads it"
         ),
         None => eprintln!("the value is shown once, above, and never again"),
     }
@@ -1283,17 +2090,7 @@ fn run_verify_chain(
     stored: &Credentials,
     args: &VerifyChainArgs,
 ) -> Result<ExitCode, CliError> {
-    resolve(cli, stored)?;
-    let tenant = args
-        .tenant
-        .clone()
-        .or_else(|| stored.tenant_id.clone())
-        .ok_or_else(|| {
-            CliError::local(
-                "verification reconstructs the signed bytes, which include the tenant id: pass \
-                 --tenant or run `oml bootstrap claim` first (chain-format.md signed fields)",
-            )
-        })?;
+    let client = resolve(cli, stored)?;
     if args.signing_keys.is_empty() {
         return Err(CliError::local(
             "the verifier holds an authenticated key set, confirmed out of band — the chain \
@@ -1304,6 +2101,19 @@ fn run_verify_chain(
     for key in &args.signing_keys {
         parse_verifying_key(key).map_err(CliError::Local)?;
     }
+    // The signed bytes include the tenant id; the key's own is derived
+    // through whoami, as the credentials file holds only the pair
+    // (chain-format.md signed fields; ADR-0039 d15).
+    let tenant = match &args.tenant {
+        Some(tenant) => tenant.clone(),
+        None => {
+            let me = client.whoami()?;
+            me["tenant"]["id"]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| CliError::local("whoami names no tenant: pass --tenant"))?
+        }
+    };
     let mode = if args.genesis { " from genesis" } else { "" };
     Err(CliError::local(format!(
         "live verification of tenant {tenant}{mode} reads the chain export (kind: chain), which \
@@ -1313,56 +2123,844 @@ fn run_verify_chain(
 }
 
 // ---------------------------------------------------------------------------
-// oml doctor
+// oml login
 // ---------------------------------------------------------------------------
 
-fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
-    let client = resolve(cli, stored)?;
-    let (health_status, health) = client.probe("/healthz")?;
-    let (ready_status, ready) = client.probe("/readyz")?;
-    let healthy = health_status == 200 && ready_status == 200;
+/// `oml login <url>` (ADR-0039 d15): the key read without echo from the
+/// terminal, or from stdin when stdin is not one; `GET /v2/whoami` under it;
+/// and only on success `url` and `api_key`, nothing else, written to the
+/// owner-only credentials file. A refusal writes nothing and exits 1 with
+/// the envelope's code; the key is never printed.
+fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
+    let key = read_key(target)?;
+    let client = Client::new(target.to_owned(), Some(key.clone()));
+    let me = client.whoami()?;
+    let path = creds::store(&Credentials {
+        url: Some(client.server().to_owned()),
+        api_key: Some(key),
+    })
+    .map_err(CliError::Local)?;
+    if cli.json {
+        print_json(&me);
+    } else {
+        println!(
+            "logged in to {} as key {} ({}): role {}, tenant {}, default workarea {}",
+            client.server(),
+            field(&me, "name"),
+            field(&me, "key_id"),
+            field(&me, "role"),
+            field(&me["tenant"], "name"),
+            field(&me["default_workarea"], "path"),
+        );
+        println!(
+            "url and api_key stored in {} (owner-only); the flags and OML_URL with \
+             OML_API_KEY still win over it",
+            path.display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
-    // Chain head via the events tail, when a key is in context.
-    let head_seq: Option<u64> = client
-        .get("/v2/events?after_seq=0&limit=1")
-        .ok()
-        .and_then(|(_, v)| v["head_seq"].as_u64());
+/// The API key for `url`, read as [`read_secret`] reads it.
+fn read_key(url: &str) -> Result<String, CliError> {
+    read_secret(&format!("API key for {url}"))
+}
 
+/// The secret `what` names: prompted for on the terminal and read without
+/// echo when stdin is one, else the first line of stdin, its line ending
+/// cut, so it never reaches argv. An empty secret, or one with a byte
+/// outside printable ASCII, which no key or enrollment token holds, is
+/// refused before anything is sent.
+fn read_secret(what: &str) -> Result<String, CliError> {
+    use std::io::{BufRead as _, IsTerminal as _};
+    let stdin = std::io::stdin();
+    let (line, from) = if stdin.is_terminal() {
+        let line = rpassword::prompt_password(format!("{what}: ")).map_err(|e| {
+            CliError::local(format!("cannot read the {what} from the terminal: {e}"))
+        })?;
+        (line, "the terminal")
+    } else {
+        let mut line = String::new();
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| CliError::local(format!("cannot read the {what} from stdin: {e}")))?;
+        (line, "stdin")
+    };
+    let secret = line.trim();
+    if secret.is_empty() {
+        return Err(CliError::local(format!(
+            "no {what} on {from}; nothing was sent and nothing written"
+        )));
+    }
+    if !secret.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(CliError::local(format!(
+            "the {what} on {from} holds a character outside printable ASCII; nothing was sent \
+             and nothing written"
+        )));
+    }
+    Ok(secret.to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// oml quickstart
+// ---------------------------------------------------------------------------
+
+/// `oml quickstart` (ADR-0041 d9): refuse a directory a quickstart wrote
+/// into and a machine without `docker compose`, before anything is written;
+/// then the compose file and its `.env`, `docker compose up --detach
+/// --wait`, the claim of the token the lead logged, the crew workarea, an
+/// agent key and a reviewer key in owner-only files, a write held, approved
+/// and recalled, and the lines that hand the agent key on. No key value is
+/// printed.
+fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::quickstart;
+    let dir = std::path::absolute(&args.dir)
+        .map_err(|e| CliError::local(format!("cannot resolve {}: {e}", args.dir.display())))?;
+    let shown = dir.display().to_string();
+    if let Some(name) = quickstart::existing(&dir) {
+        return Err(CliError::local(format!(
+            "refused: quickstart.exists — {shown} already holds {name} from a quickstart; \
+             `docker compose --project-directory {shown} down -v` removes that stack and its \
+             data, or pass another --dir; nothing was changed (ADR-0041 d9)"
+        )));
+    }
+    let project = quickstart::project_name(&dir);
+    let compose = |rest: &[&str]| {
+        let mut command = std::process::Command::new("docker");
+        command
+            .arg("compose")
+            .arg("--project-name")
+            .arg(&project)
+            .arg("--project-directory")
+            .arg(&dir)
+            .args(rest)
+            .stdin(std::process::Stdio::null());
+        command
+    };
+    match std::process::Command::new("docker")
+        .args(["compose", "version"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(out) if out.status.success() => {}
+        _ => {
+            return Err(CliError::local(
+                "refused: quickstart.docker — `docker compose version` did not answer, and the \
+                 quickstart needs Docker with compose v2; nothing was written (ADR-0041 d9)",
+            ));
+        }
+    }
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| CliError::local(format!("cannot create {shown}: {e}")))?;
+    let version = env!("CARGO_PKG_VERSION");
+    std::fs::write(
+        dir.join("compose.yaml"),
+        quickstart::compose(&project, version, args.port),
+    )
+    .map_err(|e| CliError::local(format!("cannot write {shown}/compose.yaml: {e}")))?;
+    write_owner_only(&dir.join(".env"), &quickstart::env_file())?;
+    let keys = dir.join("keys");
+    owner_only_dir(&keys)?;
+
+    eprintln!("starting the stack: docker compose --project-directory {shown} up --detach --wait");
+    let status = compose(&["up", "--detach", "--wait"])
+        .stdout(std::process::Stdio::from(std::io::stderr()))
+        .status()
+        .map_err(|e| CliError::local(format!("cannot run docker compose up: {e}")))?;
+    if !status.success() {
+        return Err(CliError::local(format!(
+            "docker compose up failed ({status}); `docker compose --project-directory {shown} \
+             logs` shows why"
+        )));
+    }
+    let url = format!("http://127.0.0.1:{}", args.port);
+    wait_ready(&url)?;
+    let logs = compose(&["logs", "oml-server"])
+        .output()
+        .map_err(|e| CliError::local(format!("cannot run docker compose logs: {e}")))?;
+    let logs = String::from_utf8_lossy(&logs.stdout);
+    let token = quickstart::enrollment_token(&logs).ok_or_else(|| {
+        CliError::local(format!(
+            "no enrollment token in the lead's log: a lead prints one on its first start \
+             against an empty database only; `docker compose --project-directory {shown} logs \
+             oml-server` shows what it printed"
+        ))
+    })?;
+
+    let admin = Child {
+        dir: &dir,
+        pair: None,
+    };
+    admin.json(
+        &[
+            "--url",
+            &url,
+            "bootstrap",
+            "claim",
+            "quickstart-admin",
+            "--token-stdin",
+            "--tenant-name",
+            "quickstart",
+            "--principal",
+            "platform/admin",
+        ],
+        Some(token),
+    )?;
+    admin.json(&["workareas", "create", "universe", "crew"], None)?;
+    let agent_file = keys.join("agent");
+    let agent_shown = agent_file.display().to_string();
+    admin.text(&[
+        "keys",
+        "issue-agent",
+        "quickstart-agent",
+        "--principal",
+        "crew/agent",
+        "--workarea",
+        "crew",
+        "--out",
+        &agent_shown,
+    ])?;
+    let reviewer_file =
+        oml_cli::issue::KeyFile::create(&keys.join("reviewer")).map_err(CliError::Local)?;
+    let reviewer_shown = reviewer_file.shown().to_owned();
+    let issued = admin
+        .json(
+            &[
+                "keys",
+                "issue",
+                "quickstart-reviewer",
+                "--role",
+                "dreamer",
+                "--held-by",
+                "human",
+                "--principal",
+                "crew/reviewer",
+                "--default-workarea",
+                "crew",
+                "--grant",
+                "crew:dreamer",
+            ],
+            None,
+        )
+        .and_then(|reviewer| {
+            reviewer["value"]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    CliError::Unanswered("the reviewer key's issuance carried no value".to_owned())
+                })
+        });
+    let reviewer_key = match issued {
+        Ok(key) => key,
+        Err(e) => {
+            // The empty file would only mislead; the refusal is the issuance's.
+            let _ = reviewer_file.discard();
+            return Err(e);
+        }
+    };
+    reviewer_file
+        .write_value(&reviewer_key)
+        .map_err(CliError::Local)?;
+    let agent_key = std::fs::read_to_string(&agent_file)
+        .map_err(|e| CliError::local(format!("cannot read {agent_shown}: {e}")))?;
+    let agent_key = agent_key.trim_end().to_owned();
+
+    // The self-check: written as the agent, held, approved by a different
+    // identity, recalled.
+    let agent = Child {
+        dir: &dir,
+        pair: Some((&url, &agent_key)),
+    };
+    let reviewer = Child {
+        dir: &dir,
+        pair: Some((&url, &reviewer_key)),
+    };
+    let held = agent.json(
+        &[
+            "write",
+            "The quickstart wrote this memory as the agent, and a reviewer approved it.",
+            "--idempotency-key",
+            "quickstart/1",
+        ],
+        None,
+    )?;
+    let check = |ok: bool, what: &str, answer: &Value| {
+        if ok {
+            Ok(())
+        } else {
+            Err(CliError::local(format!(
+                "the self-check failed: {what}: {answer}"
+            )))
+        }
+    };
+    check(held["state"] == "held", "the write was not held", &held)?;
+    reviewer.json(&["review", "next"], None)?;
+    let approved = reviewer.json(&["review", "approve"], None)?;
+    check(
+        approved["state"] == "promoted",
+        "the approval did not promote",
+        &approved,
+    )?;
+    let recalled = agent.json(&["read", "--query", "quickstart wrote"], None)?;
+    let found = recalled["hits"].as_array().is_some_and(|hits| {
+        hits.iter()
+            .any(|h| h["memory"]["artifact_id"] == held["artifact_id"])
+    });
+    check(found, "the approved memory was not recalled", &recalled)?;
+
+    println!("OML {version} is running at {url}, from {shown}/compose.yaml.");
+    println!(
+        "The self-check passed: a write by the agent key was held, approved by the reviewer \
+         key, and recalled."
+    );
+    println!();
+    println!("Keys, each in an owner-only file and printed nowhere:");
+    println!("  agent    (writes and recalls in crew)  {agent_shown}");
+    println!("  reviewer (a person approves writes)    {reviewer_shown}");
+    println!("  admin    (url and api_key)             {shown}/credentials");
+    println!();
+    println!("Give Claude Code on this machine the agent key:");
+    println!("  oml setup claude-code --url {url} --key-file {agent_shown}");
+    println!("Or store the agent key for the CLI, pasting it when asked:");
+    println!("  oml login {url}");
+    println!("Review what agents write as the reviewer:");
+    println!(
+        "  OML_URL={url} OML_API_KEY=\"$(cat {})\" oml review next",
+        sh_quote(&reviewer_shown)
+    );
+    println!("Run admin verbs against this stack:");
+    println!(
+        "  OML_CLI_CREDENTIALS={} oml keys issue-agent …",
+        sh_quote(&format!("{shown}/credentials"))
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One run of this same `oml` binary under the quickstart's own credentials
+/// file, `<dir>/credentials`, and with `pair` as `OML_URL` and
+/// `OML_API_KEY`; the caller's own pair and file are never read.
+struct Child<'a> {
+    dir: &'a std::path::Path,
+    pair: Option<(&'a str, &'a str)>,
+}
+
+impl Child<'_> {
+    fn command(&self, args: &[&str]) -> Result<std::process::Command, CliError> {
+        let exe = std::env::current_exe()
+            .map_err(|e| CliError::local(format!("cannot find the oml binary: {e}")))?;
+        let mut command = std::process::Command::new(exe);
+        command
+            .env("OML_CLI_CREDENTIALS", self.dir.join("credentials"))
+            .env_remove("OML_URL")
+            .env_remove("OML_API_KEY")
+            .env_remove("OML_CLI_SERVER")
+            .env_remove("OML_CLI_KEY");
+        if let Some((url, key)) = self.pair {
+            command.env("OML_URL", url).env("OML_API_KEY", key);
+        }
+        command.args(args);
+        Ok(command)
+    }
+
+    /// The verb's output, or its refusal with what it printed, which holds
+    /// no key: a refusal envelope or a local reason.
+    fn run(&self, args: &[&str], stdin: Option<&str>) -> Result<std::process::Output, CliError> {
+        use std::io::Write as _;
+        use std::process::Stdio;
+        let verb = args
+            .iter()
+            .find(|a| !a.starts_with('-') && !a.contains("://"))
+            .map_or("oml", |v| *v);
+        let mut child = self
+            .command(args)?
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| CliError::local(format!("cannot run oml {verb}: {e}")))?;
+        if let Some(mut pipe) = child.stdin.take() {
+            let text = stdin.map(|s| format!("{s}\n")).unwrap_or_default();
+            pipe.write_all(text.as_bytes())
+                .map_err(|e| CliError::local(format!("cannot write to oml {verb}: {e}")))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| CliError::local(format!("oml {verb} did not finish: {e}")))?;
+        if out.status.success() {
+            Ok(out)
+        } else {
+            let said = |b: &[u8]| String::from_utf8_lossy(b).trim().to_owned();
+            Err(CliError::local(format!(
+                "the quickstart's `oml {}` failed ({}): {} {}",
+                args.iter()
+                    .take_while(|a| !a.starts_with("--"))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                out.status,
+                said(&out.stdout),
+                said(&out.stderr),
+            )))
+        }
+    }
+
+    /// The verb run with `--json`: its one document.
+    fn json(&self, args: &[&str], stdin: Option<&str>) -> Result<Value, CliError> {
+        let mut with = vec!["--json"];
+        with.extend_from_slice(args);
+        let out = self.run(&with, stdin)?;
+        serde_json::from_slice(&out.stdout).map_err(|e| {
+            CliError::Unanswered(format!("oml {} printed no JSON document: {e}", args[0]))
+        })
+    }
+
+    /// The verb run for its effect, its output dropped.
+    fn text(&self, args: &[&str]) -> Result<(), CliError> {
+        self.run(args, None).map(drop)
+    }
+}
+
+/// Polls `url`'s `/readyz` for up to two minutes, the image's start
+/// included.
+fn wait_ready(url: &str) -> Result<(), CliError> {
+    let probe = Client::with_timeout(url.to_owned(), None, std::time::Duration::from_secs(2));
+    for _ in 0..120 {
+        if matches!(probe.probe("/readyz"), Ok((200, _))) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Err(CliError::local(format!(
+        "no ready lead at {url}/readyz after two minutes"
+    )))
+}
+
+/// Writes `text` to the new file `path`, owner-only from its creation.
+fn write_owner_only(path: &std::path::Path, text: &str) -> Result<(), CliError> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    oml_cli::owner_only::open_options(&mut options);
+    let shown = path.display();
+    let mut file = options
+        .open(path)
+        .map_err(|e| CliError::local(format!("cannot create {shown}: {e}")))?;
+    oml_cli::owner_only::restrict(&file)
+        .and_then(|()| file.write_all(text.as_bytes()))
+        .and_then(|()| file.sync_all())
+        .map_err(|e| CliError::local(format!("cannot write {shown}: {e}")))
+}
+
+/// Creates the directory `path`, owner-only (0700 on Unix).
+fn owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
+    // Only Unix narrows the mode, so the binding is mutated on Unix alone.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+        .create(path)
+        .map_err(|e| CliError::local(format!("cannot create {}: {e}", path.display())))
+}
+
+// ---------------------------------------------------------------------------
+// oml setup claude-code
+// ---------------------------------------------------------------------------
+
+/// The pair `oml setup claude-code` hands the plugin: `--key-file`'s key
+/// with the `--url` flag, a flag source of its own, or the pair as
+/// [`resolve`] takes it (ADR-0039 d15, ADR-0041 d7 step 1).
+fn setup_pair(
+    cli: &Cli,
+    stored: &Credentials,
+    key_file: Option<&std::path::Path>,
+) -> Result<(Client, String), CliError> {
+    let Some(path) = key_file else {
+        let client = resolve(cli, stored)?;
+        let key = first_source(cli, stored)
+            .and_then(|s| s.key.cloned())
+            .ok_or_else(|| missing(NO_PAIR))?;
+        return Ok((client, key));
+    };
+    if cli.start.flag_key.is_some() {
+        return Err(CliError::local(
+            "refused: --key-file with --api-key, which each name the key; nothing was sent",
+        ));
+    }
+    let url = cli.start.flag_url.clone().ok_or_else(|| {
+        CliError::local(
+            "refused: --key-file is set without --url, and a key is sent only to the URL given \
+             beside it; nothing was sent (ADR-0039 d15)",
+        )
+    })?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| CliError::local(format!("cannot read {}: {e}", path.display())))?;
+    let key = text.trim_end_matches(['\n', '\r']);
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(CliError::local(format!(
+            "refused: {} holds no key on one line of printable ASCII; nothing was sent",
+            path.display()
+        )));
+    }
+    Ok((Client::new(url, Some(key.to_owned())), key.to_owned()))
+}
+
+/// `oml setup claude-code` (ADR-0041 d7): check the key through whoami and
+/// refuse an admin or operator key, then install the plugin at this CLI's
+/// own tag and save the pair through `claude plugin configure
+/// --values-stdin`, or print the commands with `--print` or with no `claude`
+/// on `PATH`. The key goes to the configure command's stdin alone.
+fn run_setup_claude_code(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &SetupClaudeCodeArgs,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::setup;
+    let (client, key) = setup_pair(cli, stored, args.key_file.as_deref())?;
+    let me = client.whoami()?;
+    let role = me["role"].as_str().unwrap_or_default();
+    if setup::refuses_role(role) {
+        return Err(CliError::local(format!(
+            "refused: setup.admin_key — key {} is an {role} key, and the agent plugin takes an \
+             agent's key, never an admin's; issue one with `oml keys issue-agent --out`; \
+             nothing was installed (ADR-0041 d7)",
+            field(&me, "name"),
+        )));
+    }
+    let version = env!("CARGO_PKG_VERSION");
+    let url = client.server();
+    let print = |why: &str| {
+        println!("{why}; run these to install and configure the plugin:");
+        let shown = args.key_file.as_deref().map(|p| {
+            std::path::absolute(p)
+                .unwrap_or_else(|_| p.to_owned())
+                .display()
+                .to_string()
+        });
+        for line in setup::printed(version, url, shown.as_deref()) {
+            println!("  {line}");
+        }
+        if shown.is_none() {
+            println!("with OML_API_KEY set to the key in the shell that runs the last line");
+        }
+        println!(
+            "if `claude plugin marketplace list` already shows {} at another tag, run \
+             `claude plugin marketplace remove {}` first: Claude Code refuses an add whose \
+             source differs, and the remove uninstalls its plugins",
+            setup::MARKETPLACE_NAME,
+            setup::MARKETPLACE_NAME,
+        );
+        Ok(ExitCode::SUCCESS)
+    };
+    if args.print {
+        return print("--print");
+    }
+    let claude_version = match std::process::Command::new("claude")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return print("no claude on PATH");
+        }
+        Err(e) => {
+            return Err(CliError::local(format!(
+                "cannot run `claude --version`: {e}"
+            )));
+        }
+        Ok(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
+    };
+    let min = setup::dotted(setup::MIN_CLAUDE_CODE);
+    match setup::claude_code_version(&claude_version) {
+        Some(found) if found >= setup::MIN_CLAUDE_CODE => {}
+        found => {
+            return Err(CliError::local(format!(
+                "refused: setup.claude_code_version — `claude --version` printed {}, and \
+                 `claude plugin configure --values-stdin` needs Claude Code {min} or later; \
+                 nothing was installed (ADR-0040 d5)",
+                found.map_or_else(|| format!("{:?}", claude_version.trim()), setup::dotted),
+            )));
+        }
+    }
+    let refused = |why: String| {
+        CliError::local(format!(
+            "refused: setup.marketplace — {why}; nothing was changed (ADR-0041 d7)"
+        ))
+    };
+    let listed = claude_output(&setup::marketplace_list_command())?;
+    let mut plugins = vec![setup::PLUGIN.to_owned()];
+    match setup::marketplace(&listed, version).ok_or_else(|| {
+        refused("`claude plugin marketplace list --json` printed no JSON array".to_owned())
+    })? {
+        setup::Marketplace::Pinned => {}
+        setup::Marketplace::Absent => run_claude(&setup::add_command(version), None)?,
+        setup::Marketplace::Foreign(source) => {
+            return Err(refused(format!(
+                "Claude Code already holds a marketplace named {} from {source}, not {};                  `claude plugin marketplace remove {}` removes it and the plugins installed                  from it",
+                setup::MARKETPLACE_NAME,
+                setup::MARKETPLACE,
+                setup::MARKETPLACE_NAME,
+            )));
+        }
+        setup::Marketplace::Repin(from) => {
+            let installed = claude_output(&setup::plugin_list_command())?;
+            plugins.extend(setup::other_plugins(&installed).ok_or_else(|| {
+                refused("`claude plugin list --json` printed no JSON array".to_owned())
+            })?);
+            eprintln!(
+                "moving marketplace {} from {from} to {}#v{version}: removing it uninstalls \
+                 {}, which are installed again",
+                setup::MARKETPLACE_NAME,
+                setup::MARKETPLACE,
+                plugins.join(", "),
+            );
+            run_claude(&setup::remove_command(), None)?;
+            run_claude(&setup::add_command(version), None)?;
+        }
+    }
+    for plugin in &plugins {
+        run_claude(&setup::install_command(plugin), None)?;
+    }
+    run_claude(&setup::configure_command(), Some(&setup::values(url, &key)))?;
     if cli.json {
         print_json(&json!({
-            "healthz": { "status": health_status, "body": health },
-            "readyz": { "status": ready_status, "body": ready },
-            "chain_head_seq": head_seq,
-            "client_version": env!("CARGO_PKG_VERSION"),
-            // The PoC API exposes no server version endpoint.
-            "server_version": Value::Null,
-            "verdict": if healthy { "ok" } else { "fail" },
+            "plugin": setup::PLUGIN,
+            "version": version,
+            "url": url,
+            "key": me["name"],
+            "role": role,
         }));
     } else {
         println!(
-            "healthz     : {} ({})",
-            verdict(health_status == 200),
-            field(&health, "status")
+            "{} installed from {}#v{version} and configured for {url} as key {} (role {role}); \
+             run /reload-plugins in a running Claude Code session, or restart it",
+            setup::PLUGIN,
+            setup::MARKETPLACE,
+            field(&me, "name"),
         );
-        println!("readyz      : {}", verdict(ready_status == 200));
-        if let Some(checks) = ready["checks"].as_object() {
-            for (name, state) in checks {
-                println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Runs `claude <args>` with no stdin and returns its stdout; a failure
+/// names the command.
+fn claude_output(args: &[String]) -> Result<String, CliError> {
+    let shown = format!("claude {}", args.join(" "));
+    let out = std::process::Command::new("claude")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| CliError::local(format!("cannot run `{shown}`: {e}")))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(CliError::local(format!(
+            "`{shown}` failed ({}); nothing was changed",
+            out.status
+        )))
+    }
+}
+
+/// Runs `claude <args>`, writing `stdin` to it when given, else none; a
+/// failure names the command, which never holds the key.
+fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
+    use std::io::Write as _;
+    use std::process::{Command as Process, Stdio};
+    let shown = format!("claude {}", args.join(" "));
+    let mut child = Process::new("claude")
+        .args(args)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        // Its own output goes to stderr, so --json's stdout stays one
+        // document.
+        .stdout(Stdio::from(std::io::stderr()))
+        .spawn()
+        .map_err(|e| CliError::local(format!("cannot run `{shown}`: {e}")))?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        pipe.write_all(text.as_bytes())
+            .and_then(|()| pipe.write_all(b"\n"))
+            .map_err(|e| CliError::local(format!("cannot write to `{shown}`: {e}")))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| CliError::local(format!("`{shown}` did not finish: {e}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CliError::local(format!(
+            "`{shown}` failed ({status}); the commands before it ran"
+        )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// oml doctor
+// ---------------------------------------------------------------------------
+
+/// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
+/// URL and which set the key, never the key; `/healthz` and `/readyz` at
+/// the first source's URL, keyless, so a URL alone is enough to probe; and
+/// `GET /v2/whoami` and the events tail only when that same source also
+/// holds the key. No URL in the first source sends nothing and fails; a URL
+/// without its key warns, naming the missing setting.
+fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
+    let source = first_source(cli, stored);
+    let url_source = source
+        .as_ref()
+        .filter(|s| s.url.is_some())
+        .map(|s| s.origin(s.url_name));
+    let key_source = source
+        .as_ref()
+        .filter(|s| s.key.is_some())
+        .map(|s| s.origin(s.key_name));
+    let next = match &source {
+        None => Some(missing_message(NO_PAIR)),
+        Some(s) if s.url.is_none() || s.key.is_none() => Some(missing_message(&s.half())),
+        Some(_) => None,
+    };
+
+    let mut health = None;
+    let mut ready = None;
+    let mut me: Option<Result<Value, CliError>> = None;
+    let mut head_seq: Option<u64> = None;
+    if let Some(url) = source.as_ref().and_then(|s| s.url) {
+        let keyless = Client::new(url.clone(), None);
+        health = Some(keyless.probe("/healthz")?);
+        ready = Some(keyless.probe("/readyz")?);
+        if let Some(key) = source.as_ref().and_then(|s| s.key) {
+            let client = Client::new(url.clone(), Some(key.clone()));
+            me = Some(client.whoami());
+            head_seq = client
+                .get("/v2/events?after_seq=0&limit=1")
+                .ok()
+                .and_then(|(_, v)| v["head_seq"].as_u64());
+        }
+    }
+    // The connection surface, from wherever the CLI runs (ADR-0031 d14).
+    let oauth = source
+        .as_ref()
+        .and_then(|s| s.url)
+        .zip(ready.as_ref())
+        .map(|(url, (_, body))| discovery::check(url, body));
+    let oauth_ok = !oauth.as_ref().is_some_and(|o| o["state"] == "failing");
+    let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
+    let whoami_ok = !matches!(me, Some(Err(_)));
+    let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
+        "fail"
+    } else if me.is_none() {
+        "warn"
+    } else {
+        "ok"
+    };
+    let whoami = match &me {
+        Some(Ok(v)) => json!({
+            "role": v["role"],
+            "tenant": v["tenant"]["name"],
+            "default_workarea": v["default_workarea"]["path"],
+        }),
+        Some(Err(e)) => json!({ "error": refusal(e) }),
+        None => Value::Null,
+    };
+    let probe_json = |p: &Option<(u16, Value)>| {
+        p.as_ref().map_or(
+            Value::Null,
+            |(status, body)| json!({ "status": status, "body": body }),
+        )
+    };
+
+    if cli.json {
+        print_json(&json!({
+            "url_source": url_source,
+            "key_source": key_source,
+            "healthz": probe_json(&health),
+            "readyz": probe_json(&ready),
+            "whoami": whoami,
+            "chain_head_seq": head_seq,
+            "oauth_discovery": oauth,
+            "client_version": env!("CARGO_PKG_VERSION"),
+            // The PoC API exposes no server version endpoint.
+            "server_version": Value::Null,
+            "verdict": outcome,
+            "next": next,
+        }));
+    } else {
+        println!("url         : {}", url_source.as_deref().unwrap_or("unset"));
+        println!("api key     : {}", key_source.as_deref().unwrap_or("unset"));
+        match &health {
+            Some((status, body)) => println!(
+                "healthz     : {} ({})",
+                verdict(*status == 200),
+                field(body, "status")
+            ),
+            None => println!("healthz     : not probed (no URL)"),
+        }
+        match &ready {
+            Some((status, body)) => {
+                println!("readyz      : {}", verdict(*status == 200));
+                if let Some(checks) = body["checks"].as_object() {
+                    for (name, state) in checks {
+                        println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
+                    }
+                }
             }
+            None => println!("readyz      : not probed (no URL)"),
+        }
+        match &me {
+            Some(Ok(_)) => println!(
+                "whoami      : role {}, tenant {}, default workarea {}",
+                whoami["role"].as_str().unwrap_or("—"),
+                whoami["tenant"].as_str().unwrap_or("—"),
+                whoami["default_workarea"].as_str().unwrap_or("—"),
+            ),
+            Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
+            None => println!("whoami      : not called (no key with this URL)"),
         }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
             None => println!("chain head  : unavailable (needs a key with events-tail access)"),
         }
+        match &oauth {
+            Some(o) if o["state"] == "off" => {
+                println!("oauth       : off (no oauth.issuer: /mcp takes keys only)");
+            }
+            Some(o) if o["state"] == "ok" => println!(
+                "oauth       : ok (issuer {} serves both discovery documents)",
+                field(o, "issuer")
+            ),
+            Some(o) => println!(
+                "oauth       : failing ({}: {})",
+                field(o, "url"),
+                field(o, "reason")
+            ),
+            None => println!("oauth       : not probed (no URL)"),
+        }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         println!("server      : version not exposed by the PoC API");
-        println!("verdict     : {}", verdict(healthy));
+        println!("verdict     : {outcome}");
+        if let Some(next) = &next {
+            println!("next        : {next}");
+        }
     }
-    Ok(if healthy {
-        ExitCode::SUCCESS
-    } else {
+    Ok(if outcome == "fail" {
         ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     })
+}
+
+/// A failed call as doctor reports it: the status and code of a refusal, or
+/// the local reason, which never carries a key.
+fn refusal(e: &CliError) -> String {
+    match e {
+        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+        CliError::Local(why) | CliError::Unanswered(why) => why.clone(),
+    }
 }
 
 fn verdict(ok: bool) -> &'static str {

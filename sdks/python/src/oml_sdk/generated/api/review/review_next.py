@@ -92,7 +92,9 @@ def sync_detailed(
 
     Args:
         idempotency_key (str):
-        body (ReviewNextBody | Unset):
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
+            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+            request.validation until it is built (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,7 +133,9 @@ def sync(
 
     Args:
         idempotency_key (str):
-        body (ReviewNextBody | Unset):
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
+            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+            request.validation until it is built (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +169,9 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str):
-        body (ReviewNextBody | Unset):
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
+            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+            request.validation until it is built (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -202,7 +208,9 @@ async def asyncio(
 
     Args:
         idempotency_key (str):
-        body (ReviewNextBody | Unset):
+        body (ReviewNextBody | Unset): The queue is served whole: the subtree filter workarea is a
+            designed field (openapi-designed.yaml x-oml-designed-fields), refused with
+            request.validation until it is built (ADR-0039 d9).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -18,6 +18,7 @@
 
 <p>
   <a href="#quickstart"><b>Quickstart</b></a> ·
+  <a href="https://e8kor.github.io/open-memory-lab/start/"><b>Get started</b></a> ·
   <a href="https://e8kor.github.io/open-memory-lab/"><b>Documentation</b></a> ·
   <a href="https://e8kor.github.io/open-memory-lab/atlas/"><b>Live atlas</b></a> ·
   <a href="https://github.com/e8kor/open-memory-lab/discussions"><b>Discussions</b></a>
@@ -27,19 +28,17 @@
 
 ---
 
-**Open Memory Lab (OML)** gives AI agents and crews one shared memory: what they learn, the files
-that go with it, and the standing instructions they must follow, organised the way your teams
-are. The foundation is steady and built not to break. Around it sit capabilities you add where
-they pay off: shared vocabularies, trusted memory, what-if simulations, dataset imports and
-plugins. Open source, AI-first, human in the loop, and it runs in your own environment.
+**Open Memory Lab (OML)** gives AI agents and crews one shared memory: what they learn, and the
+standing instructions they must follow, organised the way your teams are. Every new memory waits
+until someone other than its author approves it, and every step is kept in a tamper-evident
+history. Open source, AI-first, human in the loop, and it runs in your own environment.
 
 ## Table of contents
 
 - [Why Open Memory Lab](#why-open-memory-lab)
-- [The foundation](#the-foundation)
-- [Capabilities](#capabilities)
-- [Works with](#works-with)
 - [Quickstart](#quickstart)
+- [What works today](#what-works-today)
+- [Planned](#planned)
 - [Connect your agent](#connect-your-agent)
 - [How it fits together](#how-it-fits-together)
 - [Roles and keys](#roles-and-keys)
@@ -52,96 +51,136 @@ plugins. Open source, AI-first, human in the loop, and it runs in your own envir
 
 ## Why Open Memory Lab
 
-Agents learn things all day: findings, decisions, files and house rules. Most of it is lost when
-a session ends, scattered across tools, or mixed up between teams. Every new agent starts from
+Agents learn things all day: findings, decisions and house rules. Most of it is lost when a
+session ends, scattered across tools, or mixed up between teams. Every new agent starts from
 zero and pays to rediscover what the last one already knew.
 
-OML keeps that knowledge in one place. Agents save what they learn, recall it within a budget,
-and find the right instructions first. Each crew works in its own space, and what a crew has
-approved can be locked as the baseline the next team starts from.
-
-## The foundation
-
-Everything in this section is part of every OML deployment. The Release column says which release
-built each part, or when it is planned; [releases](docs/product/releases.md) has the detail.
-
-| | What you get | Release |
-| --- | --- | --- |
-| **Memory store** | Agents remember, recall, fetch and revise memories through one stable agent interface. A new version keeps the full history behind it, and retiring a memory is a recorded step, never a silent delete. | Since v0.1.0; versions and retiring since v0.2.0 |
-| **Workareas** | One tree per organisation, with a workarea for each crew. Access follows the tree, so a key granted a workarea covers what sits beneath it, and nothing else. | Since v0.1.0 |
-| **Artifact store** | Documents, images and PDFs live with the memory they belong to. Each file is named by its own fingerprint, so it can't be swapped later, and encrypted with its own key. | Not scheduled |
-| **Recall** | Keyword and semantic search within a budget you set. Standing instructions always come first and are never cut, so house rules are never crowded out by search results. | Keyword search since v0.1.0; the budget and instructions first since v0.2.0; semantic search not scheduled |
-| **Lifecycle** | A workarea moves one way from development, to committed, to validated. Each step is proposed by one person or agent and confirmed by another. A validated workarea is locked: it stays readable and takes no new writes. | Planned for v0.5.0 |
-| **Access** | A key per agent, scoped to the workareas it needs. Names instead of ids everywhere, safe retries on every write, and an event feed that shows each key only what it may see. | Since v0.2.0; names since v0.3.0 |
-
-## Capabilities
-
-Each capability builds on the foundation and shares its access model, so you add value without
-moving your data.
-
-| Capability | What it adds | Release |
-| --- | --- | --- |
-| **Vocabularies** | Shared glossaries and ontologies. Terms keep permanent identifiers, are released in versions, and are deprecated with a pointer to their successor. A workarea can require every write to use valid terms, so "active customer" means the same thing in every crew. | Parked |
-| **Trusted memory** | A second look on every write. A new memory reaches other agents once someone other than its author approves it, and every decision is kept in a tamper-evident history. One export answers "who wrote this, who approved it, and when" for any memory, and erasure is a recorded act that makes content permanently unreadable. | Review by another identity and the tamper-evident history since v0.1.0; the export and erasure not scheduled |
-| **Simulations** | Safe what-if testing. Run a crew against invented facts, such as a market shock, inside a fenced scenario. Only the agents in it can see those facts, and real memory never changes. | Not scheduled |
-| **Datasets** | Import a snapshot of an existing table or file set as memory, checked as one batch with sampled rows. An analytics layer keeps lineage, so every figure traces back to its source. | Not scheduled |
-| **Plugins** | Swap in your own content checks, embedding models and export formats. A plugin can make the rules stricter, never looser. | Not scheduled |
-
-## Works with
-
-| Surface | Use it for | Release |
-| --- | --- | --- |
-| **Claude Code plugin** | Give a coding agent its memory in two commands ([plugins/oml](plugins/oml/README.md)). | Since v0.1.0 |
-| **Any MCP client** | The same agent tools over the open Model Context Protocol ([docs](docs/api/mcp-plugin.md)). | Since v0.1.0; the agent kit since v0.3.1 |
-| **HTTP API** | Any language, any framework ([OpenAPI](docs/api/openapi.yaml)). | Since v0.1.0 |
-| **Python and TypeScript SDKs** | Typed clients for the HTTP API ([Python](sdks/python/README.md), [TypeScript](sdks/typescript/README.md)). | In the source tree since v0.3.0; not on a package registry |
-| **`oml` CLI** | Administration and review, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). | Since v0.1.0; per platform since v0.3.1 |
+OML keeps that knowledge in one place. Agents save what they learn, search it within a budget,
+and get their standing instructions first. Each crew works in its own workarea, and a memory
+reaches the rest of the crew once someone other than its author has approved it.
 
 ## Quickstart
 
-You need Docker with the compose plugin, `curl` and `jq`. From a checkout:
+Your administrator gives you two things: the server's address and an agent key. With those, and
+Claude Code on your machine, three lines connect your agent:
 
 ```sh
-docker compose up -d          # the database and oml-server on 127.0.0.1:8080
-bash scripts/quickstart.sh    # enroll the server, create a workarea, issue keys
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.0/scripts/install/install.sh | sh
+oml login https://oml.example.com
+oml setup claude-code
 ```
 
-The quickstart creates a workarea and issues two keys: an agent key that stores and searches,
-and a reviewer key. It writes a first memory with the agent key, approves it with the reviewer
-key, and finds it again with a search. Then it prints the lines to connect Claude Code. Each key
-is shown once, so store them when they're printed.
+The first line installs the `oml` command for you alone, with no administrator rights, and checks
+the download against the release's checksums; it says whether it could also check the
+signature. `oml login` asks for the key without showing it, checks it with the server and only
+then stores the address and the key. `oml setup claude-code` installs the OML plugin in Claude
+Code and hands it the same two settings. Then run `/reload-plugins` in Claude Code, or restart it.
 
-To review what agents have written:
+Your agent's first save comes back as **held**: the agent can read it at once, and everyone
+else in the workarea finds it only after a reviewer approves it. About two minutes from these
+three lines to that first held save is a target; no run has timed it yet
+([roadmap](docs/product/roadmap.md)).
 
-```sh
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> review next
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> \
-    review verdict --memory <artifact_id> --approve
-```
+These lines are for v0.4.0. On Windows, and to read the script before it runs, see
+[install](docs/start/install.md).
 
-Compose creates two database roles on a new volume: `oml_owner`, which owns the database and
-runs the migrations through `OML_POSTGRES__OWNER_URL`, and `oml_server`, which owns nothing and
-serves through `OML_POSTGRES__URL`. A volume an earlier release created holds neither role and is
-split once before this release starts
-([ADR-0034](docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d7).
+**No server yet?** On a machine with Docker, `oml quickstart` is built to start one, create a
+workarea, issue an agent key and a reviewer key into private files, check one save end to end and
+print the line that connects Claude Code ([self-hosting](docs/guides/self-hosting.md)).
+Unverified: its compose file has no recorded green run under Docker yet.
+[Get started](docs/start/index.md) has all three paths: use OML, run OML, and add an agent.
 
-The compose credentials are for a laptop, and the server listens on the loopback interface
-only. For production, see [Run it your way](#run-it-your-way).
+## What works today
+
+Each row names the release that built it; [releases](docs/product/releases.md) has the detail.
+
+| | What you get | Release |
+| --- | --- | --- |
+| **Memory store** | Agents save, find, read back and revise memories. A new version keeps the full history behind it, and retiring a memory is a reviewed step, never a silent delete. | Since v0.1.0; versions and retiring since v0.2.0 |
+| **Review by someone else** | Every new memory is held until a reviewer who did not write it approves it. Its author can read it while it waits; nobody else can. | Since v0.1.0 |
+| **Tamper-evident history** | Every save, approval and rejection is recorded in a signed history that a separate command checks. | Since v0.1.0 |
+| **Workareas** | One tree per organisation, with a workarea for each crew. A key granted a workarea covers what sits beneath it, and nothing else. | Since v0.1.0; names in place of ids since v0.3.0 |
+| **Search** | Keyword search within a token budget you set. Standing instructions always come first and are never cut. | Keyword search since v0.1.0; the budget and instructions first since v0.2.0 |
+| **Keys** | A key per agent, scoped to the workareas it needs, issued in one command straight to a private file. | Since v0.2.0; one-command issue since v0.2.1 |
+| **Sessions that start from memory** | Each Claude Code session starts with the agent's recent work and the memories that match the project. | Since v0.2.2 |
+| **Three agent tools** | `oml_write`, `oml_read` and `oml_workarea`, in place of eight. | Since v0.4.0 |
+| **One address and one key** | The only settings any client needs: the command line, the Claude Code plugin, the kit for other tools and the SDKs. | Since v0.4.0 |
+| **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Since v0.4.0 |
+| **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Since v0.4.0 |
+| **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Since v0.4.0 |
+
+## Planned
+
+Nothing in this section is built. Each row says when it is planned, or that no release is
+assigned to it yet ([releases](docs/product/releases.md)).
+
+| Capability | What it will add | Release |
+| --- | --- | --- |
+| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.0 |
+| **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.0 |
+| **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.0 |
+| **In-progress workareas** | Teammates see each other's unreviewed work at once inside a development workarea that opts in, and nothing leaves it until it is committed. | Planned for v0.6.0 |
+| **Files with memories** | Documents, images and PDFs stored with the memory they belong to, each encrypted under its own key. | Not scheduled |
+| **Semantic search** | Search by meaning beside keyword search. | Not scheduled |
+| **Erasure and evidence export** | Erasure that makes content permanently unreadable, and one export that answers who wrote a memory, who approved it, and when. | Not scheduled |
+| **A record of every read** | Which key read which memory, kept for the retention period you set. | Not scheduled |
+| **Shared vocabularies** | Glossaries and ontologies whose terms keep permanent identifiers. | Parked |
+| **Simulations** | A crew run against invented facts in a fenced scenario that real memory never sees. | Not scheduled |
+| **Datasets** | A snapshot of an existing table or file set imported as memory, with lineage. | Not scheduled |
+| **Plugins** | Your own content checks, embedding models and export formats. | Not scheduled |
+| **Read followers** | More servers that answer reads, for scale. | Not scheduled |
 
 ## Connect your agent
 
 <details open>
 <summary><b>Claude Code</b></summary>
 
-```sh
-export OML_URL=http://127.0.0.1:8080
-export OML_API_KEY=<agent key>
-claude plugin marketplace add e8kor/open-memory-lab
-claude plugin install oml@open-memory-lab
+`oml setup claude-code` installs the plugin at the same release as your `oml` command and gives
+it the address and key that `oml login` stored, so the key never appears on a command line. It
+refuses an administrator's key. To do the same by hand inside Claude Code:
+
+```text
+/plugin marketplace add e8kor/open-memory-lab
+/plugin install oml@open-memory-lab
 ```
 
-The plugin adds the OML tools and a skill that tells the agent when to recall, remember and
-revise. See [plugins/oml](plugins/oml/README.md).
+The install asks for two settings, `url` and `api_key`; Claude Code keeps the key in the system
+keychain. The plugin adds three tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that
+tells the agent when to search, save and revise, and a read-only librarian.
+
+Claude Code asks before each tool call until you allow it. To stop the question on reads and keep
+it on every write, add the two read tools to `permissions.allow` in your settings:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_oml_oml__oml_read",
+      "mcp__plugin_oml_oml__oml_workarea"
+    ]
+  }
+}
+```
+
+`mcp__plugin_oml_oml` allows all three, the write too, which Claude then makes without showing
+you the call; every write is still held until a different identity reviews it. See the
+[Claude Code guide](docs/guides/claude-code.md) and [plugins/oml](plugins/oml/README.md).
+</details>
+
+<details>
+<summary><b>claude.ai and the Claude apps</b></summary>
+
+Your administrator issues a one-time connect code; you add the server's `/mcp` address as a
+custom connector on claude.ai and enter the code once. Claude never receives the key itself. See
+the [claude.ai and mobile guide](docs/guides/claude-ai-and-mobile.md).
+</details>
+
+<details>
+<summary><b>Codex, Cursor, Gemini CLI, VS Code and Claude Desktop</b></summary>
+
+Each release carries a kit with a configuration for each of these tools. Each reads the key
+from `OML_API_KEY`, and the server's address from `OML_URL` where the tool can read a variable
+there; elsewhere the address is the one edit. See [other tools](docs/guides/other-harnesses.md).
 </details>
 
 <details>
@@ -156,10 +195,10 @@ from oml_sdk import OmlClient
 
 # Reads OML_URL and OML_API_KEY from the environment.
 with OmlClient() as oml:
-    oml.remember("deploy-runbook", "The canary stage must drain before the next one starts.")
+    oml.write("The canary stage must drain before the next one starts.")
 
-    for hit in oml.recall("canary stage").hits:
-        print(hit.memory.body)
+    for hit in oml.read(query="canary stage").hits:
+        print(hit.memory.text)
 ```
 </details>
 
@@ -176,71 +215,67 @@ import { OmlClient } from "oml-sdk";
 
 // Reads OML_URL and OML_API_KEY from the environment.
 const oml = new OmlClient();
-await oml.remember({
-  claim_key: "deploy-runbook",
-  body: "The canary stage must drain before the next one starts.",
-});
+await oml.write({ text: "The canary stage must drain before the next one starts." });
 
-const { hits } = await oml.recall({ query: "canary stage" });
-for (const hit of hits) console.log(hit.memory.body);
+const { hits } = await oml.read({ query: "canary stage" });
+for (const hit of hits) console.log(hit.memory.text);
 ```
+
+The SDKs live in this repository and are not on a package registry yet.
 </details>
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-    A["Agents and crews"] -->|"agent API · MCP tools"| F
-    H["Admins and reviewers"] -->|"oml CLI"| C
+    A["Agents<br/>Claude Code, claude.ai, other tools, SDKs"] -->|"oml_write · oml_read · oml_workarea"| S
+    H["Admins and reviewers"] -->|"oml command line"| S
     subgraph OML["Open Memory Lab"]
-      F["Foundation<br/>memory store · workareas · artifacts · recall"]
-      C["Capabilities<br/>vocabularies · trusted memory · simulations · datasets · plugins"]
-      J[("History<br/>append-only, tamper-evident")]
-      C --- F
-      F --> J
+      S["The server<br/>one address, one key per agent"]
+      R["Review<br/>held until someone else approves"]
+      J[("History<br/>signed, tamper-evident")]
+      S --> R
+      S --> J
     end
-    J --> L["Analytics and lineage"]
 ```
 
-The foundation's agent API carries a compatibility promise: what you build on it keeps working
-as OML grows. Administration and capabilities live on a separate API surface, so they extend
-the foundation without changing it. One core holds every rule. Storage, transport and plugins
-sit behind explicit boundaries around it.
+Agents and people reach the same server at one address. An agent's save is held, a reviewer who
+did not write it approves or rejects it, and every step is recorded in the history. The database
+is the only store today; the files store, the analytics lake and the plugin points are planned
+([architecture](docs/architecture/overview.md)).
 
 ## Roles and keys
 
 | Role | Can |
 | --- | --- |
-| **reader** | Recall, search and fetch within its grants. |
-| **writer** | Remember, learn, attach files and propose new versions of its own memories. |
-| **reviewer** | Review and approve other authors' work, and propose edits and connections. |
-| **admin** | Manage keys, grants, workareas, lifecycle steps, erasure, simulations and exports for one organisation. Admins never review content. |
-| **operator** | Create organisations and their first admin key. Operators never read memory. |
+| **reader** | Search and read within its grants. |
+| **writer** | Save memories, record conclusions with their sources and propose new versions of its own memories. |
+| **reviewer** | Approve or reject other authors' work. |
+| **admin** | Issue keys, grant workareas and create them, for one organisation. Admins never review content and never read it. |
 
-Give each agent its own key. Attribution, and the rule that nobody reviews their own work, both
-depend on it.
+A fifth role, the operator who creates organisations, is planned and not scheduled. Give each
+agent its own key. Attribution, and the rule that nobody reviews their own work, both depend on
+it.
 
 ## Run it your way
 
 | Profile | Use it for | Release |
 | --- | --- | --- |
-| **One host** | A laptop or a single server. | Since v0.1.0 |
-| **Compose** | A small team, with read followers when more agents rely on it. | Since v0.1.0; read followers not scheduled |
-| **Cluster** | Production, from one chart, with read followers for scale. | One instance on the chart since v0.3.0; read followers not scheduled |
+| **One host** | A laptop or a single server, from the server archive. | Since v0.1.0; the archive since v0.3.1 |
+| **Docker** | One person's laptop, with `oml quickstart` (unverified: no recorded green compose run yet) or the compose file, whose passwords are for a laptop and which listens on `127.0.0.1` only. | Compose since v0.1.0; `oml quickstart` since v0.4.0 |
+| **Kubernetes** | One server instance from the Helm chart. | Since v0.3.0; more than one instance not scheduled |
 
-Every profile runs the same binaries, the same history format and the same conformance suite.
-See [deployment](docs/operations/deployment.md) and [configuration](docs/operations/configuration.md).
+Every profile runs the same server and the same history format. See
+[self-hosting](docs/guides/self-hosting.md), [deployment](docs/operations/deployment.md) and
+[configuration](docs/operations/configuration.md).
 
 ## Security and privacy
 
-- **Your infrastructure.** OML runs where you deploy it, and your memories and files never
-  leave it.
-- **Least privilege.** Every key is scoped to the workareas it needs, and every read is logged
-  for the retention period you set. Scoped keys since v0.2.0; the read log is not scheduled
-  ([releases](docs/product/releases.md)).
-- **Encryption per item.** Memory content and files are encrypted with their own keys, and
-  erasure destroys the key. Not scheduled: this build stores memory text unencrypted
-  ([releases](docs/product/releases.md)).
+- **Your infrastructure.** OML runs where you deploy it, and your memories never leave it.
+- **Least privilege.** Every key is scoped to the workareas it needs, and the server serves as a
+  database account that owns nothing. Scoped keys since v0.2.0; the second account since v0.3.1.
+- **Memory text is stored unencrypted in this build.** Encryption of each memory under its own
+  key, and erasure that destroys that key, are not scheduled ([releases](docs/product/releases.md)).
 - **Verifiable releases.** Every release ships with signatures and a software bill of
   materials on the [releases page](https://github.com/e8kor/open-memory-lab/releases), since v0.1.0.
 
@@ -252,12 +287,16 @@ The full documentation is at **<https://e8kor.github.io/open-memory-lab/>**.
 
 | Section | What it covers |
 | --- | --- |
+| [Get started](docs/start/index.md) | Use OML, run OML, or add an agent, each in one command |
+| [Guides](docs/guides/claude-code.md) | Claude Code, claude.ai and mobile, other tools, self-hosting, upgrading from v0.3 |
+| [Quick scenarios](docs/product/scenarios.md) | Eight short scenarios on the three tools |
+| [Use cases](docs/product/use-cases.md) | Every use case by journey and user, with its status |
 | [Live atlas](https://e8kor.github.io/open-memory-lab/atlas/) | An interactive 3D tour of crews working with OML |
 | [Overview](docs/index.md) | What OML is and what you get |
-| [Concepts](docs/concepts.md) | Workareas, roles, vocabularies, simulations and the history |
+| [Concepts](docs/concepts.md) | Workareas, roles, review and the history |
 | [Architecture](docs/architecture/overview.md) | How the system is built and why |
 | [API](docs/api/http-api.md) | The HTTP API, the MCP tools and the error catalogue |
-| [CLI](docs/cli/reference.md) | Every administration and review command |
+| [CLI](docs/cli/reference.md) | Every command |
 | [Operations](docs/operations/deployment.md) | Deployment, configuration, upgrades and observability |
 
 To build the site locally: `uvx --with mkdocs-material mkdocs serve`, then open

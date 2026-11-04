@@ -7,7 +7,7 @@ answers: how one agent key both writes and recalls through grants; what an agent
 
 # ADR-0025 — One key writes and recalls through grants, and an agent reads back, budgets, supersedes and retires its own memory only through admission
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)
 
 **Release:** partly in v0.2.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 
@@ -744,7 +744,7 @@ sourced to the code that has them; nothing decided below is built.
   `access.not_found`, indistinguishable from a nonexistent node, and it then narrows the listing
   to the key's rows in that subtree whatever the key holds below it; without `own` it must name a
   node where reader is effective, else `access.not_found`, and the listing is the intersection of
-  its subtree with the scope's, the scope still resolving from the token. `claim_key`, `state`,
+  its subtree with the scope's, the scope still resolving from the key. `claim_key`, `state`,
   `kind`, `since` and `until` also filter. The own-work listing and get resolve no workarea, so an
   `X-OML-Workarea` header sent with either is `request.validation`. The order is `created_at`
   descending, then `artifact_id` descending. The cursor is an opaque keyset position bound to the
@@ -809,7 +809,7 @@ sourced to the code that has them; nothing decided below is built.
     residual. A lead-only deployment, the default, has no such window.
 
     `oml_workarea_info` with no workarea, and `oml_events_tail` with no scope, take the key's
-    journalled `default_workarea` from the authenticated key record (ADR-0022 d4, "the token's
+    journalled `default_workarea` from the authenticated key record (ADR-0022 d4, "the key's
     default") and make one ring call; a key with no default is refused with
     `request.workarea_unresolved`.
 
@@ -963,7 +963,7 @@ sourced to the code that has them; nothing decided below is built.
 
 - **One key.** A writer-role key with `wa:writer` and `wa:reader` grants and default workarea `wa`
   remembers, recalls, reads back, supersedes, proposes retirement, lists its own work, inspects
-  its workarea and tails its events. The Claude Code plugin therefore needs one connection:
+  its workarea and tails its events. The Claude Code plugin therefore needs one key:
   `OML_RECALL_KEY` and the `oml-recall` server go away when the code lands.
 - **FR-10 and FR-11** close against their exit criteria once the agent-only-memory scenario passes
   end to end in CI; until then they stay open on the [roadmap](../product/roadmap.md)
@@ -1065,7 +1065,7 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d1 — Keep `access.verb_ceiling` for a writer without a reader grant calling recall** | The writer role admits reader grants, so the ceiling is not what refuses the call; mcp-plugin.md:371-382 specifies `access.not_found`. |
 | **d1 — Cache effective access, invalidated by the epoch** | No measurement shows it is needed, and a cache opens a staleness window, beyond the follower's replication lag, that [security](../architecture/security.md) would have to state. Recomputing on every request is one grants read plus one ancestry walk. |
 | **d1 — `access.not_found` for a verdict whenever dreamer is not effective** | A second refusal order for one verb; the reviewer already holds the serve, so `access.grant_refused` tells it nothing the serve did not. |
-| **d1 — Keep a service key out of review by serving it nothing** | Claim-edge, workarea-edge and status-transition ratification and reopen use no serve, so a stolen reconciler key could still ratify connections, which change other keys' graph reads and every later lineage-closure exclusion, and ratify a workarea's move up the status ladder. |
+| **d1 — Keep a service key out of review by serving it nothing** | Claim-edge, workarea-edge and status-transition ratification and reopen use no serve, so a stolen reconciler key could still ratify connection edges, which change other keys' graph reads and every later lineage-closure exclusion, and ratify a workarea's move up the status ladder. |
 | **d1 — Compute effective access in SQL in the adapter** | It puts policy in an adapter (ADR-0019 d1) and leaves no pure function to property-test against workareas.md:130-143. |
 | **d2 — One transaction with N+1 events** | It changes the commit request for every caller, which is FR-12's batch-commit work. |
 | **d2 — Disclose the value after `key.issued` and add the grants afterwards** | A grant failure would leave a disclosed key with fewer rights than its caller believes it holds. |
@@ -1132,7 +1132,7 @@ denial lift; issuance idempotency; key rotation and expiry enforcement; the oper
 | **d12 — A version argument on `oml_get`** | The ring has none, and each version has its own `artifact_id` (ADR-0014 d1). |
 | **d12 — Keep supersede HTTP-only** | Fails FR-10 (mcp-plugin.md:285-286 is the sentence this record removes). |
 | **d12 — A batch get** | No ring endpoint for it exists, and recall already returns text. |
-| **d13 — Default `own=true` to the token workarea's subtree** | Silently leaves out the key's rows in other areas. |
+| **d13 — Default `own=true` to the key workarea's subtree** | Silently leaves out the key's rows in other areas. |
 | **d13 — Facade-only `submitted_at` and `held_expires_at`** | ADR-0014 d1. |
 | **d13 — `X-OML-Workarea` with `own=true` as a second subtree filter** | Two filters on one listing need an intersection rule of their own; refusing the header is the smaller contract. |
 | **d13 — Omit retirement tips from the listing** | The listing would hide a promoted served tip that get serves, and no reader could see in it that a claim is retired. |

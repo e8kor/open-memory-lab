@@ -32,28 +32,24 @@ Four words carry the status of everything below:
 | **v0.2.2** | 2026-10-31 | Every Claude Code session starts from what OML holds for the agent's key: its recent work and the memories that match the project, within a budget, and nothing at all if the server cannot be reached. | [ADR-0029](../adr/ADR-0029-session-start-hook.md) |
 | **v0.3.0** | 2026-10-31 | Names instead of ids. Workareas, crews, keys and organisations carry one name each, unique and never changed or reused, and every surface accepts a name wherever it accepts an id. Crews become records of their own. An administrator's key reads the shape of the workarea tree but never a memory in it. On its first start over older data the server names every unnamed row and records that in the history. A Helm chart runs the server on Kubernetes as one instance. Python and TypeScript clients sit in the source tree, not yet published to a package registry. | [ADR-0026](../adr/ADR-0026-names-are-keys.md), in part; [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) (the record is still proposed) |
 | **v0.3.1** | 2026-11-03 | The server runs its database changes as one account and serves as a second account that owns nothing, and refuses to start when both are the same. Each organisation's search index is its own. The `oml` command line ships on its own for Linux, macOS and Windows, and the server for Intel and Arm Linux. Each release also ships the Claude Code plugins as an offline archive and as a marketplace pinned to the release, and a kit that connects other agent tools: OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop. | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md), in part |
+| **v0.4.0** | 2026-11-04 | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the eight, with the eight old names and the old command-line verbs still answering, unlisted, through the 0.4 releases, and one server address and one key as the only settings any client needs. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent searches for itself during a session, a failed command searches only when the user opts in, and a read-only librarian subagent searches for you. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key, on the server's own address; no live claude.ai connection has been made yet. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. The documentation upgrade: a Get started page and an install page, guides for Claude Code, claude.ai and mobile, other agent tools, self-hosting and upgrading from v0.3, eight short use-case scenarios beside the full use-case catalogue, refreshed for v0.4.0, and the README, architecture overview and plugin and kit READMEs rewritten. Not in it: the one-line install that also runs the quick start, and the short install address. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md); the librarian is ADR-0038's d10 |
 
 ## Planned releases
 
-Nothing in this section is built. Each row is the plan of 2026-11-03.
+Nothing in this section is released. Each row is the plan of 2026-11-03.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.4.0** | planned | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the current eight, and one server address and one key to start. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent recalls for itself during a session, and a failed command recalls only when the user opts in. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key. A librarian subagent. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. A documentation upgrade. | ADR-0039, ADR-0040, ADR-0038, ADR-0031, ADR-0041 (all proposed); the librarian has no record yet |
 | **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
 ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
-([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0031
-([#14](https://github.com/e8kor/open-memory-lab/pull/14)), ADR-0035
+([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
 ([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0037
-([#20](https://github.com/e8kor/open-memory-lab/pull/20)), ADR-0038
-([#24](https://github.com/e8kor/open-memory-lab/pull/24)), ADR-0039 and ADR-0040
-([#28](https://github.com/e8kor/open-memory-lab/pull/28)), and ADR-0041 (the `feat/quick-install`
-branch, no pull request yet). The number ADR-0032 is not used by any record.
+([#20](https://github.com/e8kor/open-memory-lab/pull/20)). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -79,9 +75,9 @@ many memories in one request. A web console is declined, not deferred.
 | Replacing a memory with a new version | introduced in v0.1.0; the old version stays the one others see until the new one is approved since v0.2.0 |
 | Agent tools: remember, learn, recall, event feed | introduced in v0.1.0 |
 | Agent tools: get, supersede, my work, workarea info | introduced in v0.2.0 |
-| Three task-shaped agent tools in place of the eight | planned for v0.4.0 |
+| Three task-shaped agent tools in place of the eight | introduced in v0.4.0 |
 | The Claude Code plugin | introduced in v0.1.0 (two keys); one key since v0.2.0 |
-| Plugin setup through Claude Code's plugin settings, key in the keychain | planned for v0.4.0 |
+| Plugin setup through Claude Code's plugin settings, key in the keychain | introduced in v0.4.0 |
 | Docker quickstart | introduced in v0.1.0 |
 | Signed releases with a software bill of materials | introduced in v0.1.0 |
 | Health and readiness checks | introduced in v0.1.0; the build is named since v0.2.0 |
@@ -94,7 +90,7 @@ many memories in one request. A web console is declined, not deferred.
 | Issuing an agent's key in one command, written to a private file | introduced in v0.2.1 |
 | The `oml-admin` plugin | introduced in v0.2.1 |
 | A session that starts from what OML holds for its key | introduced in v0.2.2 |
-| Recall during the session, and after a failed command when opted in | planned for v0.4.0 |
+| Recall during the session, and after a failed command when opted in | introduced in v0.4.0 |
 | Names for workareas, crews, keys and organisations | introduced in v0.3.0 |
 | Crew records and the workarea tree read | introduced in v0.3.0 |
 | Helm chart for Kubernetes, one instance | introduced in v0.3.0 |
@@ -104,10 +100,10 @@ many memories in one request. A web console is declined, not deferred.
 | The command line for Linux, macOS and Windows; the server for Intel and Arm Linux | introduced in v0.3.1 |
 | The plugins as an offline archive and a pinned marketplace | introduced in v0.3.1 |
 | The kit for Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop | introduced in v0.3.1 |
-| Claude's web and mobile apps over OAuth by connect code | planned for v0.4.0 |
-| The librarian subagent | planned for v0.4.0 |
-| Quick start in one command per role | planned for v0.4.0 |
-| Documentation upgrade | planned for v0.4.0 |
+| Claude's web and mobile apps over OAuth by connect code | introduced in v0.4.0 |
+| The librarian subagent | introduced in v0.4.0 |
+| Quick start in one command per role | introduced in v0.4.0 |
+| Documentation upgrade | introduced in v0.4.0 |
 | Guardrails | planned for v0.5.0 |
 | Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | planned for v0.5.0 |
@@ -139,15 +135,15 @@ which part is still decided, not built.
 | [ADR-0011](../adr/ADR-0011-simulations.md) simulations | accepted | Not scheduled. |
 | [ADR-0012](../adr/ADR-0012-admission-and-review.md) admission and review | accepted | Partly in v0.1.0: capture, scan, hold, review bound to what was served, approval. Review policies, held writes that expire and comparing crews for independence are not scheduled. |
 | [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) reads served from the database | accepted | Partly in v0.1.0: every read is served from the database. Standing instructions first since v0.2.0. The read record and semantic search are not scheduled. |
-| [ADR-0014](../adr/ADR-0014-http-api-and-mcp-facade.md) one HTTP API with MCP over it | accepted | Partly in v0.1.0: the HTTP API, the MCP tools over it, safe retries, typed errors, health checks. The answer for a retry that arrives while its first attempt is still running is not built. The rewrite of the tools is planned for v0.4.0 (ADR-0039). |
+| [ADR-0014](../adr/ADR-0014-http-api-and-mcp-facade.md) one HTTP API with MCP over it | accepted | Partly in v0.1.0: the HTTP API, the MCP tools over it, safe retries, typed errors, health checks. The answer for a retry that arrives while its first attempt is still running is not built. The rewrite of the tools arrived in v0.4.0 (ADR-0039), and connections on `/mcp` with it (ADR-0031). |
 | [ADR-0015](../adr/ADR-0015-cli-administration.md) the command line administers | accepted | Partly in v0.1.0: keys shown once, the review ceremony, the health check. Dry runs, the evidence export, settings and status are not scheduled. |
 | [ADR-0016](../adr/ADR-0016-kubernetes-workloads.md) Kubernetes workloads | accepted | Partly in v0.3.0: a chart with the server alone, under ADR-0033. The full workload set and its two profiles are not scheduled. |
 | [ADR-0017](../adr/ADR-0017-reconciliation.md) reconciliation | accepted | Not scheduled. |
-| [ADR-0018](../adr/ADR-0018-the-documentation-set.md) the documentation set | accepted | Governs the documentation since the first design revision of 2026-10-29; no software ships it. The documentation upgrade is planned for v0.4.0. |
+| [ADR-0018](../adr/ADR-0018-the-documentation-set.md) the documentation set | accepted | Governs the documentation since the first design revision of 2026-10-29; no software ships it. The documentation upgrade arrived with v0.4.0. |
 | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md) a pure core with ports | accepted | Partly in v0.1.0: the pure core, ports and thin binaries. Two of the five binaries exist; the plugin points are not scheduled. |
 | [ADR-0020](../adr/ADR-0020-dataset-onboarding.md) dataset imports | accepted | Not scheduled. |
 | [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) shared vocabularies | accepted | Decided, not built. Links between memories are planned for v0.5.0; vocabularies are parked. |
-| [ADR-0022](../adr/ADR-0022-two-ring-api.md) the two-ring API | accepted | Introduced in v0.1.0: one listener, a stable agent ring and an evolving lab ring, MCP over both. The compatibility promise is not yet in force. Amended by the v0.4.0 rewrite (planned). |
+| [ADR-0022](../adr/ADR-0022-two-ring-api.md) the two-ring API | accepted | Introduced in v0.1.0: one listener, a stable agent ring and an evolving lab ring, MCP over both. The compatibility promise is not yet in force. Amended by the v0.4.0 rewrite (ADR-0039). |
 | [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) install profiles and cluster mode | accepted | Partly in v0.1.0: one host and Docker, with a file keyring. The Kubernetes chart in v0.3.0. Read followers and cluster mode are not scheduled. |
 | [ADR-0024](../adr/ADR-0024-performance-foundation.md) the performance foundation | accepted | Not scheduled as a release item. No part of it is measured; batch writes and streamed attachments are not built. |
 | [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) the agent-only memory surface | accepted | Partly in v0.2.0: one key, own held writes in recall, budgets, ordering, versions, the own-work listing, the workarea read and the filtered feed. The separate author-only search index, the read record and changing grants after issue are not scheduled. |
@@ -156,13 +152,13 @@ which part is still decided, not built.
 | [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) agent key issuance | accepted | Introduced in v0.2.1; the key's name as its first argument since v0.3.0. |
 | [ADR-0029](../adr/ADR-0029-session-start-hook.md) the session-start hook | accepted | Introduced in v0.2.2. |
 | ADR-0030 in-progress workareas | proposed | Planned for v0.6.0. |
-| ADR-0031 OAuth by connect code | proposed | Planned for v0.4.0. |
+| [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) OAuth by connect code | accepted | Introduced in v0.4.0. |
 | [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) the interim Helm chart | proposed | Introduced in v0.3.0, while the record is still proposed. |
 | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) the server serves as an account that owns nothing | accepted | Partly in v0.3.1: the two accounts, the startup refusal, the per-organisation search index and the keys that carry the organisation. Its spike groundwork shipped in v0.3.0. The separate bootstrap workload and the health check for the split are not scheduled; one further hardening step waits on search measurements. |
 | ADR-0035 deliverables | proposed | Parked. |
 | ADR-0036 time | proposed | Parked. |
 | ADR-0037 guardrails | proposed | Planned for v0.5.0. |
-| ADR-0038 turn context | proposed | Planned for v0.4.0. |
-| ADR-0039 the API rewrite | proposed | Planned for v0.4.0. |
-| ADR-0040 plugin setup | proposed | Planned for v0.4.0. |
-| ADR-0041 quick start per role | proposed | Planned for v0.4.0. |
+| [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) turn context | accepted | Introduced in v0.4.0. |
+| [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
+| [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |
+| [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |

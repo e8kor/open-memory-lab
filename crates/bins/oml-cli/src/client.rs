@@ -48,8 +48,6 @@ pub struct CallOpts {
     /// Mint and send an `Idempotency-Key` (required on every write,
     /// http-api.md idempotency table).
     pub idempotency: bool,
-    /// The `X-OML-Workarea` per-request override (ADR-0022 d4).
-    pub workarea: Option<String>,
 }
 
 pub struct Client {
@@ -90,7 +88,7 @@ impl Client {
     fn bearer(&self) -> Result<String, CliError> {
         self.key.as_deref().map(|k| format!("Bearer {k}")).ok_or_else(|| {
             CliError::local(
-                "no API key: pass --key, set OML_CLI_KEY, or claim one with `oml bootstrap claim`",
+                "no API key: pass --api-key, set OML_API_KEY, or claim one with `oml bootstrap claim`",
             )
         })
     }
@@ -102,6 +100,12 @@ impl Client {
             .get(&format!("{}{path}", self.server))
             .set("Authorization", &self.bearer()?);
         finish(request.call())
+    }
+
+    /// `GET /v2/whoami`: the calling key's own record, from which a client
+    /// derives everything beyond its URL and key (ADR-0039 d15).
+    pub fn whoami(&self) -> Result<Value, CliError> {
+        self.get("/v2/whoami").map(|(_, me)| me)
     }
 
     /// GET without credentials, tolerating any status: `/readyz` answers 503
@@ -130,6 +134,33 @@ impl Client {
         body: &Value,
         opts: &CallOpts,
     ) -> Result<(u16, Value), CliError> {
+        finish(self.send_post(path, body, opts)?)
+    }
+
+    /// POST a JSON body; returns the parsed success body and whether it is an
+    /// idempotent replay (`Idempotency-Replay: true`, http-api.md
+    /// idempotency), which a connect-code verb reads because a replayed
+    /// answer carries no code (ADR-0031 d7).
+    pub fn post_replayable(
+        &self,
+        path: &str,
+        body: &Value,
+        opts: &CallOpts,
+    ) -> Result<(Value, bool), CliError> {
+        let result = self.send_post(path, body, opts)?;
+        let replayed = matches!(
+            &result,
+            Ok(response) if response.header("Idempotency-Replay") == Some("true")
+        );
+        finish(result).map(|(_, value)| (value, replayed))
+    }
+
+    fn send_post(
+        &self,
+        path: &str,
+        body: &Value,
+        opts: &CallOpts,
+    ) -> Result<Result<ureq::Response, ureq::Error>, CliError> {
         let mut request = self.agent.post(&format!("{}{path}", self.server));
         if opts.auth {
             request = request.set("Authorization", &self.bearer()?);
@@ -137,9 +168,23 @@ impl Client {
         if opts.idempotency {
             request = request.set("Idempotency-Key", &new_idempotency_key());
         }
-        if let Some(wa) = &opts.workarea {
-            request = request.set("X-OML-Workarea", wa);
-        }
+        Ok(request.send_json(body.clone()))
+    }
+
+    /// POST a JSON body under the key, with `idempotency_key` as its
+    /// `Idempotency-Key`, so a re-run naming the same key replays the first
+    /// answer (http-api.md idempotency; ADR-0039 d3).
+    pub fn post_keyed(
+        &self,
+        path: &str,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .post(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .set("Idempotency-Key", idempotency_key);
         finish(request.send_json(body.clone()))
     }
 }
@@ -188,7 +233,12 @@ pub fn encode(text: &str) -> String {
 
 /// One idempotency key per invocation: a re-run is a new act, a transport
 /// retry inside the call is not (ureq does not retry POSTs).
-fn new_idempotency_key() -> String {
+///
+/// # Panics
+///
+/// When the OS random source is unavailable.
+#[must_use]
+pub fn new_idempotency_key() -> String {
     let mut bytes = [0_u8; 16];
     getrandom::getrandom(&mut bytes).expect("the OS random source is available");
     format!("oml-cli-{}", hex::encode(bytes))

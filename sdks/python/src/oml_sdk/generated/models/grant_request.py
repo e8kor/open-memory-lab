@@ -19,8 +19,8 @@ T = TypeVar("T", bound="GrantRequest")
 class GrantRequest:
     """
     Attributes:
-        workarea_node_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
-            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any check that reads state;
+            an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
             (request.validation).
         role (GrantRequestRole): A grant role, admissible under the key's role (the admissibility table in
             docs/architecture/roles-and-keys.md); never admin or operator.
@@ -28,13 +28,13 @@ class GrantRequest:
             lie inside it (request.validation otherwise).
     """
 
-    workarea_node_id: str
+    workarea: str
     role: GrantRequestRole
     deny: list[GrantRequestDenyItem] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
-        workarea_node_id: str
-        workarea_node_id = self.workarea_node_id
+        workarea: str
+        workarea = self.workarea
 
         role = self.role.value
 
@@ -49,7 +49,7 @@ class GrantRequest:
 
         field_dict.update(
             {
-                "workarea_node_id": workarea_node_id,
+                "workarea": workarea,
                 "role": role,
             }
         )
@@ -64,10 +64,10 @@ class GrantRequest:
 
         d = dict(src_dict)
 
-        def _parse_workarea_node_id(data: object) -> str:
+        def _parse_workarea(data: object) -> str:
             return cast(str, data)
 
-        workarea_node_id = _parse_workarea_node_id(d.pop("workarea_node_id"))
+        workarea = _parse_workarea(d.pop("workarea"))
 
         role = GrantRequestRole(d.pop("role"))
 
@@ -81,7 +81,7 @@ class GrantRequest:
                 deny.append(deny_item)
 
         grant_request = cls(
-            workarea_node_id=workarea_node_id,
+            workarea=workarea,
             role=role,
             deny=deny,
         )

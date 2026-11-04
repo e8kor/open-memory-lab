@@ -6,17 +6,18 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea_view import WorkareaView
 from ...types import Response
 
 
 def _get_kwargs(
-    workarea_id: str,
+    workarea: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea_id}".format(
-            workarea_id=quote(str(workarea_id), safe=""),
+        "url": "/v2/workareas/{workarea}".format(
+            workarea=quote(str(workarea), safe=""),
         ),
     }
 
@@ -25,7 +26,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope:
+) -> ErrorEnvelope | WorkareaView:
+    if response.status_code == 200:
+        response_200 = WorkareaView.from_dict(response.json())
+
+        return response_200
+
     if response.status_code == 404:
         response_404 = ErrorEnvelope.from_dict(response.json())
 
@@ -38,7 +44,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -48,10 +54,10 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -65,7 +71,7 @@ def sync_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -74,11 +80,11 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaView]
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
     )
 
     response = client.get_httpx_client().request(
@@ -89,10 +95,10 @@ def sync_detailed(
 
 
 def sync(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaView | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -106,7 +112,7 @@ def sync(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -115,20 +121,20 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaView
     """
 
     return sync_detailed(
-        workarea_id=workarea_id,
+        workarea=workarea,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -142,7 +148,7 @@ async def asyncio_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -151,11 +157,11 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaView]
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -164,10 +170,10 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaView | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -181,7 +187,7 @@ async def asyncio(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
 
@@ -190,12 +196,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaView
     """
 
     return (
         await asyncio_detailed(
-            workarea_id=workarea_id,
+            workarea=workarea,
             client=client,
         )
     ).parsed

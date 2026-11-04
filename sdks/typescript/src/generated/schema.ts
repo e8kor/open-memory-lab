@@ -13,13 +13,13 @@ export interface paths {
         };
         /**
          * Structured, paginated listing of memory summaries.
-         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true the listing resolves no workarea, and an X-OML-Workarea header is refused (request.validation). Without own, the listing returns promoted served tips within reader effective access, defaulting to the token workarea's subtree (ADR-0022 d4) — a self_signed version only when the scope node is its own workarea; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workarea_id is a subtree filter (see the parameter). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
+         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workarea's subtree, defaulting to the key's default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own workarea; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workarea is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
          */
-        get: operations["searchMemories"];
+        get: operations["listMemories"];
         put?: never;
         /**
          * Submit a memory (remember or learn); held on arrival, scanned same-call.
-         * @description Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea resolves from the token (default_workarea, or the X-OML-Workarea override; request.workarea_unresolved with neither — ADR-0022 d4). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
+         * @description Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea is the body's workarea, by id or name, honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
          */
         post: operations["submitMemory"];
         delete?: never;
@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. Default scope is the token workarea's subtree — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback. Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -56,30 +56,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One memory with body (decrypted on the serving path) and attachment descriptors.
-         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.
+         * One memory with its text (decrypted on the serving path) and attachment descriptors.
+         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.
          */
         get: operations["getMemory"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/memories/{artifact_id}/lineage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The derivation closure, pending and ratified edges, serialized as stored.
-         * @description Requires: reader effective access. Serialize, don't compute (D13); out-of-scope nodes are elided to redacted ids.
-         */
-        get: operations["getLineage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -99,213 +79,9 @@ export interface paths {
         put?: never;
         /**
          * Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). X-OML-Workarea, if sent, must equal the target's workarea (request.validation otherwise); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Omitted attachments and terms leave the successor with none; only kind is inherited. A tainted replacement can never take the default tip (simulation.tip_refused at promotion): it shadows the tip for its simulation audience only.
+         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
          */
-        post: operations["proposeSupersession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/memories/{artifact_id}/reassign": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled move between workareas, recording both policy snapshots.
-         * @description Requires: admin key role. Stricter-policy destination re-enters held; refused into validated (workarea.frozen); claim_key collision refused without re_key.
-         */
-        post: operations["reassignClaim"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/memories/{artifact_id}/demote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled demotion; bytes are kept (R4).
-         * @description Requires: admin key role.
-         */
-        post: operations["demoteClaim"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/memories/{artifact_id}/erase": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled crypto-shred — erase event plus DEK destruction, scoped to body and attachment bytes.
-         * @description Requires: admin key role. dry_run returns the erasure inventory per copy class. Attribution metadata survives — FR-1.
-         */
-        post: operations["eraseClaim"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/claims/tip-override": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Designate an earlier promoted version as the served tip — explicit and journalled, never a silent re-rank.
-         * @description Requires: admin key role. Journals lifecycle.tip_override. Refused with simulation.tip_refused when the designated version is tainted — taint never captures the default tip.
-         */
-        post: operations["tipOverride"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/attachments/uploads": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Open a resumable upload session recording the expected plaintext digest up front.
-         * @description Requires: writer effective access. The session is scoped to the uploading key and expires (D3).
-         */
-        post: operations["createUploadSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/attachments/uploads/{session_id}/parts/{part_number}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Upload one part; replaying a part is harmless (verified by digest at completion).
-         * @description Requires: writer, session owner. No Idempotency-Key — a part is addressed by (session, part_number). Parts are 5–64 MiB (http-api.md Limits); an oversized part answers 413 request.payload_too_large.
-         */
-        put: operations["putUploadPart"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/attachments/uploads/{session_id}/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Assemble, hash, compare against the expected digest; store encrypted on match.
-         * @description Requires: writer, session owner. upload.digest_mismatch when the bytes are not what the session promised.
-         */
-        post: operations["completeUploadSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/attachments/{digest}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Fetch attachment bytes, decrypted on the serving path, plaintext digest verified before serving.
-         * @description Requires: reader access to a promoted claim binding the digest; the author for own held; a reviewer under a valid serve_id. Logged as a read.
-         */
-        get: operations["getAttachment"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/claim-edges": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Paginated claim-graph read, pending and ratified, scoped to read access.
-         * @description Requires: reader effective access.
-         */
-        get: operations["listClaimEdges"];
-        put?: never;
-        /**
-         * Propose a claim-to-claim connection; pending until ratified.
-         * @description Requires: dreamer(propose). The claim-edge label vocabulary is not fixed by the design (open detail, roadmap).
-         */
-        post: operations["proposeClaimEdge"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/claim-edges/{edge_id}/ratify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ratify a proposed claim edge.
-         * @description Requires: dreamer(review); never the proposer (review.ratifier_is_proposer) and refused on lineage collision (review.author_in_lineage) — R2. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
-         */
-        post: operations["ratifyClaimEdge"];
+        post: operations["supersedeMemory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -319,15 +95,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Resolve a workarea node by derived path (grants bind to node ids, never paths).
-         * @description Requires: reader effective access on the node, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
-         */
-        get: operations["resolveWorkarea"];
+        get?: never;
         put?: never;
         /**
          * Create a child workarea in development.
-         * @description Requires: admin key role. parent_id and crew each take an id or a name; a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
          */
         post: operations["createWorkarea"];
         delete?: never;
@@ -336,7 +108,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}": {
+    "/v2/workareas/{workarea}": {
         parameters: {
             query?: never;
             header?: never;
@@ -356,7 +128,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}/tree": {
+    "/v2/workareas/{workarea}/tree": {
         parameters: {
             query?: never;
             header?: never;
@@ -376,91 +148,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}/edges": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Labelled related edges touching the node, pending and ratified; edges confer zero access.
-         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
-         */
-        get: operations["listWorkareaEdges"];
-        put?: never;
-        /**
-         * Propose a labelled edge from this node; pending until ratified.
-         * @description Requires: dreamer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7).
-         */
-        post: operations["proposeWorkareaEdge"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/workarea-edges/{edge_id}/ratify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ratify a proposed workarea edge.
-         * @description Requires: dreamer(review) effective access on BOTH endpoints; never the proposer (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
-         */
-        post: operations["ratifyWorkareaEdge"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/workareas/{workarea_id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Status, the review policy object in force, pending transitions.
-         * @description Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
-         */
-        get: operations["getWorkareaStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/workareas/{workarea_id}/reparent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled single-transaction descendant path rewrite; dry_run previews paths and grants affected.
-         * @description Requires: admin key role. Re-parenting into a validated destination is refused (workarea.frozen).
-         */
-        post: operations["reparentWorkarea"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/workareas/{workarea_id}/crew": {
+    "/v2/workareas/{workarea}/crew": {
         parameters: {
             query?: never;
             header?: never;
@@ -471,9 +159,9 @@ export interface paths {
         put?: never;
         /**
          * Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
-         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew_id}/update.
+         * @description Requires: admin key role. Journals workarea.crew_updated with the crew's id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew}/update.
          */
-        post: operations["updateCrewMetadata"];
+        post: operations["setWorkareaCrew"];
         delete?: never;
         options?: never;
         head?: never;
@@ -504,7 +192,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/crews/{crew_id}": {
+    "/v2/crews/{crew}": {
         parameters: {
             query?: never;
             header?: never;
@@ -524,7 +212,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/crews/{crew_id}/update": {
+    "/v2/crews/{crew}/update": {
         parameters: {
             query?: never;
             header?: never;
@@ -544,46 +232,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/workareas/{workarea_id}/transitions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Propose a forward status transition; pending until a second party ratifies.
-         * @description Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused).
-         */
-        post: operations["proposeTransition"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/workareas/{workarea_id}/transitions/{transition_id}/ratify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ratify a pending transition; journalled with the policy snapshot.
-         * @description Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
-         */
-        post: operations["ratifyTransition"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/events": {
         parameters: {
             query?: never;
@@ -593,109 +241,9 @@ export interface paths {
         };
         /**
          * The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
-         * @description Requires: reader effective access on workarea_id (access.not_found otherwise); omitted, the key's default workarea, and request.workarea_unresolved for a key with none. Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
+         * @description Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key's default workarea, and request.workarea_unresolved for a key with none. v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor's own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key's ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.
          */
         get: operations["tailEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/vocab/suggest": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Deterministic prefix+label typeahead over granted vocabulary workareas — matching, never interpretation.
-         * @description Requires: reader effective access on the vocabulary workarea(s) searched; vocabularies outside scope are absent (fail closed).
-         */
-        get: operations["suggestTerms"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/vocab/terms/{curie}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One term record — status, successors, the releases its tip appears in.
-         * @description Requires: reader effective access on the owning vocabulary workarea. Unknown and out-of-scope CURIEs answer 404 access.not_found, indistinguishable (fail closed).
-         */
-        get: operations["getTerm"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/vocab/terms/{curie}/hierarchy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Parents, children, ancestors or descendants over ratified is_a — a lookup over the per-release closure, never a traversal.
-         * @description Requires: reader effective access on the owning vocabulary workarea. Closure rows are materialized at release ratification (serialize, don't compute — ADR-0021); release defaults to the owning vocabulary's latest ratified release.
-         */
-        get: operations["getTermHierarchy"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/vocab/mappings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Ratified SSSOM-shaped mappings touching a term; both endpoints persist — a mapping never merges.
-         * @description Requires: reader effective access on the queried term's vocabulary; mapping rows outside the key's read scope are absent (fail closed).
-         */
-        get: operations["listTermMappings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/review/queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Held-item counts and oldest ages per workarea in the reviewer's scope.
-         * @description Requires: dreamer(review) effective access. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
-         */
-        get: operations["reviewQueue"];
         put?: never;
         post?: never;
         delete?: never;
@@ -735,29 +283,9 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
          */
         post: operations["postVerdict"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/review/reopen": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Non-author reopen of a rejection — a journalled verb, not a resubmission.
-         * @description Requires: dreamer(review); the original author is refused (review.author_in_lineage). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A reopen that would put a second live version under one claim_key and ordinal is refused with 409 submission.claim_key_conflict (docs/architecture/audit-and-lineage.md, Supersession chains, claim_key and the tip; ADR-0025 d18).
-         */
-        post: operations["reopenRejection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -771,15 +299,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Key ids, roles, principals, labels, expiries — never values.
-         * @description Requires: admin key role.
-         */
-        get: operations["listKeys"];
+        get?: never;
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant_id, or a tenant's first admin key, sent with tenant_id (step 0 of the issuance order). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids; name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq).
+         * @description Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.
          */
         post: operations["issueKey"];
         delete?: never;
@@ -788,7 +312,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}": {
+    "/v2/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
+         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+         */
+        get: operations["whoami"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -808,87 +352,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}/revoke": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower.
-         * @description Requires: admin key role.
-         */
-        post: operations["revokeKey"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/keys/{key_id}/rotate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
-         * @description Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor's name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The successor takes its own name (409 name.taken when held), since both keys are live through the grace window, and carries the old key's crew (ADR-0026 d9). Per key in v1; bulk crew rotation is open — FR-6.
-         */
-        post: operations["rotateKey"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/keys/{key_id}/grants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Bind the key to a workarea node, by id or name (never a path), with optional per-grant deny masks; epoch bump.
-         * @description Requires: admin key role. A grant's role must be admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md; access.issuer_ceiling with details {role, admissible} otherwise — one grant, so no grant_index); a dreamer-class grant on an admin key is refused first (access.role_exclusive — the two-key rule). The grant's epoch is its grant.issued journal seq.
-         */
-        post: operations["addGrant"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/keys/{key_id}/grants/{grant_id}/revoke": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled grant removal; epoch bump.
-         * @description Requires: admin key role.
-         */
-        post: operations["revokeGrant"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/keys/{key_id}/denials": {
+    "/v2/keys/{key}/denials": {
         parameters: {
             query?: never;
             header?: never;
@@ -899,7 +363,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. A denial on an admin key is refused with request.validation, details.field key_id: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -908,7 +372,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}/denials/{denial_id}/lift": {
+    "/v2/keys/{key}/connect-codes": {
         parameters: {
             query?: never;
             header?: never;
@@ -918,61 +382,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Journalled lift of a global denial.
-         * @description Requires: admin key role.
+         * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
+         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.
          */
-        post: operations["liftDenial"];
+        post: operations["mintConnectCode"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/keys/{key_id}/effective-access": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The resolved answer — what this key may do where, and which deny produced each hole.
-         * @description Requires: admin key role. Reproducible from journalled grants by construction (permission epoch).
-         */
-        get: operations["getEffectiveAccess"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/bans": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Active and lifted bans, with who imposed and who lifted each.
-         * @description Requires: admin key role.
-         */
-        get: operations["listBans"];
-        put?: never;
-        /**
-         * Ban an author or source, checked at every admission; dry_run returns the reach preview without journalling.
-         * @description Requires: admin key role.
-         */
-        post: operations["imposeBan"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/bans/{ban_id}/lift": {
+    "/v2/keys/{key}/connections/{connection_id}/revoke": {
         parameters: {
             query?: never;
             header?: never;
@@ -982,54 +402,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Journalled lift; the ban row stays as history (no silent removal of governance acts).
-         * @description Requires: admin key role.
+         * Journalled revocation of one connection.
+         * @description Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection at its next request and voids the key's codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.
          */
-        post: operations["liftBan"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/simulations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Simulations with state and audience.
-         * @description Requires: admin key role.
-         */
-        get: operations["listSimulations"];
-        put?: never;
-        /**
-         * Open a simulation with a journalled audience; no dreamer in the audience means nothing can promote (fail closed, warned).
-         * @description Requires: admin key role (D10).
-         */
-        post: operations["openSimulation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/simulations/{simulation_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * One simulation — audience, rows written, sim-derived taints outside it.
-         * @description Requires: admin key role.
-         */
-        get: operations["getSimulation"];
-        put?: never;
-        post?: never;
+        post: operations["revokeConnection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1056,47 +432,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/simulations/{simulation_id}/audience": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Correct a live simulation's audience — the only recovery from the fail-closed no-dreamer state short of ending it.
-         * @description Requires: admin key role. Journals simulation.audience_changed; the audience at any seq is the fold of simulation.opened plus every audience_changed since. Removal takes effect on the next read; past reads stand in the read log.
-         */
-        post: operations["changeSimulationAudience"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/simulations/{simulation_id}/end": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Journalled end — demotes the simulation's rows and triggers re-review of tainted claims; dry_run lists everything the end would touch.
-         * @description Requires: admin key role.
-         */
-        post: operations["endSimulation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/exports": {
+    "/.well-known/oauth-protected-resource/mcp": {
         parameters: {
             query?: never;
             header?: never;
@@ -1104,34 +440,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export jobs and their states.
-         * @description Requires: admin key role.
+         * RFC 9728 protected-resource metadata for the /mcp resource; 404 where oauth.issuer is unset.
+         * @description Unauthenticated, no tenant data. Built from oauth.issuer alone, never from the request Host. resource is exactly <issuer>/mcp (RFC 9728 §3.3); one authorization server, the issuer itself. The root form /.well-known/oauth-protected-resource is not served (ADR-0031 d3).
          */
-        get: operations["listExports"];
-        put?: never;
-        /**
-         * Start an async export job — the signed evidence bundle, or the digest-only chain stream for client-side verification.
-         * @description Requires: admin key role. The export act is itself journalled; simulations are excluded unless asked for and then listed separately.
-         */
-        post: operations["createExport"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/exports/{export_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Job state — running, done or failed.
-         * @description Requires: admin key role.
-         */
-        get: operations["getExport"];
+        get: operations["protectedResourceMetadata"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1140,7 +452,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/exports/{export_id}/bundle": {
+    "/.well-known/oauth-authorization-server": {
         parameters: {
             query?: never;
             header?: never;
@@ -1148,10 +460,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The signed bundle; export.not_ready before the job is done.
-         * @description Requires: admin key role.
+         * RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
+         * @description Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document is served: OML issues no ID token (ADR-0031 d3).
          */
-        get: operations["downloadExportBundle"];
+        get: operations["authorizationServerMetadata"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1160,7 +472,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/settings": {
+    "/oauth/authorize": {
         parameters: {
             query?: never;
             header?: never;
@@ -1168,19 +480,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The configured document as last applied; effective=true adds running values with every divergence marked per key.
-         * @description Requires: admin key role.
+         * Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the connect-code page.
+         * @description Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds, no parameter sent more than once among them, are checked first, before any fetch. A parameter past its bound (a repeated one and a present code_challenge that does not match the pattern included), a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal, oauth.pkce_required for an absent code_challenge or an absent or non-S256 code_challenge_method among them, redirects with the RFC error, state and iss (RFC 9207). The authorization request writes no row: the page carries it as a handle sealed by an AEAD under a key the lead holds only in memory, so opening pages is not capped, and a full document cache evicts rather than refuses (ADR-0031 d5, d9). The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page's own POST), X-Content-Type-Options nosniff.
          */
-        get: operations["getSettings"];
+        get: operations["authorize"];
         put?: never;
-        post?: never;
+        /**
+         * The page's own form — the connect code, then the confirmation.
+         * @description Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided (docs/architecture/roles-and-keys.md, Connections); any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request's row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key's name, principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss. Connect and Cancel each delete the authorization request's row in their own commit, so a later step-3 POST with that handle names no row and answers oauth.authorization_expired on the page (ADR-0031 d9).
+         */
+        post: operations["authorizeSubmit"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/settings/validate": {
+    "/oauth/token": {
         parameters: {
             query?: never;
             header?: never;
@@ -1190,17 +506,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Server-side validation without applying; a retired settings key is refused by name, with its replacement.
-         * @description Requires: admin key role. Read-shaped POST: no Idempotency-Key.
+         * Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
+         * @description Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client's one registered URI. refresh_token answers a new pair and marks the presented token rotated; which tokens a refresh accepts, and when reuse of a refresh token or an authorization code revokes the connection (connection.revoked), are declared on docs/architecture/roles-and-keys.md (Connections). The client is the one stored on the code's or refresh token's connection; the client tables are never read here, a client_id that differs from the connection's is invalid_grant, and invalid_client answers only a request that sends client authentication: 401 with WWW-Authenticate for an Authorization header, 400 for a client_secret in the body. A revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2), and a parameter sent more than once is request.validation (invalid_request). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
          */
-        post: operations["validateSettings"];
+        post: operations["token"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v2/settings/apply": {
+    "/oauth/register": {
         parameters: {
             query?: never;
             header?: never;
@@ -1210,30 +526,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Validate, journal, apply; refused whole on any validation error, and there is no force flag.
-         * @description Requires: admin key role. Journals system.settings_applied.
+         * RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only, redirect URIs inside the allowlist.
+         * @description Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. client_name is required, since the page shows it; an absent token_endpoint_auth_method is registered and echoed as none, and any other value than none is request.validation (invalid_client_metadata). A registered client that has not connected (no Connect on the page named it) within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).
          */
-        post: operations["applySettings"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/tenants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create a tenant and its universe root; the operator then issues its first admin key and nothing else.
-         * @description Requires: operator key role. name must be unique in the deployment (409 name.taken — ADR-0026 d1, d5); the tenant's root workarea is created with the name universe (ADR-0026 d6). Operator keys never read, write or review content (access.verb_ceiling).
-         */
-        post: operations["createTenant"];
+        post: operations["registerClient"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1297,10 +593,10 @@ export interface components {
         /** @enum {string} */
         Role: "reader" | "writer" | "dreamer" | "admin" | "operator";
         /**
-         * @description The closed error vocabulary; identical to docs/api/errors.md by construction.
+         * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1317,53 +613,26 @@ export interface components {
             /** @description Mirrors the X-Request-Id response header. */
             request_id: string;
         };
-        /** @description Names no workarea: the target resolves from the key's default_workarea or the X-OML-Workarea header (ADR-0022 d4); neither present is refused with request.workarea_unresolved. This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. */
+        /** @description The target is workarea, else the key's default_workarea; neither present is refused with request.workarea_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {
             /**
-             * @description learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
+             * @description Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact.
              * @enum {string}
              */
-            verb: "remember" | "learn";
-            /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). */
-            claim_key: string;
-            /** @enum {string} */
-            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
-            /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through attachments. */
+            verb?: "remember" | "learn";
+            /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
+            claim_key?: string;
+            /**
+             * @default memory
+             * @enum {string}
+             */
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+            /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
-            /** @description At most 64 attachments per memory (http-api.md Limits). Each digest must name a completed upload session owned by this key. */
-            attachments?: components["schemas"]["Digest"][];
+            /** @description The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea (ADR-0039 d4, d7). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
-            /** @description Required when derives_from touches a simulation row; key must be in the audience. */
-            simulation_id?: string | null;
-            /**
-             * Format: date-time
-             * @description Declared data, never backdating — the journal keeps the real timestamp.
-             */
-            simulated_time?: string | null;
-            /** @description CURIE annotations (ADR-0021 d8): clear, non-erasable metadata entering the signed bytes; checked by the vocab scanner under the workarea's vocabulary_policy. */
-            terms?: components["schemas"]["Curie"][];
-            /**
-             * @description kind=term only. Structural payload field, never body text (ADR-0021 d1).
-             * @enum {string}
-             */
-            term_status?: "active" | "deprecated";
-            /** @description kind=term with term_status deprecated only — required then: exactly one replaced_by, or one-or-more consider. The ratified oml:replaced_by / oml:consider claim edges fold from this declaration, atomically with the submission (ADR-0021 d3). */
-            successors?: {
-                curie: components["schemas"]["Curie"];
-                /** @enum {string} */
-                relation: "replaced_by" | "consider";
-            }[];
-            /** @description kind=term_mapping only — required then. Structural payload fields (ADR-0021 d6): the scanner's vocab.mapping_exactMatch routing and the mappings read surface depend on them, so they never ride erasable body bytes. */
-            mapping?: {
-                subject: components["schemas"]["Curie"];
-                object: components["schemas"]["Curie"];
-                /** @enum {string} */
-                predicate: "exactMatch" | "closeMatch" | "broadMatch" | "narrowMatch" | "relatedMatch";
-                /** @enum {string} */
-                justification: "human-curated" | "lexical" | "logical";
-                note?: string;
-            };
         };
         SubmitAccepted: {
             artifact_id: string;
@@ -1443,40 +712,37 @@ export interface components {
             promoted_at: string | null;
         };
         Memory: components["schemas"]["MemorySummary"] & {
-            /** @description Decrypted on the serving path only. */
-            body?: string;
+            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
+            text?: string;
         };
         MemoryPage: {
             items: components["schemas"]["MemorySummary"][];
             next_cursor: string | null;
         };
-        /** @description Names no workarea: the default scope is the token workarea's subtree — the key's default_workarea, or the X-OML-Workarea override (ADR-0022 d4). Unknown fields are refused (request.validation). */
+        /** @description The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
         RecallRequest: {
             query: string;
+            /** @description The subtree recalled, by id or name; omitted, the key's default_workarea (ADR-0039 d4). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /** @default 8 */
             k?: number;
             /** @description Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea's journalled policy opts them in, they are hits only of a recall that omits kinds. */
             kinds?: ("memory" | "derived_fact")[];
-            /** @default true */
-            include_bodies?: boolean;
+            /**
+             * @description Whether each served item carries its text (ADR-0039 d7).
+             * @default true
+             */
+            include_text?: boolean;
             /**
              * @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they count against k and max_tokens. Rules: docs/architecture/retrieval.md.
              * @default false
              */
-            include_own_held?: boolean;
+            include_unreviewed?: boolean;
             /**
              * Format: int64
-             * @description Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest rank prefix that fits. Refused with include_bodies false. Rules: docs/architecture/retrieval.md, Token budgets.
+             * @description Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
              */
             max_tokens?: number;
-            /** @description Filter to rows whose terms annotation cites any of these CURIEs; an unreadable CURIE matches nothing (fail closed). An empty array is refused with request.validation, and so is the field where unbuilt. */
-            terms?: components["schemas"]["Curie"][];
-            /**
-             * @description descendants widens the terms filter before retrieval — per CURIE, resolved against the release pinned by the vocabulary that owns the expanded prefix (per-release closure lookup). Steering order and k are untouched; expansion changes the filter, never the ranking. Refused with request.validation where unbuilt.
-             * @default none
-             * @enum {string}
-             */
-            expand_terms?: "none" | "descendants";
         };
         RecallResponse: {
             /** @description Applicable steering, ordered structurally and never cut by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8). */
@@ -1514,28 +780,12 @@ export interface components {
             /** @description Budget tokens of the first hit not served; null when nothing was cut. */
             next_hit_tokens: number | null;
         };
-        Lineage: {
-            artifact_id: string;
-            nodes: {
-                artifact_id?: string;
-                claim_key?: string;
-                version?: number;
-                /** @description Outside the key's read scope; bare id only. */
-                redacted?: boolean;
-            }[];
-            edges: {
-                from_artifact_id?: string;
-                to_artifact_id?: string;
-                /** @enum {string} */
-                kind?: "derives_from" | "claim_edge";
-                /** @enum {string} */
-                state?: "pending" | "ratified";
-            }[];
-        };
-        /** @description Unknown fields are refused (request.validation). The body declares every submission field a successor can need — simulation_id, simulated_time, mapping and the term fields — so closing it refuses nothing a supersession must carry (ADR-0025 d16). */
+        /** @description Unknown fields are refused (request.validation; ADR-0025 d16). The designed successor fields — attachments, simulation_id, simulated_time, mapping and the term fields — are declared under x-oml-designed-fields in openapi-designed.yaml, and each sent here answers its v0.3.0 code rather than the unknown-field refusal (ADR-0039 d9). */
         SupersedeRequest: {
             /** @description Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired. */
             body: string;
+            /** @description When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7). */
+            workarea?: components["schemas"]["WorkareaRef"];
             /**
              * @description true proposes retiring the claim, and body states why. Refused with request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from the target's.
              * @default false
@@ -1546,123 +796,9 @@ export interface components {
              * @enum {string}
              */
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
-            /** @description Omitted, the successor has no attachments; nothing is inherited from the target. */
-            attachments?: components["schemas"]["Digest"][];
             /** @description The superseded target is included implicitly. */
             derives_from?: string[];
             reason?: string;
-            /** @description Required when the target or derives_from touches a simulation row (submission.simulation_id_required otherwise); the key must be in the audience. A tainted successor shadows the tip for its simulation audience only. */
-            simulation_id?: string | null;
-            /**
-             * Format: date-time
-             * @description Declared data, never backdating — the journal keeps the real timestamp.
-             */
-            simulated_time?: string | null;
-            /** @description Successor of kind term_mapping only — required then, as on SubmitRequest. Structural payload fields (ADR-0021 d6). */
-            mapping?: {
-                subject: components["schemas"]["Curie"];
-                object: components["schemas"]["Curie"];
-                /** @enum {string} */
-                predicate: "exactMatch" | "closeMatch" | "broadMatch" | "narrowMatch" | "relatedMatch";
-                /** @enum {string} */
-                justification: "human-curated" | "lexical" | "logical";
-                note?: string;
-            };
-            /** @description CURIE annotations (ADR-0021 d8). Omitted, the successor has none; nothing is inherited from the target. */
-            terms?: components["schemas"]["Curie"][];
-            /**
-             * @description kind=term only — a deprecation IS a supersession with term_status deprecated (ADR-0021 d3).
-             * @enum {string}
-             */
-            term_status?: "active" | "deprecated";
-            /** @description Required when term_status is deprecated: exactly one replaced_by, or one-or-more consider — the successor rides the deprecating submission atomically; one serve and one verdict cover both (ADR-0021 d3). */
-            successors?: {
-                curie: components["schemas"]["Curie"];
-                /** @enum {string} */
-                relation: "replaced_by" | "consider";
-            }[];
-        };
-        ReassignRequest: {
-            /** @description Destination node */
-            workarea_id: components["schemas"]["WorkareaRef"];
-            /** @description New claim_key when the move would collide at the destination. */
-            re_key?: string | null;
-            /** @default false */
-            dry_run?: boolean;
-        };
-        DemoteRequest: {
-            version: number;
-            reason: string;
-        };
-        EraseRequest: {
-            /**
-             * @description Returns the erasure inventory — every copy class and its disposition.
-             * @default false
-             */
-            dry_run?: boolean;
-        };
-        TipOverrideRequest: {
-            workarea_id: components["schemas"]["WorkareaRef"];
-            claim_key: string;
-            to_version: number;
-            reason: string;
-        };
-        /** @description Outcome of a journalled act, or a dry-run preview when dry_run was true. */
-        ActResult: {
-            /** @description Null for a dry run — nothing was journalled. */
-            journal_seq?: number | null;
-            event_id?: string | null;
-            dry_run?: boolean;
-            /** @description Reach preview for mass acts (paths rewritten, rows demoted, inventory). */
-            preview?: {
-                [key: string]: unknown;
-            };
-        };
-        UploadSessionCreate: {
-            expected_digest: components["schemas"]["Digest"];
-            /** @description Attachments are at most 64 MiB (http-api.md Limits). */
-            size_bytes: number;
-            media_type: string;
-        };
-        UploadSession: {
-            session_id: string;
-            expected_digest: components["schemas"]["Digest"];
-            size_bytes?: number;
-            media_type?: string;
-            /** @enum {string} */
-            state: "open" | "complete" | "expired" | "aborted";
-            parts?: {
-                part_number?: number;
-                size_bytes?: number;
-            }[];
-            /** Format: date-time */
-            expires_at?: string;
-        };
-        UploadComplete: {
-            digest: components["schemas"]["Digest"];
-            ciphertext_digest?: components["schemas"]["Digest"];
-            /** @constant */
-            state: "complete";
-        };
-        ClaimEdgeProposal: {
-            from_artifact_id: string;
-            to_artifact_id: string;
-            /** @description Vocabulary not fixed by the design (open detail). */
-            label: string;
-        };
-        ClaimEdge: {
-            edge_id: string;
-            from_artifact_id: string;
-            to_artifact_id: string;
-            label?: string;
-            /** @enum {string} */
-            state: "pending" | "ratified";
-            proposer_key_id?: string;
-            ratifier_key_id?: string | null;
-        };
-        ClaimEdgePage: {
-            items: components["schemas"]["ClaimEdge"][];
-            next_cursor: string | null;
         };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
         Crew: {
@@ -1731,73 +867,13 @@ export interface components {
             permission_epoch: number;
         };
         WorkareaCreate: {
-            parent_id: components["schemas"]["WorkareaRef"];
+            parent: components["schemas"]["WorkareaRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
-            /** @description Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record. */
-            prefix?: string;
         };
         WorkareaPage: {
             items: components["schemas"]["Workarea"][];
             next_cursor: string | null;
-        };
-        WorkareaEdgeProposal: {
-            to_workarea_id: components["schemas"]["WorkareaRef"];
-            /** @enum {string} */
-            label: "relates_to" | "continues" | "derived_from" | "mirrors";
-        };
-        WorkareaEdge: {
-            edge_id: string;
-            from_workarea_id: string;
-            to_workarea_id: string;
-            /** @enum {string} */
-            label: "relates_to" | "continues" | "derived_from" | "mirrors";
-            /** @enum {string} */
-            state: "pending" | "ratified";
-            proposer_key_id?: string;
-            ratifier_key_id?: string | null;
-        };
-        WorkareaEdgePage: {
-            items: components["schemas"]["WorkareaEdge"][];
-            next_cursor: string | null;
-        };
-        /** @description The per-workarea review policy object (journalled record; admission page owns it). */
-        ReviewPolicy: {
-            k?: number;
-            required_roles?: string[];
-            human_required_classes?: string[];
-            independence_axis?: string;
-            held_item_expiry?: string;
-        };
-        WorkareaStatus: {
-            workarea_id: string;
-            /** @enum {string} */
-            status: "development" | "committed" | "validated";
-            policy?: components["schemas"]["ReviewPolicy"];
-            pending_transitions?: components["schemas"]["Transition"][];
-        };
-        ReparentRequest: {
-            new_parent_id: components["schemas"]["WorkareaRef"];
-            /** @default false */
-            dry_run?: boolean;
-        };
-        TransitionProposal: {
-            /**
-             * @description Forward only; backward transitions do not exist.
-             * @enum {string}
-             */
-            to: "committed" | "validated";
-        };
-        Transition: {
-            transition_id: string;
-            workarea_id: string;
-            /** @enum {string} */
-            to: "committed" | "validated";
-            /** @enum {string} */
-            state: "pending" | "ratified";
-            proposed_by_key_id?: string;
-            ratified_by_key_id?: string | null;
-            policy_snapshot?: components["schemas"]["ReviewPolicy"];
         };
         /** @description The event-catalog envelope; payloads are digest-only, never body plaintext (D1). */
         JournalEvent: {
@@ -1824,77 +900,6 @@ export interface components {
             /** @description The resume point declared in docs/api/http-api.md, Events tail — pass it back verbatim as after_seq. It advances even when every scanned event was filtered out. */
             next_after_seq: number;
         };
-        /** @description PREFIX:localname over the tenant's journalled prefix registry; permanent once minted (first promotion). */
-        Curie: string;
-        VocabSuggestion: {
-            curie: components["schemas"]["Curie"];
-            label: string;
-            /** @enum {string} */
-            term_status: "active" | "deprecated";
-        };
-        VocabSuggestPage: {
-            items: components["schemas"]["VocabSuggestion"][];
-            next_cursor: string | null;
-        };
-        VocabTerm: {
-            curie: components["schemas"]["Curie"];
-            /** @description The owning vocabulary workarea. */
-            workarea_id: string;
-            /** @description The served tip version of the term claim. */
-            version: number;
-            /**
-             * @description Structural payload field — survives shredding
-             * @enum {string}
-             */
-            term_status: "active" | "deprecated";
-            /**
-             * @description The CURIE is permanent; the definition body is erasable (410 lifecycle.erased on fetch).
-             * @enum {string}
-             */
-            definition_state?: "present" | "erased";
-            /** @description Ratified successor edges declared with the deprecation version; empty for an active term. */
-            successors?: {
-                curie: components["schemas"]["Curie"];
-                /**
-                 * @description replaced_by is safe for automated rewiring; consider requires judgment.
-                 * @enum {string}
-                 */
-                relation: "replaced_by" | "consider";
-            }[];
-            /** @description vocab_release ids whose pinned term set includes this term. */
-            releases?: string[];
-        };
-        VocabHierarchyPage: {
-            items: components["schemas"]["VocabSuggestion"][];
-            /** @description The vocab_release the closure was read from. */
-            release: string;
-            next_cursor: string | null;
-        };
-        /** @description SSSOM-shaped ratified claim; revocable by supersession, never a merge. */
-        TermMapping: {
-            subject: components["schemas"]["Curie"];
-            object: components["schemas"]["Curie"];
-            /** @enum {string} */
-            predicate: "exactMatch" | "closeMatch" | "broadMatch" | "narrowMatch" | "relatedMatch";
-            /** @enum {string} */
-            justification: "human-curated" | "lexical" | "logical";
-            note?: string;
-            /** Format: date-time */
-            ratified_at: string;
-        };
-        TermMappingPage: {
-            items: components["schemas"]["TermMapping"][];
-            next_cursor: string | null;
-        };
-        ReviewQueuePage: {
-            items: {
-                workarea_id?: string;
-                workarea_path?: string;
-                held?: number;
-                oldest_age_seconds?: number;
-            }[];
-            next_cursor: string | null;
-        };
         ServedDigests: {
             body?: components["schemas"]["Digest"];
             attachments?: components["schemas"]["Digest"][];
@@ -1911,7 +916,8 @@ export interface components {
             served_digests: components["schemas"]["ServedDigests"];
         };
         VerdictRequest: {
-            serve_id: string;
+            /** @description The serve review next answered. Omitted, the one item this key has claimed; refused naming serve_id when it holds none or several (ADR-0039 d10). */
+            serve_id?: string;
             /** @enum {string} */
             verdict: "approve" | "reject";
             /** @description Required to reject. */
@@ -1929,14 +935,9 @@ export interface components {
             state: "promoted" | "held" | "rejected";
             ratification_event_id?: string | null;
         };
-        ReopenRequest: {
-            artifact_id: string;
-            version: number;
-            reason: string;
-        };
         GrantRequest: {
             /** @description The node, by id or name, never a path; stored as the id. */
-            workarea_node_id: components["schemas"]["WorkareaRef"];
+            workarea: components["schemas"]["WorkareaRef"];
             /**
              * @description A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never admin or operator.
              * @enum {string}
@@ -1944,7 +945,7 @@ export interface components {
             role: "reader" | "writer" | "dreamer";
             /** @description Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). */
             deny?: {
-                subtree_node_id: components["schemas"]["WorkareaRef"];
+                workarea: components["schemas"]["WorkareaRef"];
             }[];
         };
         /** @description A stored grant, as echoed at issuance and listed on a key. */
@@ -1961,7 +962,7 @@ export interface components {
             epoch: number;
         };
         DenialRequest: {
-            workarea_node_id: components["schemas"]["WorkareaRef"];
+            workarea: components["schemas"]["WorkareaRef"];
             reason?: string;
         };
         Denial: {
@@ -1977,7 +978,7 @@ export interface components {
             /** @description Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2). */
             grants?: components["schemas"]["GrantRequest"][];
             /** @description The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. */
-            default_workarea_id?: components["schemas"]["WorkareaRef"];
+            default_workarea?: components["schemas"]["WorkareaRef"];
             /**
              * @description The issuing admin's journalled attestation (ADR-0021); never verified as fact.
              * @enum {string}
@@ -1985,20 +986,15 @@ export interface components {
             held_by?: "agent" | "human" | "service";
             /** @description The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8). */
             crew?: components["schemas"]["CrewRef"];
-            /** Format: date-time */
-            expiry?: string;
             /** @description A free-text note; unique nowhere. */
             label?: string;
-            /** @description Who acts — the attribution identity */
+            /** @description Who acts — the attribution identity, shared across one identity's keys; free text. */
             principal?: string;
-            /** @description Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant_id, and its name is in the provider's namespace (ADR-0026 d4, d5). */
-            tenant_id?: components["schemas"]["TenantRef"];
-        };
-        KeyRotateRequest: {
-            /** @description The successor's own name; both keys are live through the grace window, so it cannot be the old key's (ADR-0026 d9). */
-            name: components["schemas"]["Name"];
-            /** @description Bounded grace window before the old key is revoked, e.g. "72h". */
-            grace?: string;
+            /**
+             * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
+             * @default false
+             */
+            connect_code?: boolean;
         };
         Key: {
             key_id: string;
@@ -2008,7 +1004,7 @@ export interface components {
             principal?: string;
             /** @description The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8). */
             crew_id?: string | null;
-            /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4). */
+            /** @description The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4). */
             default_workarea_id: string | null;
             /**
              * @description The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
@@ -2020,154 +1016,168 @@ export interface components {
             expiry?: string | null;
             /** Format: date-time */
             revoked_at?: string | null;
-            /** @description The key_id this key succeeded by rotation */
+            /** @description The key_id this key succeeded by rotation, if any (key.rotated links the two). */
             rotated_from?: string | null;
             grants?: components["schemas"]["Grant"][];
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
+            /**
+             * @description bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+             * @enum {string}
+             */
+            credential?: "bearer" | "connection";
+            /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
+            connections?: components["schemas"]["Connection"][];
+        };
+        /** @description A row the calling key's record references, by its id and its name (ADR-0039 d15). */
+        WhoamiRef: {
+            id: string;
+            name: string;
+        };
+        /** @description The calling key's default workarea, by its id and its name, with the path derived from its ancestry, root first (ADR-0039 d15). */
+        WhoamiWorkarea: {
+            id: string;
+            name: string;
+            /** @description The names from the root to the node, joined by '.'; derived, never stored. */
+            path: string;
+        };
+        /** @description A stored grant as whoami serves it, without its per-grant deny masks, which name subtrees the key may not read through it (ADR-0039 d15). */
+        WhoamiGrant: {
+            grant_id: string;
+            /** @description Node id, never a path. */
+            workarea_node_id: string;
+            /** @enum {string} */
+            role: "reader" | "writer" | "dreamer";
+            /** @description The journal seq of this grant's grant.issued event. */
+            epoch: number;
+        };
+        /** @description The calling key's own record (GET /v2/whoami): everything a client derives from its URL and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15). */
+        Whoami: {
+            key_id: string;
+            /** @description The key's name; null only for a key that predates names, which the lead names before it serves (ADR-0026 d11). */
+            name: string | null;
+            role: components["schemas"]["Role"];
+            principal: string;
+            /**
+             * @description As the key's row stores it: the issuing admin's attestation, agent when none was sent.
+             * @enum {string}
+             */
+            held_by: "agent" | "human" | "service";
+            /** @description The key's tenant; null for an operator key, which no tenant holds. */
+            tenant: components["schemas"]["WhoamiRef"] | null;
+            /** @description The key's journalled default workarea; null when it has none. */
+            default_workarea: components["schemas"]["WhoamiWorkarea"] | null;
+            /** @description The key's crew record, fixed for its life; null when none was named. */
+            crew: components["schemas"]["WhoamiRef"] | null;
+            /** @description The key's stored grants, each with its epoch and without its deny masks. */
+            grants: components["schemas"]["WhoamiGrant"][];
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
-            value: string;
+            value?: string;
+            connect_code?: components["schemas"]["ConnectCode"];
         };
-        KeyPage: {
-            items: components["schemas"]["Key"][];
-            next_cursor: string | null;
+        ConnectCode: {
+            code_id: string;
+            /** @description Twelve Crockford base32 symbols (60 bits) in three groups of four — shown exactly once, never journalled, stored only as the SHA-256 of the normalized symbols (ADR-0031 d8). */
+            code?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The URL to enter as the custom connector: <issuer>/mcp, from oauth.issuer, not from the address the CLI used. */
+            connector_url: string;
         };
-        EffectiveAccess: {
-            key_id: string;
-            epoch: number;
-            entries: {
-                workarea_node_id?: string;
-                path?: string;
-                role?: components["schemas"]["Role"];
-                /** @description The deny (per-grant or global) that produced a hole, when one does. */
-                masked_by?: string | null;
-            }[];
-        };
-        BanRequest: {
+        /** @description One of a connector key's connections, never a token or a digest of one. Whether it is live, the client's name and its opening and revocation times are designed (docs/api/http-api.md, Keys). */
+        Connection: {
+            connection_id: string;
+            /** @description The metadata-document URL or the registered client id. */
+            client_id: string;
             /** @enum {string} */
-            subject_kind: "principal" | "source";
-            subject: string;
-            reason?: string;
+            client_kind: "cimd" | "dcr";
+            redirect_uri: string;
+            /** @description <issuer>/mcp when the connection was created; its tokens work only while this is the current <issuer>/mcp. */
+            resource: string;
+            /** @enum {string} */
+            state: "open" | "revoked";
+            /** @enum {string|null} */
+            revoked_cause?: "admin" | "refresh_reuse" | "code_reuse" | "replaced" | null;
+        };
+        ProtectedResourceMetadata: {
+            /** @description Exactly <issuer>/mcp (RFC 9728 §3.3). */
+            resource: string;
+            authorization_servers: string[];
+            scopes_supported?: "mcp"[];
+            bearer_methods_supported?: "header"[];
+            resource_name?: string;
+        };
+        AuthorizationServerMetadata: {
+            issuer: string;
+            authorization_endpoint: string;
+            token_endpoint: string;
+            registration_endpoint?: string;
+            response_types_supported: "code"[];
+            grant_types_supported?: ("authorization_code" | "refresh_token")[];
+            code_challenge_methods_supported: "S256"[];
+            token_endpoint_auth_methods_supported?: "none"[];
+            scopes_supported?: "mcp"[];
+            /** @enum {boolean} */
+            client_id_metadata_document_supported?: true;
             /**
-             * @description Returns the reach preview without journalling.
-             * @default false
+             * @description RFC 9207 §3: every authorization response, success or error, carries iss.
+             * @enum {boolean}
              */
-            dry_run?: boolean;
+            authorization_response_iss_parameter_supported?: true;
         };
-        Ban: {
-            ban_id: string;
+        TokenRequest: {
             /** @enum {string} */
-            subject_kind: "principal" | "source";
-            subject: string;
-            reason?: string;
-            imposed_by_key_id?: string;
-            /** Format: date-time */
-            imposed_at?: string;
-            lifted_by_key_id?: string | null;
-            /** Format: date-time */
-            lifted_at?: string | null;
-        };
-        /** @description Reach preview — nothing journalled. */
-        BanPreview: {
-            keys_affected?: string[];
-            held_refusals?: number;
-            workareas_touched?: string[];
-        };
-        BanPage: {
-            items: components["schemas"]["Ban"][];
-            next_cursor: string | null;
-        };
-        SimulationCreate: {
-            audience: {
-                key_id?: components["schemas"]["KeyRef"];
-                grant_ref?: string;
-            }[];
-            label?: string;
-        };
-        /** @description Exactly one of key_id / grant_ref names the audience member; key_id takes a key's id or name. */
-        AudienceEntry: {
-            key_id?: components["schemas"]["KeyRef"];
-            grant_ref?: string;
-        };
-        Simulation: {
-            simulation_id: string;
+            grant_type: "authorization_code" | "refresh_token";
+            client_id: string;
+            /** @description authorization_code only. */
+            code?: string;
+            /** @description authorization_code only. Required exactly when the authorize request carried it, and then equal to it; when that request omitted it, omitted or equal to the client's one registered URI; otherwise oauth.authorization_code_invalid. */
+            redirect_uri?: string;
+            /** @description authorization_code only; S256 against the authorization request's code_challenge. */
+            code_verifier?: string;
+            /** @description refresh_token only. */
+            refresh_token?: string;
+            /** @description When sent, exactly <issuer>/mcp. */
+            resource?: string;
             /** @enum {string} */
-            state: "open" | "ended";
-            audience: {
-                key_id?: string;
-                grant_ref?: string;
-            }[];
-            label?: string;
-            /** Format: date-time */
-            opened_at?: string;
-            /** Format: date-time */
-            ended_at?: string | null;
-            /** @description E.g. no dreamer in the audience — nothing can promote (fail closed). */
-            warnings?: string[];
+            scope?: "mcp";
         };
-        SimulationPage: {
-            items: components["schemas"]["Simulation"][];
-            next_cursor: string | null;
+        TokenResponse: {
+            /** @description Opaque; the server stores only its SHA-256. A credential at /mcp alone, where it acts as exactly its connection's key (ADR-0031 d11). */
+            access_token: string;
+            /** @enum {string} */
+            token_type: "Bearer";
+            /** @description Seconds; the oauth.access_token_ttl setting. */
+            expires_in: number;
+            /** @description Opaque, single-use; rotated by every refresh. */
+            refresh_token: string;
+            /** @enum {string} */
+            scope: "mcp";
         };
-        ExportRequest: {
+        /** @description RFC 6749 §5.2 / RFC 7591 §3.2.2 error body. error is the RFC code a client branches on; error_description begins with the OML code (ErrorCode) and its rule (docs/api/errors.md, the oauth family). */
+        OAuthError: {
+            /** @enum {string} */
+            error: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type" | "invalid_scope" | "invalid_target" | "invalid_redirect_uri" | "invalid_client_metadata";
+            error_description?: string;
+        };
+        ClientRegistrationRequest: {
+            /** @description Each inside the allowlist: exactly https://claude.ai/api/mcp/auth_callback, matched byte for byte on the JSON string value, never after URL parsing or any further decoding. */
+            redirect_uris: string[];
+            /** @description Required, since the authorization page shows it; absent, it is request.validation (invalid_client_metadata). */
+            client_name: string;
             /**
-             * @description Signed evidence bundle, or digest-only chain stream for client-side verification.
+             * @description Absent, it is registered as none and echoed as none; any other value is request.validation (invalid_client_metadata).
              * @enum {string}
              */
-            kind: "evidence" | "chain";
-            from_seq?: number;
-            /**
-             * @description When true, simulation rows are listed separately by simulation_id.
-             * @default false
-             */
-            include_simulations?: boolean;
+            token_endpoint_auth_method?: "none";
+            grant_types?: ("authorization_code" | "refresh_token")[];
+            response_types?: "code"[];
         };
-        ExportJob: {
-            export_id: string;
-            /** @enum {string} */
-            kind: "evidence" | "chain";
-            /** @enum {string} */
-            state: "running" | "done" | "failed";
-            /** Format: date-time */
-            requested_at?: string;
-            /** Format: date-time */
-            finished_at?: string | null;
-            bundle_bytes?: number | null;
-        };
-        ExportPage: {
-            items: components["schemas"]["ExportJob"][];
-            next_cursor: string | null;
-        };
-        /** @description The settings document; its schema is not fixed by this design — the contract is show/validate/apply and the retired-key refusal. */
-        SettingsDocument: {
-            [key: string]: unknown;
-        };
-        SettingsView: {
-            configured?: components["schemas"]["SettingsDocument"];
-            /** Format: date-time */
-            applied_at?: string;
-            applied_event_id?: string;
-            effective?: components["schemas"]["SettingsDocument"];
-            divergences?: {
-                key?: string;
-                configured?: unknown;
-                effective?: unknown;
-                /** @description Defaulted value, not-yet-picked-up change, or per-replica variance. */
-                cause?: string;
-            }[];
-        };
-        SettingsValidation: {
-            valid: boolean;
-            findings: {
-                /** @description settings.retired_key or settings.invalid. */
-                code?: string;
-                key?: string;
-                /** @description For a retired key, the setting that replaced it. */
-                replacement?: string | null;
-                message?: string;
-            }[];
+        ClientRegistration: components["schemas"]["ClientRegistrationRequest"] & {
+            client_id: string;
+            client_id_issued_at: number;
         };
         Health: {
             /** @constant */
@@ -2180,15 +1190,17 @@ export interface components {
             checks: {
                 [key: string]: string;
             };
+            /** @description The lead's oauth.issuer, or null where connections are off; doctor reads whether connections are on here, not from the discovery paths it checks (ADR-0031 d14). */
+            oauth_issuer: string | null;
             build: components["schemas"]["Build"];
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
             /** @description The workspace version the binary was built at. */
             version: string;
-            /** @description The full 40-hex commit */
+            /** @description The full 40-hex commit, or unknown. */
             commit: string;
-            /** @description The commit's committer time */
+            /** @description The commit's committer time, or unknown. */
             commit_time: string;
             /** @description When the build captured these fields; SOURCE_DATE_EPOCH fixes it when set. */
             build_time: string;
@@ -2261,16 +1273,6 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description request.payload_too_large. */
-        TooLarge: {
-            headers: {
-                "X-Request-Id": components["headers"]["XRequestId"];
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorEnvelope"];
-            };
-        };
         /** @description A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …). */
         Unprocessable: {
             headers: {
@@ -2304,19 +1306,17 @@ export interface components {
         };
     };
     parameters: {
-        /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+        /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
         IdempotencyKey: string;
-        /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-        XOMLWorkarea: components["schemas"]["WorkareaRef"];
         /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
         Limit: number;
         /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
         Cursor: string;
         ArtifactId: string;
         WorkareaId: components["schemas"]["WorkareaRef"];
+        ConnectionId: string;
         KeyId: components["schemas"]["KeyRef"];
         CrewId: components["schemas"]["CrewRef"];
-        Curie: components["schemas"]["Curie"];
     };
     requestBodies: never;
     headers: {
@@ -2329,11 +1329,11 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    searchMemories: {
+    listMemories: {
         parameters: {
             query?: {
-                /** @description A subtree filter, by id or name, that must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it. Without own, a node where reader is effective; the listing is the intersection of its subtree with the scope's, and the scope still resolves from the token (request.workarea_unresolved for a key with neither a default nor X-OML-Workarea). */
-                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workarea the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workarea (request.workarea_unresolved for a key with neither). */
+                workarea?: components["schemas"]["WorkareaRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
@@ -2345,10 +1345,7 @@ export interface operations {
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
                 cursor?: components["parameters"]["Cursor"];
             };
-            header?: {
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -2410,10 +1407,8 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path?: never;
             cookie?: never;
@@ -2426,9 +1421,6 @@ export interface operations {
                  *       "claim_key": "supplier-quote-am-7741",
                  *       "kind": "memory",
                  *       "body": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
-                 *       "attachments": [
-                 *         "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b"
-                 *       ],
                  *       "derives_from": [
                  *         "art_01JB2WYT5H8K3N6Q9S2VX4ZC7B"
                  *       ]
@@ -2475,10 +1467,7 @@ export interface operations {
     recallMemories: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -2519,7 +1508,7 @@ export interface operations {
                      *           "held_expires_at": null,
                      *           "created_at": "2026-10-02T09:20:41Z",
                      *           "promoted_at": "2026-10-02T11:05:12Z",
-                     *           "body": "Prefer quotes with an explicit validity date; treat undated quotes as expired."
+                     *           "text": "Prefer quotes with an explicit validity date; treat undated quotes as expired."
                      *         }
                      *       ],
                      *       "hits": [
@@ -2554,7 +1543,7 @@ export interface operations {
                      *             "retirement": false,
                      *             "replaces": null,
                      *             "held_expires_at": null,
-                     *             "body": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
+                     *             "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
                      *           },
                      *           "score": 0.83
                      *         }
@@ -2619,7 +1608,7 @@ export interface operations {
                      *       "retirement": false,
                      *       "replaces": null,
                      *       "held_expires_at": null,
-                     *       "body": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
+                     *       "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741."
                      *     }
                      */
                     "application/json": components["schemas"]["Memory"];
@@ -2631,73 +1620,12 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getLineage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                artifact_id: components["parameters"]["ArtifactId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The lineage closure. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE",
-                     *       "nodes": [
-                     *         {
-                     *           "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE",
-                     *           "claim_key": "accra-metals-price-anchor",
-                     *           "version": 1
-                     *         },
-                     *         {
-                     *           "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *           "claim_key": "supplier-quote-am-7741",
-                     *           "version": 1
-                     *         },
-                     *         {
-                     *           "artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                     *           "redacted": true
-                     *         }
-                     *       ],
-                     *       "edges": [
-                     *         {
-                     *           "from_artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE",
-                     *           "to_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *           "kind": "derives_from",
-                     *           "state": "ratified"
-                     *         },
-                     *         {
-                     *           "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *           "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                     *           "kind": "claim_edge",
-                     *           "state": "pending"
-                     *         }
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Lineage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    proposeSupersession: {
+    supersedeMemory: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Workarea override for the provider ring, by node id or name (ADR-0022 d4, ADR-0026 d4). Omitted, the target (and recall's default scope) is the key's journalled default_workarea; present, it is honored only within the key's grants — plain-passable because it is authorization-checked data, never a secret. A provider-ring submit, recall or non-own listing from a key with neither a default nor this header is refused with 422 request.workarea_unresolved. Get, the own-work listing (own=true) and supersede never answer it: get and own=true resolve no workarea, so this header sent with either is request.validation, and supersede takes the target's workarea, which this header, if sent, must equal. */
-                "X-OML-Workarea"?: components["parameters"]["XOMLWorkarea"];
             };
             path: {
                 artifact_id: components["parameters"]["ArtifactId"];
@@ -2741,529 +1669,11 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    reassignClaim: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                artifact_id: components["parameters"]["ArtifactId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                 *       "dry_run": false
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReassignRequest"];
-            };
-        };
-        responses: {
-            /** @description Moved (or the dry-run preview). */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4305,
-                     *       "event_id": "evt_01JB2YR7S9UB2DX4FZ6H8KM1P3",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    demoteClaim: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                artifact_id: components["parameters"]["ArtifactId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "version": 2,
-                 *       "reason": "quote withdrawn by supplier"
-                 *     }
-                 */
-                "application/json": components["schemas"]["DemoteRequest"];
-            };
-        };
-        responses: {
-            /** @description Demoted. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4311,
-                     *       "event_id": "evt_01JB2YS8TA1CW3EY5G7J9LN2Q4",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    eraseClaim: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                artifact_id: components["parameters"]["ArtifactId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "dry_run": true
-                 *     }
-                 */
-                "application/json": components["schemas"]["EraseRequest"];
-            };
-        };
-        responses: {
-            /** @description Erase journalled, DEK destroyed (or the dry-run inventory). */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": null,
-                     *       "event_id": null,
-                     *       "dry_run": true,
-                     *       "preview": {
-                     *         "copy_classes": [
-                     *           {
-                     *             "copy_class": "postgres_body",
-                     *             "disposition": "unreadable on DEK destruction"
-                     *           },
-                     *           {
-                     *             "copy_class": "attachment_objects",
-                     *             "count": 1,
-                     *             "disposition": "unreadable on DEK destruction"
-                     *           },
-                     *           {
-                     *             "copy_class": "lake_derived",
-                     *             "disposition": "unreadable on DEK destruction"
-                     *           }
-                     *         ]
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    tipOverride: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                 *       "claim_key": "supplier-quote-am-7741",
-                 *       "to_version": 1,
-                 *       "reason": "revised quote promoted in error; serve v1 while it is re-reviewed"
-                 *     }
-                 */
-                "application/json": components["schemas"]["TipOverrideRequest"];
-            };
-        };
-        responses: {
-            /** @description Tip overridden. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4330,
-                     *       "event_id": "evt_01JB2YT9UB2DX4FZ6H8KM1P3R5",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    createUploadSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "expected_digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b",
-                 *       "size_bytes": 184233,
-                 *       "media_type": "application/pdf"
-                 *     }
-                 */
-                "application/json": components["schemas"]["UploadSessionCreate"];
-            };
-        };
-        responses: {
-            /** @description The session. */
-            201: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "session_id": "ups_01JB2XD9W6E4T2Y8U1O3PA5SKF",
-                     *       "expected_digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b",
-                     *       "size_bytes": 184233,
-                     *       "media_type": "application/pdf",
-                     *       "state": "open",
-                     *       "parts": [],
-                     *       "expires_at": "2026-10-29T18:40:00Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["UploadSession"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            429: components["responses"]["RateLimited"];
-            default: components["responses"]["Error"];
-        };
-    };
-    putUploadPart: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-                part_number: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/octet-stream": string;
-            };
-        };
-        responses: {
-            /** @description Part stored. */
-            204: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: components["responses"]["Conflict"];
-            413: components["responses"]["TooLarge"];
-            415: components["responses"]["UnsupportedMedia"];
-            429: components["responses"]["RateLimited"];
-            default: components["responses"]["Error"];
-        };
-    };
-    completeUploadSession: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Content-addressed attachment stored, inert until a submission binds it. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b",
-                     *       "ciphertext_digest": "sha256:52b8e04d7a1f3c96e2d50b84a7c91e36f40d82b5c6a1973e0f5d24c8a9b1e670",
-                     *       "state": "complete"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["UploadComplete"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["Unprocessable"];
-            429: components["responses"]["RateLimited"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getAttachment: {
-        parameters: {
-            query?: {
-                /** @description Reviewer fetch under a serve binding. */
-                serve_id?: string;
-            };
-            header?: never;
-            path: {
-                digest: components["schemas"]["Digest"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The plaintext bytes. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": string;
-                };
-            };
-            404: components["responses"]["NotFound"];
-            410: components["responses"]["Gone"];
-            429: components["responses"]["RateLimited"];
-            default: components["responses"]["Error"];
-        };
-    };
-    listClaimEdges: {
-        parameters: {
-            query?: {
-                workarea_id?: components["schemas"]["WorkareaRef"];
-                artifact_id?: string;
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of claim edges. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW",
-                     *           "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *           "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                     *           "label": "supports",
-                     *           "state": "pending",
-                     *           "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *           "ratifier_key_id": null
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ClaimEdgePage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    proposeClaimEdge: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                 *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                 *       "label": "supports"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ClaimEdgeProposal"];
-            };
-        };
-        responses: {
-            /** @description Pending edge. */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW",
-                     *       "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                     *       "label": "supports",
-                     *       "state": "pending",
-                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratifier_key_id": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ClaimEdge"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    ratifyClaimEdge: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Ratified edge. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW",
-                     *       "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
-                     *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                     *       "label": "supports",
-                     *       "state": "ratified",
-                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratifier_key_id": "54b2d035-b438-47f7-9055-67199237d5d7"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ClaimEdge"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            default: components["responses"]["Error"];
-        };
-    };
-    resolveWorkarea: {
-        parameters: {
-            query: {
-                /** @description Derived ltree path. The one lookup by path: no reference field accepts a path (ADR-0026 d7). */
-                path: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The node. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "name": "metals-crew",
-                     *       "parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
-                     *       "path": "universe.procurement.metals-crew",
-                     *       "status": "committed",
-                     *       "crew": {
-                     *         "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
-                     *         "name": "metals-crew",
-                     *         "charter_uri": "https://crews.example.com/metals/charter.md",
-                     *         "external_manager": "crewd.example.com"
-                     *       },
-                     *       "created_at": "2026-09-02T09:14:33Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Workarea"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            default: components["responses"]["Error"];
-        };
-    };
     createWorkarea: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -3273,7 +1683,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "parent_id": "metals-crew",
+                 *       "parent": "metals-crew",
                  *       "name": "q1-2027",
                  *       "crew": "metals-crew"
                  *     }
@@ -3318,7 +1728,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -3391,7 +1801,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -3445,241 +1855,15 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    listWorkareaEdges: {
-        parameters: {
-            query?: {
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of edges. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *           "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *           "label": "continues",
-                     *           "state": "pending",
-                     *           "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *           "ratifier_key_id": null
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["WorkareaEdgePage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    proposeWorkareaEdge: {
+    setWorkareaCrew: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                 *       "label": "continues"
-                 *     }
-                 */
-                "application/json": components["schemas"]["WorkareaEdgeProposal"];
-            };
-        };
-        responses: {
-            /** @description Pending edge. */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *       "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *       "label": "continues",
-                     *       "state": "pending",
-                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratifier_key_id": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["WorkareaEdge"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    ratifyWorkareaEdge: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                edge_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Ratified edge. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-                     *       "from_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *       "label": "continues",
-                     *       "state": "ratified",
-                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratifier_key_id": "54b2d035-b438-47f7-9055-67199237d5d7"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["WorkareaEdge"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getWorkareaStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Status view. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "status": "committed",
-                     *       "policy": {
-                     *         "k": 1,
-                     *         "required_roles": [
-                     *           "dreamer"
-                     *         ],
-                     *         "human_required_classes": [
-                     *           "vocab.deprecation_replaced_by",
-                     *           "vocab.mapping_exactMatch"
-                     *         ],
-                     *         "independence_axis": "principal",
-                     *         "held_item_expiry": "168h"
-                     *       },
-                     *       "pending_transitions": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["WorkareaStatus"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    reparentWorkarea: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "new_parent_id": "1351b2b6-5c7c-492d-9aff-630bc95035db",
-                 *       "dry_run": true
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReparentRequest"];
-            };
-        };
-        responses: {
-            /** @description Re-parented (or the dry-run preview). */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": null,
-                     *       "event_id": null,
-                     *       "dry_run": true,
-                     *       "preview": {
-                     *         "paths_rewritten": 2,
-                     *         "grants_affected": []
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    updateCrewMetadata: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
+                workarea: components["parameters"]["WorkareaId"];
             };
             cookie?: never;
         };
@@ -3769,7 +1953,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -3817,7 +2001,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                crew_id: components["parameters"]["CrewId"];
+                crew: components["parameters"]["CrewId"];
             };
             cookie?: never;
         };
@@ -3850,11 +2034,11 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                crew_id: components["parameters"]["CrewId"];
+                crew: components["parameters"]["CrewId"];
             };
             cookie?: never;
         };
@@ -3893,112 +2077,13 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    proposeTransition: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "to": "committed"
-                 *     }
-                 */
-                "application/json": components["schemas"]["TransitionProposal"];
-            };
-        };
-        responses: {
-            /** @description Pending transition. */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *       "to": "committed",
-                     *       "state": "pending",
-                     *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratified_by_key_id": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Transition"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    ratifyTransition: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                workarea_id: components["parameters"]["WorkareaId"];
-                transition_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Ratified transition. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
-                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *       "to": "committed",
-                     *       "state": "ratified",
-                     *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratified_by_key_id": "54b2d035-b438-47f7-9055-67199237d5d7",
-                     *       "policy_snapshot": {
-                     *         "k": 1,
-                     *         "required_roles": [
-                     *           "dreamer"
-                     *         ],
-                     *         "human_required_classes": [
-                     *           "vocab.deprecation_replaced_by",
-                     *           "vocab.mapping_exactMatch"
-                     *         ],
-                     *         "independence_axis": "principal",
-                     *         "held_item_expiry": "168h"
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Transition"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            default: components["responses"]["Error"];
-        };
-    };
     tailEvents: {
         parameters: {
             query?: {
                 /** @description Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim. */
                 after_seq?: number;
-                /** @description A subtree filter within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
-                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description The subtree tailed, by id or name, within reader effective access; defaults to the key's default workarea (request.workarea_unresolved when the key has none). */
+                workarea?: components["schemas"]["WorkareaRef"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -4048,234 +2133,11 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    suggestTerms: {
-        parameters: {
-            query: {
-                q: string;
-                /** @description Restrict to one vocabulary workarea. */
-                workarea_id?: components["schemas"]["WorkareaRef"];
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of suggestions. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "curie": "proc:price-quote",
-                     *           "label": "price quote",
-                     *           "term_status": "active"
-                     *         },
-                     *         {
-                     *           "curie": "proc:supplier-quote",
-                     *           "label": "supplier quote",
-                     *           "term_status": "deprecated"
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["VocabSuggestPage"];
-                };
-            };
-            429: components["responses"]["RateLimited"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getTerm: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                curie: components["parameters"]["Curie"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The term. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "curie": "proc:supplier-quote",
-                     *       "workarea_id": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
-                     *       "version": 4,
-                     *       "term_status": "deprecated",
-                     *       "definition_state": "present",
-                     *       "successors": [
-                     *         {
-                     *           "curie": "proc:price-quote",
-                     *           "relation": "replaced_by"
-                     *         }
-                     *       ],
-                     *       "releases": [
-                     *         "rel_01JB2Z2D4F6H8K1M3P5R7TVXZB"
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["VocabTerm"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getTermHierarchy: {
-        parameters: {
-            query: {
-                direction: "parents" | "children" | "ancestors" | "descendants";
-                /** @description A vocab_release id; defaults to the owning vocabulary's latest ratified release. */
-                release?: string;
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path: {
-                curie: components["parameters"]["Curie"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of related terms, naming the release the closure was read from. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "curie": "proc:quote",
-                     *           "label": "quote",
-                     *           "term_status": "active"
-                     *         }
-                     *       ],
-                     *       "release": "rel_01JB2Z2D4F6H8K1M3P5R7TVXZB",
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["VocabHierarchyPage"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            default: components["responses"]["Error"];
-        };
-    };
-    listTermMappings: {
-        parameters: {
-            query: {
-                term: components["schemas"]["Curie"];
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of mappings. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "subject": "proc:price-quote",
-                     *           "object": "fin:quotation",
-                     *           "predicate": "closeMatch",
-                     *           "justification": "human-curated",
-                     *           "note": "fin:quotation covers bids; proc:price-quote is supplier-issued only",
-                     *           "ratified_at": "2026-10-20T11:02:44Z"
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["TermMappingPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    reviewQueue: {
-        parameters: {
-            query?: {
-                /** @description Subtree filter. */
-                workarea?: components["schemas"]["WorkareaRef"];
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Queue depths. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "workarea_path": "universe.procurement.metals-crew",
-                     *           "held": 3,
-                     *           "oldest_age_seconds": 5411
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ReviewQueuePage"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            default: components["responses"]["Error"];
-        };
-    };
     reviewNext: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4283,14 +2145,8 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                /**
-                 * @example {
-                 *       "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286"
-                 *     }
-                 */
-                "application/json": {
-                    workarea?: components["schemas"]["WorkareaRef"];
-                };
+                /** @example {} */
+                "application/json": Record<string, never>;
             };
         };
         responses: {
@@ -4330,7 +2186,7 @@ export interface operations {
                      *         "held_expires_at": null,
                      *         "created_at": "2026-10-29T16:02:51Z",
                      *         "promoted_at": null,
-                     *         "body": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations."
+                     *         "text": "Accra Metals has undercut the next-best aluminium quote in three consecutive quarters; treat them as the price anchor for Q1-2027 negotiations."
                      *       },
                      *       "served_digests": {
                      *         "body": "sha256:1e5a7c3902d8b6f44a0c2e917d3f58b62c90e1a74f6d2b85031c7e9a4b5d6f28",
@@ -4359,7 +2215,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4403,115 +2259,11 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    reopenRejection: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
-                 *       "version": 1,
-                 *       "reason": "rejection cited a stale source; re-review against the revised quote"
-                 *     }
-                 */
-                "application/json": components["schemas"]["ReopenRequest"];
-            };
-        };
-        responses: {
-            /** @description Returned to the review queue. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4351,
-                     *       "event_id": "evt_01JB2YV1CW3EY5G7J9LN2Q4S6",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    listKeys: {
-        parameters: {
-            query?: {
-                role?: components["schemas"]["Role"];
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of keys. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *           "name": "metals-reviewer-3",
-                     *           "role": "dreamer",
-                     *           "principal": "crew-review/agent-3",
-                     *           "crew_id": null,
-                     *           "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "held_by": "agent",
-                     *           "label": "metals review agent",
-                     *           "expiry": null,
-                     *           "revoked_at": null,
-                     *           "rotated_from": null,
-                     *           "grants": [
-                     *             {
-                     *               "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *               "role": "dreamer",
-                     *               "grant_id": "gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ",
-                     *               "epoch": 41
-                     *             }
-                     *           ],
-                     *           "denials": [],
-                     *           "epoch": 41
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["KeyPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     issueKey: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
@@ -4525,15 +2277,15 @@ export interface operations {
                  *       "name": "procure-agent-7",
                  *       "grants": [
                  *         {
-                 *           "workarea_node_id": "metals-crew",
+                 *           "workarea": "metals-crew",
                  *           "role": "writer"
                  *         },
                  *         {
-                 *           "workarea_node_id": "metals-crew",
+                 *           "workarea": "metals-crew",
                  *           "role": "reader"
                  *         }
                  *       ],
-                 *       "default_workarea_id": "metals-crew",
+                 *       "default_workarea": "metals-crew",
                  *       "held_by": "agent",
                  *       "crew": "metals-crew",
                  *       "label": "procure agent 7",
@@ -4591,12 +2343,65 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    whoami: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The calling key's own record. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "claude-laptop",
+                     *       "role": "writer",
+                     *       "principal": "claude/laptop",
+                     *       "held_by": "agent",
+                     *       "tenant": {
+                     *         "id": "6f1c2a3e-0b7d-4e59-9a41-2c8d5e7f9b10",
+                     *         "name": "acme"
+                     *       },
+                     *       "default_workarea": {
+                     *         "id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *         "name": "q1-2027",
+                     *         "path": "universe.metals-crew.q1-2027"
+                     *       },
+                     *       "crew": {
+                     *         "id": "0d2e4f6a-8b1c-4d3e-9f5a-7b9c1d3e5f70",
+                     *         "name": "metals-crew"
+                     *       },
+                     *       "grants": [
+                     *         {
+                     *           "workarea_node_id": "3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b",
+                     *           "role": "writer",
+                     *           "grant_id": "9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c",
+                     *           "epoch": 41
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Whoami"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            default: components["responses"]["Error"];
+        };
+    };
     getKey: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                key_id: components["parameters"]["KeyId"];
+                key: components["parameters"]["KeyId"];
             };
             cookie?: never;
         };
@@ -4641,206 +2446,15 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    revokeKey: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                key_id: components["parameters"]["KeyId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                /**
-                 * @example {
-                 *       "reason": "agent decommissioned"
-                 *     }
-                 */
-                "application/json": {
-                    reason?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Revoked. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4360,
-                     *       "event_id": "evt_01JB2YW2DX4FZ6H8KM1P3R5T7",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    rotateKey: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                key_id: components["parameters"]["KeyId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "name": "procure-agent-7-r2",
-                 *       "grace": "72h"
-                 *     }
-                 */
-                "application/json": components["schemas"]["KeyRotateRequest"];
-            };
-        };
-        responses: {
-            /** @description The successor key, value shown once, rotated_from naming the old key. */
-            201: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "key_id": "080b4bed-308d-48f7-8b3e-90b6f403e2e3",
-                     *       "name": "procure-agent-7-r2",
-                     *       "role": "writer",
-                     *       "principal": "crew-procure/agent-7",
-                     *       "crew_id": "d10bcbe9-032d-4080-aa0c-cc06f8acd89f",
-                     *       "default_workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *       "held_by": "agent",
-                     *       "label": "procure agent 7",
-                     *       "expiry": null,
-                     *       "revoked_at": null,
-                     *       "rotated_from": "4b155359-710a-4417-811c-904cc3959fcc",
-                     *       "grants": [
-                     *         {
-                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "role": "writer",
-                     *           "grant_id": "gr_01JB2YX3EY5G7J9LN2Q4S6U8W1",
-                     *           "epoch": 8
-                     *         }
-                     *       ],
-                     *       "denials": [],
-                     *       "epoch": 8,
-                     *       "value": "oml_9rT2wXq5bD0eG7hJ4kM8vN3pL6sU1yZaC4fQ7xT9mK2"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["KeyIssued"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    addGrant: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                key_id: components["parameters"]["KeyId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "workarea_node_id": "q1-2027",
-                 *       "role": "writer"
-                 *     }
-                 */
-                "application/json": components["schemas"]["GrantRequest"];
-            };
-        };
-        responses: {
-            /** @description The grant. */
-            201: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *       "role": "writer",
-                     *       "grant_id": "gr_01JB2YQ6R8TA1CW3EY5G7J9LN2",
-                     *       "epoch": 9
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Grant"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    revokeGrant: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                key_id: components["parameters"]["KeyId"];
-                grant_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Revoked. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4364,
-                     *       "event_id": "evt_01JB2YY4FZ6H8KM1P3R5T7V9X2",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     addDenial: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                key_id: components["parameters"]["KeyId"];
+                key: components["parameters"]["KeyId"];
             };
             cookie?: never;
         };
@@ -4848,7 +2462,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                 *       "workarea": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
                  *       "reason": "quarantine the q1-2027 subtree during incident 44"
                  *     }
                  */
@@ -4878,177 +2492,21 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    liftDenial: {
+    mintConnectCode: {
         parameters: {
             query?: never;
             header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
-                key_id: components["parameters"]["KeyId"];
-                denial_id: string;
+                key: components["parameters"]["KeyId"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Lifted. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4371,
-                     *       "event_id": "evt_01JB2YZ5G7J9LN2Q4S6U8W1Y3A",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getEffectiveAccess: {
-        parameters: {
-            query?: {
-                workarea?: components["schemas"]["WorkareaRef"];
-            };
-            header?: never;
-            path: {
-                key_id: components["parameters"]["KeyId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Effective access. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "key_id": "4b155359-710a-4417-811c-904cc3959fcc",
-                     *       "epoch": 10,
-                     *       "entries": [
-                     *         {
-                     *           "workarea_node_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
-                     *           "path": "universe.procurement.metals-crew",
-                     *           "role": "writer",
-                     *           "masked_by": null
-                     *         },
-                     *         {
-                     *           "workarea_node_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-                     *           "path": "universe.procurement.metals-crew.q1-2027",
-                     *           "role": "writer",
-                     *           "masked_by": "dn_01JB2YH9K2M4P6R8TA1CV3EX5G"
-                     *         }
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["EffectiveAccess"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listBans: {
-        parameters: {
-            query?: {
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of bans. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "ban_id": "ban_01JB2YE6G8J1L3N5Q7S9UB2DXF",
-                     *           "subject_kind": "principal",
-                     *           "subject": "crew-procure/agent-4",
-                     *           "reason": "repeated fabricated quote references",
-                     *           "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
-                     *           "imposed_at": "2026-10-29T16:20:00Z",
-                     *           "lifted_by_key_id": null,
-                     *           "lifted_at": null
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["BanPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    imposeBan: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "subject_kind": "principal",
-                 *       "subject": "crew-procure/agent-4",
-                 *       "reason": "repeated fabricated quote references",
-                 *       "dry_run": true
-                 *     }
-                 */
-                "application/json": components["schemas"]["BanRequest"];
-            };
-        };
-        responses: {
-            /** @description Dry-run reach preview. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "keys_affected": [
-                     *         "be45850c-8461-413d-bc65-332fbeae5453"
-                     *       ],
-                     *       "held_refusals": 2,
-                     *       "workareas_touched": [
-                     *         "fbbb41c5-9630-4274-ae53-166f562f5286"
-                     *       ]
-                     *     }
-                     */
-                    "application/json": components["schemas"]["BanPreview"];
-                };
-            };
-            /** @description Ban imposed. */
+            /** @description The connect code, shown once. */
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
@@ -5057,214 +2515,70 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "ban_id": "ban_01JB2YE6G8J1L3N5Q7S9UB2DXF",
-                     *       "subject_kind": "principal",
-                     *       "subject": "crew-procure/agent-4",
-                     *       "reason": "repeated fabricated quote references",
-                     *       "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
-                     *       "imposed_at": "2026-10-29T16:20:00Z",
-                     *       "lifted_by_key_id": null,
-                     *       "lifted_at": null
+                     *       "code_id": "1f0d2c7e-3a4b-4c5d-9e6f-7a8b9c0d1e2f",
+                     *       "code": "7KQ2-M9XD-4TPA",
+                     *       "expires_at": "2026-10-31T14:13:00Z",
+                     *       "connector_url": "https://oml.example.com/mcp"
                      *     }
                      */
-                    "application/json": components["schemas"]["Ban"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    liftBan: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                ban_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Lifted. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "ban_id": "ban_01JB2YE6G8J1L3N5Q7S9UB2DXF",
-                     *       "subject_kind": "principal",
-                     *       "subject": "crew-procure/agent-4",
-                     *       "reason": "repeated fabricated quote references",
-                     *       "imposed_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
-                     *       "imposed_at": "2026-10-29T16:20:00Z",
-                     *       "lifted_by_key_id": "8dbd2549-9218-4b87-8df3-965e4110c137",
-                     *       "lifted_at": "2026-10-30T09:00:00Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Ban"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    listSimulations: {
-        parameters: {
-            query?: {
-                ended?: boolean;
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of simulations. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "simulation_id": "sim_01JB2YC4E6G8J1L3N5Q7S9VXZB",
-                     *           "state": "open",
-                     *           "audience": [
-                     *             {
-                     *               "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
-                     *             },
-                     *             {
-                     *               "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                     *             }
-                     *           ],
-                     *           "label": "q1-2027 negotiation dry run",
-                     *           "opened_at": "2026-10-29T15:05:00Z",
-                     *           "ended_at": null,
-                     *           "warnings": []
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["SimulationPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    openSimulation: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "audience": [
-                 *         {
-                 *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
-                 *         },
-                 *         {
-                 *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                 *         }
-                 *       ],
-                 *       "label": "q1-2027 negotiation dry run"
-                 *     }
-                 */
-                "application/json": components["schemas"]["SimulationCreate"];
-            };
-        };
-        responses: {
-            /** @description The simulation. */
-            201: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "simulation_id": "sim_01JB2YC4E6G8J1L3N5Q7S9VXZB",
-                     *       "state": "open",
-                     *       "audience": [
-                     *         {
-                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
-                     *         },
-                     *         {
-                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                     *         }
-                     *       ],
-                     *       "label": "q1-2027 negotiation dry run",
-                     *       "opened_at": "2026-10-29T15:05:00Z",
-                     *       "ended_at": null,
-                     *       "warnings": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Simulation"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getSimulation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                simulation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The simulation. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "simulation_id": "sim_01JB2YC4E6G8J1L3N5Q7S9VXZB",
-                     *       "state": "open",
-                     *       "audience": [
-                     *         {
-                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
-                     *         },
-                     *         {
-                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                     *         }
-                     *       ],
-                     *       "label": "q1-2027 negotiation dry run",
-                     *       "opened_at": "2026-10-29T15:05:00Z",
-                     *       "ended_at": null,
-                     *       "warnings": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Simulation"];
+                    "application/json": components["schemas"]["ConnectCode"];
                 };
             };
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeConnection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+                connection_id: components["parameters"]["ConnectionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "phone lost"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description Why; the journal keeps its SHA-256 digest, never the text. */
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The connection, revoked. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "connection_id": "6a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+                     *       "client_id": "8e2f4a6c-0b1d-4e3f-9a5b-7c9d1e3f5a7b",
+                     *       "client_kind": "dcr",
+                     *       "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+                     *       "resource": "https://oml.example.com/mcp",
+                     *       "state": "revoked",
+                     *       "revoked_cause": "admin"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };
     };
@@ -5325,444 +2639,360 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    changeSimulationAudience: {
+    protectedResourceMetadata: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "resource": "https://oml.example.com/mcp",
+                     *       "authorization_servers": [
+                     *         "https://oml.example.com"
+                     *       ],
+                     *       "scopes_supported": [
+                     *         "mcp"
+                     *       ],
+                     *       "bearer_methods_supported": [
+                     *         "header"
+                     *       ],
+                     *       "resource_name": "Open Memory Lab"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProtectedResourceMetadata"];
+                };
             };
-            path: {
-                simulation_id: string;
+            /** @description Connections are not configured on this deployment. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
+        };
+    };
+    authorizationServerMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "issuer": "https://oml.example.com",
+                     *       "authorization_endpoint": "https://oml.example.com/oauth/authorize",
+                     *       "token_endpoint": "https://oml.example.com/oauth/token",
+                     *       "registration_endpoint": "https://oml.example.com/oauth/register",
+                     *       "response_types_supported": [
+                     *         "code"
+                     *       ],
+                     *       "grant_types_supported": [
+                     *         "authorization_code",
+                     *         "refresh_token"
+                     *       ],
+                     *       "code_challenge_methods_supported": [
+                     *         "S256"
+                     *       ],
+                     *       "token_endpoint_auth_methods_supported": [
+                     *         "none"
+                     *       ],
+                     *       "scopes_supported": [
+                     *         "mcp"
+                     *       ],
+                     *       "client_id_metadata_document_supported": true,
+                     *       "authorization_response_iss_parameter_supported": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AuthorizationServerMetadata"];
+                };
+            };
+            /** @description Connections are not configured on this deployment. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    authorize: {
+        parameters: {
+            query: {
+                response_type: "code";
+                /** @description An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., non-default port or IP-literal host; its own WHATWG serialization), or a client_id that POST /oauth/register minted. */
+                client_id: string;
+                /** @description Exactly one of the client's registered URIs, inside the allowlist (exactly https://claude.ai/api/mcp/auth_callback), matched byte for byte on the value after exactly one application/x-www-form-urlencoded decoding, never after URL parsing or any further decoding; optional for a client with exactly one. */
+                redirect_uri?: string;
+                /** @description Required by the flow: absent, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. Present but not matching the pattern, it is request.validation on the page. */
+                code_challenge?: string;
+                /** @description Required by the flow: absent (which RFC 7636 §4.3 reads as plain) or anything but S256, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. */
+                code_challenge_method?: "S256";
+                /** @description At most 512 bytes; echoed verbatim on the redirect, percent-encoded as a query parameter. */
+                state?: string;
+                /** @description When sent, exactly <issuer>/mcp. */
+                resource?: string;
+                scope?: "mcp";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connect-code page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description A refusal after the redirect URI was validated (oauth.pkce_required, oauth.resource_mismatch, request.validation), redirected with error, error_description, state and iss. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A refusal page naming its code (request.validation for a parameter past its bound, oauth.client_invalid, oauth.redirect_refused). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    authorizeSubmit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @description The authorization request's handle the page carries. */
+                    handle: string;
+                    /** @description The code, normalized by Crockford base32 decoding. */
+                    connect_code: string;
+                } | {
+                    /** @description The authorization request's handle the page carries. */
+                    handle: string;
+                    /** @enum {string} */
+                    action: "connect" | "cancel";
+                };
+            };
+        };
+        responses: {
+            /** @description The confirmation page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The redirect to the client, with code, state and iss, or with error, state and iss. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The form again, or a refusal page naming its code (oauth.connect_code_invalid, oauth.authorization_expired, request.validation). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The refusal page for a submission that fails the origin check, oauth.origin_refused; never redirected, and no attempt is consumed. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["TokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The token pair. Sent with Cache-Control no-store. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "access_token": "oml_at_Q3kV8mT1xR6pL2nW9zA4cY7bD5eG0hJ3kM8sU1wXq2E",
+                     *       "token_type": "Bearer",
+                     *       "expires_in": 3600,
+                     *       "refresh_token": "oml_rt_H5jN2qP8vS4tY1uB7cD3fK9mR6wZ0xA2eG4hL8nT5sV",
+                     *       "scope": "mcp"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, for a request that sends a client_secret in the body), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_grant",
+                     *       "error_description": "oauth.refresh_invalid: a refresh token is used once; a reused one ends its connection."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description oauth.client_invalid as invalid_client, for a request that sends an Authorization header: every client is public (RFC 6749 §5.2). */
+            401: {
+                headers: {
+                    /** @description The scheme the request used, for example Basic realm="oml" (RFC 6749 §5.2). */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "oauth.client_invalid: every client is public and sends no client authentication."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description A body other than application/x-www-form-urlencoded, as invalid_request. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+        };
+    };
+    registerClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
                 /**
                  * @example {
-                 *       "add": [
-                 *         {
-                 *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                 *         }
+                 *       "client_name": "Example MCP client",
+                 *       "redirect_uris": [
+                 *         "https://claude.ai/api/mcp/auth_callback"
                  *       ],
-                 *       "remove": [],
-                 *       "reason": "no dreamer in the audience; nothing could promote"
+                 *       "token_endpoint_auth_method": "none",
+                 *       "grant_types": [
+                 *         "authorization_code",
+                 *         "refresh_token"
+                 *       ],
+                 *       "response_types": [
+                 *         "code"
+                 *       ]
                  *     }
                  */
-                "application/json": {
-                    add?: components["schemas"]["AudienceEntry"][];
-                    remove?: components["schemas"]["AudienceEntry"][];
-                    reason?: string;
-                };
+                "application/json": components["schemas"]["ClientRegistrationRequest"];
             };
         };
         responses: {
-            /** @description The resulting audience; carries the same warnings field as creation when it still holds no dreamer key. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "simulation_id": "sim_01JB2YC4E6G8J1L3N5Q7S9VXZB",
-                     *       "state": "open",
-                     *       "audience": [
-                     *         {
-                     *           "key_id": "4b155359-710a-4417-811c-904cc3959fcc"
-                     *         },
-                     *         {
-                     *           "key_id": "d405428e-4c99-426d-8826-76d28436e423"
-                     *         }
-                     *       ],
-                     *       "label": "q1-2027 negotiation dry run",
-                     *       "opened_at": "2026-10-29T15:05:00Z",
-                     *       "ended_at": null,
-                     *       "warnings": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["Simulation"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    endSimulation: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                simulation_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                /**
-                 * @example {
-                 *       "dry_run": false
-                 *     }
-                 */
-                "application/json": {
-                    /** @default false */
-                    dry_run?: boolean;
-                };
-            };
-        };
-        responses: {
-            /** @description End journalled; demotion closure proceeding (or the dry-run listing). */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4388,
-                     *       "event_id": "evt_01JB2Z3E5G7J9LN2Q4S6U8WY1A",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    listExports: {
-        parameters: {
-            query?: {
-                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
-                limit?: components["parameters"]["Limit"];
-                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
-                cursor?: components["parameters"]["Cursor"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of jobs. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "items": [
-                     *         {
-                     *           "export_id": "exp_01JB2YD5F7H9K2M4P6R8TA1CWE",
-                     *           "kind": "evidence",
-                     *           "state": "done",
-                     *           "requested_at": "2026-10-29T16:30:00Z",
-                     *           "finished_at": "2026-10-29T16:34:10Z",
-                     *           "bundle_bytes": 7340032
-                     *         }
-                     *       ],
-                     *       "next_cursor": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ExportPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createExport: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "kind": "evidence",
-                 *       "from_seq": 1
-                 *     }
-                 */
-                "application/json": components["schemas"]["ExportRequest"];
-            };
-        };
-        responses: {
-            /** @description Job accepted. */
-            202: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "export_id": "exp_01JB2YD5F7H9K2M4P6R8TA1CWE",
-                     *       "kind": "evidence",
-                     *       "state": "running",
-                     *       "requested_at": "2026-10-29T16:30:00Z",
-                     *       "finished_at": null,
-                     *       "bundle_bytes": null
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ExportJob"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getExport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                export_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The job. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "export_id": "exp_01JB2YD5F7H9K2M4P6R8TA1CWE",
-                     *       "kind": "evidence",
-                     *       "state": "done",
-                     *       "requested_at": "2026-10-29T16:30:00Z",
-                     *       "finished_at": "2026-10-29T16:34:10Z",
-                     *       "bundle_bytes": 7340032
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ExportJob"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            default: components["responses"]["Error"];
-        };
-    };
-    downloadExportBundle: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                export_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The signed bundle. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": string;
-                };
-            };
-            409: components["responses"]["Conflict"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getSettings: {
-        parameters: {
-            query?: {
-                effective?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Configured (and optionally effective) settings. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "configured": {
-                     *         "search": {
-                     *           "fts_config": "simple"
-                     *         },
-                     *         "idempotency": {
-                     *           "replay_window": "48h"
-                     *         }
-                     *       },
-                     *       "applied_at": "2026-10-28T08:12:00Z",
-                     *       "applied_event_id": "evt_01JB2Z4F6H8KM1P3R5T7V9X2ZB",
-                     *       "divergences": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["SettingsView"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    validateSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "search": {
-                 *         "fts_config": "simple"
-                 *       },
-                 *       "idempotency": {
-                 *         "replay_window": "48h"
-                 *       }
-                 *     }
-                 */
-                "application/json": components["schemas"]["SettingsDocument"];
-            };
-        };
-        responses: {
-            /** @description Findings, including settings.retired_key findings. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "valid": true,
-                     *       "findings": []
-                     *     }
-                     */
-                    "application/json": components["schemas"]["SettingsValidation"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
-        };
-    };
-    applySettings: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "search": {
-                 *         "fts_config": "simple"
-                 *       },
-                 *       "idempotency": {
-                 *         "replay_window": "48h"
-                 *       }
-                 *     }
-                 */
-                "application/json": components["schemas"]["SettingsDocument"];
-            };
-        };
-        responses: {
-            /** @description Applied. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "journal_seq": 4401,
-                     *       "event_id": "evt_01JB2Z5G7J9LN2Q4S6U8W1Y3AC",
-                     *       "dry_run": false
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ActResult"];
-                };
-            };
-            415: components["responses"]["UnsupportedMedia"];
-            422: components["responses"]["Unprocessable"];
-            default: components["responses"]["Error"];
-        };
-    };
-    createTenant: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the key's default_workarea or the X-OML-Workarea override (ADR-0022 d4); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "name": "acme-industrial"
-                 *     }
-                 */
-                "application/json": {
-                    name: components["schemas"]["Name"];
-                };
-            };
-        };
-        responses: {
-            /** @description The tenant. */
+            /** @description Registered. */
             201: {
                 headers: {
-                    "X-Request-Id": components["headers"]["XRequestId"];
                     [name: string]: unknown;
                 };
                 content: {
                     /**
                      * @example {
-                     *       "tenant_id": "ccbc07d6-0481-4dc4-bce9-534f55f58b91",
-                     *       "name": "acme-industrial"
+                     *       "client_id": "oml_client_8Rk2Tq5Vx1Lm7Pn3Wz9Ac4Yb6Dd0Eg",
+                     *       "client_id_issued_at": 1793455980,
+                     *       "client_name": "Example MCP client",
+                     *       "redirect_uris": [
+                     *         "https://claude.ai/api/mcp/auth_callback"
+                     *       ],
+                     *       "token_endpoint_auth_method": "none",
+                     *       "grant_types": [
+                     *         "authorization_code",
+                     *         "refresh_token"
+                     *       ],
+                     *       "response_types": [
+                     *         "code"
+                     *       ]
                      *     }
                      */
-                    "application/json": {
-                        tenant_id: string;
-                        name: string;
-                    };
+                    "application/json": components["schemas"]["ClientRegistration"];
                 };
             };
-            409: components["responses"]["Conflict"];
-            415: components["responses"]["UnsupportedMedia"];
-            default: components["responses"]["Error"];
+            /** @description An RFC 7591 error: oauth.redirect_refused (invalid_redirect_uri), request.validation (invalid_client_metadata). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description limit.rate — the cap on unused registrations; Retry-After says when. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
         };
     };
     healthz: {
@@ -5814,6 +3044,7 @@ export interface operations {
                      *         "postgres": "ok",
                      *         "fork_check": "ok"
                      *       },
+                     *       "oauth_issuer": "https://oml.example.com",
                      *       "build": {
                      *         "version": "0.2.0",
                      *         "commit": "779e7e4c1f0d8a5b2e6c9f3a7d1b4e8c2a5f9d03",

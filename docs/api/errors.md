@@ -2,7 +2,7 @@
 id: api/errors
 tier: engineering
 status: design draft for review · decided, not built
-answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; what a malformed, unknown or taken name answers
+answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; what a malformed, unknown or taken name answers; how the oauth family travels inside RFC error shapes on the OAuth endpoints
 -->
 
 # Error taxonomy
@@ -38,7 +38,7 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
     "code": "access.verb_ceiling",
     "message": "a writer key cannot transition a workarea",
     "rule": "R1: the surface an agent can call never promotes, signs, demotes or deletes.",
-    "details": {"verb": "POST /v2/workareas/{id}/transitions", "role": "writer"},
+    "details": {"verb": "POST /v2/workareas/{workarea}/transitions", "role": "writer"},
     "retryable": false
   },
   "request_id": "req_01J…"
@@ -54,12 +54,85 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 | `retryable` | `true` only where retrying the identical request can succeed later. Retryable responses carry a `Retry-After` header (seconds). |
 | `request_id` | Mirrors the `X-Request-Id` response header, for correlating with the read log and support. |
 
+The same envelope is every refusal on every surface
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d11). On the [agent
+plugin](mcp-plugin.md) a served tool that refuses answers a JSON-RPC result with `isError: true`,
+carrying the envelope both as `structuredContent` and as its one text content, its `request_id`
+mirroring the `X-Request-Id` of the `/mcp` response; a JSON-RPC error is a protocol fault, and a
+tool the server does not serve is -32602. The CLI prints the envelope's `code` and `message` and
+exits 1 ([CLI reference](../cli/reference.md)), and the SDKs raise one error type, `ApiError`,
+carrying `code`, `message` and `details`. No code exists for a renamed spelling: a field or
+header sent under the name [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7
+replaced is `request.validation`, `details.field` naming what was sent and `details.renamed_to`
+what to send, a body field as its JSON pointer and a header by its name. Served on the key and
+workarea routes: `POST /v2/keys` (`/default_workarea_id`, `/tenant_id`,
+`/grants/{i}/workarea_node_id`, `/grants/{i}/deny/{j}/subtree_node_id`),
+`POST /v2/keys/{key}/denials` (`/workarea_node_id`) and `POST /v2/workareas` (`/parent_id`).
+Served on the provider ring and the events tail: the `X-OML-Workarea` header on submit,
+supersede and recall (`renamed_to` `/workarea`) and on `GET /v1/memories`, `GET /v2/events`
+(`workarea`); the `workarea_id` query parameter on those two (`workarea`); and recall's
+`/include_bodies` and `/include_own_held` (`/include_text`, `/include_unreviewed`). Get, which
+names no workarea, refuses the header with `details.field` alone. Designed for the agent plugin,
+whose v0.3.0 argument names are the ones this server still accepts: a v0.4.0 argument sent
+there today is an unknown field, refused as `request.validation` without
+`details.renamed_to`.
+
 ## `auth` — who is calling
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates; only `/healthz` and `/readyz` do not. |
-| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which). | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6). |
+| `auth.missing` | 401 | No `Authorization: Bearer` header. | Every request on either ring authenticates, and so does `/mcp`; only `/healthz`, `/readyz`, the discovery documents and the OAuth endpoints do not. |
+| `auth.invalid` | 401 | The key is unknown, malformed, expired or revoked (`details.reason` says which; as built a key's refusal names `unknown`). At `/mcp` the same reasons cover a connection's access token: unknown, expired, a revoked connection, a revoked or expired connector key, and a token whose connection's resource is not the current `<issuer>/mcp`, each answering `reason: unknown` as built. Only a token of kind `access` authenticates at `/mcp`: a refresh token presented there answers `reason: unknown` and is neither rotated nor counted as reuse. On either ring an access token is not a credential and answers `reason: unknown`. | Tenant and identity derive from the key, server-side, or not at all — an unverifiable caller gets nothing (D6); a token is exactly its key ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11). |
+
+At `/mcp` both codes carry the RFC 9728 challenge, `WWW-Authenticate: Bearer
+resource_metadata="…", scope="mcp"`, with `error="invalid_token"` added to an `auth.invalid`, and
+`Bearer realm="oml"` where the deployment sets no `oauth.issuer`
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)). The bodies are
+unchanged, and no ring route's `401` carries the header ([FR-35](../product/roadmap.md)).
+
+## `oauth` — connections
+
+The refusals of the connection flow
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients),
+[roles and keys — connections](../architecture/roles-and-keys.md#connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d13). Where they surface decides
+their shape. At `POST /oauth/token` and `POST /oauth/register` the body is the RFC's
+`{"error", "error_description"}`: `error` is the RFC code in the third column, the one an OAuth
+client branches on, and `error_description` begins with the OML code and its rule. At
+`/oauth/authorize` a refusal is a redirect to the client carrying `error`, `error_description`,
+`state` and `iss` (RFC 9207 §2), except where the third column says *page*, and for a parameter
+past its bound: then nothing is redirected, and the `text/html` page names the code. The HTTP
+column is the status when the code is answered as a body or a page; a refusal redirected from
+`/oauth/authorize` is a `302` (`GET`) or a `303` (`POST`) to the client, and its status is that of
+the redirect; and `oauth.client_invalid` answering a token request that sent an `Authorization`
+header is `401` with `WWW-Authenticate` naming the scheme the request used (RFC 6749 §5.2).
+`oauth.connect_refused` answers on `/v2` in the envelope above, and
+`oauth.attach_refused` is an `/mcp` tool result in the same envelope, which no served tool answers
+since `oml_attach` left the catalog ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d2).
+Malformed parameters on the OAuth endpoints are `request.validation`, carried as
+`invalid_request` or as the RFC's own name for the fault (`unsupported_grant_type`,
+`unsupported_response_type`, `invalid_scope`, `invalid_client_metadata`).
+
+| Code | HTTP | OAuth `error` | Fires when | The rule it names |
+|---|---|---|---|---|
+| `oauth.client_invalid` | 400 | *page* at authorize; `invalid_client` at token | At authorize: the `client_id` is unknown; a document URL is not in the admitted form (`reason: client_id_form`); its metadata document cannot be fetched within the fetch bounds, or a fetch cap is full with no cached copy to serve (`reason: fetch_busy`); the document is not JSON, lacks `client_id`, `client_name` or `redirect_uris`, names a `client_id` other than its own URL, or asks for client authentication other than `none` (`details.reason` in the description). At token: only a request that sends client authentication — an `Authorization` header (`401`, above) or a `client_secret` in the body (`400`) ([HTTP API](http-api.md#connections-oauth-for-hosted-mcp-clients)). | Clients are public and identified by a verified document or a registration; a client the server cannot identify is never shown to a person, and a connection keeps its client for its whole life (ADR-0031 d5). |
+| `oauth.redirect_refused` | 400 | *page* at authorize; `invalid_redirect_uri` at register | A redirect URI is outside the allowlist, or an authorize request's `redirect_uri` is not exactly one of the client's registered URIs. | An authorization code goes only to `https://claude.ai/api/mcp/auth_callback`, by exact match; a refused redirect is never followed (ADR-0031 d6; RFC 6749 §4.1.2.1). |
+| `oauth.pkce_required` | 400 | `invalid_request` | An authorize request without `code_challenge`, or whose `code_challenge_method` is absent (RFC 7636 §4.3 reads that as `plain`) or not `S256`; redirected once the client and the redirect URI are accepted. A `code_challenge` that is present but does not match `^[A-Za-z0-9_-]{43}$` is `request.validation` on the page. | Every authorization request is bound by S256 PKCE to the client that started it (ADR-0031 d4). |
+| `oauth.resource_mismatch` | 400 | `invalid_target` | A `resource` parameter that is not exactly `<issuer>/mcp`, at authorize or token. | A token is issued for the one protected resource and accepted nowhere else (ADR-0031 d10; RFC 8707 §2). |
+| `oauth.authorization_expired` | 400 | `access_denied`; *page* when the handle is unknown | The authorization request outlived its ten minutes or spent its five attempts; the form's handle does not open under the lead's sealing key or names no live request, a restart or takeover of the lead included; or a confirmation's handle names no row, because Connect or Cancel already used it, or its code is voided ([roles and keys — connections](../architecture/roles-and-keys.md#connections)). | A page acts only on a live request it rendered, for a bounded number of tries (ADR-0031 d9). |
+| `oauth.connect_code_invalid` | 400 | *page* — the code form again, with the attempts left | The connect code entered is unknown, expired, voided or already spent, or belongs to a revoked or expired key — one answer for all five. | A connect code is single-use and short-lived, and the page never tells a guesser that a code existed (ADR-0031 d8, d9). |
+| `oauth.authorization_code_invalid` | 400 | `invalid_grant` | The authorization code is unknown, expired, already redeemed (which revokes its connection only under the reuse rule of [roles and keys — connections](../architecture/roles-and-keys.md#connections)), issued to another client, its PKCE verifier does not match, its `redirect_uri` does not follow the token endpoint's rule ([HTTP API](http-api.md#connections-oauth-for-hosted-mcp-clients)), its connect code is voided, its key is revoked or expired, or its connection's resource is not the current `<issuer>/mcp`. | An authorization code is redeemed once, by the client that holds the verifier, within its sixty seconds (ADR-0031 d9, d10; RFC 6749 §4.1.2). |
+| `oauth.refresh_invalid` | 400 | `invalid_grant` | The refresh token is unknown or expired, is not a token of kind `refresh` (an access token sent as one included), was already rotated — which revokes the connection — belongs to a revoked connection, was issued to another client, belongs to a revoked or expired key, or belongs to a connection whose resource is not the current `<issuer>/mcp`. | A refresh token is used once; a reused one ends its connection (ADR-0031 d10). |
+| `oauth.origin_refused` | 403 | *page* | A `POST /oauth/authorize` carries neither `Sec-Fetch-Site: same-origin` nor, without that header, an `Origin` equal to the issuer's — `Origin: null` included. Never redirected; it consumes no attempt. | The page acts only on its own form; a cross-site submission is refused before its fields are read (ADR-0031 d9). |
+| `oauth.attach_refused` | 403 | — (`/mcp` tool result) | `oml_attach` with `action: "open"` under a connection, refused before any upload session is created. | An upload's parts travel on `/v1` under a key value, which a connector key does not have, and a token is a credential only at `/mcp`; a connection opens no session it could never fill (ADR-0031 d11). |
+| `oauth.connect_refused` | 422 | — (`/v2` envelope) | A connect code is asked for a key that cannot hold a connection: an `admin` or `operator` role, `held_by: service`, a key with a bearer value, a revoked or expired key, or a deployment without `oauth.issuer`; or a connector key is rotated (`details.reason` ∈ `role` \| `held_by_service` \| `bearer_key` \| `revoked` \| `expired` \| `not_configured` \| `connector_key`). | A connection acts as one agent key on the agent-safe surface; a key that cannot act there, or already has a value, gets no connect code, and a connector key never gains a value by rotation (ADR-0031 d7, d8). |
+
+The one throttle on these endpoints is a cap on stored state: the cap on unused dynamic
+registrations answers `429 limit.rate` at `POST /oauth/register` in the same RFC shape, as
+`invalid_request` with `Retry-After`. An authorization request stores nothing until its code
+verifies, and a full document cache evicts rather than refuses, so `GET /oauth/authorize` answers
+no `429`. No limit keys on a source address (ADR-0031 d5, d9, d14).
 
 ## `access` — what this key may do
 
@@ -67,7 +140,7 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 |---|---|---|---|
 | `access.verb_ceiling` | 403 | A key's **role** may never call this verb: any agent key (reader/writer/dreamer) calling an admin verb — re-parent, keys, grants, bans, simulations, reassign, demote, erase, tip-override, export, settings (a reader or writer key proposing a status transition is also this code; a dreamer proposing or ratifying one is not — transitions are dreamer-or-admin verbs, D8); an admin key posting a verdict (admin ≠ reviewer); an operator key touching content; a verb whose needed grant role the key's role does not admit (step 1 of the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) — a reader key submitting, a writer key reviewing, an admin key recalling or reading claim content, which its structure reads never include, [ADR-0026](../adr/ADR-0026-names-are-keys.md) d15); a `held_by: service` key calling any review-class verb (review queue, review next, verdict, reopen, claim-edge ratify, workarea-edge ratify) or status-transition ratify, refused before any lookup ([the role each verb needs](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). | **R1: the surface an agent can call never promotes, signs, demotes or deletes** — the verb ceiling is per role (D9), and no claimed purpose lifts it. |
 | `access.grant_refused` | 403 | The node is readable — reader is among the key's effective roles there — but its effective access (grants minus denies, at the current permission epoch) does not confer the verb's role on this workarea (step 3 of the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). `details`: `{workarea_id, needed_role}`. | Effective access is the union of grants, each attenuated by its denies, deny-wins for global denials; what a grant does not confer, the key does not have (D7). |
-| `access.not_found` | 404 | The resource does not exist, **or** lies outside the key's effective read scope, **or** is a simulation row and the key is outside that simulation's audience. It also answers a verb on a node where the key holds neither the needed role nor reader (step 4 of the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)), a supersede or `derives_from` target the key cannot read, a listing `workarea_id` the key may not name ([Search](http-api.md#search-get-v1memories)), a fetch of an erased version the key could not read before its erasure, and a [name](http-api.md#names-and-ids) that names no row or a row outside the key's access, exactly as that row's id would — and it never carries, in its message or its details, an id or an unresolved value that a name was replaced by; every supersede refusal that depends on the target comes after this check (step 5 of the supersede rule). Indistinguishable by design. | Reads fail closed as absence: the service never confirms the existence of what a key may not see (D7, D10, R3). |
+| `access.not_found` | 404 | The resource does not exist, **or** lies outside the key's effective read scope, **or** is a simulation row and the key is outside that simulation's audience. It also answers a verb on a node where the key holds neither the needed role nor reader (step 4 of the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)), a supersede or `derives_from` target the key cannot read, a listing `workarea` the key may not name ([Search](http-api.md#search-get-v1memories)), a fetch of an erased version the key could not read before its erasure, and a [name](http-api.md#names-and-ids) that names no row or a row outside the key's access, exactly as that row's id would — and it never carries, in its message or its details, an id or an unresolved value that a name was replaced by; every supersede refusal that depends on the target comes after this check (step 5 of the supersede rule). Indistinguishable by design. | Reads fail closed as absence: the service never confirms the existence of what a key may not see (D7, D10, R3). |
 | `access.author_only` | 403 | A writer key proposes a supersession of a readable target version it did not author — [own](../architecture/roles-and-keys.md#own) is read on the target version, the current tip, not on the claim's first version; an unreadable target is `access.not_found`. | A writer proposes supersessions of its own claims only; editing another author's claim is the dreamer's edit-as-proposal path (D9). |
 | `access.issuer_ceiling` | 403 | Key issuance (or a grant on it) requests a role above the issuer's, or a grant role outside the key role's admissible set ([roles-and-keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)); an operator key issues a key that is neither an operator key nor a tenant's first admin key, or an admin key for a tenant that already holds a key of any role, revoked or expired included. `details`: for a key role above the issuer's, `{role, admissible}` — the requested key role and the key roles this issuer may issue, empty for a tenant that already holds a key; for an inadmissible grant, `{role, admissible}` — the grant's role and the key role's admissible set — plus, at issuance, `grant_index`, the first refused grant's 0-based index in `grants` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). | A key is issued with a role no higher than the issuer's (D9); authority never amplifies through issuance. |
 | `access.role_exclusive` | 403 | Key issuance or a grant amendment would combine the `admin` role with a dreamer-class grant on one key. | Admin is never a reviewer (D9): a key never combines admin with dreamer verbs. A person holding both duties holds two keys, so the journal shows which capacity acted ([roles-and-keys](../architecture/roles-and-keys.md)). |
@@ -77,17 +150,18 @@ one taxonomy ([ADR-0022](../adr/ADR-0022-two-ring-api.md)):
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. Also: an unknown field in a recall, supersede, key-issuance or grant body; `max_tokens` with `include_bodies: false`; an empty `kinds` or `terms` array in a recall; `terms` or `expand_terms` sent to a server that does not yet serve them (refused by name, never ignored); an events-tail `after_seq` beyond `head_seq`; a deny outside its own grant's subtree; a `default_workarea_id` no grant of the key covers; a key issuance whose `tenant_id` is absent where an operator key issues an admin key, or present on any other issuance — an operator key issuing an operator key, or an admin key issuing any key; `held_by` on an operator key's issuance (only an admin attests it); an `X-OML-Workarea` that differs from a supersede target's workarea, or sent with get or the own-work listing (`own=true`), which resolve no workarea; a successor `kind` the [kind-change rule](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip) does not admit; `retirement: true` when the target's kind is `term`, or when a `kind` is sent that differs from the target's; an `oml_supersede` call whose target is of a vocabulary kind (`term`, `term_mapping`, `vocab_release`), which is superseded on the HTTP API; a value naming a workarea, crew, key or tenant that is neither an id nor a name under the [reference grammar](http-api.md#names-and-ids) — a derived path among them, and a hex-and-dash value of version 8, which no id carries — and a name at creation that the creation grammar refuses, the derived form `<prefix>-<32 hex>` among them (`details.field` names the field); a global denial on an admin key (`details.field: key_id`; [admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
+| `request.validation` | 400 | Malformed JSON, missing or ill-typed fields, unknown enum values, a stale or foreign pagination cursor. Also: an unknown field in a recall, supersede, key-issuance, grant, denial or workarea-create body; `max_tokens` with `include_text: false`; an empty `kinds` or `terms` array in a recall; `terms` or `expand_terms` sent to a server that does not yet serve them (refused by name, never ignored); an events-tail `after_seq` beyond `head_seq`; a deny outside its own grant's subtree; a `default_workarea` no grant of the key covers; a key issuance whose `tenant` is absent where an operator key issues an admin key, or present on any other issuance — an operator key issuing an operator key, or an admin key issuing any key; `held_by` on an operator key's issuance (only an admin attests it); a supersede body's `workarea` that differs from the target's workarea (`details.field: /workarea`); an `X-OML-Workarea` header sent with get, which resolves no workarea; a successor `kind` the [kind-change rule](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip) does not admit; `retirement: true` when the target's kind is `term`, or when a `kind` is sent that differs from the target's; an `oml_supersede` or `oml_write` call whose target is of a vocabulary kind (`term`, `term_mapping`, `vocab_release`), which is superseded on the HTTP API (`details.field: /replaces`, `oml_write`'s name for the target); an `oml_write` argument outside the mode its fields choose — `retirement` or `reason` without `replaces`, `claim_key` or a vocabulary `kind` with it (`details.field` names it; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3); an `oml_read` argument outside the mode its fields choose, `query` beside `artifact_id`, or the designed `lineage` or `depth` (`details.field` names it; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4); a value naming a workarea, crew, key or tenant that is neither an id nor a name under the [reference grammar](http-api.md#names-and-ids) — a derived path among them, and a hex-and-dash value of version 8, which no id carries — and a name at creation that the creation grammar refuses, the derived form `<prefix>-<32 hex>` among them (`details.field` names the field); a submitted `claim_key` starting `auto-`, the prefix of the keys the server derives (`details.field: /claim_key`; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d6); a global denial on an admin key (`details.field: key`; [admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6); a review verdict that omits `serve_id` while the key holds no claimed review item, or several (`details.field: /serve_id`; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10). A field or header sent under a spelling [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7 renamed (`details.field` names it, a body field as its JSON pointer and a header by its name, and `details.renamed_to` the spelling to send; d11), served on the key and workarea routes, the provider ring and the events tail, and designed for the agent plugin's arguments ([above](#the-envelope)). | The contract is [openapi.yaml](openapi.yaml); what it does not admit is refused, not coerced. |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` arrives without `Idempotency-Key`. | Every side-effecting request is replayable exactly once by construction (D13); the service refuses to guess whether a retry is a duplicate. |
 | `request.payload_too_large` | 413 | Body or part exceeds the admitted size. | Size bounds are admission policy, enforced before bytes are stored. |
 | `request.unsupported_media` | 415 | The request `Content-Type` is not supported by this operation (`details.supported` names what is). | Each operation's request media type is fixed by the contract — `application/json` everywhere except attachment part upload (`application/octet-stream`); a body in any other type is refused before parsing, never sniffed into shape. |
-| `request.workarea_unresolved` | 422 | A provider-ring (`/v1`) submit, recall or non-own listing arrives from a key with no journalled `default_workarea` and no `X-OML-Workarea` header — get, the own-work listing (`own=true`) and supersede never answer it: get and `own=true` resolve no workarea, and supersede takes the target's workarea; or an events tail without `workarea_id`, or an MCP tool whose omitted workarea defaults to the key's, from a key with no default ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d14, d15). | The target workarea comes from the token ([ADR-0022](../adr/ADR-0022-two-ring-api.md) d4): a `/v1` request names no workarea — the key's `default_workarea` is the target, and `X-OML-Workarea` (a node id or [name](http-api.md#names-and-ids), honored only within the key's grants) is the explicit override. A key with neither is refused, never guessed for. |
+| `request.workarea_unresolved` | 422 | A provider-ring (`/v1`) submit, recall or non-own listing without `workarea` arrives from a key with no journalled `default_workarea` — get, the own-work listing (`own=true`) and supersede never answer it: get resolves no workarea, an own-work listing without `workarea` reads every workarea the key wrote in, and supersede takes the target's workarea; or an events tail without `workarea`, or an MCP tool whose omitted workarea defaults to the key's, from a key with no default ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d14, d15; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4). | The target workarea comes from the request's `workarea` (a node id or [name](http-api.md#names-and-ids), honored only within the key's grants) or, omitted, from the key's `default_workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A key with neither is refused, never guessed for. |
 
 `details.field`, wherever a code carries it, names the refused value's place as the contract
 spells it: the parameter's name as [openapi.yaml](openapi.yaml) spells it for a path or query
-parameter (`workarea_id`, `key_id`, `crew_id`), the header name for a header (`X-OML-Workarea`),
-and an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer for a body member
-(`/grants/1/deny/0/subtree_node_id`). An MCP tool reports the HTTP field its argument maps to.
+parameter (`workarea`, `key`, `crew` for a path parameter, `workarea` for the listing's and
+the events tail's query parameter), the header name for a header (`X-OML-Workarea`), and an
+[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer for a body member
+(`/grants/1/deny/0/workarea`). An MCP tool reports the HTTP field its argument maps to.
 
 Response media types are not negotiated in v1: servers emit `application/json` (the binary
 downloads excepted, [http-api.md](http-api.md)), and the `Accept` header never varies a response.
@@ -96,8 +170,8 @@ downloads excepted, [http-api.md](http-api.md)), and the `Accept` header never v
 
 Semantics in full on the [HTTP API page](http-api.md#idempotency); the record is
 `(key_id, workarea, idem_key) → request digest + state + stored response`, claimed before any side
-effect (D13). On the provider ring the workarea component is the **resolved** target — the key's
-`default_workarea` or the `X-OML-Workarea` override (ADR-0022 d4); for supersede it is the fixed
+effect (D13). On the provider ring the workarea component is the **resolved** target — the
+body's `workarea`, else the key's `default_workarea` (ADR-0039 d7); for supersede it is the fixed
 nil value, as on lab endpoints that name no workarea
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). A supersede record is looked
 up after step 1 of the
@@ -241,18 +315,21 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 
 | HTTP | Codes |
 |---|---|
-| 400 | `request.validation`, `request.idempotency_key_required` |
+| 400 | `request.validation`, `request.idempotency_key_required`, `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid` |
 | 401 | `auth.missing`, `auth.invalid` |
-| 403 | `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
+| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
 | 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `name.taken`, `submission.tip_conflict`, `submission.claim_key_conflict`, `submission.universe_refused`, `workarea.frozen`, `workarea.transition_refused`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `request.workarea_unresolved`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `request.workarea_unresolved`, `oauth.connect_refused`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |
+
+`oauth.client_invalid` is also a `401`, at `POST /oauth/token`, for a request that sent an
+`Authorization` header ([`oauth`](#oauth-connections)).
 
 ## Implementation mapping
 

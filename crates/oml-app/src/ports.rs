@@ -6,6 +6,7 @@
 //! the traits are not dyn-compatible; compositions use generics.
 
 use core::future::Future;
+use std::net::IpAddr;
 
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde_json::Value;
@@ -13,11 +14,15 @@ use uuid::Uuid;
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
+use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, key_fingerprint};
 
 use crate::types::{
-    ClaimKeyState, CrewRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, MemoryRecord,
-    RecallCandidate, UnnamedRows, WorkareaRecord,
+    AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
+    KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
+    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
+    UnnamedRows, WorkareaRecord,
 };
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
@@ -38,6 +43,28 @@ pub enum StoreError {
     /// and this commit wrote nothing (http-api.md idempotency).
     #[error("an idempotency record already holds this scope")]
     IdempotencyRecorded,
+    /// A `connection.opened` fold found the connection not openable under
+    /// the chain lock: not held by the tenant, not `authorized`, its
+    /// authorization code redeemed already or expired at the commit's `at`,
+    /// its connect code voided, its key revoked, or the key's open
+    /// connection not the one the opening names as replaced. The commit
+    /// wrote nothing. A token exchange that read the row before its fold,
+    /// and lost a race for the code or saw a mint, a connection revocation
+    /// or a `key.revoked` land since, judges the code by the reuse rule and
+    /// otherwise answers `invalid_grant` (`oauth.authorization_code_invalid`)
+    /// (postgres-schema.md `oauth_connections`; roles-and-keys.md
+    /// connections; errors.md; ADR-0031 d8, d10, d11, d12).
+    #[error("connection {connection_id} cannot open at this commit")]
+    ConnectionNotOpenable { connection_id: Uuid },
+    /// A `connection.code_issued` fold found that the code the mint names
+    /// as the one it voids is not the key's one unredeemed, unvoided code:
+    /// a code entry spent it, or another commit voided or minted one, after
+    /// the mint read the key's codes. The commit wrote nothing; it is
+    /// contention, retryable as a head conflict is, and answered
+    /// `system.unavailable` (errors.md; event-catalog.md
+    /// `connection.code_issued`; ADR-0031 d8).
+    #[error("key {key_id}'s unredeemed connect code moved before the mint committed")]
+    ConnectCodeMoved { key_id: Uuid },
     /// A creation named a name its kind already holds in the namespace, a
     /// revoked key's included: the unique index refused it, and the commit
     /// wrote nothing, its event included (postgres-schema.md names and
@@ -55,6 +82,12 @@ pub enum StoreError {
     /// defect, answered `system.internal` (ADR-0034 d11).
     #[error("the tenant's partition DDL failed: {0}")]
     Partition(String),
+    /// A registration found 10 000 registered clients that have not
+    /// connected and are younger than 24 hours: it wrote nothing, and is
+    /// answered `limit.rate` until some lapse (http-api.md
+    /// `POST /oauth/register`; errors.md; ADR-0031 d5).
+    #[error("the unused client registrations are at their cap")]
+    CapReached,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -84,7 +117,11 @@ pub enum MetadataFold {
     /// `workarea.create`: the node, its path derived from its parent's path
     /// and its name (postgres-schema.md `workareas`).
     WorkareaCreated(WorkareaRecord),
-    /// `key.issued`: the key row, its `issued_seq` this commit's seq.
+    /// `key.issued`: the key row, its `issued_seq` this commit's seq, with
+    /// its credential. A connector key (`Credential::Connection`) carries no
+    /// hash, or the store refuses it, so it never resolves through
+    /// [`JournalStore::key_by_hash`] (postgres-schema.md
+    /// `api_keys_connector_has_no_hash`; ADR-0031 d7).
     KeyIssued(KeyRecord),
     /// `crew.created`: one crew record (ADR-0026 d8).
     CrewCreated(CrewRecord),
@@ -135,9 +172,61 @@ pub enum MetadataFold {
     },
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
-    /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2).
+    /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2). It
+    /// voids the key's unredeemed codes, their `voided_seq` this commit's
+    /// seq (roles-and-keys.md connect codes; ADR-0031 d8).
     KeyRevoked {
         key_id: Uuid,
+    },
+    /// `connection.code_issued`: the code's row, its `issued_seq` this
+    /// commit's seq. The commit voids every code of the key from which no
+    /// connection has opened, spent or not, their `voided_seq` this seq.
+    /// `voids` is the key's unredeemed code the event names as replaced,
+    /// else `None`; the store refuses a commit whose `voids` is not the
+    /// key's one unredeemed, unvoided code with
+    /// [`StoreError::ConnectCodeMoved`], and a code of a key it does not
+    /// hold (event-catalog.md `connection.code_issued`; ADR-0031 d8).
+    ConnectCodeIssued {
+        code: ConnectCode,
+        voids: Option<Uuid>,
+    },
+    /// `connection.opened`: the `authorized` connection opens, its
+    /// `opened_seq` this commit's seq and its `auth_code_redeemed_at` this
+    /// commit's `at`, and the key's earlier open connection, which
+    /// `replaces` names, is revoked with the cause `replaced` and its
+    /// `revoked_seq` this seq. The store refuses a connection that is not
+    /// `authorized`, one whose authorization code is redeemed already or
+    /// expired at this `at`, one whose connect code is voided, a `replaces`
+    /// that is not the key's open connection, and a key that is revoked, so
+    /// no connection opens after its key's `key.revoked` or after a mint or
+    /// revocation voided its code since Connect. Each refusal is
+    /// [`StoreError::ConnectionNotOpenable`] (postgres-schema.md
+    /// `oauth_connections`; event-catalog.md `connection.opened`; ADR-0031
+    /// d7, d8, d10, d11, d12).
+    ///
+    /// The exchange's conditional update matches the row by
+    /// `auth_code_hash`, the presented code's digest, so a digest that is
+    /// not the connection's is refused the same way, and on its match the
+    /// fold inserts `tokens`, the pair the exchange minted, created at the
+    /// commit's `at`: redemption, the pair and the event are one transaction
+    /// under the chain lock. No journal payload carries either digest
+    /// (postgres-schema.md, redemption and rotation are conditional updates;
+    /// ADR-0031 d10, d12).
+    ConnectionOpened {
+        connection_id: Uuid,
+        replaces: Option<Uuid>,
+        auth_code_hash: Sha256Hash,
+        tokens: TokenPair,
+    },
+    /// `connection.revoked`: the open connection is revoked with `cause`,
+    /// its `revoked_seq` this commit's seq, and every code of its key from
+    /// which no connection has opened, spent or not, is voided, their
+    /// `voided_seq` this seq. The store refuses a connection that is not
+    /// open and the cause `replaced`, which only a newer `connection.opened`
+    /// gives (event-catalog.md `connection.revoked`; ADR-0031 d8, d12).
+    ConnectionRevoked {
+        connection_id: Uuid,
+        cause: RevokedCause,
     },
     /// A captured submission: the row lands `held` and, with `enqueue`,
     /// waits in the review queue. The store refuses a second held, promoted
@@ -485,6 +574,16 @@ pub trait JournalStore: Send + Sync {
         workareas: &[Uuid],
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
+    /// The memory ids of the queue entries this reviewer key has claimed,
+    /// oldest first and at most two, enough to tell one open item from
+    /// several: the default of a verdict sent without `serve_id`
+    /// (ADR-0039 d10).
+    fn review_claimed(
+        &self,
+        tenant_id: Uuid,
+        reviewer_key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
     /// One equality lookup on the key-value hash (roles-and-keys.md); a
     /// revoked key resolves to nothing.
     fn key_by_hash(
@@ -543,6 +642,16 @@ pub trait JournalStore: Send + Sync {
         key_id: Uuid,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
 
+    /// The rows a key of the tenant references, read in one query under the
+    /// tenant's fence: the tenant's id and name, the key's default workarea
+    /// with the path its ancestry derives, and its crew record; `None` for a
+    /// key the tenant does not hold (ADR-0039 d15).
+    fn key_references(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<KeyReferences>, StoreError>> + Send;
+
     /// The tenant's rows that have no name yet: its own row, its workareas
     /// and its keys, which the lead names before it serves (http-api.md
     /// rows created before names; ADR-0026 d11).
@@ -589,6 +698,338 @@ pub trait JournalStore: Send + Sync {
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+}
+
+/// The connection rows of a store that serves connector keys
+/// (postgres-schema.md "connections (ADR-0031)"): the operational writes
+/// that journal nothing — code entry spending a code and writing its
+/// authorization request, Connect or Cancel taking that request, Connect
+/// creating an `authorized` connection, a client's row, a refresh's
+/// rotation and the sweep — and the reads, the pre-tenant digest lookups
+/// among them. Every argument that names a secret is its digest, never the
+/// secret (ADR-0031 d10). The journalled acts are folds of
+/// [`MetadataFold`] (ADR-0031 d5, d8, d9, d12; event-catalog.md,
+/// operational state).
+pub trait ConnectionStore: JournalStore {
+    /// The pre-tenant lookup of a connect code by the SHA-256 of its twelve
+    /// decoded symbols, as `api_keys.hash` is found: the code's row, which
+    /// names its key and its state, and the tenant that then sets
+    /// `oml.tenant_id`; `None` for a digest no row holds (postgres-schema.md
+    /// "connections (ADR-0031)"; ADR-0031 d8).
+    fn code_by_hash(
+        &self,
+        code_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<TenantRow<ConnectCodeRecord>>, StoreError>> + Send;
+
+    /// The tenant's name as the operator gave it at `POST /v2/tenants`,
+    /// which no tenant admin can set, under that tenant: what the
+    /// authorization page's confirmation names the key's tenant by; `None`
+    /// for a tenant it does not hold or one not yet named (http-api.md "The
+    /// authorization page"; ADR-0031 d9 step 2; ADR-0026 d1).
+    fn tenant_name(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Name>, StoreError>> + Send;
+
+    /// Spends the code by its first correct entry, `redeemed_at` = `at`, in
+    /// one conditional update that matches only a code still unredeemed,
+    /// unvoided and unexpired at `at`, so of two racing correct entries
+    /// exactly one spends it: `true` when this call spent it, `false`
+    /// otherwise, the code unchanged. The key's state is the caller's check
+    /// (ADR-0031 d8, d9).
+    fn spend_code(
+        &self,
+        tenant_id: Uuid,
+        code_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// Cancel: deletes the authorization request's row by `handle_hash`
+    /// under the provider tenant and returns it, `None` when Connect or
+    /// Cancel took it already or it was removed, so a later confirmation
+    /// with that handle finds no row (postgres-schema.md "connections
+    /// (ADR-0031)"; ADR-0031 d9).
+    fn take_authorization_by_handle(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<AuthorizationRecord>, StoreError>> + Send;
+
+    /// The pre-tenant lookup of a connection by its authorization code's
+    /// digest, redeemed or not, so a second redemption is recognized while
+    /// the connection stands; `None` for a digest no row holds
+    /// (ADR-0031 d10).
+    fn connection_by_auth_code(
+        &self,
+        auth_code_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<TenantRow<ConnectionRecord>>, StoreError>> + Send;
+
+    /// The pre-tenant lookup of a token by its digest, matching only a row
+    /// of `kind`: at `/mcp` the kind is `access` and at a refresh `refresh`,
+    /// so a refresh token's digest finds nothing at `/mcp`
+    /// (roles-and-keys.md connections; ADR-0031 d11).
+    fn token_by_hash(
+        &self,
+        token_hash: &Sha256Hash,
+        kind: TokenKind,
+    ) -> impl Future<Output = Result<Option<TenantRow<TokenRecord>>, StoreError>> + Send;
+
+    /// Inserts an open connection's access and refresh rows, created at
+    /// `at`; a connection that is not open, or a digest held already, is
+    /// refused and inserts neither (ADR-0031 d10).
+    fn insert_token_pair(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+        tokens: TokenPair,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// A refresh, in one transaction that takes no chain lock: it finds the
+    /// presented refresh token's row, locks its connection's row, reads
+    /// [`RefreshFacts`] at `at` and asks `decide`; only on
+    /// [`RefreshDecision::Rotate`] it runs the conditional update that marks
+    /// the token rotated where it is still unrotated and unexpired, and on
+    /// that match inserts `next`. Of two racing refreshes with one token,
+    /// the second reads the first's rotation under the lock, so exactly one
+    /// mints. A reuse decision writes nothing here: its `connection.revoked`
+    /// is a commit of its own under the chain lock (postgres-schema.md,
+    /// redemption and rotation are conditional updates; ADR-0031 d10, d11).
+    fn rotate_refresh<F>(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+        next: TokenPair,
+        at: &EventTime,
+        decide: F,
+    ) -> impl Future<Output = Result<RefreshOutcome, StoreError>> + Send
+    where
+        F: FnOnce(Option<&RefreshFacts>) -> RefreshDecision + Send;
+
+    /// The operational removal at `at` (postgres-schema.md, the removal
+    /// paragraph; ADR-0031 d9, d10): under `tenant_id`, every `authorized`
+    /// connection whose authorization code lapsed unexchanged, every token
+    /// row past its own expiry and every token row of a revoked connection,
+    /// and a revoked connection's `auth_code_hash`; under the provider
+    /// tenant, every authorization request 24 hours past its expiry. A
+    /// rotated refresh token keeps its row until its own expiry. Journals
+    /// nothing (ADR-0031 d12).
+    fn sweep_expired(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<SweepReport, StoreError>> + Send;
+
+    /// Connect, in one transaction (postgres-schema.md "connections
+    /// (ADR-0031)"): it deletes the authorization request's row by
+    /// `handle_hash` under the provider tenant, stamps the row's client's
+    /// `connected_at` at `grant.at` where it is null, then, under the
+    /// row's code tenant, reads the code's voiding and creates the
+    /// `authorized` connection from the row and `grant`. A voided code
+    /// changes nothing ([`ConnectOutcome::CodeVoided`]); a refused insert, a
+    /// key or code the code tenant does not hold or a second connection of
+    /// one code (`oauth_connections_tenant_id_code_id`), rolls the whole
+    /// transaction back, so the request's row stays and the stamp commits
+    /// only with the connection row (ADR-0031 d5, d8, d9; ADR-0034 d12).
+    fn connection_connect(
+        &self,
+        handle_hash: &Sha256Hash,
+        grant: ConnectGrant,
+    ) -> impl Future<Output = Result<ConnectOutcome, StoreError>> + Send;
+
+    /// The authorization request's row at a correct code, under the
+    /// provider tenant; a second row with one handle digest is refused
+    /// (postgres-schema.md `oauth_authorizations`; ADR-0031 d9).
+    fn authorization_insert(
+        &self,
+        record: AuthorizationRecord,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The authorization request's row by its handle digest; `None` once
+    /// Connect or Cancel took it.
+    fn authorization(
+        &self,
+        handle_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<AuthorizationRecord>, StoreError>> + Send;
+
+    /// A client's row, a cached document or a registration, under the
+    /// provider tenant; a second row for one `client_id` is refused
+    /// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+    fn oauth_client_insert(
+        &self,
+        record: OAuthClientRecord,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// A client's row by its `client_id`; `None` for one it does not hold.
+    fn oauth_client(
+        &self,
+        client_id: &str,
+    ) -> impl Future<Output = Result<Option<OAuthClientRecord>, StoreError>> + Send;
+
+    /// Caches a fetched client ID metadata document, under the provider
+    /// tenant, for [`cache_lifetime`](oml_domain::oauth::cache_lifetime) of
+    /// `max_age` from `fetched_at`, its `last_used_at` = `fetched_at`. A
+    /// cached client's row is refreshed in place and keeps its
+    /// `connected_at` and `created_at`. A new row in a cache holding
+    /// [`CACHED_DOCUMENTS_MAX`](oml_domain::oauth::CACHED_DOCUMENTS_MAX)
+    /// documents evicts the least recently used one whose client has not
+    /// connected; when every cached client has connected it writes nothing
+    /// and answers [`DocumentCaching::NotCached`], never a refusal
+    /// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+    fn upsert_cimd(
+        &self,
+        document: ClientDescription,
+        fetched_at: &EventTime,
+        max_age: u64,
+    ) -> impl Future<Output = Result<DocumentCaching, StoreError>> + Send;
+
+    /// A cached document's use at `at`, its `last_used_at`, the cache's
+    /// eviction order: `true` when a cached document's row was touched,
+    /// `false` for a `client_id` no cached document holds (ADR-0031 d5).
+    fn touch_cimd(
+        &self,
+        client_id: &str,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// A dynamic registration's row, created at `at`, under the provider
+    /// tenant. Refused with [`StoreError::CapReached`], writing nothing,
+    /// when
+    /// [`UNUSED_REGISTRATIONS_MAX`](oml_domain::oauth::UNUSED_REGISTRATIONS_MAX)
+    /// registrations that have not connected were created within
+    /// [`UNUSED_REGISTRATION_SECONDS`](oml_domain::oauth::UNUSED_REGISTRATION_SECONDS)
+    /// before `at`; a second row for one `client_id` is refused
+    /// (http-api.md `POST /oauth/register`; ADR-0031 d5).
+    fn insert_dcr(
+        &self,
+        registration: ClientDescription,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Removes every registration that has not connected and was created at
+    /// or before `registered_by`, which the caller sets 24 hours before
+    /// now; cached documents are untouched. Answers how many rows it
+    /// removed, and journals nothing (ADR-0031 d5, d12).
+    fn remove_unused_dcr(
+        &self,
+        registered_by: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The key's codes in the order they were issued, voided and spent ones
+    /// included; empty for a key the tenant does not hold.
+    fn connect_codes(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ConnectCodeRecord>, StoreError>> + Send;
+
+    /// The key's connections in any state, in the order they were created,
+    /// ties by id; empty for a key the tenant does not hold
+    /// (roles-and-keys.md connections; ADR-0031 d11).
+    fn connections(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<ConnectionRecord>, StoreError>> + Send;
+
+    /// One connection of the tenant, in any state; `None` for one it does
+    /// not hold.
+    fn connection(
+        &self,
+        tenant_id: Uuid,
+        connection_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ConnectionRecord>, StoreError>> + Send;
+}
+
+/// The sealing port of an authorization request's handle (ADR-0031 d9 step
+/// 1): an AEAD under a key the lead generates when it starts and holds only
+/// in memory, so a handle is the request itself and no row is written for
+/// it. `open` answers the sealed bytes only for a handle this sealer's key
+/// sealed and nobody altered; any other string — another process's handle,
+/// a tampered one, or garbage — opens to `None`.
+pub trait HandleSealer: Send + Sync {
+    fn seal(&self, plaintext: &[u8]) -> String;
+    fn open(&self, handle: &str) -> Option<Vec<u8>>;
+}
+
+/// A client ID metadata document as fetched: its body as received, within
+/// the 16 KiB bound, and its `Cache-Control` `max-age` in seconds, `0`
+/// where it allows no caching (ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedDocument {
+    pub body: Vec<u8>,
+    pub max_age: u64,
+}
+
+/// Why a document was not fetched (http-api.md "Client identity"): any
+/// failure within the fetch bounds, or a full fetch cap. Either serves a
+/// cached copy kept within its 24 hours; without one it is
+/// `oauth.client_invalid` (ADR-0031 d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentFetchFailure {
+    /// An answer outside the address allow-list, TLS, a redirect, the
+    /// 5-second or 16 KiB cut, or any other failed fetch.
+    Failed,
+    /// At most 16 fetches at once, one per host name and one per resolved
+    /// address; past any cap (`reason: fetch_busy`).
+    Busy,
+}
+
+/// The outbound fetch of a client ID metadata document at its URL, under
+/// the bounds of http-api.md "Client identity" (ADR-0031 d5). The use case
+/// decides what the cache serves; the fetcher only fetches.
+pub trait ClientDocumentFetcher: Send + Sync {
+    fn fetch(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
+}
+
+/// The fetch-cap slots one piece of outbound work holds (ADR-0031 d5):
+/// they are given back when the last guard holding them drops. An adapter
+/// moves the guard it is handed into whatever runs the I/O — the
+/// `spawn_blocking` closure, not the future awaiting it — so a dropped
+/// request or a timeout that fires while a resolver or a connection still
+/// runs leaves its slots taken until that work ends. Only
+/// [`crate::oauth_fetch::CappedFetcher`] mints one.
+#[must_use = "the slots are given back when the guard drops"]
+pub struct FetchGuard {
+    _slots: Vec<std::sync::Arc<crate::oauth_fetch::Slot>>,
+}
+
+impl FetchGuard {
+    pub(crate) fn new(slots: Vec<std::sync::Arc<crate::oauth_fetch::Slot>>) -> Self {
+        Self { _slots: slots }
+    }
+}
+
+/// The outbound I/O under a document fetch, split at the one point the fetch
+/// caps need between its halves (ADR-0031 d5; http-api.md "Client
+/// identity"): resolve the host, then fetch from one address the use case
+/// checked. [`crate::oauth_fetch::CappedFetcher`] holds the caps and the
+/// address allow-list over it, so an adapter cannot widen either. Each half
+/// is handed the [`FetchGuard`] of the slots it runs under and keeps it
+/// until its I/O ends, whether or not anything still awaits it.
+pub trait DocumentFetcher: Send + Sync {
+    /// Every A and AAAA answer for `host`, unfiltered; a resolver failure
+    /// or timeout is [`DocumentFetchFailure::Failed`]. `guard` is held
+    /// until the resolver itself returns.
+    fn resolve(
+        &self,
+        host: &str,
+        guard: FetchGuard,
+    ) -> impl Future<Output = Result<Vec<IpAddr>, DocumentFetchFailure>> + Send;
+
+    /// `GET url` over a connection to `address` with no second resolution,
+    /// no proxy and no redirect, `Accept-Encoding: identity`, cut at 5
+    /// seconds and at 16 KiB received; TLS verifies the URL's host, sent
+    /// as SNI. Any answer but `200` is [`DocumentFetchFailure::Failed`].
+    /// `guard` is held until the connection is done with.
+    fn fetch(
+        &self,
+        url: &str,
+        address: IpAddr,
+        guard: FetchGuard,
+    ) -> impl Future<Output = Result<FetchedDocument, DocumentFetchFailure>> + Send;
 }
 
 /// The signer port — the lead/follower split as a trait: only the lead

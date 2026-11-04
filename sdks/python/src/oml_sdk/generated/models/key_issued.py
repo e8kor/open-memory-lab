@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.key_credential import KeyCredential
 from ..models.key_held_by_type_1 import KeyHeldByType1
 from ..models.key_held_by_type_2_type_1 import KeyHeldByType2Type1
 from ..models.key_held_by_type_3_type_1 import KeyHeldByType3Type1
@@ -14,6 +15,8 @@ from ..models.role import Role
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.connect_code import ConnectCode
+    from ..models.connection import Connection
     from ..models.denial import Denial
     from ..models.grant import Grant
 
@@ -30,20 +33,27 @@ class KeyIssued:
         role (Role):
         default_workarea_id (None | str): The key's default workarea; for an issued key, as key.issued journals it — the
             one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance
-            order; ADR-0025 d2). The provider-ring target when no X-OML-Workarea is sent (ADR-0022 d4).
+            order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4).
         held_by (KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None): The issuing admin's attestation;
             for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2).
-        value (str): The secret — returned exactly once, journalled as issued-without-value.
         principal (str | Unset):
         crew_id (None | str | Unset): The key's crew record, as key.issued journals it; null when none was named
             (ADR-0026 d8).
         label (str | Unset):
         expiry (datetime.datetime | None | Unset):
         revoked_at (datetime.datetime | None | Unset):
-        rotated_from (None | str | Unset): The key_id this key succeeded by rotation
+        rotated_from (None | str | Unset): The key_id this key succeeded by rotation, if any (key.rotated links the
+            two).
         grants (list[Grant] | Unset):
         denials (list[Denial] | Unset):
         epoch (int | Unset):
+        credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
+            a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+        connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
+            most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
+            (ADR-0031 d11).
+        value (str | Unset): The secret — returned exactly once, journalled as issued-without-value.
+        connect_code (ConnectCode | Unset):
     """
 
     key_id: str
@@ -51,7 +61,6 @@ class KeyIssued:
     role: Role
     default_workarea_id: None | str
     held_by: KeyHeldByType1 | KeyHeldByType2Type1 | KeyHeldByType3Type1 | None
-    value: str
     principal: str | Unset = UNSET
     crew_id: None | str | Unset = UNSET
     label: str | Unset = UNSET
@@ -61,6 +70,10 @@ class KeyIssued:
     grants: list[Grant] | Unset = UNSET
     denials: list[Denial] | Unset = UNSET
     epoch: int | Unset = UNSET
+    credential: KeyCredential | Unset = UNSET
+    connections: list[Connection] | Unset = UNSET
+    value: str | Unset = UNSET
+    connect_code: ConnectCode | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,8 +95,6 @@ class KeyIssued:
             held_by = self.held_by.value
         else:
             held_by = self.held_by
-
-        value = self.value
 
         principal = self.principal
 
@@ -133,6 +144,23 @@ class KeyIssued:
 
         epoch = self.epoch
 
+        credential: str | Unset = UNSET
+        if not isinstance(self.credential, Unset):
+            credential = self.credential.value
+
+        connections: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.connections, Unset):
+            connections = []
+            for connections_item_data in self.connections:
+                connections_item = connections_item_data.to_dict()
+                connections.append(connections_item)
+
+        value = self.value
+
+        connect_code: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.connect_code, Unset):
+            connect_code = self.connect_code.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -142,7 +170,6 @@ class KeyIssued:
                 "role": role,
                 "default_workarea_id": default_workarea_id,
                 "held_by": held_by,
-                "value": value,
             }
         )
         if principal is not UNSET:
@@ -163,11 +190,21 @@ class KeyIssued:
             field_dict["denials"] = denials
         if epoch is not UNSET:
             field_dict["epoch"] = epoch
+        if credential is not UNSET:
+            field_dict["credential"] = credential
+        if connections is not UNSET:
+            field_dict["connections"] = connections
+        if value is not UNSET:
+            field_dict["value"] = value
+        if connect_code is not UNSET:
+            field_dict["connect_code"] = connect_code
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.connect_code import ConnectCode
+        from ..models.connection import Connection
         from ..models.denial import Denial
         from ..models.grant import Grant
 
@@ -219,8 +256,6 @@ class KeyIssued:
             )
 
         held_by = _parse_held_by(d.pop("held_by"))
-
-        value = d.pop("value")
 
         principal = d.pop("principal", UNSET)
 
@@ -298,13 +333,37 @@ class KeyIssued:
 
         epoch = d.pop("epoch", UNSET)
 
+        _credential = d.pop("credential", UNSET)
+        credential: KeyCredential | Unset
+        if isinstance(_credential, Unset):
+            credential = UNSET
+        else:
+            credential = KeyCredential(_credential)
+
+        _connections = d.pop("connections", UNSET)
+        connections: list[Connection] | Unset = UNSET
+        if _connections is not UNSET:
+            connections = []
+            for connections_item_data in _connections:
+                connections_item = Connection.from_dict(connections_item_data)
+
+                connections.append(connections_item)
+
+        value = d.pop("value", UNSET)
+
+        _connect_code = d.pop("connect_code", UNSET)
+        connect_code: ConnectCode | Unset
+        if isinstance(_connect_code, Unset):
+            connect_code = UNSET
+        else:
+            connect_code = ConnectCode.from_dict(_connect_code)
+
         key_issued = cls(
             key_id=key_id,
             name=name,
             role=role,
             default_workarea_id=default_workarea_id,
             held_by=held_by,
-            value=value,
             principal=principal,
             crew_id=crew_id,
             label=label,
@@ -314,6 +373,10 @@ class KeyIssued:
             grants=grants,
             denials=denials,
             epoch=epoch,
+            credential=credential,
+            connections=connections,
+            value=value,
+            connect_code=connect_code,
         )
 
         key_issued.additional_properties = d

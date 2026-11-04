@@ -6,11 +6,12 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea_page import WorkareaPage
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    workarea_id: str,
+    workarea: str,
     *,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
@@ -26,8 +27,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/workareas/{workarea_id}/tree".format(
-            workarea_id=quote(str(workarea_id), safe=""),
+        "url": "/v2/workareas/{workarea}/tree".format(
+            workarea=quote(str(workarea), safe=""),
         ),
         "params": params,
     }
@@ -37,7 +38,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope:
+) -> ErrorEnvelope | WorkareaPage:
+    if response.status_code == 200:
+        response_200 = WorkareaPage.from_dict(response.json())
+
+        return response_200
+
     response_default = ErrorEnvelope.from_dict(response.json())
 
     return response_default
@@ -45,7 +51,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -55,12 +61,12 @@ def _build_response(
 
 
 def sync_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -68,7 +74,7 @@ def sync_detailed(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -79,11 +85,11 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         limit=limit,
         cursor=cursor,
     )
@@ -96,12 +102,12 @@ def sync_detailed(
 
 
 def sync(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -109,7 +115,7 @@ def sync(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -120,11 +126,11 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaPage
     """
 
     return sync_detailed(
-        workarea_id=workarea_id,
+        workarea=workarea,
         client=client,
         limit=limit,
         cursor=cursor,
@@ -132,12 +138,12 @@ def sync(
 
 
 async def asyncio_detailed(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -145,7 +151,7 @@ async def asyncio_detailed(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -156,11 +162,11 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
-        workarea_id=workarea_id,
+        workarea=workarea,
         limit=limit,
         cursor=cursor,
     )
@@ -171,12 +177,12 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    workarea_id: str,
+    workarea: str,
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -184,7 +190,7 @@ async def asyncio(
     permission matrix footnote 6; ADR-0026 d15).
 
     Args:
-        workarea_id (str): A workarea, by its node id or its name. Resolved server-side before any
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
@@ -195,12 +201,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaPage
     """
 
     return (
         await asyncio_detailed(
-            workarea_id=workarea_id,
+            workarea=workarea,
             client=client,
             limit=limit,
             cursor=cursor,

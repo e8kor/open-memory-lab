@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,12 +22,15 @@ class Ready:
     Attributes:
         status (ReadyStatus):
         checks (ReadyChecks): Per-check detail, e.g. postgres, fork_check.
+        oauth_issuer (None | str): The lead's oauth.issuer, or null where connections are off; doctor reads whether
+            connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build (Build): The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field
             nothing could supply is the string unknown.
     """
 
     status: ReadyStatus
     checks: ReadyChecks
+    oauth_issuer: None | str
     build: Build
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -35,6 +38,9 @@ class Ready:
         status = self.status.value
 
         checks = self.checks.to_dict()
+
+        oauth_issuer: None | str
+        oauth_issuer = self.oauth_issuer
 
         build = self.build.to_dict()
 
@@ -44,6 +50,7 @@ class Ready:
             {
                 "status": status,
                 "checks": checks,
+                "oauth_issuer": oauth_issuer,
                 "build": build,
             }
         )
@@ -60,11 +67,19 @@ class Ready:
 
         checks = ReadyChecks.from_dict(d.pop("checks"))
 
+        def _parse_oauth_issuer(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        oauth_issuer = _parse_oauth_issuer(d.pop("oauth_issuer"))
+
         build = Build.from_dict(d.pop("build"))
 
         ready = cls(
             status=status,
             checks=checks,
+            oauth_issuer=oauth_issuer,
             build=build,
         )
 

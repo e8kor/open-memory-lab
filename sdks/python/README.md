@@ -14,23 +14,34 @@ uv add ./sdks/python            # or: pip install ./sdks/python
 ```python
 from oml_sdk import OmlClient
 
-# The key comes from api_key=, else OML_API_KEY; the server from base_url=, else OML_URL.
+# One pair: url= and api_key=, else OML_URL and OML_API_KEY; one set alone is refused.
 with OmlClient() as oml:
-    written = oml.remember("deploy-runbook", "The canary stage must drain before the next one starts.")
+    written = oml.write("The canary stage must drain before the next one starts.")
     print(written.value.state)          # held: invisible to other keys until a reviewer's verdict
+    print(written.value.claim_key)      # derived by the server when none is sent
     print(written.idempotency_key)      # the key every retry of this call sent
 
-    for hit in oml.recall("canary stage", include_own_held=True).hits:
-        print(hit.memory.state, hit.memory.body)
+    for hit in oml.read(query="canary stage", include_unreviewed=True).hits:
+        print(hit.memory.state, hit.memory.text)
 
-    for row in oml.iter_memories(own=True, limit=50):   # follows next_cursor to the end
+    memory = oml.read(written.value.artifact_id)   # the key's own row, in any state
+    print(memory.state, memory.text)
+
+    # replaces must name the served tip, so a reviewer's approve promotes the version first:
+    # superseding it while it is held raises SubmissionError (submission.tip_conflict).
+    oml.write("Drain, then wait five minutes.", replaces=memory.artifact_id)
+
+    for row in oml.iter_memories(limit=50):   # the key's own rows; follows next_cursor to the end
         print(row.artifact_id, row.state)
 ```
 
-Refusals raise one exception class per family of [errors.md](../../docs/api/errors.md), all
-subclasses of `oml_sdk.ApiError`, each carrying `code`, `rule`, `message`, `retryable`,
-`details`, `request_id` and `status`. File uploads raise `NotBuiltError`: the server serves no
-upload sessions yet.
+Seven verbs: `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`.
+`write`'s arguments choose a submission or, with `replaces`, a supersession; `read`'s choose a
+fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_write` and
+`oml_read` do. Every refusal raises `oml_sdk.ApiError` carrying the envelope of
+[errors.md](../../docs/api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`,
+`request_id` — and `status`, as the subclass of the code's family; an argument outside its mode
+is refused the same way before anything is sent.
 
 `oml_sdk.generated` is generated and never edited by hand; `python3 scripts/generate_sdks.py`
 regenerates it. The tests run against a real `oml-server-lead` on a throwaway database

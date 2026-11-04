@@ -1,4 +1,5 @@
-// One exception class per error family of docs/api/errors.md.
+// One error type, ApiError, for every refusal, carrying the envelope of
+// docs/api/errors.md, in one subclass per error family (ADR-0039 d11).
 //
 // docs/engineering/sdks.md, "What the wrapper covers": the class is chosen by
 // the code's family prefix, so a code this client has never seen lands in its
@@ -12,11 +13,6 @@ export class OmlError extends Error {
 /** The client has no key or no server URL; nothing was sent. */
 export class ConfigError extends OmlError {
   override name = "ConfigError";
-}
-
-/** The server does not serve this capability yet; nothing was sent. */
-export class NotBuiltError extends OmlError {
-  override name = "NotBuiltError";
 }
 
 /** The request failed in transit after the last retry; the cause is attached. */
@@ -35,7 +31,11 @@ export interface ApiErrorFields {
   retryAfter: number | null;
 }
 
-/** A refusal in the errors.md envelope. `code` is null only when the response carried no envelope. */
+/**
+ * A refusal in the errors.md envelope. `code` is null only when the response carried no envelope;
+ * `requestId` is null also on a refusal the wrapper raised before sending, as the server answers
+ * the same arguments.
+ */
 export class ApiError extends OmlError {
   override name = "ApiError";
   readonly status: number;
@@ -68,6 +68,10 @@ export class ApiError extends OmlError {
 /** `auth`: who is calling. */
 export class AuthError extends ApiError {
   override name = "AuthError";
+}
+/** `oauth`: connections, connect codes and the OAuth endpoints. */
+export class OAuthError extends ApiError {
+  override name = "OAuthError";
 }
 /** `access`: what this key may do. */
 export class AccessError extends ApiError {
@@ -132,6 +136,7 @@ export class ServerError extends ApiError {
 
 export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze({
   auth: AuthError,
+  oauth: OAuthError,
   access: AccessError,
   request: RequestError,
   idempotency: IdempotencyError,
@@ -160,6 +165,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function familyOf(code: string): typeof ApiError {
+  const family = code.split(".", 1)[0] ?? "";
+  return Object.hasOwn(FAMILIES, family) ? FAMILIES[family]! : ApiError;
+}
+
 /** The typed exception for one non-2xx response; `body` is its parsed JSON, or its text. */
 export function errorFromResponse(status: number, body: unknown, headers: Headers): ApiError {
   const error = isRecord(body) ? body.error : undefined;
@@ -175,8 +185,7 @@ export function errorFromResponse(status: number, body: unknown, headers: Header
       retryAfter: retryAfter(headers),
     });
   }
-  const family = error.code.split(".", 1)[0] ?? "";
-  const Family = Object.hasOwn(FAMILIES, family) ? FAMILIES[family]! : ApiError;
+  const Family = familyOf(error.code);
   const requestId = isRecord(body) ? body.request_id : undefined;
   return new Family({
     status,
@@ -187,5 +196,26 @@ export function errorFromResponse(status: number, body: unknown, headers: Header
     details: isRecord(error.details) ? error.details : {},
     requestId: typeof requestId === "string" ? requestId : null,
     retryAfter: retryAfter(headers),
+  });
+}
+
+/** The refusal the server answers the same arguments with, raised before anything is sent: its family's class, without a requestId. */
+export function refusedLocally(
+  status: number,
+  code: string,
+  message: string,
+  rule: string,
+  details: Record<string, unknown>,
+): ApiError {
+  const Family = familyOf(code);
+  return new Family({
+    status,
+    code,
+    message,
+    rule,
+    retryable: false,
+    details,
+    requestId: null,
+    retryAfter: null,
   });
 }

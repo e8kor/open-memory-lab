@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
@@ -15,27 +14,26 @@ T = TypeVar("T", bound="DenialRequest")
 class DenialRequest:
     """
     Attributes:
-        workarea_node_id (str): A workarea, by its node id or its name. Resolved server-side before any check that reads
-            state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
+        workarea (str): A workarea, by its node id or its name. Resolved server-side before any check that reads state;
+            an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
             (request.validation).
         reason (str | Unset):
     """
 
-    workarea_node_id: str
+    workarea: str
     reason: str | Unset = UNSET
-    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        workarea_node_id: str
-        workarea_node_id = self.workarea_node_id
+        workarea: str
+        workarea = self.workarea
 
         reason = self.reason
 
         field_dict: dict[str, Any] = {}
-        field_dict.update(self.additional_properties)
+
         field_dict.update(
             {
-                "workarea_node_id": workarea_node_id,
+                "workarea": workarea,
             }
         )
         if reason is not UNSET:
@@ -47,33 +45,16 @@ class DenialRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
 
-        def _parse_workarea_node_id(data: object) -> str:
+        def _parse_workarea(data: object) -> str:
             return cast(str, data)
 
-        workarea_node_id = _parse_workarea_node_id(d.pop("workarea_node_id"))
+        workarea = _parse_workarea(d.pop("workarea"))
 
         reason = d.pop("reason", UNSET)
 
         denial_request = cls(
-            workarea_node_id=workarea_node_id,
+            workarea=workarea,
             reason=reason,
         )
 
-        denial_request.additional_properties = d
         return denial_request
-
-    @property
-    def additional_keys(self) -> list[str]:
-        return list(self.additional_properties.keys())
-
-    def __getitem__(self, key: str) -> Any:
-        return self.additional_properties[key]
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        self.additional_properties[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self.additional_properties[key]
-
-    def __contains__(self, key: str) -> bool:
-        return key in self.additional_properties

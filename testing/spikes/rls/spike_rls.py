@@ -1347,8 +1347,8 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
         # constraint, so it neither stores a cross-tenant id nor answers whether one exists. Tenant
         # A's own target is the control that the probe statement is otherwise accepted.
         nowhere = uuid.uuid5(NS, "no-row")
-        probe_key = ("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq, {col}) "
-                     "VALUES (%s, %s, 'reader', 'probe', 1, %s)")
+        probe_key = ("INSERT INTO api_keys (tenant_id, hash, credential, role, principal, issued_seq, {col}) "
+                     "VALUES (%s, %s, 'bearer', 'reader', 'probe', 1, %s)")
         fk_cases = [
             ("workareas.parent_id",
              "INSERT INTO workareas (tenant_id, parent_id, name, status) VALUES (%s, %s, 'probe', "
@@ -1376,8 +1376,8 @@ def s3_4_for(s: Scenario, role: str, ci: str, a: Tenant, b: Tenant, needles: set
                     f"no row is (tenant B's: {to_b}; no row's: {to_none}; tenant A's own: {accepted})"
                     + ("" if ok else "; the key does not carry tenant_id, so tenant A can store another "
                        "tenant's id and test whether one exists"))
-        uq = oracle("INSERT INTO api_keys (tenant_id, hash, role, principal, issued_seq) VALUES (%s, %s, 'reader', "
-                    "'probe', 1)", [a.id, key_hash("B", "writer")])
+        uq = oracle("INSERT INTO api_keys (tenant_id, hash, credential, role, principal, issued_seq) VALUES (%s, %s, "
+                    "'bearer', 'reader', 'probe', 1)", [a.id, key_hash("B", "writer")])
         obs.append(f"unique-index existence oracle: a tenant A key row carrying tenant B's key hash gives {uq}; "
                    "the global UNIQUE on api_keys.hash answers whether a hash exists anywhere (it is the SHA-256 of "
                    "a secret key value, so the oracle needs the value)")

@@ -128,7 +128,7 @@ async fn run() -> Result<(), BootError> {
         "deployment signing key loaded (kms-file)"
     );
 
-    let start = start_lead(&store, signing_key).await?;
+    let start = start_lead(&store, signing_key, config.oauth_issuer.clone()).await?;
     match &start.fork_check {
         Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
         // ADR-0002 d7: never sign on top of a fork. Writes are refused
@@ -156,6 +156,11 @@ async fn run() -> Result<(), BootError> {
             "POST /v2/bootstrap/claim {{\"enrollment_token\": \"...\", \"name\": \"<key-name>\"}}"
         );
     }
+
+    // The connections' operational removal, hourly from the start: nothing
+    // else deletes an unused registration, a lapsed authorization or an
+    // expired token (ADR-0031 d5, d9, d10).
+    let _sweep = oml_server_lead::spawn_connection_sweep(store.clone());
 
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await

@@ -1,11 +1,11 @@
 ---
 name: oml-memory
-description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question. Covers the oml_remember, oml_learn, oml_recall, oml_get, oml_supersede, oml_my_work, oml_workarea_info and oml_events_tail tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
+description: Use when a task should store a fact, decision or finding for later sessions or other agents, or when prior shared knowledge might already answer the question - before non-trivial work, on a project term you do not know, and after a command or test fails, recall with 2-4 exact keywords such as an identifier, an error code or a file name. Covers the oml_write, oml_read and oml_workarea tools of an Open Memory Lab server, why a write is not visible right away, and how to revise or retire a memory.
 ---
 
 # Working with Open Memory Lab memory
 
-An Open Memory Lab server holds every write for review. `oml_remember` succeeds with
+An Open Memory Lab server holds every write for review. `oml_write` succeeds with
 `state: "held"`: the memory is accepted for review, not published. It becomes visible to
 other keys only after a different identity approves it. Plan around that delay rather
 than writing the same fact twice.
@@ -16,25 +16,38 @@ The plugin connects once, as `oml`, with the agent's one key, and every tool run
 The key holds a writer grant and a reader grant on its default workarea, so the whole loop
 is one connection:
 
-1. recall before you act (`oml_recall`);
-2. remember (`oml_remember`, `oml_learn`), which answers `held`;
-3. check your held writes (`oml_my_work`, `oml_get`, `oml_recall` with
-   `include_own_held: true`);
-4. follow what happens to them once a different identity reviews them (`oml_events_tail`);
-5. revise or retire what no longer holds (`oml_supersede`).
+1. recall before you act (`oml_read` with a `query`);
+2. write (`oml_write`), which answers `held`;
+3. check your held writes (`oml_read` with no `query`, with an `artifact_id`, or with a
+   `query` and `include_unreviewed: true`);
+4. learn what became of them once a different identity reviews them (`oml_read` with
+   `state`);
+5. revise or retire what no longer holds (`oml_write` with `replaces`).
+
+## Three tools, chosen by their arguments
+
+`oml_write` stores, `oml_read` reads and `oml_workarea` describes a workarea. The
+arguments you pass choose what `oml_write` and `oml_read` do, and the result's `mode` says
+which ran:
+
+- `oml_write` without `replaces` writes a new claim; with `replaces` it proposes a new
+  version of that claim, and with `replaces` and `retirement: true` it proposes retiring it.
+- `oml_read` with `artifact_id` reads one memory, with `query` recalls, and with neither
+  lists. Never pass `query` and `artifact_id` together.
+
+An argument outside the call's mode is refused with `request.validation` naming it in
+`details.field`: drop that argument and call again.
 
 ## Name a workarea
 
-Every argument that names a workarea takes its name, such as `metals-crew`, or its id:
-`workarea` on `oml_remember`, `oml_learn`, `oml_my_work` and `oml_workarea_info`, and
-`scope` on `oml_recall` and `oml_events_tail`. A workarea's name is unique in the tenant and
-never changes. A path is not a name: pass `metals-crew`, not
-`universe.procurement.metals-crew`. A name the key cannot see is refused with
-`access.not_found`, exactly as its id would be.
+Every argument that names a workarea is `workarea`, on all three tools, and takes its name,
+such as `metals-crew`, or its id. A workarea's name is unique in the tenant and never
+changes. A path is not a name: pass `metals-crew`, not `universe.procurement.metals-crew`.
+A name the key cannot see is refused with `access.not_found`, exactly as its id would be.
 
 ## Check what a workarea allows
 
-Call `oml_workarea_info` with no arguments to describe the key's default workarea, or pass
+Call `oml_workarea` with no arguments to describe the key's default workarea, or pass
 `workarea` to name another. It returns the workarea's `name`, `path` and `status`, the child
 workareas the key can read, each with its name as `path_leaf`, and `my_effective_verbs`: the
 verbs the key's grants allow there, such as `remember` or `recall`. A verb missing from the
@@ -44,15 +57,19 @@ and `access.not_found` when it cannot read the workarea at all.
 
 ## Recall before you act
 
-Call `oml_recall` with a short query when earlier work might already answer the question.
-Recall returns approved memories. Rows under `steering` are standing instructions from the
-crew. They come before the hits and are not ranked, so read them first.
+Call `oml_read` with a `query` before non-trivial work, when the task names a project term
+you do not know, and after a command or test fails. Pass 2-4 exact keywords the memory would
+contain, such as an identifier, an error code, a module or a file name, never a whole
+question; every word must match, without stemming, so try other words once before concluding
+nothing is stored. Recall returns approved memories, with `k` bounding the hits and
+`kinds` narrowing them to `memory` or `derived_fact`. Rows under `steering` are standing
+instructions from the crew. They come before the hits and are not ranked, so read them first.
 
-Pass `include_own_held: true` to search your own held writes as well. They come back among
-the hits with `state: "held"` and `tip: false`, and a held revision is listed beside the
-approved version it would replace. Recall never returns another key's held writes, and
+Pass `include_unreviewed: true` to search your own held writes as well. They come back
+among the hits with `state: "held"` and `tip: false`, and a held revision is listed beside
+the approved version it would replace. Recall never returns another key's held writes, and
 your own held steering and retirements are not in force until approved, so recall leaves
-them out; read them with `oml_my_work` and `oml_get`.
+them out; list them with `oml_read` and no `query`.
 
 Pass `max_tokens` to bound the answer. Every item carries its `tokens`, the server's count
 of one token per four bytes of text, rounded up, which is not your model's count. Steering
@@ -66,17 +83,19 @@ nothing is there.
 
 ## See what became of your writes
 
-Call `oml_my_work` to list what your key wrote, newest first, in every workarea it wrote
-to: each item's `state` is `held` while it waits for review, then `promoted` or
-`rejected`. Items carry the `artifact_id`, `claim_key`, `version` and `tokens` but not the
-text. Pass `state`, `claim_key` or `workarea` to narrow the list. When `next_cursor` is not
-null, pass it back as `cursor` for the next page. A cursor works only for the key that
-received it and expires; when one is refused with `request.validation`, start again from
-the first page.
+Call `oml_read` with neither `query` nor `artifact_id` to list what your key wrote, newest
+first, in every workarea it wrote to: each item's `state` is `held` while it waits for
+review, then `promoted` or `rejected`. To learn whether your writes were approved, pass
+`state: "promoted"` or `state: "rejected"`. Items carry the `artifact_id`, `claim_key`,
+`version`, `tokens` and `text`. Pass `claim_key`, `kind`, `workarea`, `since` or `until` to
+narrow the list. When `next_cursor` is not null, pass it back as `cursor` for the next page.
+A cursor works only for the key that received it and expires; when one is refused with
+`request.validation`, start again from the first page. With `own: false` the call lists the
+approved claims of a workarea instead of your own work.
 
 ## Read one memory back
 
-Call `oml_get` with an `artifact_id` to read one version with its `text`. Your own writes
+Call `oml_read` with an `artifact_id` to read one version with its `text`. Your own writes
 are answered in any state, so you can check a held memory before anyone approves it;
 another key's memory is answered only once approved, and anything else is refused with
 `access.not_found`. `tip: true` marks the version recall serves for its claim. An older
@@ -85,32 +104,33 @@ replaced.
 
 ## Remember one claim at a time
 
-- `claim_key` names the claim inside its workarea, for example
-  `supplier-quote-am-7741`. Reuse a key only for the same claim.
 - `text` is the claim itself, written so a reader with no context can check it. Include
   the source and the date it holds for.
 - `idempotency_key` must stay the same when the same write is retried, for example
   `<task>/<run>/<step>`. A retry then returns the stored receipt with
   `idempotent_replay: true` and writes nothing twice.
+- Leave `claim_key` out. The server derives one from your key and the text and returns it
+  in the result; never invent one. A key you pass that starts with `auto-` is refused.
 - Leave `workarea` out unless told otherwise. The key's default workarea applies.
 
-Use `oml_learn` for a conclusion drawn from memories you already hold. It requires
-`derives_from`, the `artifact_id`s it rests on. Declared lineage keeps a memory's author
-out of the review of anything derived from it.
+For a conclusion drawn from memories you already hold, pass `derives_from`, the
+`artifact_id`s it rests on. Declared lineage keeps a memory's author out of the review of
+anything derived from it.
 
 ## Revise or retire a memory
 
-Call `oml_supersede` to propose a new version of a claim whose current version your key
-wrote. Pass the `artifact_id` of the version recall serves now, the one with `tip: true`,
-the whole new `text`, and optionally a `reason`. The new version is held like any write,
-and recall keeps serving the old one until a different identity approves the new one. If
-another version took the tip first, the refusal `submission.tip_conflict` names it in
-`details.current_tip`; read it with `oml_get` before you propose again. Keep the same
-`idempotency_key` when you retry the same proposal.
+Call `oml_write` with `replaces` to propose a new version of a claim whose current version
+your key wrote. Pass the `artifact_id` of the version recall serves now, the one with
+`tip: true`, the whole new `text`, and optionally a `reason`; do not pass `claim_key`, since
+the new version takes its target's. The new version is held like any write, and recall
+keeps serving the old one until a different identity approves the new one. If another
+version took the tip first, the refusal `submission.tip_conflict` names it in
+`details.current_tip`; read it with `oml_read` and its `artifact_id` before you propose
+again. Keep the same `idempotency_key` when you retry the same proposal.
 
-To retire a claim that no longer holds, pass `retirement: true` with a `text` that says
-why. Once approved, recall stops serving the claim, and every version stays readable with
-`oml_get`.
+To retire a claim that no longer holds, pass `replaces` and `retirement: true` with a
+`text` that says why. Once approved, recall stops serving the claim, and every version
+stays readable with `oml_read`.
 
 ## What the tools cannot do
 
@@ -119,7 +139,8 @@ actions belong to other identities on purpose. When a write is refused, the resu
 `isError: true` and an `error` object with `code`, `rule` and `message`. Report the code
 and the rule, and do not retry a refusal whose `retryable` is `false`.
 
-To follow what happened after a write, poll `oml_events_tail` and pass each call's
-`next_after_seq` back as the next call's `after_seq`; `idle: true` means you have caught up.
-Resume from `next_after_seq`, never from the last `seq` you saw: a page can hold no events
-while `next_after_seq` still advances past events this key may not see.
+No tool attaches or reads a file: MCP carries no file bytes, so files go through the `oml`
+CLI or the SDKs, once the server serves uploads. Write the claim's text with `oml_write`.
+
+No tool streams events. To follow what happened after a write, list your own work again
+with `oml_read` and `state`; an item stays `held` until a different identity reviews it.

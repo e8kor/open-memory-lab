@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design and 0.4.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.3.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.4.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,737 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.4.0-design
+
+Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+records. `info.version` moved to `0.4.0-design` with the contract split below; entries landed
+here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
+this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
+
+### 2026-11-04 — Release v0.4.0: ADR-0031, ADR-0038, ADR-0039, ADR-0040 and ADR-0041 accepted
+
+The maintainer accepted [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md),
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md),
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md) and
+[ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) on 2026-11-04 with release
+v0.4.0: three agent tools, one URL and one key to start, claude.ai and mobile by connect code,
+the plugin set up in Claude Code, and a one-line install. Each record's Status becomes accepted
+design, and its Release line names v0.4.0.
+
+- **Amended records:** ADR-0010, ADR-0014, ADR-0015, ADR-0018, ADR-0022, ADR-0025, ADR-0028 and
+  ADR-0029 gain their "amended by" pointers to the accepted records that amend them.
+- **Rewordings ADR-0031 owes:** a claim↔claim or workarea↔workarea link is a "connection edge"
+  in ADR-0010 d5, ADR-0012's context and ADR-0025's d1 rejected alternative; ADR-0025's agent-facing
+  results say the plugin "needs one key"; and the "token" that named a key in ADR-0022 and
+  ADR-0025 d13, d14 and d13's rejected alternative is now "key". RS-2 leaves the
+  [roadmap](product/roadmap.md), its exit criterion met, and [commitments](product/commitments.md)
+  lists FR-34, FR-35 and FR-36 in its place.
+- **Not done here:** the `spec-v0.4` tag of ADR-0031 d15 is cut with the release tag, not by this
+  change.
+- **Corrected:** [upgrades](operations/upgrades.md) and the [upgrading guide](guides/upgrading.md)
+  said v0.4.0 adds no migration; it adds `0012_connections` and `0013_oauth_clients`, which the
+  lead runs at start under the owner URL, and the upgrade gains the optional step that turns
+  connections on.
+- **Pages touched:** the five records, the amended records, the [register](adr/index.md),
+  [releases](product/releases.md), the roadmap, commitments, `llms.txt`, the pages citing RS-2,
+  every page whose release marker said planned or built for v0.4.0, and this page.
+- **No surface change:** `info.version` stays `0.4.0-design`.
+
+### 2026-11-04 — The v0.4.0 documentation: Get started, install, five guides, eight quick scenarios beside the use-case catalogue, and every front page rewritten for the three tools and the one pair (ADR-0018, ADR-0041)
+
+A documentation change carrying out the [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md)
+steps 1 to 5. The README marks each unbuilt capability as planned with its release, or not
+scheduled, and its Quickstart is the installer at `v0.4.0`, `oml login` and `oml setup
+claude-code`. New: [Get started](start/index.md), [install](start/install.md), and the guides for
+[Claude Code](guides/claude-code.md), [claude.ai and mobile](guides/claude-ai-and-mobile.md),
+[other agent tools](guides/other-harnesses.md), [self-hosting](guides/self-hosting.md) and
+[upgrading from v0.3](guides/upgrading.md). Eight [quick scenarios](product/scenarios.md) on
+the three tools sit beside the [use cases](product/use-cases.md) catalogue from PR #26, whose
+statuses read v0.3.1 as released and v0.4.0 as built, and the
+[use-case call map](engineering/use-case-call-map.md) names the calls v0.4.0 serves for each.
+
+- **Checks:** `check_release.py` fails an installer URL on a reader page at a tag other than the
+  workspace version's or `vX.Y.Z`, and a README Quickstart other than those three lines;
+  `check_contract_sync.py` reads `docs/start/`, `docs/guides/`, the use cases and the quick
+  scenarios as start pages.
+- **No surface change:** `info.version` stays `0.4.0-design`.
+- **Unmeasured:** every time named is ADR-0041 d10's target, FR-68.
+
+### 2026-11-04 — `oml keys issue-agent --out` prints the `oml setup claude-code --key-file` line after the configure line (ADR-0041 d7, implementation)
+
+With `--out` the verb prints a fourth stdout line,
+`oml setup claude-code --url '<server>' --key-file '<file>'`, which installs the plugin at the
+CLI's release and configures it from the same file, refusing an admin key. The `jq | claude
+plugin configure` line stays for a machine without the `oml` CLI. The `oml-admin` skill hands the
+operator the new line first.
+
+- **Pages touched:** [CLI reference](cli/reference.md#oml-keys-issuance-revocation-rotation)
+  (the output, the `oml-admin` plugin), the `oml-admin` skill and this page.
+- **Tests:** `the_setup_line_runs_setup_claude_code_with_the_url_and_the_key_file`, and
+  `issue_agent_out_prints_the_plugin_configure_line_and_the_setup_line_naming_the_key_file_and_never_the_key`.
+
+### 2026-11-04 — `oml setup claude-code` runs again over a marketplace already added, and each quickstart is a compose project of its own (ADR-0041 d7, d9, implementation)
+
+`oml setup claude-code` now reads `claude plugin marketplace list --json` before it adds the
+marketplace. Claude Code 2.1.312 refuses an add whose source differs from the one it holds, so a
+v0.3.x user whose marketplace is pinned at `#v0.3.1` got a failure partway, or the 0.3 plugin.
+At the CLI's tag it adds nothing. From the same repository at another tag it removes the
+marketplace, adds it at the CLI's tag and installs again each plugin the remove uninstalled.
+From another source it refuses as `setup.marketplace`. `oml quickstart` names its compose
+project from the directory's absolute path, so two stacks in two `oml` directories no longer
+share containers and volumes. ADR-0041's d9 row no longer reads as if the compose file had run:
+it has not run under Docker yet.
+
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (d7 step
+  4, d9 step 2, and both status rows),
+  [CLI reference](cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start)
+  and this page.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.4.0 (ADR-0041 d3, implementation)
+
+The installers install the release they are cut with (d3), and `check_release.py`,
+`check_plugin.py` and `check_chart.py` hold that release equal to the workspace version, so the
+workspace, `Chart.yaml`'s `version` and `appVersion`, both `plugin.json` files and the two
+installers' defaults move from 0.3.1 to 0.4.0 together. `oml setup claude-code` installs the
+plugin from the marketplace at the CLI's own tag, so a 0.4.0 CLI installs the 0.4.0 plugin, the
+first with the `url` and `api_key` options. No tag is cut and nothing is released: until v0.4.0
+is tagged, an install without `--version` fails naming the 404, and `install-smoke` keeps
+installing 0.3.1, the newest published release.
+
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (d3's
+  status) and this page.
+
+### 2026-11-04 — The quick start's two verbs: `oml setup claude-code` and `oml quickstart` (ADR-0041 d7, d9, implementation)
+
+The quick start ([ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md), proposed)
+is merged into this branch, and two of its decided verbs are built. No decision changes, no HTTP
+surface moves, and the record stays proposed; its Consequences now give each item's status.
+
+- **`oml setup claude-code`** (d7) refuses an `admin` or `operator` key as `setup.admin_key` after
+  `GET /v2/whoami`, and a Claude Code older than 2.1.285 as `setup.claude_code_version`. It then
+  installs the plugin from the marketplace at the CLI's own tag and writes the URL and key to
+  `claude plugin configure --values-stdin`, never to argv. `--key-file` reads the file
+  `issue-agent --out` wrote. `--print`, or no `claude` on `PATH`, prints the commands instead.
+- **`oml quickstart`** (d9) writes a compose file embedded in the binary, its image pinned to the
+  CLI's version, and an owner-only `.env` of generated passwords for the superuser and the
+  owner and serving roles. It runs `docker compose up --detach --wait` on `127.0.0.1`, claims the
+  token the lead logged, and issues an agent key and a reviewer key into owner-only files. It
+  checks a write end to end, then prints the agent's key file, the `oml setup claude-code` line
+  and the `oml login` line. A directory a quickstart wrote into is refused as `quickstart.exists`.
+- **Not built:** `install.sh --quickstart`. `scripts/quickstart.sh` stays for the `e2e` and
+  `chart` jobs.
+- **The checks.** `oml-cli`'s `setup_claude_code` suite runs the verb against a fake `claude`, and
+  its `quickstart` suite against a fake `docker` and the real lead. CI's `compose` job runs `oml
+  quickstart` against the image built from the checkout, then a second run that must be refused.
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (the
+  status of each item), [CLI reference](cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start),
+  [CI and toolchain](engineering/ci-and-toolchain.md), the
+  [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md) and this page.
+
+### 2026-11-04 — Connections on the rewritten surface: `/mcp` takes an access token as its key, and `/v2` mints and revokes (ADR-0031, ADR-0039 d9, implementation)
+
+No decision changes, and ADR-0031 stays proposed.
+
+- **`/mcp`** accepts a connection's access token beside a key value. The facade resolves the token
+  once per request to its live connection's key and runs every tool under that key, so a token
+  is never more than its key and never reaches a ring route as a credential (d10, d11). A `401`
+  carries `WWW-Authenticate: Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource/mcp", scope="mcp"`,
+  with `error="invalid_token"` when a credential failed, and `Bearer realm="oml"` without
+  `oauth.issuer` (d2).
+- **Served** in [openapi.yaml](api/openapi.yaml), moved from the annex, which now holds 45
+  operations: `POST /v2/keys/{key}/connect-codes` and
+  `POST /v2/keys/{key}/connections/{connection_id}/revoke`; `connect_code` on `POST /v2/keys`, its
+  `201` carrying `connect_code` in the value's place; `credential` and `connections` on
+  `GET /v2/keys/{key}`. A connection's liveness, client name and times stay designed.
+- **The CLI:** `oml keys issue-agent --connect-code` now reaches the route; `oml keys connect-code`
+  and `oml keys disconnect` are added, and `oml keys show` lists a key's connections. The key value
+  still goes only to `--out`.
+- **Doctor** gains `oauth_discovery`: `off`, `ok`, or `failing` with the URL, from both discovery
+  documents fetched at the issuer the lead names on `/readyz`, which gains `oauth_issuer`, so a
+  proxy that answers `404` for the discovery paths reads as `failing`, never `off`.
+- **The check.** `oml-cli`'s `connect_flow` suite runs the flow over HTTP against the lead on a TCP
+  port: the claim, the CLI's issuance, a registration, the page, the exchange, `/mcp` under the
+  access token, the refresh token refused there, the token refused on `/v1`, the disconnect and a
+  fresh code. It runs where a superuser mints the role pair, as CI does.
+- **Docs:** [deployment](operations/deployment.md#connections-behind-a-reverse-proxy) states
+  `oauth.issuer=https://<public origin>` and what the proxy passes through on the same origin.
+- **SDKs** regenerate from openapi.yaml.
+- **Pages touched:** [HTTP API](api/http-api.md), [errors](api/errors.md),
+  [agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
+  [CLI reference](cli/reference.md), [configuration](operations/configuration.md),
+  [deployment](operations/deployment.md), [observability](operations/observability.md), the
+  [roadmap](product/roadmap.md) (FR-34, FR-35), `README.md` and this page.
+
+### 2026-11-04 — Connections merged onto the rewrite: the OAuth routes are served and the connect-code routes designed (ADR-0031, ADR-0039 d9, implementation)
+
+Merging the connections build into this branch. No decision changes, and ADR-0031 stays
+proposed. The build was made on v0.3.1 with nothing wired into `/mcp`, `/v1` or `/v2`, so the
+merge sorts its operations by what the lead now routes
+([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
+
+- **Served** in [openapi.yaml](api/openapi.yaml): the two discovery documents, `GET` and
+  `POST /oauth/authorize`, `POST /oauth/token` and `POST /oauth/register`, six operations routed
+  where `oauth.issuer` is set. They join the 23 routed operations, from a second public table,
+  `OAUTH_ROUTES`, beside `ROUTES`, and the server test that holds the table equal to the document
+  now compares both tables with its 29 operations. Their schemas and the `oauth` codes of the
+  `ErrorCode` enum come with them.
+- **Designed** in [openapi-designed.yaml](api/openapi-designed.yaml): `POST /v2/keys/{key}/connect-codes`
+  and `POST /v2/keys/{key}/connections/{connection_id}/revoke`, which the use cases serve and no
+  route calls, so the annex holds 47 operations; `connect_code` on key issuance, request and
+  response, and `credential` and `connections` on the key read, under `x-oml-designed-fields`;
+  the connector-key refusal of key rotation. `POST /v2/keys` still refuses `connect_code` as an
+  unknown field.
+- **Migrations:** `0012_connections.sql` and `0013_oauth_clients.sql` keep their numbers after
+  this branch's `0009`; `0010` and `0011` stay unused.
+- **SDKs:** both generated clients gain the six served operations, and their tests hold the 29
+  equal to openapi.yaml as before; both wrappers gain `OAuthError`, the class of the `oauth`
+  family [errors](api/errors.md) now declares.
+- **Not wired, as before the merge:** `/mcp` accepting an access token, the `/v2` connect-code and
+  connection routes, and `POST /v2/keys` reading `connect_code`, so
+  `oml keys issue-agent --connect-code` is refused by the server until that step lands.
+- **Pages touched:** the two OpenAPI documents, [HTTP API](api/http-api.md),
+  [the MCP plugin](api/mcp-plugin.md), the [CLI reference](cli/reference.md),
+  [SDKs](engineering/sdks.md), ADR-0031's Release line, the [register](adr/index.md),
+  [releases](product/releases.md), [roadmap](product/roadmap.md), `llms.txt` and this page.
+
+### 2026-11-04 — Connections by connect code: the tables, the use cases and the `/oauth` routes (implementation)
+
+An implementation milestone; no decision changes. The code now builds the internals and the
+unversioned OAuth surface of the proposed
+[ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md). The record stays proposed: no
+Status line moves, `info.version` stays `0.4.0-design`, no `spec-v0.4` tag is cut, and no package
+version moves until the release.
+
+- **The tables** (d5, d7–d10). Migration `0012_connections.sql` adds `api_keys.credential`,
+  `connect_codes`, `oauth_connections` and `oauth_tokens`, and `0013_oauth_clients.sql` adds
+  `oauth_clients` and `oauth_authorizations`, the provider tenant's deployment-level state
+  ([postgres-schema](data/postgres-schema.md#connections-adr-0031)). `0010` and `0011` are left to
+  other work.
+- **The use cases** (d7, d8, d10–d12). A connector key is issued with a connect code in place of a
+  value; an admin mints a fresh code, lists a key's connections and revokes one; the first
+  exchange opens a connection in one `connection.opened`, each refresh rotates by one conditional
+  update and journals nothing, and a reused refresh token or redeemed code ends the connection in
+  a `connection.revoked`. An access token resolves to exactly its key's caller.
+- **The routes** (d1, d3–d6, d9, d13, d14). With `oauth.issuer` set, the lead serves the two
+  discovery documents, `GET` and `POST /oauth/authorize` with the authorization page,
+  `POST /oauth/token` and `POST /oauth/register`, outside both rings; unset, each answers `404`.
+  The page fetches client ID metadata documents through one capped fetcher, 16 slots, one per host
+  and per address, behind the address allow-list
+  ([HTTP API](api/http-api.md#connections-oauth-for-hosted-mcp-clients)).
+- **The CLI** (d7). `oml keys issue-agent --connect-code` sends `connect_code: true`, refuses
+  `--out`, and prints the connector URL and the code; `POST /v2/keys` does not yet read the member.
+- **The check.** `oml-server-lead`'s `oauth_flow` suite runs the whole flow through the real lead:
+  a registration, the page, the code and Connect, the exchange, a refresh and the replay of the
+  rotated refresh token, which ends the connection, with exactly `connection.code_issued`,
+  `connection.opened` and `connection.revoked` journalled. It runs only where a superuser mints
+  the role pair, CI's `cargo test (Postgres)`, and prints `did not run` elsewhere.
+- **Not built:** what waits for the proposed ADR-0039, which rewrites `/mcp` and the `/v2` routes:
+  `/mcp` accepting an access token and its `401` challenge (d2); the `/v2` connect-code,
+  connections and revoke routes and the CLI's wiring to them, `oml keys connect-code` and
+  `oml keys disconnect` included; the doctor checks `oauth_discovery`, `connect_codes` and
+  `connections`; and the issuer recorded in the cluster lease (d14). FR-34 stays open: no live
+  claude.ai connection has run.
+- **No surface change** beyond the routes the 2026-10-31 entry below declared: no error code or
+  event type is added.
+- **Pages touched:** [HTTP API](api/http-api.md), [roles and keys](architecture/roles-and-keys.md),
+  [Postgres schema](data/postgres-schema.md) and this page.
+
+### 2026-11-04 — The release map covers the v0.4.0 records and pages (merge of main)
+
+A documentation change with no decision or surface change. Merging main brings
+[releases](product/releases.md) to this branch; the proposed
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) and
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md) each gain a **Release:** line, planned for
+v0.4.0, and a Release cell in the [register](adr/index.md), and the releases page links them.
+
+- **Pages touched:** the three records, the register, releases, `README.md`,
+  `plugins/oml/README.md`, [http-api](api/http-api.md), [the MCP plugin](api/mcp-plugin.md),
+  [retrieval](architecture/retrieval.md), [roles and keys](architecture/roles-and-keys.md), the
+  [CLI reference](cli/reference.md), [upgrades](operations/upgrades.md) and this page. Each
+  section this branch added carries the release line main gave its neighbours: the three tools,
+  `GET /v2/whoami`, the start settings, `oml login`, `oml write`, `oml read`, `oml events`,
+  `oml hook tool-failure`, the librarian and the upgrade to v0.4.0 are planned for v0.4.0. Each
+  section it rewrote keeps main's release line and adds the parts that are new, each planned for
+  v0.4.0: on http-api, for instance, submit's `workarea` in the body and derived `claim_key`, get's
+  `text` and the events tail's `workarea` parameter, and on the CLI reference and the plugin
+  README the session-start hook's plugin settings and compaction prompt naming `oml_write`. The
+  releases page records the librarian as ADR-0038's d10.
+- **No surface change:** `info.version` stays `0.4.0-design`; no record's decision moves.
+
+### 2026-11-04 — The plugin's librarian subagent answers what OML holds about a subject, reading with `oml_read` alone (ADR-0038 d10)
+
+The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
+gains d10, the librarian v0.4.0 carries (ADR-0039, context).
+
+- **Decided and built:** `plugins/oml/agents/librarian.md`, the subagent `oml:librarian`, on
+  `model: haiku`, whose only tool is `mcp__plugin_oml_oml__oml_read`; it recalls with the
+  subject's exact words and then one variant at a time, at most eight queries, because recall
+  stems nothing, and returns each finding's `artifact_id`, `claim_key`, `workarea_path` and
+  `created_at` under the hooks' framing line, with the queries it ran. The plugin README
+  describes it, and `scripts/check_plugin.py` fails on a second agent, another model, any tool
+  beside `oml_read`, an omitted `tools` field, a field a plugin subagent ignores, or a prompt
+  without hook.rs's framing line.
+- No HTTP operation, MCP tool, error code or package version changes.
+- **Pages touched:** ADR-0038 and its [register](adr/index.md) row, the plugin README,
+  `scripts/check_plugin.py` and this page.
+
+### 2026-11-04 — Turn context on the rewritten surface: the agent recalls with `oml_read`, and a failed command recalls when opted in (ADR-0038, rebased onto ADR-0039 d2 and ADR-0040 d3)
+
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+proposed on 2026-11-03 and accepted by the maintainer on 2026-11-04 with release v0.4.0,
+was built on v0.3.0's tools in PR #24; this change merges it into v0.4.0 and fits it to the
+rewrite, as ADR-0039's consequences owe. It amends [ADR-0029](adr/ADR-0029-session-start-hook.md)
+d6 and d7; the pointer on ADR-0029 was added on acceptance, on 2026-11-04.
+
+- **Decided and built:** `initialize` answers with server instructions under 4,096 characters
+  that ask for `oml_read` with a query within their first 1,024 and name `oml_write` for a record,
+  with no `claim_key` and no v0.3.0 tool name (d1); `oml_read`'s description in
+  `docs/api/mcp-tools.json` and the `oml-memory` skill open with when to recall and with which
+  words (d2); one recall line in the session-start context naming `oml_read` (d3);
+  `oml hook tool-failure`, off unless `OML_FAILURE_RECALL=1`, which reads its server and key as
+  the session-start hook does, the plugin's `url` and `api_key` options before `OML_URL` and
+  `OML_API_KEY` as one pair (ADR-0040 d3), recalls with at most three distinctive words of a
+  failed Bash command's error, secrets removed, skips `grep`, `test`, `[` and `diff`, an error the
+  session already recalled and any session whose earlier request failed, and sends one `POST
+  /v1/memories/recall` of `k` 3 under 200 budget tokens with `include_text`, never
+  `include_unreviewed`, a 1-second timeout and a 2-second deadline (d4–d7); its context prints
+  each hit's `text` under the data frame and a may-be-irrelevant line, at most 1,600 bytes,
+  nothing on a miss (d8); the per-session cache of ids and digests, 0600, seeded by session start
+  and deleted by `oml hook session-end`, and the two guarded hook entries (d9).
+- **The catalog an agent reads** grows from 8,130 to 8,488 characters with `oml_read`'s opening
+  sentence, against 18,893 for v0.3.0's twelve entries, measured as before.
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs both verbs against the real lead behind
+  the request recorder, one with the plugin's options beside an environment pair that names
+  another server, and against stubs for a failing and a silent server; `hook.rs`'s unit tests hold
+  the request body, the hit's `text`, the recall line and the pair refusals;
+  `crates/bins/oml-server-lead/tests/mcp_facade.rs` holds the instructions; and
+  `scripts/check_plugin.py` holds all three hook entries and that no line of `hook.rs` names a
+  tool `tools/list` does not offer.
+- **Not verified here:** that Claude Code runs the two new hooks and adds the failure context;
+  whether `session_id` survives `/clear`. The [roadmap](product/roadmap.md) moves FR-57 and opens
+  FR-63 and FR-64.
+- **No HTTP surface change:** no operation, field, error code or event type is added, and
+  `info.version` stays `0.4.0-design`.
+- **Pages touched:** [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), the [decision register](adr/index.md) (row and the D14
+  cell), `mkdocs.yml`, [llms.txt](llms.txt), [CLI reference](cli/reference.md),
+  [agent plugin](api/mcp-plugin.md), [mcp-tools.json](api/mcp-tools.json), the
+  [roadmap](product/roadmap.md) (FR-57, FR-63, FR-64) and this page; outside `docs/`,
+  `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
+  `plugins/oml/hooks/hooks.json` and `scripts/check_plugin.py`.
+
+### 2026-11-04 — The 0.4.0 breaks, each with its migration (ADR-0039 d13, d14 step 5, implementation)
+
+This entry is the break list a v0.3 user reads before upgrading; the entries below record each
+change as it was built. Keys, grants, stored memories, the journal and the schema do not change,
+and v0.4.0 adds no migration.
+
+| Break | Who it reaches | Migration |
+|---|---|---|
+| Three tools, `oml_write`, `oml_read` and `oml_workarea`, replace the eight of v0.3.0 | `permissions.allow` rules naming the v0.3.0 read tools, which now allow nothing | allow `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea`, or the server-wide `mcp__plugin_oml_oml`; the plugin README and the root README carry both |
+| The events tail leaves MCP | callers of `oml_events_tail` | `oml_read` with `state` for an agent's own writes; `GET /v2/events`, the SDKs' `events` or `oml events` to audit |
+| The plugin takes `url` and `api_key` as its own settings, and its cached skill and hook name the old tools | plugin 0.3 installs, which serve no tools after the update until configured | `claude plugin update oml@open-memory-lab`, then `/plugin configure oml@open-memory-lab` or `claude plugin configure --values-stdin`; install the v0.4.0 CLI for the hook |
+| One `workarea` field replaces the `X-OML-Workarea` header and the `workarea_id` filter; `include_unreviewed` replaces `include_own_held`; recall takes `include_text` for `include_bodies`; a sent `auto-` claim key is refused | HTTP callers, the CLI, the hook | upgrade the CLI with the server; a renamed spelling is refused with `request.validation` naming the new one in `details.renamed_to`, and an `auto-` key naming `/claim_key` |
+| The admin routes' request fields are named after the kind they reference: `POST /v2/keys` takes `default_workarea` for `default_workarea_id`, `tenant` for `tenant_id`, each grant's `workarea` for `workarea_node_id` and `deny[].workarea` for `deny[].subtree_node_id`; `POST /v2/keys/{key}/denials` takes `workarea` for `workarea_node_id`; `POST /v2/workareas` takes `parent` for `parent_id`; and the `scope` of v0.3.0's `oml_recall` and `oml_events_tail` is `workarea` on `oml_read` and `GET /v2/events` | admin scripts, HTTP callers, MCP clients, the CLI | send the new spelling: each admin route field above is refused with `request.validation` naming its successor in `details.renamed_to`, the CLI sends the new spellings, and the two v0.3.0 tools still take `scope` through the alias window |
+| A served claim's `body` is `text` | HTTP readers, the SDKs | read `text` |
+| A submission with `derives_from` and no `verb` is journalled `submission.learn` | journal readers | none; an explicit `verb: "remember"` keeps the old event |
+| The SDKs' verbs are `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`, at `0.2.0`; openapi.yaml declares only the 23 routed operations, so the unrouted ones leave the generated modules for the designed annex; three operationIds are renamed, `searchMemories` to `listMemories`, `proposeSupersession` to `supersedeMemory` and `updateCrewMetadata` to `setWorkareaCrew`, and the generated calls with them | SDK users | the wrapper's `write` and `read`; call a renamed generated operation by its new name; the removed generated calls never reached a route |
+| CLI verbs, flags and variables renamed: `oml write`, `oml read`, `oml events`, `oml review approve` and `reject`, `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`; the bootstrap secret's argv flag removed | scripts, shell profiles | the new names; `oml login <url>` once; `oml bootstrap claim … --token-stdin` |
+| `oml.doublegate.io` on a v0.3 release | the maintainer's deployment | upgrade the server, the CLI and the plugin together, configure the plugin, replace the permission rules, and record the upgrade with its date in [upgrades](operations/upgrades.md#server-cli-and-plugin-together-the-upgrade-to-v040); not run yet |
+
+**The alias window.** The eight v0.3.0 tool names answer through `tools/call`, never in
+`tools/list`, with their v0.3.0 inputs, outputs and refusal codes, and each call logs
+`mcp_alias_called`; `oml submit`, `oml recall`, `oml supersede`, `oml review verdict`,
+`--server` and `--key` run their successors, naming each on stderr; and a v0.3.0 credentials
+file's `server` and `key` are read as `url` and `api_key`. All of these answer through v0.4.x
+and leave in v0.5.0, as ADR-0039 d12 reads the window since the rewrite moved to v0.4.0
+(2026-11-03, below). **The maintainer has not decided that reading**; the other is no aliases
+at all. HTTP and the SDKs have none. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read, and a
+missing start setting names the variable to rename.
+
+**The catalog an agent reads.** The three served entries of
+[mcp-tools.json](api/mcp-tools.json) come to 8,488 characters, against 18,893 for v0.3.0's
+twelve, each counted as the length of the entry's JSON from Python's `json.dumps` with its
+default separators, the measure that gives the 18,893 ADR-0039 records.
+
+`scripts/check_contract_sync.py` now fails a start page, the READMEs, the plugin skills, the
+agent kit's README, the docs index, `llms.txt`, [SDKs](engineering/sdks.md), the operations
+pages and the scripts, that names a v0.3.0 spelling of ADR-0039 d10 outside a section headed
+"Upgrading from …": any of the eight tool names, read from the facade's alias table,
+`X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, `--token`, `--server`,
+`--key`, `oml submit`, `oml recall`, `oml supersede`, `oml review verdict`, or the release
+0.3.2 written with or without its `v`. The pattern is first run against one probe line per
+spelling and against the v0.4.0 spellings it must let through. The quickstart's own CLI URL
+variable is `OML_CLI_URL`.
+
+- **Pages touched:** the root README's quickstart (the server, `oml login`, the plugin, `oml
+  write` and `oml read`, the permission rules), the `oml-memory` skill's mode rules and its file
+  rule, [upgrades](operations/upgrades.md), the [overview](index.md), `llms.txt`, the
+  [HTTP API](api/http-api.md), [reviewer crews](api/reviewer-crews.md),
+  [roles and keys](architecture/roles-and-keys.md), the
+  [PostgreSQL schema](data/postgres-schema.md), the [critical path](product/critical-path.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and this page.
+
+### 2026-11-04 — The agent kit reads the OML_URL and OML_API_KEY pair (ADR-0039 d15, implementation)
+
+The kit's Cursor configuration reaches `${env:OML_URL}/mcp` and its Gemini CLI configuration
+`${OML_URL}/mcp`, each tool's documented form for a variable inside a URL, and every
+configuration still takes its bearer from `OML_API_KEY`. Codex, VS Code and Claude Desktop's
+`mcp-remote` bridge document no variable in a URL, so theirs keep `http://127.0.0.1:8080/mcp`,
+and the kit README's "Before you start" exports both variables and names that one edit for those
+three alone. Every page the README cites for a URL or key form was fetched again on 2026-11-04.
+`scripts/check_agent_kit.py` holds each configuration's URL to the form its tool documents and
+the README's edit to the tools that cannot expand it.
+
+- **Pages:** the kit README and [CI and toolchain](engineering/ci-and-toolchain.md).
+
+### 2026-11-04 — The session-start hook reads the plugin's options before the environment pair, and issue-agent --out prints the plugin configure line (ADR-0040 d3, d4, implementation)
+
+`oml hook session-start` takes its server and key from `CLAUDE_PLUGIN_OPTION_URL` and
+`CLAUDE_PLUGIN_OPTION_API_KEY` when either is set and non-empty, and otherwise from `OML_URL` and
+`OML_API_KEY`; one option set alone sends nothing and names the unset one, so a key never goes
+to a URL from another source. The printable-ASCII refusal names whichever key variable it read,
+and the redaction covers either pair. `oml keys issue-agent --out` prints a third stdout line, the
+`jq … | claude plugin configure oml@open-memory-lab --values-stdin` pipeline that reads the key
+file, amending ADR-0028 d1's two-line output; the value still enters neither stream. With the
+previous entry, an install that follows the plugin README gets its tools and its session context
+from the two settings alone; no release carries that entry without this one.
+
+- **Pages:** the [CLI reference](cli/reference.md) for the hook's variables, the issue-agent
+  output and the `oml-admin` plugin; [mcp-plugin.md](api/mcp-plugin.md); [the CLI
+  sessions](cli/sessions.md); the plugin README; the `oml-admin` skill, which now hands over the
+  configure line and has the key file deleted only after it succeeds.
+
+### 2026-11-04 — The plugin's userConfig and .mcp.json read the url and api_key options alone (ADR-0040 d1, d2, d5, d6, implementation)
+
+`plugins/oml/.claude-plugin/plugin.json` declares two `userConfig` options, `url` and a
+`sensitive` `api_key`, neither with a default, and `.mcp.json` reaches `${user_config.url}/mcp`
+with `Bearer ${user_config.api_key}` and names no `OML_` variable. A v0.3.x install that only
+exported `OML_URL` and `OML_API_KEY` serves no tools until the plugin is configured once, in the
+`/plugin install` dialog, with `/plugin configure oml@open-memory-lab`, or from a shell by piping
+the key file through `jq` into `claude plugin configure --values-stdin`, which needs Claude Code
+2.1.285. `scripts/check_plugin.py` checks that the plugin declares exactly url and a sensitive
+api_key, that the mcp entry reads no environment variable, and that the plugin README shows no
+`export OML_API_KEY` line; CI's plugin job also runs `claude plugin validate --strict`. The
+plugin README discloses the session-start hook's two requests and the directory name it sends.
+The hook still reads `OML_URL` and `OML_API_KEY` (ADR-0040 d3 is not built), and the plugin's
+version stays the workspace's until the release bump.
+
+- **Pages:** [mcp-plugin.md](api/mcp-plugin.md), the plugin README, the root README's Claude
+  Code block and the quickstart's closing instructions.
+
+### 2026-11-04 — Both SDKs move to 0.2.0 with the seven wrapper verbs and the URL-and-key start (ADR-0039 d10, d11, d15, implementation)
+
+The Python and TypeScript wrappers take `write`, `read`, `workarea`, `events`, `review_next`
+(`reviewNext`), `approve` and `reject`. `write` takes `oml_write`'s fields and chooses submit or,
+with `replaces`, supersede; `read` takes `oml_read`'s and chooses fetch, recall or the listing,
+`own` defaulting to true; a field outside the mode, `query` beside `artifact_id` among them, is
+`request.validation` naming it, raised before anything is sent. A `write` without `claim_key`,
+and an `approve` or `reject` without `serve_id`, send none. The constructor takes `url` and
+`api_key`, else `OML_URL` and `OML_API_KEY`, under the CLI's one-source rule, and every refusal
+is `ApiError` carrying the envelope. The generated layers were already current with
+openapi.yaml.
+
+- **Breaks:** `remember`, `learn`, `supersede`, `recall`, `get`, `list_memories`
+  (`listMemories`) and `verdict` are gone, with no alias (d12); `base_url` (`baseUrl`) is `url`;
+  a URL argument with the key left to `OML_API_KEY`, or the reverse, is refused; the raising
+  `upload_attachment` stub and `NotBuiltError` are removed.
+- **Breaks, same names:** `pages` and `iter_memories` (`pages` and `memories`) now send
+  `own=true` when `own` is omitted, as `read`'s listing does, so they yield the key's own rows in
+  every state where 0.1.0 sent no `own` and got the promoted tips of the default workarea; pass
+  `own=False` (`own: false`) to keep that. TypeScript's `pages(query, options)` and
+  `memories(query, options)` take one argument: move `options.workarea` into the query.
+- **Breaks, stored kind:** `learn` defaulted `kind` to `derived_fact`; `write` with
+  `derives_from` sends no kind, so the server stores `memory` and a recall filtered on `kinds`
+  finds the row under that kind. Pass `kind="derived_fact"` (`kind: "derived_fact"`) where a
+  caller relied on `learn`'s default.
+- **Pages touched:** [SDKs](engineering/sdks.md), the root README and both SDK READMEs.
+
+### 2026-11-04 — `oml login <url>` stores the pair once whoami accepts the key (ADR-0039 d15, implementation)
+
+`oml login <url>` reads the key without echo from the terminal, or the first line of stdin when
+stdin is not a terminal, calls `GET /v2/whoami` under it, and only on success writes `url` and
+`api_key`, nothing else, to the owner-only credentials file. A refusal writes nothing, leaving a
+stored pair as it was, and exits `1` with the envelope's code. The designed `oml context` verbs
+leave the reference: `oml login` replaces `context add`, `oml doctor` replaces `context show`,
+and a second server is a second file through `OML_CLI_CREDENTIALS`. The no-echo read is
+`rpassword` 7.5, the CLI's one new dependency, since std reads no terminal without echo. The
+[CLI sessions](cli/sessions.md) mockups follow: the bootstrap claim stores the operator's pair,
+each later identity runs `oml login` once into its own file, and `export OML_CLI_CREDENTIALS=…`
+switches between them. `check_contract_sync.py` fails a reader page that still runs a retired
+`oml context` verb.
+
+- **Pages touched:** [cli/reference.md](cli/reference.md#oml-login-and-oml-doctor-storing-and-checking-the-pair), [cli/sessions.md](cli/sessions.md).
+
+### 2026-11-04 — `oml doctor` reports each start setting's source and probes with a URL alone (ADR-0039 d15, implementation)
+
+`oml doctor` no longer takes the pair through the refusal every other verb applies. It names the
+source of the URL and of the key, never the key; probes `/healthz` and `/readyz` keyless at the
+first source's URL; and calls `GET /v2/whoami` and the events tail only when that source also
+holds the key. A URL alone is a `warn` (exit `0`) naming the missing key, as `oml --server X
+doctor` answered without a key in v0.3.0; no URL in the first source sends nothing and is a
+`fail` (exit `1`). `--json` gains `url_source`, `key_source`, `whoami` and `next`, and its
+`verdict` can be `warn`.
+
+- **Pages touched:** [cli/reference.md](cli/reference.md#start-settings).
+
+### 2026-11-04 — The CLI starts from one URL-and-key pair: flag, then environment, then file (ADR-0039 d15, implementation)
+
+The CLI's start settings are `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`, and the
+credentials file's `url` and `api_key`, taken as one pair from the first of those sources that
+sets either value. A source that sets one alone is refused (exit `2`) naming the other, and
+nothing is sent, so `--url` is never paired with a key from the environment or the file.
+`oml bootstrap claim` takes the URL alone and stores the pair and nothing else; a v0.3.0 file's
+`server` and `key` are read through v0.4.x and its other fields ignored, and `oml audit
+verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`. The hidden
+`--server` and `--key` print one stderr line naming their successors; `OML_CLI_SERVER` and
+`OML_CLI_KEY` are not read, and a missing start setting names whichever is set for renaming.
+
+- **Breaks:** `--key` with the URL left to the credentials file is refused, and an `OML_URL`
+  and `OML_API_KEY` exported for the plugin win over the stored admin pair; scripts pass both
+  flags or unset both variables, as the quickstart, the PoC demo and the SDK harnesses now do.
+- **Pages touched:** [cli/reference.md](cli/reference.md#start-settings),
+  [deployment.md](operations/deployment.md), the root README and the `issue-agent-key` skill.
+
+### 2026-11-04 — A verdict without `serve_id` applies to the reviewer key's one claimed item (ADR-0039 d10, implementation)
+
+`POST /v2/review/verdicts` takes `serve_id` as optional. Omitted, the verdict applies to the one
+item the key has claimed through `POST /v2/review/next`, so a reviewer holding one item need not
+copy what `review next` printed; while the key holds none or several it is `request.validation`
+with `details.field` `/serve_id`, and nothing is journalled. The default rests on the claimed
+queue row, as the explicit `serve_id` does, and the serve binding stays FR-66. A request that
+sends `serve_id` is unchanged.
+
+The route honours its `Idempotency-Key`, scoped to the key and a nil workarea, and looks the
+record up before the default resolves: a retry of a committed verdict replays its stored
+response with `Idempotency-Replay: true` whatever the key has claimed since, so a retried
+default never applies to an item its caller was not shown, and the same key with another body is
+`idempotency.digest_mismatch`.
+
+- **Pages touched:** [http-api.md](api/http-api.md#review), [errors.md](api/errors.md)
+  (`request.validation`), [openapi.yaml](api/openapi.yaml) and the SDKs' generated layers.
+
+### 2026-11-04 — The eight v0.3.0 tool names answer as hidden aliases with their v0.3.0 shapes until v0.5.0 (ADR-0039 d12, implementation)
+
+`oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`, `oml_my_work`,
+`oml_workarea_info` and `oml_events_tail` answer only through `tools/call`, never in
+`tools/list`. Each takes its v0.3.0 input, `scope` as the ring's `workarea`, `include_own_held`
+as its `include_unreviewed` and `claim_key` still required, and answers its v0.3.0 output
+shape and refusal codes; `oml_events_tail` rides `GET /v2/events`. Every call logs the event
+`mcp_alias_called` naming the tool, its successor, the calling key's `key_id` and `tenant_id`
+and the call's `request_id`, so an operator sees which keys still call an old name. The window is v0.4.x, and v0.5.0 removes
+the eight, as d12 reads it; the maintainer has not decided that reading.
+[mcp-plugin.md](api/mcp-plugin.md) states the window and the removal release, and the facade
+tests hold each name to a fixture of its v0.3.0 shape.
+
+- **Pages touched:** [mcp-plugin.md](api/mcp-plugin.md) and this page.
+
+### 2026-11-04 — `tools/list` names three tools, `oml_write`, `oml_read` and `oml_workarea`, and every surface that names a tool moves with it (ADR-0039 d2, d5, d8, d13, implementation)
+
+`mcp-tools.json` declares exactly the three served tools with their annotations, and the facade
+serves it whole. The new `mcp-tools.designed.json`, never served, holds `oml_relate_propose`,
+`oml_vocab`, `oml_read`'s `lineage` and `depth` and `oml_write`'s `attachments`; a call to a
+designed tool is JSON-RPC -32602 naming that file, and `oml_attach` and `oml_graph` answer -32602
+naming their successors. The eight v0.3.0 tool names leave `tools/list` and still answer, as d12
+reads its window. [mcp-plugin.md](api/mcp-plugin.md) describes the three tools, their modes and
+hints, the events tail on HTTP and the CLI only, and d8's rule, and records the catalog at 8,130
+characters against 18,893. The skill and the agent kit's `AGENTS.md` block teach the three tools,
+with no invented `claim_key` and `oml_read {state}` for a write's outcome; the session-start
+hook's lines name `oml_write`, `oml_read` and `oml_workarea`; the plugin README's permission rules
+are `mcp__plugin_oml_oml__oml_read` and `__oml_workarea`, or `mcp__plugin_oml_oml` (amends
+ADR-0029 d8); the quickstart drives `oml_write` and `oml_read`. `check_plugin.py` fails on a tool
+the skill or the hook names that is not served, and `check_contract_sync.py` on a catalog other
+than the served `tools/list` or a designed tool in both files.
+
+### 2026-11-04 — `oml_read` chooses get, recall or listing from the fields present, and `oml_workarea` reads one node (ADR-0039 d2, d4, implementation)
+
+The facade serves `oml_read` and `oml_workarea` beside `oml_write` and the eight v0.3.0 tools,
+declared in `mcp-tools.json` with `readOnlyHint` and `idempotentHint` true and `openWorldHint`
+false. `artifact_id` is one `GET /v1/memories/{artifact_id}`; `query` is one
+`POST /v1/memories/recall` with `workarea`, `k`, `kinds`, `include_unreviewed` and
+`max_tokens`; neither is one `GET /v1/memories` with `own` (default `true`), `workarea`,
+`claim_key`, `state`, `kind`, `since`, `until`, `limit` and `cursor`, and `own: false`, the
+scoped listing, is new on MCP. An argument outside the mode, and `query` beside `artifact_id`,
+is `request.validation` naming it in `details.field`; the lineage mode's `lineage` and `depth`
+are designed and refused the same way. The output is `{mode, items}` for get, `{mode, steering,
+hits, budget?}` for recall and `{mode, items, next_cursor}` for the listing, `mode` being `get`,
+`recall` or `listing`, and every item is the claim item with its `text`, the listing's included,
+so `oml_read {state}` tells an agent whether its write was approved without the events tail.
+`oml_workarea` is one `GET /v2/workareas/{workarea}` answered as `oml_workarea_info` answers.
+
+### 2026-11-04 — `oml_write` takes one flat argument set, and the fields present choose the endpoint (ADR-0039 d3, implementation)
+
+The facade serves `oml_write` beside the eight v0.3.0 tools, declared in `mcp-tools.json` with
+its annotations. `text` and `idempotency_key` are required. Without `replaces` it is one
+`POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty, its
+`claim_key` and `kind` left to the server's defaults; with `replaces` it is one
+`…/{replaces}/supersede`, and `retirement: true` proposes retiring the target. A field outside
+the mode is `request.validation` naming it in `details.field`: `retirement` and `reason` without
+`replaces`; `claim_key`, a `kind` other than `memory`, `derived_fact` or `steering`, a `workarea`
+not the target's and a vocabulary-kind target with it. The output is `{mode, artifact_id,
+claim_key, version, state, workarea, retirement, replaces, idempotent_replay}`, `mode` being
+`submit` or `supersede`. The vocabulary-target refusal now carries `details.field: /replaces` on
+`oml_supersede` too. The v0.3.0 tools leave `tools/list` in a later step.
+
+### 2026-11-04 — The memory routes and the events tail take one `workarea` field, `include_unreviewed` and `include_text`, and serve `text` (ADR-0039 d4, d7, implementation)
+
+`POST /v1/memories`, `…/supersede` and `…/recall` take the body field `workarea`, and
+`GET /v1/memories` and `GET /v2/events` the query parameter `workarea`, each an id or a name.
+Omitted, recall and the scoped listing read the key's default workarea and the own-work listing
+every workarea the key wrote in. Recall takes `include_unreviewed`, reaching the key's own held
+rows and defaulting to `false`, and `include_text`; a served claim carries `text` where v0.3.0
+said `body`, on get, recall, the listings and the review serve. The request field `body` and the
+serve's `served_digests.body` keep their names.
+
+- **Breaks, each with its migration:** the `X-OML-Workarea` header is `request.validation` with
+  `details.renamed_to` `/workarea` on a body route and `workarea` on a query route, and on get,
+  which names no workarea, `details.field` alone: send the field. The listing's and the events
+  tail's `workarea_id` is refused naming `workarea`; on the scoped listing it was a filter inside
+  the scope, and the one field now is the scope. Recall's `include_own_held` and
+  `include_bodies` are refused naming `include_unreviewed` and `include_text`. Read `text`.
+- The recall `query_digest` keeps its members' v0.3.0 names, so read-log digests compare across
+  the rename ([retrieval](architecture/retrieval.md#the-read-log)).
+- The CLI's `submit --workarea` and `recall --workarea` send the field, and `oml hook
+  session-start` sends `include_text` and `include_unreviewed` and reads `text`, amending
+  ADR-0029 d2. The v0.3.0 MCP tools keep their arguments until `oml_read` and `oml_write` replace
+  them; the facade sends their `workarea`, `scope` and `include_own_held` as the ring's new
+  fields. The SDKs are regenerated.
+
+### 2026-11-03 — The key and workarea routes take v0.4.0's request spellings and refuse v0.3.0's by name (ADR-0039 d7, admin half, implementation)
+
+`POST /v2/keys` takes `default_workarea`, `tenant`, each grant's `workarea` and each deny entry's
+`workarea`; `POST /v2/keys/{key}/denials` takes `workarea`; `POST /v2/workareas` takes `parent`.
+The path parameters are `{workarea}`, `{crew}` and `{key}`, in openapi-designed.yaml too. Each
+takes an id or a name. A v0.3.0 spelling is `request.validation` with `details.field` naming it
+and `details.renamed_to` its successor, as JSON Pointers, and the denial and workarea-create
+bodies are now closed, so no field is dropped. Responses keep their v0.3.0 names. The CLI's
+`keys issue`, `keys issue-agent`, `deny set` and `workareas create` send the new spellings, and
+the SDKs are regenerated. The provider ring's renames and the MCP arguments are not built yet.
+
+### 2026-11-03 — openapi.yaml declares only what the server routes; the rest is a designed annex (ADR-0039 d9, implementation)
+
+[openapi.yaml](api/openapi.yaml) now holds exactly the 23 routed operations, the 22 of v0.3.0 and
+`GET /v2/whoami`, each with only the fields the build accepts, and the complete `ErrorCode` enum;
+`info.version` is `0.4.0-design`. The new [openapi-designed.yaml](api/openapi-designed.yaml), from
+which nothing is generated, holds the 45 designed operations and, under `x-oml-designed-fields`,
+the designed fields of served ones: the attachment, simulation and vocabulary fields of submit,
+supersede and recall, a workarea's `prefix`, the `expiry` and `tenant_id` of key issuance, the
+review serve's `workarea` filter, and the workarea read's review policy and pending transitions. A designed field sent to a served operation answers its v0.3.0 code.
+
+- **Removed:** `GET /v2/workareas/{id}/status`, a second read of the node the workarea read
+  serves.
+- **Merged:** the claim-edge and workarea-edge families become one designed `/v2/edges` family of
+  three, keyed by `kind` `claim` | `workarea`, each kind keeping its authority, refusal codes and
+  journal events.
+- **Renamed operationIds:** `searchMemories` → `listMemories`, `proposeSupersession` →
+  `supersedeMemory`, `updateCrewMetadata` → `setWorkareaCrew`; the generated SDK modules follow,
+  and the wrappers call them under their existing verbs.
+- **Checks:** the router builds its routes from the transport's public `ROUTES` table, which a
+  server test compares with openapi.yaml; `check_contract_sync.py` compares
+  [http-api.md](api/http-api.md), which now marks each endpoint served or designed, with the
+  union of both documents' paths, and fails on a path in both or on a designed field the served
+  operation also declares; each SDK's tests hold its generated operations equal to openapi.yaml's.
+  The Python generator's recorded warnings are now empty, since the status read's schema, whose
+  name clashed with `Workarea`'s status enum, is gone.
+
+### 2026-11-03 — The API rewrite and the plugin setup retargeted to v0.4.0 (ADR-0039, ADR-0040, proposed)
+
+The maintainer moved the rewrite from v0.3.2 to v0.4.0 the same day it was proposed. Both
+proposed records now name v0.4.0, and the spec version the build moves to is `0.4.0-design`.
+ADR-0039 is renamed to `ADR-0039-the-api-rewritten-for-v0-4-0.md`, with its `id:` header and
+every link, while nothing outside the branch links to it. ADR-0039 d12's alias window becomes
+hidden through v0.4.x and removed in v0.5.0, and a v0.3.0 credentials file's `server` and `key`
+are read through v0.4.x. **The maintainer has not decided that window**; the other reading is no
+aliases at all, which drops d14's step 3. Turn context (ADR-0038), the mobile OAuth connector
+(ADR-0031) and the librarian subagent also land in v0.4.0 from their own branches and rebase onto
+ADR-0039's build.
+
+- **Pages touched:** the two records, their [register](adr/index.md) rows, `mkdocs.yml`,
+  `llms.txt`, the roadmap's FR-65 and FR-67 rows and this page.
+- **Not built.**
+
+### 2026-10-31 — Connections: Claude's hosted apps over OAuth, bound by a one-time connect code (ADR-0031)
+
+[ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), proposed on 2026-10-31 and accepted by the
+maintainer on 2026-11-04 with release v0.4.0, designs how claude.ai,
+Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/mcp-plugin.md)
+through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth 2.1
+protected resource with its own authorization server, beside unchanged bearer keys; the binding by a
+one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014 (d1, d2,
+d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15) and ADR-0028 (d1); their Status lines gain
+the back-pointer on acceptance, and did on 2026-11-04. Sources: the MCP authorization specification, revision
+2025-11-25, Anthropic's connector documentation, the client ID metadata document draft (-02), RFC
+9700, RFC 9207, the Fetch Standard, the IANA IPv4 and IPv6 Special-Purpose Address Registries and
+Caddy's `log` directive documentation, all fetched 2026-10-31.
+
+- **Decided, not built:** the `/mcp` `401` keeps its typed body and gains the RFC 9728 challenge
+  (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one RFC
+  8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned, in the
+  RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID metadata
+  documents preferred, dynamic registration as the fallback, no pre-registered client (d5), with the
+  document URL's form, an allow-list of global unicast addresses, TLS, proxy and concurrency bounds,
+  a document cache that evicts and never refuses, and a token endpoint that identifies the client by
+  the connection; a fixed redirect allowlist of exactly `https://claude.ai/api/mcp/auth_callback`,
+  matched byte for byte after one form decoding (d6); the connector key, which has no value and at
+  most one open connection, `oml keys issue-agent --connect-code`, and connect-code responses
+  stored in the idempotency record without the code, amending ADR-0014 d3 (d7); the connect code —
+  twelve Crockford base32 symbols, shown once, stored as a digest,
+  journalled by id, ten minutes by default, with a new code or a revoked connection ending every
+  page in progress for the key (d8); the two-step authorization page with a sealed handle and no row
+  until a code verifies, Connect and Cancel each using up the request, no cookie, fixed headers,
+  `Referrer-Policy: same-origin`, `iss` on every
+  redirect, a warning against forwarded links, and a confirmation naming the tenant and built from
+  the key's role (d9); opaque tokens bound to their connection's resource, rotation on every refresh
+  by one conditional update, reuse ending the connection, and a redeemed code ending it only in the
+  hands of its verifier's holder (d10); a token as exactly its key, only an access token at `/mcp`,
+  the key's state read at code entry, exchange and refresh, when a connection is live, `oml_attach`
+  refused under a connection, and `oml keys disconnect` (d11); `connection.code_issued`,
+  `connection.opened` and `connection.revoked`, and no event for a refresh (d12); the `oauth` error
+  family (d13); the configuration keys, doctor fields, proxy routing and access logs, and cluster
+  mode with the follower serving the lead's issuer (d14); the build order (d16).
+- **On names** ([ADR-0026](adr/ADR-0026-names-are-keys.md), accepted with v0.3.0 after this
+  record was proposed): the record follows them where they apply. `oml keys issue-agent
+  <key-name> … --connect-code` sends the key's name, and `oml keys connect-code` and `oml keys
+  disconnect` take the key by id or name, while a connection, which has no name, is named by its
+  id. The connect-code check is the issuance order's seventh step, ahead of the name check, which
+  ADR-0026 d5 keeps after every other check and which becomes the eighth. The confirmation names
+  the key and every granted workarea by name, and the journal events keep binding to ids.
+- **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
+  token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7). The
+  claim↔claim and workarea↔workarea sense is always "connection edge" or "connection proposal",
+  reworded where it stood bare.
+- **`info.version` 0.3.0-design → 0.4.0-design** (d15): the error taxonomy, which the rule on this
+  page names, gains eleven `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
+  documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes; on
+  `/v2` the connect-code operations' idempotency record stores no code. `spec-v0.3` was cut when
+  [ADR-0026](adr/ADR-0026-names-are-keys.md) was accepted, so this record opens the next
+  revision, and `spec-v0.4` is cut at its acceptance.
+- **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form; the record meets its exit criterion on
+  acceptance, when the row leaves the register. FR-34 opened: the flow is designed, not built, and
+  no live connection has run. FR-35 opened: the `/v1` and `/v2` `401` answers carry no
+  `WWW-Authenticate` challenge, which RFC 9110 §15.5.2 requires. FR-36 opened: a bearer key's
+  issuance or rotation keeps its value in the idempotency record's stored response.
+- **Pages touched:** [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), the
+  [decision register](adr/index.md) (row; the D9, D13 and D14 cells; the ADR-0022 row says "key"
+  where it said "token"), `mkdocs.yml`,
+  [llms.txt](llms.txt), [HTTP API](api/http-api.md), [openapi.yaml](api/openapi.yaml),
+  [mcp-tools.json](api/mcp-tools.json) (the revision only), [errors](api/errors.md),
+  [the agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
+  [security](architecture/security.md), [event catalog](data/event-catalog.md),
+  [Postgres schema](data/postgres-schema.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), [CLI reference](cli/reference.md),
+  [roadmap](product/roadmap.md), [positioning](product/positioning.md) ("key" where it said
+  "token"), [admission](architecture/admission.md) (the token formats in
+  `secret.api_token`), [audit and lineage](architecture/audit-and-lineage.md) and
+  [concepts](concepts.md) ("connection edge" or "connection proposal" where "connection" stood
+  bare for an edge), [the overview](index.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
+  (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a
+  phone).
+- **Not built.** No code changes with this entry; the implementation follows iteration 3, and the
+  pure modules d16 names may land before it.
 
 ## 0.3.0-design
 
@@ -61,12 +792,76 @@ its Status line, and the [register](adr/index.md) a Release column; neither rest
   per-platform archive jobs; v0.3.1 ran them.
 - **No surface change:** `info.version` stays `0.3.0-design`; no record's decision moves.
 
+### 2026-11-03 — A quick start in one command per role (proposed ADR-0041), the installers, and the v0.4.0 documentation plan
+
+[ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md), proposed on 2026-11-03 and accepted by the
+maintainer on 2026-11-04 with release v0.4.0, decides how a person
+goes from nothing to a first memory in one command per role. Its d1–d3 and d8 are built;
+d4–d7, d9 and d10 are decided, not built. No `info.version` change: no HTTP surface moves.
+
+- **Built.** `scripts/install/install.sh` and `install.ps1` install the CLI for the user without
+  sudo. They check the archive against the release's `SHA256SUMS`, and `SHA256SUMS` with cosign
+  when it is on `PATH`, and say which happened. They install the release they were cut with unless
+  `--version` names another or `latest`, and they edit no profile.
+  `ci.yml` job `install-smoke` runs them against v0.3.1 on Linux, macOS and Windows.
+  `scripts/check_release.py` now fails a pull request if a script names a release file the
+  release does not sign, misses a target, drops cosign's identity or drifts from the workspace
+  version. The [CLI reference](cli/reference.md#installing-oml-and-what-differs-on-windows) shows
+  the one line.
+- **Decided.** `oml login` and `oml doctor` (from the proposed ADR-0039) as the onboarding step;
+  `oml setup claude-code`, which refuses an admin key; `oml quickstart` for the docker profile;
+  a redirect from `oml.doublegate.io`; the time targets.
+- **Opened:** FR-68 and FR-69 on the [roadmap](product/roadmap.md).
+- **Planned:** the [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md), page by page.
+
 ### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
 
 An implementation milestone with no decision or surface change: each tag also ships the oml and
 oml-admin plugins as an offline marketplace archive and as a marketplace pinned to the tag, and an
 agent kit of MCP configurations for other agent tools, signed and summed with the binaries
 ([release artifacts](engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+
+### 2026-11-03 — The API rewritten for v0.3.2, and the plugin configured in Claude Code (ADR-0039, ADR-0040, proposed)
+
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), proposed on 2026-11-03 and accepted by the maintainer
+on 2026-11-04 with release v0.4.0, records the
+maintainer's choice that day to rewrite the API while OML is pre-release instead of layering on it,
+to ship the rewrite as v0.3.2, and the maintainer's answers to its open questions and to six
+findings of the use-case call map. It decides the three MCP tools `oml_write`, `oml_read` and
+`oml_workarea` in place of the eight served ones, with their field rules and annotations; the
+events tail off MCP and kept on HTTP, the SDKs and a new `oml events`; no `oml_attach` tool, and
+`oml_graph` as a lineage mode of `oml_read`; a `claim_key` the server derives from the authoring
+key and the text when it is omitted, beside a required `idempotency_key`; `kind` defaulting to
+`memory`; one `workarea` field in place of the `X-OML-Workarea` header, and one
+`include_unreviewed` flag in place of `include_own_held`, which ADR-0030 adopts; a verdict's
+`serve_id` defaulting to the reviewer's one open item; openapi.yaml holding only the routed
+operations, with the 45 designed ones in an annex; the mapping from every served tool, route,
+CLI verb and SDK method to its successor; one error shape; the old MCP tool names and CLI verbs
+callable but hidden through v0.3.x and removed in v0.4.0, with no HTTP or SDK aliases; every
+client started from `OML_URL` and `OML_API_KEY` alone, the CLI's `oml login <url>` storing that
+pair owner-only, flag before environment before file, and a new `GET /v2/whoami` deriving the
+tenant, role, key name and default workarea; `oml bootstrap claim --token-stdin` in place of the
+built `--token`; the breaking changes and their migration; and the build plan. It amends ADR-0014
+(d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1) and ADR-0029 (d2, d6, d8).
+
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md), proposed the same day and accepted with release
+v0.4.0 on 2026-11-04, records the
+maintainer's choice to configure the plugin in Claude Code: a `url` option and a sensitive
+`api_key` option kept in the keychain, the same pair as every other client; `.mcp.json` reading
+`${user_config.*}` and nothing from the environment; the hooks reading `CLAUDE_PLUGIN_OPTION_*`
+before `OML_URL` and `OML_API_KEY`; the key file piped to `claude plugin configure
+--values-stdin`; and Claude Code 2.1.285 as the minimum version. It amends ADR-0028 (d1) and
+ADR-0029 (d4). The records bind nothing before acceptance, and the amended records' Status lines
+gain their back-pointers then.
+
+- **Opened:** FR-65, FR-66 and FR-67 on the [roadmap](product/roadmap.md), marked proposed;
+  FR-46 to FR-64 are used on other branches.
+- **No surface change yet:** openapi.yaml, mcp-tools.json, http-api.md and errors.md keep the
+  v0.3.0 contract until ADR-0039's build changes them together; `info.version` stays
+  `0.3.0-design`, and the build moves it to `0.3.2-design`.
+- **Pages touched:** the two records, their [register](adr/index.md) rows, `mkdocs.yml`,
+  `llms.txt`, the roadmap and this page.
+- **Not built.**
 
 ### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
 

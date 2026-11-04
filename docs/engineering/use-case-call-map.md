@@ -9,6 +9,13 @@ answers: for every use case on the use-cases page, its UC id, its status and the
 
 **Status:** design draft for review · decided, not built
 
+**Read against v0.3.1.** This page was written on 2026-11-03 as the input to
+[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), and its "today" is v0.3.1's
+surface. The v0.4.0 build took its three tools and most of its candidates; ADR-0039 d10 maps
+every call named here to its successor. The [use cases](../product/use-cases.md) catalogue lists
+every use case below one by one, with v0.4.0's statuses, and the
+[quick scenarios](../product/scenarios.md) walk eight of them on the three tools.
+
 This page maps each use case of [use cases](../product/use-cases.md) to the calls it needs today,
 then derives the smallest client surface that serves them all. It is the input the maintainer
 asked for on 2026-11-03 for the v0.3.2 API rewrite, ADR-0039: "when designing client interaction
@@ -133,7 +140,7 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 | UC-KA-08 | [Change a key's access](../product/use-cases.md#change-a-keys-access) | designed | designed: `oml grants add\|remove\|list\|effective`, three routes | `grants add\|remove`; `list` and `effective` fold into `keys show` (merge M6) |
 | UC-KA-10 | [Stop an author or source](../product/use-cases.md#stop-an-author-or-source) | designed | designed: `oml bans add\|lift\|list`, `/v2/bans` | unchanged, under one preview convention (merge M10) |
 | UC-KA-11 | [Host another organization](../product/use-cases.md#host-another-organization) | designed; `oml tenants create` refuses locally | designed: `oml tenants create`, `oml tenants issue-admin`, `POST /v2/tenants` | unchanged |
-| UC-KA-12 | [Switch servers and keys](../product/use-cases.md#switch-between-servers-and-keys) | designed | today `--server`/`--key`, `OML_CLI_SERVER`/`OML_CLI_KEY`, the credentials file; designed `oml context add\|use\|show\|remove` | unchanged |
+| UC-KA-12 | [Switch servers and keys](../product/use-cases.md#log-in-once-and-switch-between-servers) | designed | today `--server`/`--key`, `OML_CLI_SERVER`/`OML_CLI_KEY`, the credentials file; the designed context verbs, which ADR-0039 d15 replaced with `oml login <url>` and one credentials file per server | `oml login` (v0.4.0) |
 | UC-WA-05 | [A workarea grows up](../product/use-cases.md#a-workarea-grows-up) | designed (ADR-0009) | designed: `oml workareas status propose\|ratify\|pending`; three routes | `status propose\|ratify`; `pending` reads from `workareas show` (ADR-0039 d9) |
 | UC-WA-06 | Relate two workareas | designed | designed: `oml workareas relate propose\|ratify`; `oml_relate_propose {kind: workarea}`; workarea-edge routes | `workareas relate propose\|ratify` over one edge family (M12) |
 | UC-WA-07 | Move a workarea | designed | designed: `oml workareas re-parent <w> --new-parent [--apply]` | unchanged |
@@ -294,6 +301,27 @@ issue` absorbs `keys issue-agent` (M9), `keys show` absorbs `grants list` and `g
 `pre-tool-use`, are calls the harness makes, not the agent. Each reads with the agent's key
 through the same `read` routes and adds no route of its own, except `GET /v1/guardrails` (K6).
 
+## The calls in v0.4.0
+
+The Status and "Calls today" columns above are v0.3.1's; the [use cases](../product/use-cases.md)
+catalogue carries each use case's v0.4.0 status. The Minimal column is what v0.4.0 serves for
+every built use case, under these spellings, which ADR-0039 d10 maps call by call:
+
+| Minimal, on this page | Served in v0.4.0 | Where the build differs from the map |
+|---|---|---|
+| `write {text, …}` | MCP `oml_write`, CLI `oml write <text>`, SDK `write` | `retire` is `retirement`, and the optional `reason` stays (C5 not taken); `kind` keeps `derived_fact` (C4 not taken); `idempotency_key` stays required on MCP (D2) |
+| `read {…}` | MCP `oml_read`, CLI `oml read`, SDK `read` | `include_held` is `include_unreviewed` (M3, under ADR-0030's name); `mine` is `own`; the lineage mode (M4) is designed, refused until the lineage read is routed |
+| `workarea {}` | MCP `oml_workarea`, SDK `workarea` | none |
+| `events {}` | `GET /v2/events`, CLI `oml events`, SDK `events`; not on MCP (C1 taken) | none |
+| `review next`, `review approve {}`, `review reject {reason}` | `oml review next`, `oml review approve [<serve_id>] [--note]`, `oml review reject [<serve_id>] --reason`; SDK `review_next`, `approve`, `reject` | `serve_id` is optional (D5 taken); `--note` on approve stays (C8 not taken) |
+| `oml login` (UC-KA-12) | `oml login <url>`, checked through `GET /v2/whoami`; `oml doctor` | `OML_CLI_SERVER` and `OML_CLI_KEY` are gone, against K7 (ADR-0039 d15) |
+| plugin `userConfig` (UC-SS-05) | the plugin's `url` and `api_key` settings, and `oml setup claude-code [--key-file]` (ADR-0040, ADR-0041 d7) | none |
+| `keys issue … --connect-code` (UC-MB-02) | `oml keys issue-agent … --connect-code` (ADR-0031) | `keys issue-agent` stays a verb of its own (M9 not taken) |
+| `doctor` (UC-FL-05) | `oml doctor` | `oml status` stays designed (M11 not taken) |
+
+v0.4.0 also took D1, D3, D4, M1, M7 and C3. Every other row's Minimal is a candidate for the
+record its row names, and the use case keeps its catalogue status until that record is built.
+
 ## Cut candidates
 
 | # | What | Why no use case needs it | Bearing on the records |
@@ -376,6 +404,22 @@ through the same `read` routes and adds no route of its own, except `GET /v1/gua
 
 The map adds candidates ADR-0039 does not name: M6, M9, M10 and M11 on the admin CLI, M13 on the
 review loop and M14 on the agent's terminal reads. None changes an agent tool.
+
+## Refusals, retries and taken labels
+
+The [use cases](../product/use-cases.md) catalogue tells these from the user's side; the quick
+[scenarios](../product/scenarios.md) leave them out.
+
+- **A refused request** answers the one envelope of [errors](../api/errors.md#the-envelope) on
+  every surface: its code names the rule, `retryable` says whether a retry can help, and on MCP
+  the envelope is the tool result's `structuredContent` with `isError: true` (ADR-0039 d11).
+- **A retry without a duplicate** carries the same `idempotency_key`; a repeat answers the first
+  attempt's result with `idempotent_replay: true` ([HTTP API](../api/http-api.md#idempotency)).
+  The SDKs and the CLI generate the key.
+- **A taken label.** With `claim_key` omitted, v0.4.0 derives one from the author and the text
+  (ADR-0039 d6), so the agent never invents one. An explicit `claim_key` another live claim of
+  the workarea holds is refused as `submission.claim_key_conflict`, which tells the writer only
+  about its own rows.
 
 ## What this page does not decide
 

@@ -9,9 +9,12 @@ import {
   ApiError,
   ConfigError,
   FAMILIES,
-  NotBuiltError,
+  type MemoryPage,
   OmlClient,
+  type ReadInput,
+  RequestError,
   SubmissionError,
+  type WriteInput,
   errorFromResponse,
 } from "../src/index.ts";
 
@@ -44,13 +47,41 @@ function envelope(code: string): string {
   });
 }
 
-function recorder() {
+function recorder(status = 500, answer: unknown = null) {
   const requests: Request[] = [];
   const fetcher = async (request: Request): Promise<Response> => {
-    requests.push(request);
-    return new Response(null, { status: 500 });
+    requests.push(request.clone());
+    return answer === null
+      ? new Response(null, { status })
+      : Response.json(answer, { status });
   };
   return { requests, fetcher };
+}
+
+const ACCEPTED = {
+  artifact_id: "art_1",
+  claim_key: "auto-0123456789abcdef",
+  version: 1,
+  state: "held",
+  plaintext_digest: `sha256:${"0".repeat(64)}`,
+  journal_seq: 1,
+  workarea_id: "wa_1",
+  retirement: false,
+  replaces: null,
+};
+
+function client(fetcher: (request: Request) => Promise<Response>): OmlClient {
+  return new OmlClient({ url: "http://oml.test", apiKey: "oml_test_key", fetch: fetcher });
+}
+
+/** Asserts `call` rejects with request.validation naming `field`. */
+async function refusedNaming(call: () => Promise<unknown>, field: string): Promise<void> {
+  await assert.rejects(call, (error: unknown) => {
+    assert.ok(error instanceof RequestError);
+    assert.equal(error.code, "request.validation");
+    assert.deepEqual(error.details, { field });
+    return true;
+  });
 }
 
 test("every family errors.md declares has its own exception class", () => {
@@ -71,6 +102,23 @@ test("a family the client has never seen lands in ApiError", () => {
   const error = errorFromResponse(409, JSON.parse(envelope("brand.new")), new Headers());
   assert.equal(error.constructor, ApiError);
   assert.equal(error.code, "brand.new");
+});
+
+test("a renamed field refusal is a RequestError carrying details.renamed_to", () => {
+  const body = {
+    error: {
+      code: "request.validation",
+      message: "scope is renamed workarea: send workarea",
+      rule: "r",
+      details: { field: "scope", renamed_to: "workarea" },
+      retryable: false,
+    },
+    request_id: "req_1",
+  };
+  const error = errorFromResponse(400, body, new Headers());
+  assert.equal(error.constructor, RequestError);
+  assert.equal(error.code, "request.validation");
+  assert.deepEqual(error.details, { field: "scope", renamed_to: "workarea" });
 });
 
 test("a response without the envelope is an ApiError without a code", () => {
@@ -109,39 +157,249 @@ test("a retryable refusal is retried under the same key", async () => {
       { status: 202 },
     );
   };
-  const client = new OmlClient({ baseUrl: "http://oml.test", apiKey: "oml_test_key", fetch: fetcher });
-  const written = await client.remember({ claim_key: "retry", body: "Retried once." });
+  const written = await client(fetcher).write({ text: "Retried once.", claim_key: "retry" });
   assert.equal(sent.length, 2);
   assert.equal(sent[0], written.idempotencyKey);
   assert.equal(sent[1], written.idempotencyKey);
   assert.equal(written.value.artifact_id, "art_1");
 });
 
-test("a client without a key refuses before any request", () => {
+test("write without claim_key sends none", async () => {
+  const { requests, fetcher } = recorder(202, ACCEPTED);
+  const written = await client(fetcher).write({ text: "A claim with no key of its own." });
+  assert.deepEqual(
+    requests.map((r) => [r.method, new URL(r.url).pathname]),
+    [["POST", "/v1/memories"]],
+  );
+  assert.deepEqual(await requests[0]?.json(), { body: "A claim with no key of its own." });
+  assert.equal(requests[0]?.headers.get("idempotency-key"), written.idempotencyKey);
+  assert.equal(written.value.claim_key, "auto-0123456789abcdef");
+});
+
+test("write with replaces supersedes its target and sends the reason", async () => {
+  const { requests, fetcher } = recorder(202, { ...ACCEPTED, version: 2 });
+  await client(fetcher).write({
+    text: "Retired: the runbook moved.",
+    replaces: "art_1",
+    retirement: true,
+    reason: "moved",
+  });
+  assert.deepEqual(
+    requests.map((r) => [r.method, new URL(r.url).pathname]),
+    [["POST", "/v1/memories/art_1/supersede"]],
+  );
+  assert.deepEqual(await requests[0]?.json(), {
+    body: "Retired: the runbook moved.",
+    retirement: true,
+    reason: "moved",
+  });
+});
+
+test("a write argument outside its mode raises before sending", async () => {
   const { requests, fetcher } = recorder();
-  assert.throws(() => new OmlClient({ baseUrl: "http://oml.test", fetch: fetcher }), ConfigError);
+  const oml = client(fetcher);
+  const cases: [WriteInput, string][] = [
+    [{ text: "t", retirement: true }, "/retirement"],
+    [{ text: "t", reason: "why" }, "/reason"],
+    [{ text: "t", replaces: "art_1", claim_key: "k" }, "/claim_key"],
+  ];
+  for (const [input, field] of cases) await refusedNaming(() => oml.write(input), field);
   assert.deepEqual(requests, []);
 });
 
-test("a client without a server refuses before any request", () => {
+test("read with artifact_id and query raises before sending", async () => {
   const { requests, fetcher } = recorder();
-  assert.throws(() => new OmlClient({ apiKey: "oml_test_key", fetch: fetcher }), ConfigError);
+  const both: ReadInput = { artifact_id: "art_1", query: "canary stage" };
+  await refusedNaming(() => client(fetcher).read(both), "/query");
+  assert.deepEqual(requests, []);
+});
+
+test("a read argument outside its mode raises before sending", async () => {
+  const { requests, fetcher } = recorder();
+  const oml = client(fetcher);
+  const cases: [ReadInput, string][] = [
+    [{ artifact_id: "art_1", workarea: "w" }, "/workarea"],
+    [{ query: "q", own: true }, "/own"],
+    [{ k: 3 }, "/k"],
+  ];
+  for (const [input, field] of cases) await refusedNaming(() => oml.read(input), field);
+  assert.deepEqual(requests, []);
+});
+
+test("read with neither lists the key's own rows", async () => {
+  const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
+  const page: MemoryPage = await client(fetcher).read({ limit: 5 });
+  assert.deepEqual(page.items, []);
+  const url = new URL(requests[0]?.url ?? "");
+  assert.deepEqual(
+    [requests[0]?.method, url.pathname, Object.fromEntries(url.searchParams)],
+    ["GET", "/v1/memories", { own: "true", limit: "5" }],
+  );
+});
+
+test("the listing iterators send own true unless the caller passes own false, workarea in the query", async () => {
+  const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
+  const oml = client(fetcher);
+  for await (const _ of oml.memories({ limit: 5 })) assert.fail("no rows were answered");
+  for await (const _ of oml.pages({ own: false, workarea: "w", limit: 5 })) continue;
+  assert.deepEqual(
+    requests.map((r) => Object.fromEntries(new URL(r.url).searchParams)),
+    [
+      { own: "true", limit: "5" },
+      { own: "false", workarea: "w", limit: "5" },
+    ],
+  );
+});
+
+test("write with derives_from sends no kind unless the caller names one", async () => {
+  const { requests, fetcher } = recorder(202, ACCEPTED);
+  const oml = client(fetcher);
+  await oml.write({ text: "Derived without a kind.", derives_from: ["art_0"] });
+  await oml.write({ text: "Derived as learn stored it.", derives_from: ["art_0"], kind: "derived_fact" });
+  assert.deepEqual(
+    await Promise.all(requests.map((r) => r.json())),
+    [
+      { body: "Derived without a kind.", derives_from: ["art_0"] },
+      { body: "Derived as learn stored it.", derives_from: ["art_0"], kind: "derived_fact" },
+    ],
+  );
+});
+
+test("approve without serve_id sends none", async () => {
+  const result = { artifact_id: "art_1", version: 1, verdict: "approve", state: "promoted" };
+  const { requests, fetcher } = recorder(200, result);
+  const written = await client(fetcher).approve();
+  assert.deepEqual(await requests[0]?.json(), { verdict: "approve" });
+  assert.equal(written.value.state, "promoted");
+});
+
+test("reject sends its reason and serve_id", async () => {
+  const result = { artifact_id: "art_1", version: 1, verdict: "reject", state: "rejected" };
+  const { requests, fetcher } = recorder(200, result);
+  await client(fetcher).reject({ serve_id: "srv_1", reason: "no source" });
+  assert.deepEqual(await requests[0]?.json(), {
+    serve_id: "srv_1",
+    verdict: "reject",
+    reason: "no source",
+  });
+});
+
+test("a refusal raises the envelope's code and details", async () => {
+  const envelope = {
+    error: {
+      code: "request.validation",
+      message: "query is refused with artifact_id",
+      rule: "The contract is openapi.yaml; what it does not admit is refused, not coerced.",
+      details: { field: "/query" },
+      retryable: false,
+    },
+    request_id: "req_7",
+  };
+  const { fetcher } = recorder(400, envelope);
+  await assert.rejects(client(fetcher).read({ query: "canary stage" }), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.deepEqual(
+      [error.status, error.code, error.details],
+      [400, "request.validation", { field: "/query" }],
+    );
+    assert.deepEqual(
+      [error.message, error.rule, error.requestId, error.retryable],
+      [envelope.error.message, envelope.error.rule, "req_7", false],
+    );
+    return true;
+  });
+});
+
+test("the client refuses an environment that sets only OML_URL", () => {
+  process.env.OML_URL = "http://oml.test";
+  const { requests, fetcher } = recorder();
+  assert.throws(() => new OmlClient({ fetch: fetcher }), {
+    name: "ConfigError",
+    message: "OML_URL is set without OML_API_KEY",
+  });
+  assert.deepEqual(requests, []);
+});
+
+test("the client refuses an environment that sets only OML_API_KEY", () => {
+  process.env.OML_API_KEY = "oml_test_key";
+  assert.throws(() => new OmlClient(), {
+    name: "ConfigError",
+    message: "OML_API_KEY is set without OML_URL",
+  });
+});
+
+test("one option alone is refused and never takes the other from the environment", () => {
+  process.env.OML_URL = "http://oml.test";
+  process.env.OML_API_KEY = "oml_test_key";
+  const { requests, fetcher } = recorder();
+  assert.throws(() => new OmlClient({ url: "http://elsewhere.test", fetch: fetcher }), {
+    name: "ConfigError",
+    message: "url is passed without apiKey",
+  });
+  assert.throws(() => new OmlClient({ apiKey: "oml_other_key", fetch: fetcher }), {
+    name: "ConfigError",
+    message: "apiKey is passed without url",
+  });
+  assert.deepEqual(requests, []);
+});
+
+test("a client with no source refuses before any request", () => {
+  const { requests, fetcher } = recorder();
+  assert.throws(() => new OmlClient({ fetch: fetcher }), ConfigError);
   assert.deepEqual(requests, []);
 });
 
 test("the key is in no inspection of the client", () => {
-  const client = new OmlClient({ baseUrl: "http://oml.test", apiKey: "oml_secret_value" });
-  assert.ok(!inspect(client, { depth: 10, showHidden: true }).includes("oml_secret_value"));
-  assert.ok(!JSON.stringify(client).includes("oml_secret_value"));
-  assert.ok(!String(client).includes("oml_secret_value"));
+  const oml = new OmlClient({ url: "http://oml.test", apiKey: "oml_secret_value" });
+  assert.ok(!inspect(oml, { depth: 10, showHidden: true }).includes("oml_secret_value"));
+  assert.ok(!JSON.stringify(oml).includes("oml_secret_value"));
+  assert.ok(!String(oml).includes("oml_secret_value"));
 });
 
-test("an upload raises NotBuiltError and sends no request", async () => {
-  const { requests, fetcher } = recorder();
-  const client = new OmlClient({ baseUrl: "http://oml.test", apiKey: "oml_test_key", fetch: fetcher });
-  await assert.rejects(
-    client.uploadAttachment(new TextEncoder().encode("%PDF-1.7"), { mediaType: "application/pdf" }),
-    NotBuiltError,
+/** Every [METHOD, path] the document's paths declare, in its own layout. */
+function declaredOperations(document: string): Set<string> {
+  const operations = new Set<string>();
+  let inPaths = false;
+  let path: string | null = null;
+  for (const line of document.split("\n")) {
+    if (line !== "" && !line.startsWith(" ")) {
+      inPaths = line === "paths:";
+      path = null;
+    } else if (inPaths && line.startsWith("  /")) {
+      path = line.trim().replace(/:$/, "");
+    } else if (inPaths && path !== null) {
+      const method = /^ {4}(get|put|post|delete|patch):$/.exec(line)?.[1];
+      if (method) operations.add(`${method.toUpperCase()} ${path}`);
+    }
+  }
+  return operations;
+}
+
+/** Every [METHOD, path] the generated `paths` interface types as an operation. */
+function generatedOperations(schema: string): Set<string> {
+  const operations = new Set<string>();
+  const start = schema.indexOf("export interface paths {");
+  const body = schema.slice(start, schema.indexOf("\nexport ", start));
+  let path: string | null = null;
+  for (const line of body.split("\n")) {
+    const item = /^ {4}"([^"]+)": \{$/.exec(line)?.[1];
+    if (item) path = item;
+    const method = /^ {8}(get|put|post|delete|patch): operations\[/.exec(line)?.[1];
+    if (method && path !== null) operations.add(`${method.toUpperCase()} ${path}`);
+  }
+  return operations;
+}
+
+test("the generated SDK carries no operation the server does not route", () => {
+  // openapi.yaml declares only what the server routes, which the server's
+  // own test holds against its route table (ADR-0039 d9).
+  const declared = declaredOperations(
+    readFileSync(new URL("../../../docs/api/openapi.yaml", import.meta.url), "utf8"),
   );
-  assert.deepEqual(requests, []);
+  assert.ok(declared.has("GET /v2/whoami"));
+  assert.equal(declared.size, 31);
+  const generated = generatedOperations(
+    readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
+  );
+  assert.deepEqual([...generated].sort(), [...declared].sort());
 });

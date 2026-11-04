@@ -239,7 +239,7 @@ operator's machine (the release's `oml-cli` archive, verified and installed as t
 ```console
 $ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 $ kubectl --namespace oml port-forward service/oml-server 8080:8080 &
-$ oml --server http://127.0.0.1:8080 bootstrap claim <key-name> --token "$TOKEN" \
+$ printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> --token-stdin \
     --tenant-name <tenant> --principal <you>
 ```
 
@@ -252,7 +252,9 @@ from the running pod, not from `--previous`.
 
 Only then expose the API, if it needs to leave the cluster:
 `helm upgrade oml deploy/helm/oml --namespace oml --reuse-values --set ingress.enabled=true
---set 'ingress.hosts[0].host=<host>'`. The install notes warn when an install enables the
+--set 'ingress.hosts[0].host=<host>' --set 'ingress.hosts[0].paths[0].path=/'
+--set 'ingress.hosts[0].paths[0].pathType=Prefix'`. Setting the host replaces the whole `hosts`
+list, so the path goes with it or the Ingress routes nothing. The install notes warn when an install enables the
 Ingress; the chart does not refuse one, because it cannot see whether the claim happened. The
 default Ingress path `/` also routes `/readyz`, whose body names the build
 ([HTTP API](../api/http-api.md#health)); narrow `ingress.hosts[].paths` to keep it off the
@@ -306,6 +308,62 @@ cosign verify-blob \
 Only then is the running lead stopped, `oml-server-lead-$v-$t/oml-server-lead` put in place of the
 old binary, and the lead started; [upgrades](upgrades.md) fixes the order when more than the lead
 runs. An archive that does not verify is not installed.
+
+## Connections behind a reverse proxy
+
+*Available since v0.4.0 · [releases](../product/releases.md)*
+
+Claude's hosted apps — claude.ai, Claude Desktop and the Claude mobile apps — reach OML through a
+connection opened by a one-time connect code
+([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). The lead serves the whole
+surface itself, on the origin that already serves `/mcp`: there is no separate host, port or
+service to run. Two settings make it reachable.
+
+1. **`oauth.issuer` is the public origin**, `https` with no path and no trailing slash, the one
+   people type and Claude fetches, never the address the lead binds:
+
+    ```toml
+    [oauth]
+    issuer = "https://oml.example.com"
+    ```
+
+    or `OML_OAUTH__ISSUER=https://oml.example.com` in the lead's environment
+    ([configuration](configuration.md)). Unset, connections are off: the documents and the OAuth
+    endpoints answer `404`, `/mcp` takes keys only, and a connect code is refused.
+
+2. **The reverse proxy passes the paths through** on that origin, unchanged, with no path
+   rewriting and no caching: `/mcp`, `/.well-known/oauth-protected-resource/mcp`,
+   `/.well-known/oauth-authorization-server` and `/oauth/*`. A proxy that forwards the whole
+   origin to the lead already does; one that forwards only `/mcp`, `/v1` and `/v2` adds
+   `/.well-known/oauth-*` and `/oauth/*`. The page's security headers are the lead's own, so the
+   proxy adds none. Its access log must not record the `Location` header of
+   `POST /oauth/authorize` or the bodies of `POST /oauth/authorize` and `POST /oauth/token`,
+   which carry the codes and tokens ([observability](observability.md#per-profile-checks)). A
+   Caddy site:
+
+    ```caddy
+    oml.example.com {
+        reverse_proxy 127.0.0.1:8080
+        log {
+            format filter {
+                wrap json
+                fields {
+                    resp_headers>Location delete
+                }
+            }
+        }
+    }
+    ```
+
+`oml doctor` then checks the route from wherever it runs: it reads the lead's `oauth.issuer` from
+`/readyz` at the configured URL, a route that does not depend on the discovery paths, fetches both
+discovery documents from that issuer, and reports `oauth : failing` with the URL that failed when
+the proxy does not pass a path, a `404` included, or a node serves another issuer; `off` means the
+lead names no issuer ([observability](observability.md#the-doctor-contract)). With connections on,
+`oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> --connect-code`
+prints the connector URL and the code to give the person connecting
+([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
 
 ## The standalone profile
 
@@ -417,20 +475,25 @@ the consequences.
 
 ### Docker quickstart
 
-!!! warning "Design mockup"
-    Nothing below exists. No image is built, no compose file is published.
-    This transcript is the committed shape of the experience — an exit
-    criterion for the deployment work, not a record of it.
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
-```console
-$ curl -LO https://e8kor.github.io/open-memory-lab/compose/docker-compose.yaml
-$ docker compose up --detach --wait
-$ docker compose cp oml-bootstrap:/run/oml/enrollment.token - \
-    | oml bootstrap claim root-operator --url http://localhost:8080 --token-stdin
+`oml quickstart` is the docker profile's quick start as built: one verb writes a compose file with
+the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with an owner-only
+`.env` of generated passwords, brings it up on `127.0.0.1`, claims the lead, issues an agent key
+and a reviewer key into owner-only files and checks one write end to end
+([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9;
+[CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start);
+[self-hosting](../guides/self-hosting.md)). It is not the full profile above: it runs no
+`oml-bootstrap` service, no MinIO and none of the other workloads, and reads the enrollment
+token from the lead's log until `oml-bootstrap` exists.
+
+```sh
+oml quickstart                # --dir oml, --port 8080 by default
 ```
 
-Follower scale-out, when read load calls for it:
-`docker compose --profile followers up --detach --scale oml-server-follower=3`.
+No transcript is shown here yet: the page shows the output of a CI run of the verb, and CI's
+`compose` job has not run it green on a pushed branch. Until it has, the verb's behaviour is the
+reference's row, held by `oml-cli`'s `quickstart` suite against a fake `docker`.
 
 ## The lake-writer singleton and its two fences
 

@@ -3,7 +3,10 @@
 
 The API contract is declared on three surfaces that must agree by construction:
 
-  1. docs/api/openapi.yaml       — the ErrorCode enum and the paths section
+  1. docs/api/openapi.yaml       — the ErrorCode enum and the served paths, and
+     docs/api/openapi-designed.yaml — the designed paths and, under
+                                   x-oml-designed-fields, the designed fields of
+                                   served operations (ADR-0039 d9)
   2. docs/api/errors.md          — the per-family code tables and the status-code index
   3. docs/api/http-api.md        — the endpoint surface (tables, bullets, headings)
 
@@ -11,8 +14,44 @@ This script extracts each surface and fails with a diff on any disagreement:
 
   * an error code present in one of {enum, family tables, status index} and not the others
   * a code whose HTTP status differs between its family table row and the status index
-  * a path+method present in openapi.yaml and never documented on http-api.md,
-    or documented on http-api.md and absent from openapi.yaml
+  * a path+method present in either OpenAPI document and never documented on
+    http-api.md, or documented on http-api.md and absent from both
+  * a path+method declared in both OpenAPI documents
+  * an x-oml-designed-fields entry that names no served operation, or a side
+    other than request and response, or a field the served operation's request
+    (body properties and parameters) or 2xx response already declares
+  * a surface-table row on http-api.md whose Contract cell says served for an
+    operation openapi.yaml does not declare, or designed for one
+    openapi-designed.yaml does not declare
+  * a key with a null value in either OpenAPI document outside an example,
+    default or const: an unquoted ", " in a flow mapping splits a description
+    into a truncated one and a garbage key, which the 3.1 validator accepts
+  * a `memory.<field>` read in README.md, an SDK README or a script under
+    scripts/ that names a field the served Memory schema does not declare:
+    whatever names a field moves in the step that renames it (ADR-0039 d14)
+  * docs/api/mcp-tools.json's tools, in order, other than the tools/list the
+    facade serves (SERVED_TOOLS in crates/transports/oml-transport-http/src/
+    mcp.rs, which serves that file whole); a tool docs/api/mcp-tools.designed.json
+    and mcp-tools.json both name, or a designed tool the facade does not name as
+    designed (DESIGNED_TOOLS); and a designed argument that names no served
+    tool or that the served tool's inputSchema already declares (ADR-0039 d2)
+  * a retired CLI verb, the designed `oml context add|use|list|show|remove`,
+    run on a reader page (README.md, an SDK README, docs/ outside adr/, atlas/
+    and changelog.md): `oml login` with one credentials file per identity
+    replaces it, and a page that still runs it contradicts the reference
+    (ADR-0039 d15)
+  * a v0.3.0 spelling from d10's table on a start page: the eight tool names
+    (ALIASES in crates/transports/oml-transport-http/src/mcp/alias.rs),
+    `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
+    `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
+    `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
+    the pattern first checked against probe lines it must catch and pass, on a
+    start page (README.md, a plugin or SDK README, a plugin skill,
+    kit/README.md, docs/index.md, docs/llms.txt, docs/engineering/sdks.md,
+    docs/operations/, docs/start/, docs/guides/, docs/product/use-cases.md,
+    docs/product/scenarios.md or a script under scripts/) outside a section headed
+    "Upgrading from …": the migration names the old spelling, a start page
+    teaches the new one (ADR-0039 d13, d14 step 5)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -34,6 +73,10 @@ Parsing rules (kept deliberately dumb and documented):
     segment (`POST /v2/memories/{id}/reassign` · `/demote`).
   * Path placeholders are normalized to {} before comparison, because http-api.md
     writes {id} where openapi.yaml writes {workarea_id}.
+  * A surface table is any table with a Contract column; its cell is served or
+    designed, and it marks every endpoint span of its row.
+  * A $ref is followed within its own document, or into openapi.yaml when it
+    names that file; allOf members contribute their properties.
 
 Dependencies: stdlib + PyYAML.
 Exit status: 0 when all surfaces agree, 1 with a readable diff otherwise.
@@ -41,6 +84,7 @@ Exit status: 0 when all surfaces agree, 1 with a readable diff otherwise.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -54,6 +98,40 @@ ROOT = Path(__file__).resolve().parent.parent
 ERRORS_MD = ROOT / "docs" / "api" / "errors.md"
 HTTP_API_MD = ROOT / "docs" / "api" / "http-api.md"
 OPENAPI_YAML = ROOT / "docs" / "api" / "openapi.yaml"
+DESIGNED_YAML = ROOT / "docs" / "api" / "openapi-designed.yaml"
+DESIGNED_FIELDS = "x-oml-designed-fields"
+MCP_TOOLS_JSON = ROOT / "docs" / "api" / "mcp-tools.json"
+MCP_DESIGNED_JSON = ROOT / "docs" / "api" / "mcp-tools.designed.json"
+MCP_RS = ROOT / "crates" / "transports" / "oml-transport-http" / "src" / "mcp.rs"
+MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
+                  *sorted((ROOT / "scripts").glob("*.sh"))]
+MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
+CONTRACT_MARKS = {"served", "designed"}
+RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
+RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
+ALIAS_RS = MCP_RS.parent / "mcp" / "alias.rs"
+
+
+def v0_3_0_tools() -> list[str]:
+    """The eight v0.3.0 tool names, the first of each pair of `ALIASES` in alias.rs."""
+    match = re.search(r"ALIASES: \[\(&str, &str\); \d+\] = \[(.*?)\];",
+                      ALIAS_RS.read_text(encoding="utf-8"), re.S)
+    if not match:
+        sys.exit(f"ALIASES not found in {ALIAS_RS.relative_to(ROOT)}")
+    return re.findall(r'\(\s*"([^"]+)"\s*,', match.group(1))
+
+
+# d10's v0.3.0 column: the tool names, the header, the recall flag, the
+# variables, the flags, the CLI verbs, and the release 0.3.2 the rewrite
+# replaced with v0.4.0, spelled with or without a "v" and at a sentence's end.
+RETIRED_NAME_RE = re.compile(
+    "|".join(rf"\b{re.escape(tool)}\b" for tool in v0_3_0_tools())
+    + r"|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
+    r"|(?<![-\w])--(?:token|server|key)(?![-\w])"
+    r"|\boml (?:submit|recall|supersede|review verdict)\b"
+    r"|(?<![\w.])v?0\.3\.2(?!\.?\w)"
+)
+MIGRATION_HEADING_RE = re.compile(r"^(#+) Upgrading from ")
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 SPAN_RE = re.compile(r"`([^`]+)`")
@@ -205,6 +283,257 @@ def http_api_md_ops(text: str) -> set[tuple[str, str]]:
     return ops
 
 
+def http_api_md_marks(text: str) -> tuple[dict[tuple[str, str], set[str]], list[str]]:
+    """(METHOD, path) -> the Contract marks its surface-table rows give it."""
+    marks: dict[tuple[str, str], set[str]] = {}
+    problems: list[str] = []
+    for table in parse_pipe_tables(text):
+        header = table[0]
+        if "Contract" not in header:
+            continue
+        column = header.index("Contract")
+        for row in table[1:]:
+            mark = row[column].strip("`* ") if column < len(row) else ""
+            if mark not in CONTRACT_MARKS:
+                problems.append(f"surface row with Contract cell {mark!r}, not served or designed: {row[0]}")
+                continue
+            for op in http_api_md_ops(row[0]):
+                marks.setdefault(op, set()).add(mark)
+    return marks, problems
+
+
+def operations_by_id(spec: dict) -> dict[str, dict]:
+    ops: dict[str, dict] = {}
+    for item in spec["paths"].values():
+        if not isinstance(item, dict):
+            continue
+        for method, op in item.items():
+            if method.lower() in OPENAPI_METHODS and isinstance(op, dict) and "operationId" in op:
+                ops[op["operationId"]] = op
+    return ops
+
+
+def resolve(node, docs: dict[str, dict], doc: str):
+    """Follow $ref until a node without one; returns (node, the document it is in)."""
+    seen = set()
+    while isinstance(node, dict) and "$ref" in node:
+        target, _, pointer = node["$ref"].partition("#")
+        doc = target or doc
+        if (doc, pointer) in seen:
+            break
+        seen.add((doc, pointer))
+        node = docs[doc]
+        for part in pointer.strip("/").split("/"):
+            node = node[part]
+    return node, doc
+
+
+def schema_fields(schema, docs: dict[str, dict], doc: str) -> set[str]:
+    """The property names a schema declares, through $ref, allOf, oneOf and anyOf."""
+    schema, doc = resolve(schema, docs, doc)
+    if not isinstance(schema, dict):
+        return set()
+    fields = set(schema.get("properties", {}))
+    for combinator in ("allOf", "oneOf", "anyOf"):
+        for member in schema.get(combinator, []):
+            fields |= schema_fields(member, docs, doc)
+    return fields
+
+
+def served_fields(op: dict, docs: dict[str, dict]) -> dict[str, set[str]]:
+    """The request fields (body properties, parameter names) and 2xx response fields of op."""
+    request: set[str] = set()
+    for parameter in op.get("parameters", []):
+        parameter, _ = resolve(parameter, docs, "openapi.yaml")
+        request.add(parameter["name"])
+    body, _ = resolve(op.get("requestBody", {}), docs, "openapi.yaml")
+    for media in body.get("content", {}).values():
+        request |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+    response: set[str] = set()
+    for status, answer in op.get("responses", {}).items():
+        if not str(status).startswith("2"):
+            continue
+        answer, _ = resolve(answer, docs, "openapi.yaml")
+        for media in answer.get("content", {}).values():
+            response |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+    return {"request": request, "response": response}
+
+
+def designed_field_problems(spec: dict, designed: dict) -> list[str]:
+    docs = {"openapi.yaml": spec, "openapi-designed.yaml": designed}
+    served = operations_by_id(spec)
+    entries = designed.get(DESIGNED_FIELDS)
+    if not isinstance(entries, dict) or not entries:
+        return [f"openapi-designed.yaml declares no {DESIGNED_FIELDS} map"]
+    problems: list[str] = []
+    for operation_id, sides in entries.items():
+        if operation_id not in served:
+            problems.append(f"{operation_id}: names no operation openapi.yaml serves")
+            continue
+        fields = served_fields(served[operation_id], docs)
+        for side, declared in (sides or {}).items():
+            if side not in fields:
+                problems.append(f"{operation_id}.{side}: a side other than request and response")
+                continue
+            for field in sorted(set(declared or {}) & fields[side]):
+                problems.append(f"{operation_id}.{side}.{field}: designed and also served")
+    return problems
+
+
+def memory_read_problems(spec: dict) -> list[str]:
+    """Each memory.<field> read on a reader surface that the served Memory schema lacks."""
+    docs = {"openapi.yaml": spec}
+    fields = schema_fields({"$ref": "#/components/schemas/Memory"}, docs, "openapi.yaml")
+    if not fields:
+        return ["openapi.yaml: the Memory schema declares no fields"]
+    problems: list[str] = []
+    for path in MEMORY_READERS:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for field in MEMORY_READ_RE.findall(line):
+                if field not in fields:
+                    problems.append(f"{path.relative_to(ROOT)}:{number}: memory.{field}")
+    return problems
+
+
+def retired_verb_problems() -> list[str]:
+    """Each line of a reader page that runs a CLI verb ADR-0039 d15 retired."""
+    pages = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
+             *sorted((ROOT / "docs").rglob("*.md"))]
+    problems: list[str] = []
+    for path in pages:
+        if any(path == e or e in path.parents for e in RETIRED_VERB_EXEMPT):
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for verb in RETIRED_VERB_RE.findall(line):
+                problems.append(f"{path.relative_to(ROOT)}:{number}: {verb}")
+    return problems
+
+
+def start_pages() -> list[Path]:
+    """The pages a new reader starts from, which teach only v0.4.0's names."""
+    return [ROOT / "README.md", *sorted((ROOT / "plugins").glob("*/README.md")),
+            *sorted((ROOT / "plugins").glob("*/skills/*/SKILL.md")),
+            *sorted((ROOT / "sdks").glob("*/README.md")), ROOT / "kit" / "README.md",
+            ROOT / "docs" / "index.md", ROOT / "docs" / "llms.txt",
+            ROOT / "docs" / "engineering" / "sdks.md",
+            *sorted((ROOT / "docs" / "operations").glob("*.md")),
+            *sorted((ROOT / "docs" / "start").glob("*.md")),
+            *sorted((ROOT / "docs" / "guides").glob("*.md")),
+            *[p for p in [ROOT / "docs" / "product" / "use-cases.md",
+                         ROOT / "docs" / "product" / "scenarios.md"] if p.exists()],
+            *sorted((ROOT / "scripts").glob("*.sh"))]
+
+
+# One line per v0.3.0 spelling d10 and d13 retire, which RETIRED_NAME_RE must
+# catch, and the v0.4.0 spellings and look-alikes it must let through: the
+# pattern is checked against these before it reads a page.
+RETIRED_NAME_CATCHES = [
+    "call oml_remember", "call oml_learn", "call oml_recall", "call oml_get",
+    "call oml_supersede", "call oml_my_work", "call oml_workarea_info",
+    "call oml_events_tail", "send X-OML-Workarea", "set include_own_held",
+    "export OML_CLI_SERVER=x", "export OML_CLI_KEY=x", "oml bootstrap claim ci --token s",
+    "oml --server https://x", "oml --key k", "oml submit --claim t", "oml recall --query q",
+    "oml supersede a", "oml review verdict --approve", "tag v0.3.2", "ships in 0.3.2.",
+    "0.3.2 ships",
+]
+RETIRED_NAME_PASSES = [
+    "call oml_write", "call oml_read", "call oml_workarea", "oml write t", "oml read --query q",
+    "oml review approve", "oml --url https://x --api-key k", "--token-stdin", "--key-file k",
+    "--server-url x", "OML_URL and OML_API_KEY", "include_unreviewed", "tag v0.3.1",
+    "0.3.20", "10.3.2", "0.3.2.1", "oml recalls", "oml submitted",
+]
+
+
+def retired_name_pattern_problems() -> list[str]:
+    """Each probe line RETIRED_NAME_RE misreads: a retired spelling it misses or
+    a v0.4.0 spelling it fails."""
+    missed = [f"misses {line!r}" for line in RETIRED_NAME_CATCHES
+              if not RETIRED_NAME_RE.search(line)]
+    return missed + [f"fails {line!r}" for line in RETIRED_NAME_PASSES
+                     if RETIRED_NAME_RE.search(line)]
+
+
+def retired_name_problems() -> list[str]:
+    """Each line of a start page that names a v0.3.0 spelling ADR-0039 d13 breaks,
+    outside a section headed "Upgrading from …", whose migration names it."""
+    problems: list[str] = []
+    for path in start_pages():
+        migration_level = 0
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            heading = re.match(r"^(#+) ", line) if path.suffix == ".md" else None
+            if heading:
+                level = len(heading.group(1))
+                if migration_level and level <= migration_level:
+                    migration_level = 0
+                if MIGRATION_HEADING_RE.match(line):
+                    migration_level = level
+            if migration_level:
+                continue
+            for name in RETIRED_NAME_RE.findall(line):
+                problems.append(f"{path.relative_to(ROOT)}:{number}: {name}")
+    return problems
+
+
+NULL_EXEMPT = {"example", "examples", "default", "const"}
+
+
+def null_keys(node, path: str = "") -> list[str]:
+    """Every key whose value is null, outside example, default and const subtrees."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in NULL_EXEMPT:
+                continue
+            here = f"{path}/{key}"
+            if value is None:
+                found.append(here)
+            else:
+                found += null_keys(value, here)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found += null_keys(value, f"{path}/{index}")
+    return found
+
+
+def rust_str_array(source: str, name: str) -> list[str] | None:
+    """The string literals of `const NAME: [&str; n] = [...]` in `source`."""
+    match = re.search(name + r": \[&str; \d+\] = \[([^\]]*)\]", source)
+    return re.findall(r'"([^"]+)"', match.group(1)) if match else None
+
+
+def mcp_catalog_problems() -> list[str]:
+    """mcp-tools.json is the served tools/list and mcp-tools.designed.json the
+    designed annex, disjoint from it (ADR-0039 d2)."""
+    served = json.loads(MCP_TOOLS_JSON.read_text(encoding="utf-8"))["tools"]
+    designed = json.loads(MCP_DESIGNED_JSON.read_text(encoding="utf-8"))
+    mcp_rs = MCP_RS.read_text(encoding="utf-8")
+    problems = []
+    names = [t["name"] for t in served]
+    listed = rust_str_array(mcp_rs, "SERVED_TOOLS")
+    if listed is None:
+        problems.append("SERVED_TOOLS not found in mcp.rs")
+    elif names != listed:
+        problems.append(f"mcp-tools.json declares {names}, the facade serves {listed}")
+    designed_names = [t["name"] for t in designed.get("tools", [])]
+    for name in sorted(set(designed_names) & set(names)):
+        problems.append(f"{name} is in both mcp-tools.json and mcp-tools.designed.json")
+    named_designed = rust_str_array(mcp_rs, "DESIGNED_TOOLS")
+    if named_designed is None:
+        problems.append("DESIGNED_TOOLS not found in mcp.rs")
+    elif sorted(named_designed) != sorted(designed_names):
+        problems.append(
+            f"mcp-tools.designed.json declares {designed_names}, the facade names {named_designed} as designed"
+        )
+    schemas = {t["name"]: t["inputSchema"].get("properties", {}) for t in served}
+    for tool, arguments in sorted(designed.get("designed_arguments", {}).items()):
+        if tool not in schemas:
+            problems.append(f"designed_arguments names {tool}, which mcp-tools.json does not serve")
+            continue
+        for argument in sorted(set(arguments) & set(schemas[tool])):
+            problems.append(f"{tool}.{argument} is designed and also in the served inputSchema")
+    return problems
+
+
 def format_ops(ops: set[tuple[str, str]]) -> list[str]:
     return [f"{method} {path}" for method, path in sorted(ops, key=lambda t: (t[1], t[0]))]
 
@@ -215,13 +544,19 @@ def main() -> int:
     errors_text = ERRORS_MD.read_text(encoding="utf-8")
     http_text = HTTP_API_MD.read_text(encoding="utf-8")
     spec = yaml.safe_load(OPENAPI_YAML.read_text(encoding="utf-8"))
+    designed = yaml.safe_load(DESIGNED_YAML.read_text(encoding="utf-8"))
 
     family_codes, family_problems = errors_md_family_codes(errors_text)
     index_codes, index_problems = errors_md_status_index(errors_text)
     enum_codes = openapi_error_codes(spec)
-    spec_ops = openapi_ops(spec)
+    served_ops = openapi_ops(spec)
+    designed_ops = openapi_ops(designed)
+    spec_ops = served_ops | designed_ops
     doc_ops = http_api_md_ops(http_text)
+    marks, mark_problems = http_api_md_marks(http_text)
 
+    if mark_problems:
+        failures.append(("http-api.md surface tables: parse problems", mark_problems))
     if family_problems:
         failures.append(("errors.md family tables: parse problems", family_problems))
     if index_problems:
@@ -233,7 +568,9 @@ def main() -> int:
         ("errors.md family-table codes", len(family_codes)),
         ("errors.md status-index codes", len(index_codes)),
         ("openapi.yaml ErrorCode enum", len(enum_codes)),
-        ("openapi.yaml path+method ops", len(spec_ops)),
+        ("openapi.yaml path+method ops", len(served_ops)),
+        ("openapi-designed.yaml path+method ops", len(designed_ops)),
+        ("http-api.md Contract-marked ops", len(marks)),
         ("http-api.md documented ops", len(doc_ops)),
     ]:
         if size < 10:
@@ -270,16 +607,63 @@ def main() -> int:
     if status_lines:
         failures.append(("HTTP status disagreement between family tables and status index", status_lines))
 
+    in_both = served_ops & designed_ops
+    if in_both:
+        failures.append(
+            ("paths declared in both openapi.yaml and openapi-designed.yaml", format_ops(in_both))
+        )
     only_spec = spec_ops - doc_ops
     only_docs = doc_ops - spec_ops
     if only_spec:
         failures.append(
-            ("paths in openapi.yaml never documented on http-api.md", format_ops(only_spec))
+            ("paths in the OpenAPI documents never documented on http-api.md", format_ops(only_spec))
         )
     if only_docs:
         failures.append(
-            ("paths documented on http-api.md but absent from openapi.yaml", format_ops(only_docs))
+            ("paths documented on http-api.md but absent from both OpenAPI documents",
+             format_ops(only_docs))
         )
+
+    for name, document in (("openapi.yaml", spec), ("openapi-designed.yaml", designed)):
+        nulls = null_keys(document)
+        if nulls:
+            failures.append((f"{name}: keys with a null value (an unquoted ', ' split a mapping?)", nulls))
+
+    field_problems = designed_field_problems(spec, designed)
+    if field_problems:
+        failures.append((f"{DESIGNED_FIELDS} disagrees with the served operations", field_problems))
+
+    read_problems = memory_read_problems(spec)
+    if read_problems:
+        failures.append(("a memory field read that the served Memory schema does not declare",
+                         read_problems))
+
+    retired = retired_verb_problems()
+    if retired:
+        failures.append(("a reader page runs a CLI verb ADR-0039 d15 retired", retired))
+
+    pattern_problems = retired_name_pattern_problems()
+    if pattern_problems:
+        failures.append(("the v0.3.0 spelling pattern misreads a probe line", pattern_problems))
+
+    retired_names = retired_name_problems()
+    if retired_names:
+        failures.append(("a start page names a v0.3.0 spelling ADR-0039 d13 breaks", retired_names))
+
+    catalog_problems = mcp_catalog_problems()
+    if catalog_problems:
+        failures.append(("the MCP catalog disagrees with the served tools/list", catalog_problems))
+
+    mark_lines = []
+    for op, op_marks in sorted(marks.items(), key=lambda t: (t[0][1], t[0][0])):
+        want = {"served"} if op in served_ops else {"designed"} if op in designed_ops else set()
+        if want and op_marks != want:
+            mark_lines.append(
+                f"{op[0]} {op[1]}: http-api.md marks it {sorted(op_marks)}, "
+                f"the OpenAPI documents declare it {sorted(want)[0]}"
+            )
+    if mark_lines:
+        failures.append(("http-api.md Contract marks disagree with the OpenAPI documents", mark_lines))
 
     if failures:
         print("contract-sync check FAILED\n")
@@ -292,7 +676,9 @@ def main() -> int:
 
     print("contract-sync check passed")
     print(f"  error codes agreeing on all three surfaces: {len(enum_set)}")
-    print(f"  path+method operations agreeing: {len(spec_ops)}")
+    print(f"  path+method operations agreeing: {len(spec_ops)} "
+          f"({len(served_ops)} served, {len(designed_ops)} designed)")
+    print("  MCP tools: mcp-tools.json is the served tools/list, mcp-tools.designed.json disjoint from it")
     return 0
 
 

@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
  "oml-domain",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "clap",
@@ -1167,6 +1167,7 @@ dependencies = [
  "oml-app",
  "oml-pg",
  "oml-server-lead",
+ "rpassword",
  "serde",
  "serde_json",
  "sha2",
@@ -1180,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "oml-domain"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1193,8 +1194,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-fetch"
+version = "0.4.0"
+dependencies = [
+ "oml-app",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
 name = "oml-pg"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "hex",
  "oml-app",
@@ -1208,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -1218,12 +1228,13 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-fetch",
  "oml-pg",
  "oml-transport-http",
  "serde_json",
@@ -1239,14 +1250,16 @@ dependencies = [
 
 [[package]]
 name = "oml-transport-http"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "ring",
  "serde",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 
@@ -1516,6 +1529,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpassword"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2da316a15f47e3d053de9cb2c439650bd8fa4aaeb9365f2e5f27f492ff73c196"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1533,6 +1557,16 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

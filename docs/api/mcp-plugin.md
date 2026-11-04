@@ -2,14 +2,14 @@
 id: api/mcp-plugin
 tier: engineering
 status: design draft for review · decided, not built
-answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name
+answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name; how an agent authenticates, by key or by a connection, and how Claude's hosted apps are wired in
 -->
 
 # The agent plugin: MCP over streamable HTTP
 
 **Status:** design draft for review · decided, not built
 
-**Release:** eight tools available, four since v0.1.0 and four since v0.2.0; the three task-shaped tools that replace them are planned for v0.4.0 ([releases](../product/releases.md)).
+**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answer unlisted through the 0.4 releases ([releases](../product/releases.md)).
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
@@ -24,30 +24,40 @@ also offer, and much exists there that this surface deliberately does not
 (D13). The tool catalog is the **agent-safe subset**: the verbs a writing or
 recalling agent needs, and none of the verbs that change what others may see.
 
-The machine-readable form of this catalog is
-[mcp-tools.json](mcp-tools.json) — the exact `tools/list` result payload:
-every tool's name, description and input schema. It is normative for the
-wire shape in the same relationship [http-api.md](http-api.md) has to
-[openapi.yaml](openapi.yaml): this page and that file describe the same twelve
-tools, and a divergence between them that `_meta.pending_design` does not
-list is a documentation bug, not an ambiguity to interpret. One ordering rule keeps the two honest while the
-build catches up: `tools/list` serves the subset of that file the server
-builds, so a served tool's entry changes only in the same change as the code
-that serves it — the server never advertises a field it refuses. Whatever
-this page decides for a served tool that its entry does not carry yet is
-stated here ahead of the file and listed under `_meta.pending_design` in
-[mcp-tools.json](mcp-tools.json).
+The catalog is three task-shaped tools, [`oml_write`](#oml_write),
+[`oml_read`](#oml_read) and [`oml_workarea`](#oml_workarea)
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2). Its
+machine-readable form is [mcp-tools.json](mcp-tools.json): exactly the
+`tools/list` result payload, every served tool's name, description,
+annotations and input schema. It is normative for the wire shape in the same
+relationship [http-api.md](http-api.md) has to [openapi.yaml](openapi.yaml):
+this page and that file describe the same three tools, and a divergence
+between them that `_meta.pending_design` does not list is a documentation
+bug, not an ambiguity to interpret. The file declares only what is served,
+so a served tool's entry changes only in the same change as the code that
+serves it, and the server never advertises a field it refuses. What this
+page decides and the server does not serve, the tools
+[`oml_relate_propose`](#oml_relate_propose) and [`oml_vocab`](#oml_vocab),
+`oml_read`'s lineage mode and `oml_write`'s `attachments`, is in
+[mcp-tools.designed.json](mcp-tools.designed.json), which is never served;
+`scripts/check_contract_sync.py` fails when the two files name a tool in
+common or mcp-tools.json differs from the served `tools/list`.
 
 ## Transport: streamable HTTP, stateless
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, since v0.4.0 · [releases](../product/releases.md)*
 
 The plugin runs the MCP streamable HTTP transport in stateless mode, declared
 up front:
 
 - **No server session id.** The server issues no `Mcp-Session-Id`; a client
   that sends one is ignored, not refused. `initialize` is answered honestly
-  (protocol version, capabilities, server name) and nothing is stored.
+  (protocol version, capabilities, server name) and nothing is stored. Its
+  `instructions`, under the 4,096 characters Claude Code keeps, tell the agent
+  when to call [`oml_read`](#oml_read) with a query and with which words; the text is
+  declared once, as `SERVER_INSTRUCTIONS` in
+  `crates/transports/oml-transport-http/src/mcp.rs`
+  ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) d1).
 - **Every tool call is independent.** Each HTTP POST carries one complete
   JSON-RPC request and receives one complete JSON response
   (`Content-Type: application/json`). The server opens no SSE stream in
@@ -65,11 +75,12 @@ Why this fits, stated with its cost:
   stateless mode lets any replica answer any call.
 - Agents crash, restart and retry. A session to resume is a failure mode to
   handle; an independent call retried with the same
-  [idempotency key](#oml_remember) is a no-op by construction
+  [idempotency key](#oml_write) is a no-op by construction
   ([idempotency records](http-api.md), D13).
-- No tool in the catalog needs push. The one tool shaped like a stream,
-  [`oml_events_tail`](#oml_events_tail), is a poll from a client-held journal
-  sequence — which is exactly what stateless mode permits.
+- No tool in the catalog needs push. The one read shaped like a stream, the
+  events tail, is not on MCP: it is `GET /v2/events`, a poll from a
+  client-held journal sequence, and an agent learns what became of its writes
+  with [`oml_read`](#oml_read) and `state` (ADR-0039 d2).
 - The cost is real and accepted: an agent that wants to react to events polls
   and pays the latency of its polling interval, and long-running server-side
   work cannot stream progress. If a v1 use case surfaces that needs push, that
@@ -79,15 +90,27 @@ The MCP specification revision the implementation pins, and the transport
 behavior verified against it, are recorded with a fetch date at implementation
 time — the same sourcing discipline the auth question below already follows.
 
-## Authentication: bearer keys
+## Authentication: bearer keys and connections
 
-*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code since v0.4.0 · [releases](../product/releases.md)*
 
-Every HTTP request carrying an MCP message presents the agent's API key:
+Every HTTP request carrying an MCP message presents one credential in the same header: the
+agent's API key, or, for a client that cannot hold a key, a connection's access token:
 
 ```
 Authorization: Bearer oml_k_01JB2X8F0YQZ6W4N7R9T3VH5MD
 ```
+
+A **connection** binds one OAuth client — Claude's hosted apps, through a claude.ai custom
+connector — to one connector key, opened by a one-time connect code an admin issues; its access
+token resolves to that key on every call, so the tools below answer exactly as they would to the
+key, and never more, with one exception: [`oml_attach`](#oml_attach) `open` is refused under a
+connection ([roles and keys — connections](../architecture/roles-and-keys.md#connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)); as built no served tool opens an
+upload, since `oml_attach` left the catalog. A refused call keeps its typed `401` and carries the
+OAuth challenge that starts a client's sign-in
+([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)), or `Bearer
+realm="oml"` where the deployment sets no `oauth.issuer`.
 
 The mapping is entirely server-side (D6): the key resolves to a tenant, a
 role, and a set of grants over workarea subtrees
@@ -103,23 +126,19 @@ reciprocal-approval statistics in the evidence export all key off the
 (key, principal) pair. A key shared across crew members makes their work
 mutually indistinguishable to every one of those mechanisms.
 
-The MCP specification defines an OAuth 2.1 authorization model; OML ships
-bearer keys in v1. Whether and when OML adopts OAuth is an open research
-row with a sourcing requirement on it — see
-[RS-2 in the roadmap](../product/roadmap.md), which may only be finalized
-with spec revision, fetch date and verified client support.
+Bearer keys stay the credential of every client that can hold one — the Claude
+Code plugin, scripts, reviewer crews — and nothing about them changes. The
+MCP authorization specification, revision 2025-11-25 (fetched 2026-10-31),
+and the clients that need it are recorded in the context of
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md).
 
 ## The verb ceiling: what this surface can never do (R1)
 
 **No promote, sign, demote, delete or admin verb exists on this surface.**
 Not refused — absent. The `tools/list` result is the entire surface, and the
-catalog holds twelve read-and-propose tools (nine at ADR-0014's writing; the
-tenth, [`oml_vocab`](#oml_vocab), is owned as a count change in ADR-0014's
-terms — the one non-zero default cost the vocabulary capability adds, ~100
-tokens in every `tools/list`; the eleventh and twelfth,
-[`oml_get`](#oml_get) and [`oml_supersede`](#oml_supersede), are owned as a
-count change by [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
-d12). There is no tool whose success changes
+catalog holds three read-and-propose tools
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2; twelve
+before it, nine at ADR-0014's writing). There is no tool whose success changes
 what *other* keys can read, except by entering the admission pipeline as a
 held submission that an independent reviewer must ratify
 ([admission](../architecture/admission.md), R3).
@@ -131,9 +150,9 @@ Concretely:
   ([permission matrix](../architecture/roles-and-keys.md#permission-matrix)).
 - Signing is done by `oml-server` with the deployment key
   ([storage](../architecture/storage.md)); no client signs anything.
-- Review verdicts and connection ratification are dreamer(review) verbs on
-  the [HTTP API](http-api.md), bound to the serve ceremony — a server-issued,
-  expiring `serve_id` consumed by its first verdict (D14,
+- Review verdicts and the ratification of connection proposals are
+  dreamer(review) verbs on the [HTTP API](http-api.md), bound to the serve
+  ceremony — a server-issued, expiring `serve_id` consumed by its first verdict (D14,
   [review guide](../review-guide.md)). They are deliberately not MCP tools:
   the catalog stays writer/reader/propose-safe, so handing an agent this
   plugin config hands it no path to a verdict, whatever role its key carries.
@@ -165,23 +184,42 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   ([workareas](../architecture/workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)) —
   never from the role name alone. A writer key recalls only where it also
   holds reader-scope grants.
-- **Errors** are the typed, fail-closed taxonomy of the HTTP API, surfaced as
-  MCP tool results with `isError: true` and the typed error object as
-  structured content. Every error names the rule that refused the call. The
-  taxonomy — spellings, retryability, HTTP status mapping including the 429
-  quota family — is declared in [errors.md](errors.md); the examples below
-  use its codes, and a retryable refusal carries a `Retry-After` header in
-  seconds. One shared example, the per-replica-approximated quota
-  limit (D6, [FR-8](../product/roadmap.md)):
+- **Errors** are the typed, fail-closed taxonomy of the HTTP API, one shape
+  on every surface ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+  d11). A served tool that refuses answers a JSON-RPC *result* with
+  `isError: true`, carrying the [errors.md envelope](errors.md#the-envelope)
+  — `{error: {code, message, rule, details?, retryable}, request_id}` — both
+  as `structuredContent` and, serialized, as its one text content, so a
+  client that reads only text sees the same refusal. `request_id` mirrors the
+  `X-Request-Id` of the `/mcp` response. A JSON-RPC *error* is a protocol
+  fault only: a malformed message, an unknown method, `tools/call` params
+  that are not `{name, arguments}`, and -32602 for a tool the server does not
+  serve, whether unknown, designed, or a v0.3.0 tool with no successor tool. Every error names
+  the rule that refused the call. The taxonomy — spellings, retryability,
+  HTTP status mapping including the 429 quota family — is declared in
+  [errors.md](errors.md); the examples below use its codes, and a retryable
+  refusal carries a `Retry-After` header in seconds. Designed, with
+  [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7's renames
+  and not yet served: a field sent under a spelling v0.4.0 renamed is
+  `request.validation` with `details.field` and `details.renamed_to`; no
+  code is added for it. Until then the v0.3.0 argument names are the served
+  ones. One shared example, the
+  per-replica-approximated quota limit (D6, [FR-8](../product/roadmap.md)),
+  as the `result` of a `tools/call`:
 
 ```json
 {
-  "error": {
-    "code": "limit.quota",
-    "rule": "tenant quota (journalled grant attribute; enforced per replica at limit/N)",
-    "message": "write quota exhausted for this key's tenant",
-    "retryable": true
-  }
+  "content": [{"type": "text", "text": "{\"error\":{\"code\":\"limit.quota\",…},\"request_id\":\"req_01J…\"}"}],
+  "structuredContent": {
+    "error": {
+      "code": "limit.quota",
+      "rule": "tenant quota (journalled grant attribute; enforced per replica at limit/N)",
+      "message": "write quota exhausted for this key's tenant",
+      "retryable": true
+    },
+    "request_id": "req_01J…"
+  },
+  "isError": true
 }
 ```
 
@@ -189,45 +227,45 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   a workarea or artifact the key cannot read returns the same typed error as
   asking about one that does not exist.
 - **A workarea by id or name.** Every argument that names a workarea —
-  `workarea`, `scope`, `workarea_id`, and a workarea edge's `from` and `to` —
+  `workarea` on the three tools, and a workarea edge's `from` and `to` on the
+  designed `oml_relate_propose` —
   takes the node's id or its [name](http-api.md#names-and-ids)
   ([ADR-0026](../adr/ADR-0026-names-are-keys.md)). The facade passes the value
-  through and the server resolves it, so a name the key may not see answers
+  through as the ring's `workarea` field
+  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7), whose
+  JSON Pointer, `/workarea`, a refusal's `details.field` names, and the server
+  resolves it, so a name the key may not see answers
   `access.not_found` exactly as its id would. A derived path is neither, and
   is refused with `request.validation`.
 - **Pagination** is cursor-based everywhere a list can grow; the client holds
   the cursor (stateless), and the cursor contract — including the events
   tail's deliberate `after_seq` exception — is owned by
   [http-api.md](http-api.md).
-- **Simulation fencing** applies to every read tool below: rows with
+- **Simulation fencing** applies to every read below: rows with
   `provenance: simulation` are served only to keys in that simulation's
   audience ([simulations](../architecture/simulations.md)). This is a
   predicate, not an error — fenced rows are simply absent.
 - All identifiers in the examples are illustrative.
 
-| Tool | One line | Role class |
-|---|---|---|
-| [`oml_remember`](#oml_remember) | Submit a memory — held on arrival | writer |
-| [`oml_recall`](#oml_recall) | Search promoted memories in a subtree, optionally with the caller's own held rows and a budget; steering first | reader |
-| [`oml_learn`](#oml_learn) | Submit a derived fact with declared lineage — held on arrival | writer |
-| [`oml_get`](#oml_get) | Read one claim version by id | reader, or the calling key for its own rows |
-| [`oml_supersede`](#oml_supersede) | Propose a new version of a claim, or its retirement — held on arrival | writer (own claims); dreamer (propose) otherwise |
-| [`oml_attach`](#oml_attach) | Open or inspect a resumable upload session | writer |
-| [`oml_relate_propose`](#oml_relate_propose) | Propose a claim↔claim or workarea↔workarea edge | dreamer (propose) |
-| [`oml_my_work`](#oml_my_work) | Status of the caller's own submissions | any content role (own work only) |
-| [`oml_workarea_info`](#oml_workarea_info) | One workarea: status, crew, the caller's effective verbs | reader |
-| [`oml_graph`](#oml_graph) | Scoped claims-and-edges read; serialize, don't compute | reader |
-| [`oml_events_tail`](#oml_events_tail) | Poll journal events in scope, from a client-held cursor | reader |
-| [`oml_vocab`](#oml_vocab) | Resolve vocabulary terms: suggest, get, hierarchy, mappings — read-only | reader |
+| Tool | One line | Annotations | Role class |
+|---|---|---|---|
+| [`oml_write`](#oml_write) | Store a claim, a derived claim, a new version or a retire-proposal — held on arrival | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` | writer; with `replaces`, writer (own claims) or dreamer (propose) |
+| [`oml_read`](#oml_read) | Fetch one version, recall in a subtree, or list own work or a workarea's tips | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader, or the calling key for its own rows |
+| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
+
+The annotations are [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d5's: Claude Code runs read-only calls in parallel and may repeat a pending
+idempotent one ([MCP in Claude Code](https://code.claude.com/docs/en/mcp),
+fetched 2026-11-03), and a write here is held for review, never destructive.
 
 ## The claim item
 
-One shape describes a claim version wherever a tool returns one — recall's
-steering items and hits, `oml_get`, and `oml_my_work`'s items — so the three
-are interchangeable to an agent
+One shape describes a claim version wherever a tool returns one — every mode
+of [`oml_read`](#oml_read): get's item, recall's steering items and hits, and
+the listing's items — so the three are interchangeable to an agent
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d12). Every field
 comes from the ring's `MemorySummary` and `Memory`
-([openapi.yaml](openapi.yaml)); the facade renames `body` to `text` and adds
+([openapi.yaml](openapi.yaml)), whose `text` it keeps, and the facade adds
 nothing else.
 
 | Field | Meaning |
@@ -246,17 +284,399 @@ nothing else.
 | `created_at` | When the version was written |
 | `promoted_at` | When it was ratified; null otherwise |
 
-Per tool, the item adds: `text` in [`oml_recall`](#oml_recall) and
-[`oml_get`](#oml_get); `score` on recall hits only; `held_expires_at` in
-[`oml_my_work`](#oml_my_work); `derives_from` and `attachments` in
-[`oml_get`](#oml_get). `derives_from` lists only the ancestors the calling
+Every `oml_read` item carries `text`. Per mode, the item adds: `score` on
+recall hits only; `held_expires_at` in the listing; `derives_from` and
+`attachments` in get. The v0.3.0 sections below state what each old tool's
+item carried. `derives_from` lists only the ancestors the calling
 key can read, as on the ring
 ([http-api](http-api.md#get-get-v1memoriesartifact_id)). Recall steering
 items carry `text` and `tokens` like every other item, never a score.
 
 ---
 
-## `oml_remember`
+## `oml_write`
+
+*Available since v0.4.0 · [releases](../product/releases.md)*
+
+Store a claim, a claim derived from others, a new version of one, or a
+proposal to retire one. Every write is **held on arrival**: scanned, then
+reviewed by an identity that did not write it, and visible to others only
+after ratification (R2, R3; [admission](../architecture/admission.md)).
+Success means *accepted for review*, never *published*.
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3.)
+
+**Annotations:** `readOnlyHint: false`, `destructiveHint: false`,
+`idempotentHint: true`, `openWorldHint: false`. A write is held for review
+and a retirement is a proposal, so no call destroys anything, and the
+`idempotency_key` makes a repeat a replay (d5).
+
+**Who may call:** keys with writer effective access on the target workarea;
+with `replaces`, the target's author, or dreamer(propose) otherwise, as on
+the ring ([supersede](http-api.md#supersede-post-v1memoriesartifact_idsupersede)).
+
+**The mode is chosen by the fields present.** One flat argument set; `text`
+and `idempotency_key` are required:
+
+| Mode | Chosen by | Takes | Refused, each `request.validation` naming it in `details.field` | Rides |
+|---|---|---|---|---|
+| `submit` | no `replaces` | `claim_key`, `kind` (default `memory`), `derives_from`, `workarea` | `retirement`, `reason` | `POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty and `submission.remember` otherwise |
+| `supersede` | `replaces` | `kind`, `derives_from`, `workarea`, `retirement`, `reason` | `claim_key` (the new version takes the target's); a `kind` other than `memory`, `derived_fact` or `steering`; a `workarea` not the target's; a target of a vocabulary kind | `POST /v1/memories/{replaces}/supersede`; `retirement: true` is ADR-0025 d11's retire-proposal, `text` stating why |
+
+```json
+{
+  "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.",
+  "derives_from": ["8f0c2d4e-1b7a-4c39-9e55-3a6d2f81b0c4"],
+  "idempotency_key": "crew-procure/run-4412/step-9"
+}
+```
+
+- `claim_key` is **optional, and an agent leaves it out**: the server derives
+  `auto-` plus 16 hex digits from the authoring key and the NFC text, and a
+  sent key starting `auto-` is refused (d6). An agent invents no key.
+- `workarea` takes an id or a name; omitted, a submission targets the key's
+  default workarea (`request.workarea_unresolved` for a key with none).
+- `idempotency_key` is scoped to (key, resolved workarea) without `replaces`
+  and to the calling key alone with it, as the two endpoints scope it; the
+  same key reused across the two modes is a separate write (D13).
+- Designed, in [mcp-tools.designed.json](mcp-tools.designed.json):
+  `attachments`, the upload sessions a file was put through outside MCP, and
+  `simulation_id` with `simulated_time`, an audience key's write inside a
+  simulation, in submit and supersede mode alike, as the v0.3.0 writes
+  declared them. Each is refused as outside the input schema until it is
+  built; `x-oml-designed-fields` in
+  [openapi-designed.yaml](openapi-designed.yaml) keeps the same
+  fields for HTTP.
+
+**Output**
+
+```json
+{
+  "mode": "submit",
+  "artifact_id": "0b7e5a1c-6d2f-4e83-9a41-c5f8d3b2e907",
+  "claim_key": "auto-3f9a1c0e7b2d4a68",
+  "version": 1,
+  "state": "held",
+  "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
+  "retirement": false,
+  "replaces": null,
+  "idempotent_replay": false
+}
+```
+
+The ring's own refusals pass through unchanged: a frozen workarea, a tip
+conflict (`submission.tip_conflict` naming `details.current_tip`), a
+`claim_key` conflict, an idempotency key reused with another request, a
+banned author.
+
+## `oml_read`
+
+*Available since v0.4.0 · [releases](../product/releases.md)*
+
+Find, fetch or list claims. Every mode answers
+[claim items](#the-claim-item) with their `text`, under a `mode` field
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4).
+
+**Annotations:** `readOnlyHint: true`, `idempotentHint: true`,
+`openWorldHint: false` (d5): Claude Code may run it beside other read-only
+calls without asking, once a rule allows it.
+
+**Who may call:** reader effective access on the subtree read, or the
+calling key for its own rows.
+
+**The mode is chosen by the fields present.** `artifact_id` fetches, `query`
+recalls, and neither lists. An argument outside the chosen mode, or
+`artifact_id` and `query` together, is refused with `request.validation`
+naming it in `details.field`:
+
+| Mode | Arguments | Output | Rides |
+|---|---|---|---|
+| `get` | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `{mode, items}`, one item with `derives_from` and `attachments` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
+| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `{mode, steering, hits, budget?}` | `POST /v1/memories/recall` |
+| `listing` | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `{mode, items, next_cursor}` | `GET /v1/memories` |
+
+- **get** answers the calling key's own rows in any state and others'
+  promoted versions within read access; anything else is
+  `access.not_found`, as a nonexistent id is.
+- **recall** searches promoted claims in the subtree, the key's default
+  workarea when `workarea` is omitted. Steering comes first, never ranked
+  and never cut by `max_tokens`; the hits served are the longest rank prefix
+  that fits, and `budget` reports the cut. `include_unreviewed: true`
+  (default `false`) adds the key's own held rows that match, flagged
+  `state: "held"`; it is the one flag for unreviewed rows (d4).
+- **listing** with `own: true`, the default, is everything the key wrote,
+  newest first, in every state and every workarea it wrote in; with
+  `own: false` it is the promoted tips of the workarea's subtree. `since`
+  takes a version written at its instant and `until` leaves it out.
+- **An agent learns what became of its writes here**: `oml_read` with
+  `state: "promoted"` or `state: "rejected"` over its own work, with no
+  cursor to hold and no event tool (d2).
+- The lineage mode, the successor of `oml_graph`, is designed in
+  [mcp-tools.designed.json](mcp-tools.designed.json): `lineage` and `depth`
+  are refused with `request.validation` naming the field until the lineage
+  read is routed.
+
+## `oml_workarea`
+
+*Available since v0.4.0 · [releases](../product/releases.md)*
+
+One workarea as the calling key may see it: its identity, derived path,
+status, crew record, readable immediate children, and the verbs the key's
+effective access carries there, `my_effective_verbs`, with the permission
+epoch. It returns a node, not claim items, which is why it is not a mode of
+`oml_read`. `workarea` is optional, an id or a name; omitted, it is the
+key's default workarea (`request.workarea_unresolved` for a key with none).
+(Rides `GET /v2/workareas/{workarea}`, one call.)
+
+**Annotations:** `readOnlyHint: true`, `idempotentHint: true`,
+`openWorldHint: false` (d5).
+
+**Who may call:** keys with reader effective access on the workarea, or an
+admin key for its structure read. The output is
+[`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name.
+
+## What left the catalog
+
+- **The events tail is not on MCP.** An agent's one use for it, learning
+  whether a write was approved or rejected, is `oml_read` with `state`. The
+  tail stays on `GET /v2/events`, the SDKs' `events` and the CLI, for
+  auditors, a poll from a client-held journal sequence
+  ([http-api.md](http-api.md)).
+- **`oml_attach` has no successor tool.** MCP carries no file bytes, so an
+  agent would still need a terminal for the parts. Files go through the
+  designed `oml attach put <file>` and the SDKs' upload, whose session
+  `oml_write`'s designed `attachments` names. A call to `oml_attach` is
+  JSON-RPC -32602 saying so.
+- **`oml_graph` is `oml_read`'s designed lineage mode**, since lineage
+  returns claim items. A call to `oml_graph` is -32602 saying so.
+- **`oml_relate_propose` and `oml_vocab` are designed**, in
+  [mcp-tools.designed.json](mcp-tools.designed.json), which is never served;
+  a call to either is -32602 naming that file.
+- **The eight v0.3.0 tool names are not in `tools/list`.** They are hidden
+  aliases: a `tools/call` naming one answers with its v0.3.0 inputs, output
+  shape and refusal codes through v0.4.x, and v0.5.0 removes them, as
+  [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 reads its
+  alias window, a reading the maintainer has not decided. Their sections
+  [below](#the-v030-tools-not-listed) are their contracts for that window.
+  Claude Code offers the model only what `tools/list` names, so the window
+  serves raw MCP clients. Each maps to its successor:
+
+| v0.3.0 | v0.4.0 |
+|---|---|
+| `oml_remember`, `oml_learn` | `oml_write`; `derives_from` journals learn |
+| `oml_supersede` | `oml_write` with `replaces` |
+| `oml_recall` | `oml_read` with `query`; `include_unreviewed` for `include_own_held`, `workarea` for `scope` |
+| `oml_get` | `oml_read` with `artifact_id` |
+| `oml_my_work` | `oml_read` with neither, `own` defaulting to `true` |
+| `oml_workarea_info` | `oml_workarea` |
+| `oml_events_tail` | `oml_read` with `state` for an agent's own writes; `GET /v2/events` to audit |
+
+**Migration.** A `permissions.allow` rule naming an old read tool allows
+nothing: allow `mcp__plugin_oml_oml__oml_read` and
+`mcp__plugin_oml_oml__oml_workarea`, or the server-wide
+`mcp__plugin_oml_oml`, which allows `oml_write` too
+([the plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md);
+amends [ADR-0029](../adr/ADR-0029-session-start-hook.md) d8). Run
+`claude plugin update oml@open-memory-lab` and the v0.4.0 CLI, so the cached
+skill and the session-start hook name the three tools (d13), then set the
+plugin's `url` and `api_key` settings once, since its entry no longer reads
+`OML_URL` and `OML_API_KEY`
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d2,
+[below](#wiring-it-into-your-agent)).
+
+## A new capability is a parameter, a resource or a hook first
+
+A new agent capability arrives as a parameter of one of the three tools, an
+MCP resource or a hook before it is a tool. A fourth served tool needs a
+record saying why no parameter of the three, no resource and no hook
+carries it ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d8).
+Each tool costs every session its catalog entry and every user a permission
+rule.
+
+## What the catalog costs
+
+The three served entries of [mcp-tools.json](mcp-tools.json) are 8,488
+characters, against 18,893 for the twelve entries of v0.3.0, each entry
+measured the same way: serialized as JSON with the default separators,
+summed over the entries. That is the text every session's `tools/list` puts
+in front of the model.
+
+## Designed tools, never served
+
+These two tools are decided and not served; their entries are in
+[mcp-tools.designed.json](mcp-tools.designed.json), and each moves to
+mcp-tools.json in the change that serves it, under d8's test below. Their
+workarea arguments are `workarea`, as on the served tools
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7).
+
+### `oml_relate_propose`
+
+*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+
+Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
+journalled and **pending**; it confers nothing and changes no access until a
+*different* dreamer ratifies it (R2 extends to edges). Ratification is not on
+this surface — it is a dreamer(review) verb behind the serve ceremony on the
+[HTTP API](http-api.md). (Rides the designed `POST /v2/edges`, `kind` `claim` or
+`workarea` — the lab ring.)
+
+**Who may call:** keys with dreamer(propose) effective access. For a
+workarea edge: propose access on at least one endpoint **and** reader access
+on both. For a claim edge: both claims readable by the key. The
+edge-authority rule is declared in
+[workareas](../architecture/workareas.md#edge-authority).
+
+**Input** — a workarea edge (closed label set: `relates_to`, `continues`,
+`derived_from`, `mirrors`):
+
+```json
+{
+  "kind": "workarea",
+  "label": "continues",
+  "from": "fbbb41c5-9630-4274-ae53-166f562f5286",
+  "to": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+  "note": "metals-crew Q1 planning continues the Q4 negotiation workarea"
+}
+```
+
+A claim edge uses `kind: "claim"` with artifact ids as endpoints; claim-edge
+proposals are part of the admission pipeline and enter the lineage closure
+computed at promotion time, pending and ratified alike
+([audit and lineage](../architecture/audit-and-lineage.md)). The claim-edge
+label vocabulary is not fixed by the design — an open detail tracked in the
+[roadmap](../product/roadmap.md) ([http-api.md](http-api.md)); the proposal
+event's payload shape is owned by the
+[event catalog](../data/event-catalog.md).
+
+**Output**
+
+```json
+{
+  "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
+  "kind": "workarea",
+  "label": "continues",
+  "state": "pending",
+  "proposer_key": "d405428e-4c99-426d-8826-76d28436e423",
+  "awaiting": "ratification by a dreamer(review) key on both endpoints, ratifier ≠ proposer (R2)"
+}
+```
+
+**Refusals** — missing propose access on every endpoint; an endpoint outside
+read scope (fail closed, indistinguishable from nonexistent); a label outside
+the closed set for workarea edges. Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "edge proposal requires dreamer(propose) on ≥1 endpoint and reader on both (D7)",
+    "message": "endpoint 'to' names no workarea readable by this key",
+    "retryable": false
+  },
+  "request_id": "req_01J…"
+}
+```
+
+### `oml_vocab`
+
+*Parked · [releases](../product/releases.md)*
+
+Read the tenant's vocabularies: term lookup, deterministic typeahead,
+hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
+four actions — each translates to one `GET /v2/vocab/*` call (the lab ring;
+[http-api.md](http-api.md#vocabularies)). Strictly read-only at the reader
+ceiling: proposing a term or mapping is [`oml_write`](#oml_write) with
+the matching `kind`, and nothing on this surface deprecates, ratifies or cuts
+a release.
+
+**Who may call:** keys with reader effective access on the vocabulary
+workarea(s) involved. Vocabularies outside scope are absent, fail closed.
+
+**Input** — `action` ∈ `suggest` | `get` | `hierarchy` | `mappings`:
+
+- `suggest` — `{q, workarea?, limit?, cursor?}`: prefix+label typeahead
+  over granted vocabulary workareas, deterministic matching only. Returns
+  `{curie, label, term_status}` per suggestion.
+- `get` — `{curie}`: the term's served tip.
+- `hierarchy` — `{curie, direction: parents | children | ancestors |
+  descendants, release?, limit?, cursor?}`: a lookup over the closure
+  materialized at release ratification; `release` defaults to the owning
+  vocabulary's latest ratified release.
+- `mappings` — `{term, limit?, cursor?}`: ratified mappings touching the
+  CURIE — subject, object, predicate, justification, `ratified_at`.
+
+```json
+{ "action": "get", "curie": "proc:supplier-quote" }
+```
+
+**Output** — `get` returns `term_status` and the ratified successor pointers,
+so an agent whose citation is stale self-heals in one hop:
+
+```json
+{
+  "curie": "proc:supplier-quote",
+  "workarea": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
+  "version": 4,
+  "term_status": "deprecated",
+  "definition_state": "present",
+  "successors": [
+    { "curie": "proc:price-quote", "relation": "replaced_by" }
+  ],
+  "releases": ["rel_01JB2Z2D4F6H8K1M3P5R7TVXZB"]
+}
+```
+
+`replaced_by` is safe for automated rewiring; `consider` requires judgment.
+The same two codes an agent meets when *citing* terms on a submit apply here
+in read form: an unknown or out-of-scope CURIE is absence
+(`access.not_found` — the read twin of `vocab.unknown_curie`, which fails a
+citation closed exactly as `derives_from` does), and a submission citing a
+deprecated term under `enforcement: require` is refused with
+`vocab.inactive_curie`, whose `details` carry the successors and relation —
+under `annotate`, the citation records a finding and never blocks
+([errors.md](errors.md)).
+
+**Refusals** — a CURIE or vocabulary outside read scope, indistinguishable
+from one that does not exist. Example:
+
+```json
+{
+  "error": {
+    "code": "access.not_found",
+    "rule": "CURIE resolution fails closed within the key's effective read scope (D7)",
+    "message": "no readable term proc:supplier-quote for this key",
+    "retryable": false
+  },
+  "request_id": "req_01J…"
+}
+```
+
+## The v0.3.0 tools, not listed
+
+None of these is in `tools/list`
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2). The eight
+served in v0.3.0 are hidden aliases, each mapped to its successor in
+[What left the catalog](#what-left-the-catalog); `oml_attach` and `oml_graph`,
+listed in v0.3.0 and never served, answer -32602 naming their successors.
+Where a section below names a sibling old tool, read its successor.
+
+**The alias window.** Through v0.4.x a `tools/call` naming one of the eight
+takes the v0.3.0 input below, `scope` and `include_own_held` included and
+`claim_key` required, and answers the v0.3.0 output below with the v0.3.0
+refusal codes: the facade translates `scope` to the ring's `workarea` and
+`include_own_held` to its `include_unreviewed`, and a v0.4.0 spelling such
+as `include_unreviewed` is outside the old input schema, so it is
+`request.validation`. `oml_events_tail` rides `GET /v2/events`. Every call,
+refused or not, logs one line with `event` `mcp_alias_called` naming the
+tool, its successor (`oml_write`, `oml_read`, `oml_workarea`, or
+`GET /v2/events` for the tail), the calling key's `key_id` and `tenant_id`,
+and the call's `request_id`: ids only, never the key's value
+([observability](../operations/observability.md), structured logging). The
+operator sees which keys still call an old name, so whose clients to move
+before the removal. **v0.5.0 removes
+the eight**, and a call to one is then -32602 like any tool not served
+(d12).
+
+### `oml_remember`
 
 *Available since v0.1.0 · [releases](../product/releases.md)*
 
@@ -359,11 +779,12 @@ an idempotency-key reuse with a different request; a banned author or source
     "rule": "status ladder: a validated workarea refuses new writes (D8)",
     "message": "workarea fbbb41c5… is validated; writes are refused. Demote, erasure and crew-metadata update are its only admissible mutations, none on this surface.",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
-## `oml_recall`
+### `oml_recall`
 
 *Available since v0.1.0; own held rows, budgets and steering first since v0.2.0 · [releases](../product/releases.md)*
 
@@ -396,6 +817,10 @@ with the key's effective read access. Subtree scoping rides the derived-path
 filter column of the serving indexes
 ([retrieval](../architecture/retrieval.md#the-serving-tier)); hybrid
 FTS + vector is the only search mode. `k` is at most 100, as on the ring.
+The tool keeps its v0.3.0 argument names until `oml_read` replaces it:
+`scope` rides the ring's `workarea` and `include_own_held` its
+`include_unreviewed` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d7).
 
 - `include_own_held` — **optional**, default `false`: the calling key's own
   held rows that match join the hits, ranked in the same order and flagged
@@ -489,7 +914,7 @@ never merged. Every item is a [claim item](#the-claim-item) with `text` and
 quality and latency are unmeasured — [FR-4](../product/roadmap.md).
 
 **Refusals** — scope outside the key's read access (same error as a
-nonexistent node, fail closed); `max_tokens` with `include_bodies: false` on
+nonexistent node, fail closed); `max_tokens` with `include_text: false` on
 the ring, or any field the schema does not declare (`request.validation`).
 Example:
 
@@ -500,11 +925,12 @@ Example:
     "rule": "effective access (D7); unknown and out-of-scope are indistinguishable",
     "message": "no readable workarea 821e1387… for this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
-## `oml_learn`
+### `oml_learn`
 
 *Available since v0.1.0 · [releases](../product/releases.md)*
 
@@ -576,11 +1002,12 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
     "rule": "lineage targets must be readable by the submitting key (fail closed)",
     "message": "derives_from[1] names no artifact readable by this key",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
-## `oml_get`
+### `oml_get`
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
@@ -638,7 +1065,7 @@ row of another key included: unknown and unreadable are indistinguishable;
 erasure, and `access.not_found` for any other erased version
 ([errors](errors.md)).
 
-## `oml_supersede`
+### `oml_supersede`
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
@@ -735,154 +1162,12 @@ of the supersede rule. Example:
     "message": "art_01JB2XF2R7M9… is no longer the tip of supplier-quote-am-7741",
     "details": { "current_tip": { "artifact_id": "art_01JB2Z3E5G7J9L2N4Q6S8UWA1C", "version": 3 } },
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
-## `oml_attach`
-
-*Not scheduled · [releases](../product/releases.md)*
-
-Manage a **resumable upload session** for a file, image or PDF (D3). The
-session is the unit a memory references: open it with the expected plaintext
-SHA-256 and size, move the bytes, then hand the session id to
-[`oml_remember`](#oml_remember). (Rides `/v1/attachments/*` — the provider
-ring.)
-
-The chunk bytes themselves do **not** travel over MCP. Tool messages are
-JSON; base64 would inflate every chunk by a third and push attachment-sized
-payloads through the agent's context. The session's parts are PUT to the
-versioned HTTP API under the same bearer key; this tool opens and inspects
-sessions, nothing more. That split is the accepted cost of keeping the MCP
-surface small; an agent whose harness cannot issue a plain HTTP PUT cannot
-attach files through this plugin.
-
-**Who may call:** keys with writer effective access (the session binds to a
-workarea only when a submission references it).
-
-**Input** — open a session:
-
-```json
-{
-  "action": "open",
-  "media_type": "application/pdf",
-  "size_bytes": 184233,
-  "expected_digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b"
-}
-```
-
-**Output**
-
-```json
-{
-  "upload_session": "ups_01JB2XD9W6E4T2Y8U1O3PA5SKF",
-  "state": "open",
-  "part_size_bytes": 8388608,
-  "parts_expected": 1,
-  "upload_path": "/v1/attachments/uploads/ups_01JB2XD9W6E4T2Y8U1O3PA5SKF/parts/{part_number}",
-  "expires_at": "2026-10-29T18:40:00Z"
-}
-```
-
-**Input** — inspect after a crash or retry (`action: "status"` with the
-session id) returns `state` (`open` | `complete` | `aborted` | `expired`),
-the parts received, and the next part to send — this is what
-"resumable" means: a retry resumes the recorded session rather than
-improvising (D3). On the last part the server verifies the plaintext digest;
-on match the session is `complete` and referenceable, the object is stored
-content-addressed and encrypted per artifact
-([storage](../architecture/storage.md)). A digest mismatch at completion
-moves the session to `aborted` — terminal, open a new one; the refusal is
-`upload.digest_mismatch`, and the mismatched bytes never bind to a claim.
-
-Every attachment of a claim is served to its reviewer before a verdict
-counts, and what review *means* per attachment type — extracted text where a
-deterministic extractor exists, provenance + digest + scan result for opaque
-binaries — is stated honestly in [admission](../architecture/admission.md).
-
-**Refusals** — a key without writer effective access; a session quota or size
-ceiling (typed 429/413 family, [errors.md](errors.md)); referencing an
-incomplete or mismatched session from `oml_remember`. Example:
-
-```json
-{
-  "error": {
-    "code": "upload.digest_mismatch",
-    "rule": "a session records its expected digest; bytes that do not match never bind (D3)",
-    "message": "session ups_01JB2XD9… received bytes with sha256 1c44…, expected 9f2c…; session is terminal, open a new one",
-    "retryable": false
-  }
-}
-```
-
-## `oml_relate_propose`
-
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
-
-Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
-journalled and **pending**; it confers nothing and changes no access until a
-*different* dreamer ratifies it (R2 extends to edges). Ratification is not on
-this surface — it is a dreamer(review) verb behind the serve ceremony on the
-[HTTP API](http-api.md). (Rides `POST /v2/claim-edges` /
-`POST /v2/workareas/{id}/edges` — the lab ring.)
-
-**Who may call:** keys with dreamer(propose) effective access. For a
-workarea edge: propose access on at least one endpoint **and** reader access
-on both. For a claim edge: both claims readable by the key. The
-edge-authority rule is declared in
-[workareas](../architecture/workareas.md#edge-authority).
-
-**Input** — a workarea edge (closed label set: `relates_to`, `continues`,
-`derived_from`, `mirrors`):
-
-```json
-{
-  "kind": "workarea",
-  "label": "continues",
-  "from": "fbbb41c5-9630-4274-ae53-166f562f5286",
-  "to": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
-  "note": "metals-crew Q1 planning continues the Q4 negotiation workarea"
-}
-```
-
-A claim edge uses `kind: "claim"` with artifact ids as endpoints; claim-edge
-proposals are part of the admission pipeline and enter the lineage closure
-computed at promotion time, pending and ratified alike
-([audit and lineage](../architecture/audit-and-lineage.md)). The claim-edge
-label vocabulary is not fixed by the design — an open detail tracked in the
-[roadmap](../product/roadmap.md) ([http-api.md](http-api.md)); the proposal
-event's payload shape is owned by the
-[event catalog](../data/event-catalog.md).
-
-**Output**
-
-```json
-{
-  "edge_id": "we_01JB2Y6T8V1X3Z5B7D9FH2KM4P",
-  "kind": "workarea",
-  "label": "continues",
-  "state": "pending",
-  "proposer_key": "d405428e-4c99-426d-8826-76d28436e423",
-  "awaiting": "ratification by a dreamer(review) key on both endpoints, ratifier ≠ proposer (R2)"
-}
-```
-
-**Refusals** — missing propose access on every endpoint; an endpoint outside
-read scope (fail closed, indistinguishable from nonexistent); a label outside
-the closed set for workarea edges. Example:
-
-```json
-{
-  "error": {
-    "code": "access.not_found",
-    "rule": "edge proposal requires dreamer(propose) on ≥1 endpoint and reader on both (D7)",
-    "message": "endpoint 'to' names no workarea readable by this key",
-    "retryable": false
-  }
-}
-```
-
-## `oml_my_work`
+### `oml_my_work`
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
@@ -975,18 +1260,19 @@ the decision trail belongs to the evidence export, an admin surface.
     "rule": "operator never writes, reads or reviews content (D9)",
     "message": "operator keys have no own-work view",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
 
-## `oml_workarea_info`
+### `oml_workarea_info`
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
 needs before writing — the verbs this key's effective access carries there.
-(Rides `GET /v2/workareas/{id}`, one call — the lab ring.)
+(Rides `GET /v2/workareas/{workarea}`, one call — the lab ring.)
 
 **Who may call:** keys with reader effective access on the node.
 
@@ -1055,65 +1341,7 @@ marked.
 **Refusals** — a node outside read scope, same `access.not_found` error as
 [`oml_recall`](#oml_recall), fail closed.
 
-## `oml_graph`
-
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
-
-A scoped read of claims and their edges: the declared lineage
-(`derives_from`), claim↔claim connection edges with their pending/ratified
-state, and supersession chains within a subtree. The contract is
-**serialize, don't compute**: the server returns the subgraph inside the
-key's read scope; closure computation, path finding and ranking are the
-client's problem. That keeps the server's work bounded and the output
-auditable, at the cost of chattier clients on deep graphs. (Rides the lab
-ring's graph reads — `GET /v2/claim-edges` and
-`GET /v2/memories/{id}/lineage`.)
-
-**Who may call:** keys with reader effective access on the scope. `scope` is
-optional: omitted, it is the key's default workarea (ADR-0022 d4). Reads are
-logged like any read.
-
-**Input**
-
-```json
-{
-  "scope": "fbbb41c5-9630-4274-ae53-166f562f5286",
-  "roots": ["art_01JB2XJH8K1M3P5R7T9W2YA4CE"],
-  "depth": 2,
-  "limit": 100
-}
-```
-
-**Output**
-
-```json
-{
-  "claims": [
-    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" },
-    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" }
-  ],
-  "edges": [
-    { "kind": "derives_from", "from": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "to": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "state": "declared" },
-    { "kind": "connection", "label": "…", "from": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "to": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH", "state": "pending", "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW" }
-  ],
-  "truncated": false,
-  "next_cursor": null
-}
-```
-
-What the graph shows is the **declared** graph, and only that — undeclared
-derivation is invisible to the service and therefore to this tool
-([audit and lineage](../architecture/audit-and-lineage.md)). Nodes outside
-the key's scope are absent; an edge whose far endpoint is unreadable appears
-with the endpoint id only, body-less, so the shape is honest without leaking
-content. The simulation predicate applies: simulation rows and their edges
-are served only inside the audience.
-
-**Refusals** — scope outside read access (`access.not_found`, fail closed);
-a `depth`/`limit` above the served ceiling returns the typed limit error from
-[errors.md](errors.md) rather than a truncated answer pretending to be whole.
-
-## `oml_events_tail`
+### `oml_events_tail`
 
 *Available since v0.1.0; filtered per key since v0.2.0 · [releases](../product/releases.md)*
 
@@ -1210,84 +1438,158 @@ polling interval, by design in v1.
 `after_seq`, or one beyond `head_seq`, is a typed `request.validation`
 refusal, never a silent restart from zero.
 
-## `oml_vocab`
+### `oml_attach`
 
-*Parked · [releases](../product/releases.md)*
+*Not scheduled · [releases](../product/releases.md)*
 
-Read the tenant's vocabularies: term lookup, deterministic typeahead,
-hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
-four actions — each translates to one `GET /v2/vocab/*` call (the lab ring;
-[http-api.md](http-api.md#vocabularies)). Strictly read-only at the reader
-ceiling: proposing a term or mapping is [`oml_remember`](#oml_remember) with
-the matching `kind`, and nothing on this surface deprecates, ratifies or cuts
-a release.
+Manage a **resumable upload session** for a file, image or PDF (D3). The
+session is the unit a memory references: open it with the expected plaintext
+SHA-256 and size, move the bytes, then hand the session id to
+[`oml_remember`](#oml_remember). (Rides `/v1/attachments/*` — the provider
+ring.)
 
-**Who may call:** keys with reader effective access on the vocabulary
-workarea(s) involved. Vocabularies outside scope are absent, fail closed.
+The chunk bytes themselves do **not** travel over MCP. Tool messages are
+JSON; base64 would inflate every chunk by a third and push attachment-sized
+payloads through the agent's context. The session's parts are PUT to the
+versioned HTTP API under the same bearer key; this tool opens and inspects
+sessions, nothing more. That split is the accepted cost of keeping the MCP
+surface small; an agent whose harness cannot issue a plain HTTP PUT cannot
+attach files through this plugin.
 
-**Input** — `action` ∈ `suggest` | `get` | `hierarchy` | `mappings`:
+**Under a connection.** A connection has no key value, and a token is a
+credential only at `/mcp`: it is never accepted on the parts route. Under a
+connection, `open` is therefore refused before any session is created, so no
+session counts against the key's upload quota, with `oauth.attach_refused`
+([errors](errors.md#oauth-connections),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11);
+`status` answers as it would to the key, which has no session to show. No
+file's bytes travel through an upload session under a connection; ADR-0035
+(proposed, in pull request #17) gives a connection small text files inline on
+`oml_remember` instead.
 
-- `suggest` — `{q, workarea_id?, limit?, cursor?}`: prefix+label typeahead
-  over granted vocabulary workareas, deterministic matching only. Returns
-  `{curie, label, term_status}` per suggestion.
-- `get` — `{curie}`: the term's served tip.
-- `hierarchy` — `{curie, direction: parents | children | ancestors |
-  descendants, release?, limit?, cursor?}`: a lookup over the closure
-  materialized at release ratification; `release` defaults to the owning
-  vocabulary's latest ratified release.
-- `mappings` — `{term, limit?, cursor?}`: ratified mappings touching the
-  CURIE — subject, object, predicate, justification, `ratified_at`.
+**Who may call:** keys with writer effective access (the session binds to a
+workarea only when a submission references it).
 
-```json
-{ "action": "get", "curie": "proc:supplier-quote" }
-```
-
-**Output** — `get` returns `term_status` and the ratified successor pointers,
-so an agent whose citation is stale self-heals in one hop:
+**Input** — open a session:
 
 ```json
 {
-  "curie": "proc:supplier-quote",
-  "workarea_id": "408324c0-55dd-4eb7-b39f-2d7f7147dc66",
-  "version": 4,
-  "term_status": "deprecated",
-  "definition_state": "present",
-  "successors": [
-    { "curie": "proc:price-quote", "relation": "replaced_by" }
-  ],
-  "releases": ["rel_01JB2Z2D4F6H8K1M3P5R7TVXZB"]
+  "action": "open",
+  "media_type": "application/pdf",
+  "size_bytes": 184233,
+  "expected_digest": "sha256:9f2c41aa7d0e8b64c3f2a19e5d87b4610c3e9f2a84d7b1c6e0f5a382947d1c5b"
 }
 ```
 
-`replaced_by` is safe for automated rewiring; `consider` requires judgment.
-The same two codes an agent meets when *citing* terms on a submit apply here
-in read form: an unknown or out-of-scope CURIE is absence
-(`access.not_found` — the read twin of `vocab.unknown_curie`, which fails a
-citation closed exactly as `derives_from` does), and a submission citing a
-deprecated term under `enforcement: require` is refused with
-`vocab.inactive_curie`, whose `details` carry the successors and relation —
-under `annotate`, the citation records a finding and never blocks
-([errors.md](errors.md)).
+**Output**
 
-**Refusals** — a CURIE or vocabulary outside read scope, indistinguishable
-from one that does not exist. Example:
+```json
+{
+  "upload_session": "ups_01JB2XD9W6E4T2Y8U1O3PA5SKF",
+  "state": "open",
+  "part_size_bytes": 8388608,
+  "parts_expected": 1,
+  "upload_path": "/v1/attachments/uploads/ups_01JB2XD9W6E4T2Y8U1O3PA5SKF/parts/{part_number}",
+  "expires_at": "2026-10-29T18:40:00Z"
+}
+```
+
+**Input** — inspect after a crash or retry (`action: "status"` with the
+session id) returns `state` (`open` | `complete` | `aborted` | `expired`),
+the parts received, and the next part to send — this is what
+"resumable" means: a retry resumes the recorded session rather than
+improvising (D3). On the last part the server verifies the plaintext digest;
+on match the session is `complete` and referenceable, the object is stored
+content-addressed and encrypted per artifact
+([storage](../architecture/storage.md)). A digest mismatch at completion
+moves the session to `aborted` — terminal, open a new one; the refusal is
+`upload.digest_mismatch`, and the mismatched bytes never bind to a claim.
+
+Every attachment of a claim is served to its reviewer before a verdict
+counts, and what review *means* per attachment type — extracted text where a
+deterministic extractor exists, provenance + digest + scan result for opaque
+binaries — is stated honestly in [admission](../architecture/admission.md).
+
+**Refusals** — a key without writer effective access; a session quota or size
+ceiling (typed 429/413 family, [errors.md](errors.md)); `open` under a
+connection (`oauth.attach_refused`, above); referencing an incomplete or
+mismatched session from `oml_remember`. Example:
 
 ```json
 {
   "error": {
-    "code": "access.not_found",
-    "rule": "CURIE resolution fails closed within the key's effective read scope (D7)",
-    "message": "no readable term proc:supplier-quote for this key",
+    "code": "upload.digest_mismatch",
+    "rule": "a session records its expected digest; bytes that do not match never bind (D3)",
+    "message": "session ups_01JB2XD9… received bytes with sha256 1c44…, expected 9f2c…; session is terminal, open a new one",
     "retryable": false
-  }
+  },
+  "request_id": "req_01J…"
 }
 ```
+
+### `oml_graph`
+
+*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+
+A scoped read of claims and their edges: the declared lineage
+(`derives_from`), claim↔claim connection edges with their pending/ratified
+state, and supersession chains within a subtree. The contract is
+**serialize, don't compute**: the server returns the subgraph inside the
+key's read scope; closure computation, path finding and ranking are the
+client's problem. That keeps the server's work bounded and the output
+auditable, at the cost of chattier clients on deep graphs. (Rides the lab
+ring's designed graph reads — `GET /v2/edges` and
+`GET /v2/memories/{id}/lineage`.)
+
+**Who may call:** keys with reader effective access on the scope. `scope` is
+optional: omitted, it is the key's default workarea (ADR-0022 d4). Reads are
+logged like any read.
+
+**Input**
+
+```json
+{
+  "scope": "fbbb41c5-9630-4274-ae53-166f562f5286",
+  "roots": ["art_01JB2XJH8K1M3P5R7T9W2YA4CE"],
+  "depth": 2,
+  "limit": 100
+}
+```
+
+**Output**
+
+```json
+{
+  "claims": [
+    { "artifact_id": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "claim_key": "accra-metals-price-anchor", "version": 1, "kind": "derived_fact", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" },
+    { "artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "claim_key": "supplier-quote-am-7741", "version": 1, "kind": "memory", "state": "promoted", "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286" }
+  ],
+  "edges": [
+    { "kind": "derives_from", "from": "art_01JB2XJH8K1M3P5R7T9W2YA4CE", "to": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "state": "declared" },
+    { "kind": "connection", "label": "…", "from": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5", "to": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH", "state": "pending", "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW" }
+  ],
+  "truncated": false,
+  "next_cursor": null
+}
+```
+
+What the graph shows is the **declared** graph, and only that — undeclared
+derivation is invisible to the service and therefore to this tool
+([audit and lineage](../architecture/audit-and-lineage.md)). Nodes outside
+the key's scope are absent; an edge whose far endpoint is unreadable appears
+with the endpoint id only, body-less, so the shape is honest without leaking
+content. The simulation predicate applies: simulation rows and their edges
+are served only inside the audience.
+
+**Refusals** — scope outside read access (`access.not_found`, fail closed);
+a `depth`/`limit` above the served ceiling returns the typed limit error from
+[errors.md](errors.md) rather than a truncated answer pretending to be whole.
 
 ---
 
 ## Wiring it into your agent
 
-*Available since v0.1.0; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; setup through Claude Code's plugin settings since v0.4.0 · [releases](../product/releases.md)*
 
 A generic MCP client configuration — the shape most harnesses accept, adjust
 the key names to yours:
@@ -1306,7 +1608,78 @@ the key names to yours:
 }
 ```
 
-Operational notes:
+In Claude Code the `oml` plugin declares this entry for you, reading two
+plugin settings and nothing from the environment
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d1, d2):
+
+```json
+{
+  "mcpServers": {
+    "oml": {
+      "type": "http",
+      "url": "${user_config.url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_key}"
+      }
+    }
+  }
+}
+```
+
+`url` is the server without `/mcp` and `api_key` the agent's key, marked
+`sensitive`, so Claude Code keeps it in the system keychain and never in
+`settings.json`; neither has a default. `/plugin install` asks for both in a
+masked dialog and `/plugin configure oml@open-memory-lab` changes them; from a
+shell, Claude Code 2.1.285 or later reads them from the key file through
+`claude plugin configure --values-stdin`, as the
+[plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md#install)
+shows (ADR-0040 d4, d5). A v0.3.x install that only exported `OML_URL` and
+`OML_API_KEY` serves no tools until the plugin is configured once.
+`scripts/check_plugin.py` fails when the entry or the two options differ from
+this shape (ADR-0040 d6).
+
+### Claude on the web, on the desktop and on a phone
+
+Claude's hosted apps — claude.ai, Claude Desktop, and the Claude iOS and Android
+apps — cannot carry the header above, so they connect through a connection
+instead (since v0.4.0, no live connection yet: [FR-34](../product/roadmap.md)).
+The deployment must set `oauth.issuer` to its public origin, and its reverse
+proxy must pass the discovery and OAuth paths through
+([deployment](../operations/deployment.md#connections-behind-a-reverse-proxy)).
+
+1. An admin issues the agent's connector key and its connect code in one call,
+   one principal per agent as always:
+
+    ```console
+    $ oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea> --connect-code
+    https://oml.example.com/mcp
+    7KQ2-M9XD-4TPA
+    ```
+
+    `claude-mobile` is the key's [name](http-api.md#names-and-ids). The first
+    line is the connector URL, the second the code: single use, alive 10 minutes
+    by default, shown this once
+    ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
+
+2. On claude.ai, at Customize > Connectors, add a custom connector with exactly
+   that URL — no trailing slash. Custom connectors are offered on the Free plan
+   (one connector), Pro, Max, Ultra, Team and Enterprise
+   ([Anthropic Help Center](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
+   fetched 2026-10-31).
+3. Claude opens OML's connect page; enter the code there and confirm. What
+   the page says, word for word, is declared on the
+   [HTTP API](http-api.md#connections-oauth-for-hosted-mcp-clients).
+4. The connector is then usable from every Claude app signed in to that account,
+   the mobile apps included. claude.ai holds only tokens bound to that one key;
+   no key value exists to paste. It opens no upload session: the designed
+   `oml_attach` `open` is refused under a connection ([`oml_attach`](#oml_attach)).
+
+`oml keys disconnect claude-mobile <connection-id>` ends the connection, and
+revoking the key ends it too. A code that lapsed before use is replaced with
+`oml keys connect-code claude-mobile`. Claude Code keeps the header
+configuration above.
+
+### Operational notes
 
 - **One key per agent.** Issue each crew member its own key
   ([key issuance](../architecture/roles-and-keys.md#key-lifecycle), via the
@@ -1314,38 +1687,53 @@ Operational notes:
   collusion statistics depend on it. `oml keys issue-agent <key-name>
   --principal <principal> --workarea <workarea>` issues the one key this
   plugin needs, under the key's [name](http-api.md#names-and-ids)
-  ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12), and prints the
-  `OML_URL` and `OML_API_KEY` lines it reads
+  ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12)
   ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)), and the
   [`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs it for an
   operator with `--out`, so the value lands in an owner-only file and never in
-  a transcript; this plugin cannot issue keys, since key issuance is an
-  admin verb (R1). Keep the key in the environment, never in the config file
-  you commit.
+  a transcript, the file the plugin's shell configuration reads, and prints
+  that configuration's `claude plugin configure` line (ADR-0040 d4); this plugin
+  cannot issue keys, since key issuance is an admin verb (R1). Never put the
+  key in a config file you commit.
 - **One key does the agent's whole loop.** An agent that writes and recalls
   holds one writer-role key with a writer grant and a reader grant on its
   workarea, and that workarea as its default
   ([grant admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)):
-  it remembers, recalls with its own held rows, reads back, supersedes,
-  proposes retirement, lists its own work and tails its events through the
-  one `oml` entry above. A recall-only agent gets a reader key; a proposing
+  it writes, recalls with its own held rows, reads back, supersedes,
+  proposes retirement and lists its own work, with the state that says what
+  became of each write, through the one `oml` entry above. A recall-only agent gets a reader key; a proposing
   agent, dreamer(propose). A reviewing crew member does not use this plugin
   for its verdicts — verdicts live on the [HTTP API](http-api.md) behind the
   serve ceremony.
 - **Retry with intent.** Put a stable `idempotency_key` on every
-  `oml_remember`/`oml_learn` your harness might retry; retries then cost
+  [`oml_write`](#oml_write) your harness might retry; retries then cost
   nothing and duplicate nothing.
-- **Expect `held`.** A successful write is a claim under test. Poll
-  [`oml_my_work`](#oml_my_work) or [`oml_events_tail`](#oml_events_tail) if
-  the agent's plan depends on its memory becoming visible to others.
+- **Allow the reads.** A plugin cannot allow its own tools; allow
+  `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea` in
+  `permissions.allow` to stop the question on reads and keep it on every
+  write, or `mcp__plugin_oml_oml` to allow all three (amends
+  [ADR-0029](../adr/ADR-0029-session-start-hook.md) d8).
+- **Expect `held`.** A successful write is a claim under test. List the
+  key's own work with [`oml_read`](#oml_read) and `state` if the agent's plan
+  depends on its memory becoming visible to others.
 - **Start each session from memory.** In Claude Code the `oml` plugin's
   SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,
   which injects the workarea's steering, the key's recent submissions and the
-  memories matching the working directory's name, under a token budget and
-  under the same `OML_URL` and `OML_API_KEY` as the entry above; it is
+  memories matching the working directory's name, under a token budget; it
+  reads the plugin's two settings first and `OML_URL` and `OML_API_KEY`
+  second, as one pair, never one value from each: either setting set and
+  non-empty makes the settings the pair, one of them alone prints nothing
+  and names the other, an empty value counts as unset, and the CLI's stored
+  credentials are never read (ADR-0040 d3); it is
   declared, with its variables and how it fails open, on the
   [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
   ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).
+- **Recall after a failed command, when opted in.** With
+  `OML_FAILURE_RECALL=1`, the plugin's PostToolUseFailure hook runs
+  `oml hook tool-failure` on a failed Bash command and injects at most three
+  memories matching the error's distinctive words, declared on the
+  [CLI reference](../cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command)
+  ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)).
 - Liveness for your own infrastructure: `oml-server` exposes `/healthz` and
   `/readyz` ([deployment](../operations/deployment.md)); the MCP endpoint
   itself has no separate probe.
@@ -1355,11 +1743,20 @@ Operational notes:
 This surface is owned by ADR-0014 ([decision register](../adr/index.md)): one
 versioned JSON HTTP API with MCP as a stateless streamable-HTTP facade, and
 idempotency records. The two-ring split each tool rides, and the
-token-derived target workarea that made the `workarea` arguments optional,
+key-derived target workarea that made the `workarea` arguments optional,
 are [ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. `oml_get`,
 `oml_supersede`, the claim item, own held rows and budgets on recall, the
 own-work and workarea reads, and the events-tail visibility rule are
 the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
 which would amend ADR-0014 d2. Workarea arguments that take a name as well as
 an id, and the named crew record the workarea read serves, are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s.
+[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s. The three-tool catalog, its
+modes and annotations, the designed annex, the events tail leaving MCP, and
+the rule that a new capability is a parameter, a resource or a hook first are
+[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)'s
+(d2 to d5, d8). The Claude Code plugin's two settings and the entry that
+reads them alone are
+[ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)'s (d1, d2, d6). Authentication by a connection,
+for Claude's hosted apps, is
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s, which
+amends ADR-0014 d1, d2 and d4.

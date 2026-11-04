@@ -1,5 +1,5 @@
 {
-  "description": "Start every session from what Open Memory Lab holds for this agent's key.",
+  "description": "Start every session from what Open Memory Lab holds for this agent's key and, when opted in, recall what it holds about a failed command.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,29 @@
             "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0",
             "timeout": 10,
             "statusMessage": "Loading OML memory"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook tool-failure || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0",
+            "timeout": 1
           }
         ]
       }

@@ -52,10 +52,8 @@ def test_a_write_whose_response_was_lost_is_retried_under_the_same_key_and_repla
 ):
     claim_key = f"lost-{secrets.token_hex(4)}"
     transport = LoseFirstSubmitResponse()
-    with OmlClient(
-        base_url=oml_server.url, api_key=oml_server.agent_key, transport=transport
-    ) as client:
-        written = client.remember(claim_key, "A write whose first response never arrived.")
+    with OmlClient(url=oml_server.url, api_key=oml_server.agent_key, transport=transport) as client:
+        written = client.write("A write whose first response never arrived.", claim_key=claim_key)
 
     assert transport.lost == 1
     assert transport.keys == [written.idempotency_key, written.idempotency_key]
@@ -68,8 +66,8 @@ def test_a_write_whose_response_was_lost_is_retried_under_the_same_key_and_repla
 def test_a_caller_supplied_key_replays_the_first_write(agent):
     claim_key = f"replay-{secrets.token_hex(4)}"
     key = f"sdk-test/{secrets.token_hex(8)}"
-    first = agent.remember(claim_key, "Written once, sent twice.", idempotency_key=key)
-    second = agent.remember(claim_key, "Written once, sent twice.", idempotency_key=key)
+    first = agent.write("Written once, sent twice.", claim_key=claim_key, idempotency_key=key)
+    second = agent.write("Written once, sent twice.", claim_key=claim_key, idempotency_key=key)
     assert (first.replayed, second.replayed) == (False, True)
     assert first.idempotency_key == second.idempotency_key == key
     assert second.value.artifact_id == first.value.artifact_id
@@ -78,15 +76,13 @@ def test_a_caller_supplied_key_replays_the_first_write(agent):
 def test_a_key_reused_with_a_different_body_is_refused_and_not_retried(oml_server, agent):
     claim_key = f"mismatch-{secrets.token_hex(4)}"
     key = f"sdk-test/{secrets.token_hex(8)}"
-    agent.remember(claim_key, "The first body.", idempotency_key=key)
+    agent.write("The first body.", claim_key=claim_key, idempotency_key=key)
     transport = CountSubmits()
     with (
-        OmlClient(
-            base_url=oml_server.url, api_key=oml_server.agent_key, transport=transport
-        ) as client,
+        OmlClient(url=oml_server.url, api_key=oml_server.agent_key, transport=transport) as client,
         pytest.raises(IdempotencyError) as caught,
     ):
-        client.remember(claim_key, "A different body.", idempotency_key=key)
+        client.write("A different body.", claim_key=claim_key, idempotency_key=key)
     assert caught.value.code == "idempotency.digest_mismatch"
     assert caught.value.status == 409
     assert caught.value.retryable is False
@@ -95,8 +91,8 @@ def test_a_key_reused_with_a_different_body_is_refused_and_not_retried(oml_serve
 
 def test_each_call_sends_a_fresh_key(agent):
     tag = secrets.token_hex(4)
-    one = agent.remember(f"fresh-{tag}-1", "The first of two writes.")
-    two = agent.remember(f"fresh-{tag}-2", "The second of two writes.")
+    one = agent.write("The first of two writes.", claim_key=f"fresh-{tag}-1")
+    two = agent.write("The second of two writes.", claim_key=f"fresh-{tag}-2")
     assert one.idempotency_key != two.idempotency_key
     assert (one.replayed, two.replayed) == (False, False)
 
@@ -131,8 +127,8 @@ def test_a_retryable_refusal_is_retried_under_the_same_key():
         return httpx.Response(202, json=accepted)
 
     with OmlClient(
-        base_url="http://oml.test", api_key="oml_test_key", transport=httpx.MockTransport(handler)
+        url="http://oml.test", api_key="oml_test_key", transport=httpx.MockTransport(handler)
     ) as client:
-        written = client.remember("retry", "Retried once.")
+        written = client.write("Retried once.", claim_key="retry")
     assert len(sent) == 2 and sent[0] == sent[1] == written.idempotency_key
     assert written.value.artifact_id == "art_1"

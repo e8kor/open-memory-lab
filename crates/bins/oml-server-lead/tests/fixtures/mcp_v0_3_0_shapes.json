@@ -1,0 +1,38 @@
+{
+  "source": "The v0.3.0 output shapes of the eight MCP tools, as v0.3.1 (96b72e8) served them from crates/transports/oml-transport-http/src/mcp.rs and docs/api/mcp-plugin.md declared them: each tool's structuredContent members, and for a tool that returns items, the members of one item. A claim item's text is text: the v0.3.0 facade renamed the ring's body to text.",
+  "tools": {
+    "oml_remember": {
+      "fields": ["artifact_id", "attachments_bound", "claim_key", "idempotent_replay", "state", "version", "workarea"]
+    },
+    "oml_learn": {
+      "fields": ["artifact_id", "attachments_bound", "claim_key", "idempotent_replay", "state", "version", "workarea"]
+    },
+    "oml_recall": {
+      "fields": ["hits", "steering"],
+      "items": {
+        "hits": ["artifact_id", "claim_key", "created_at", "kind", "promoted_at", "replaces", "retirement", "score", "state", "text", "tip", "tokens", "version", "workarea", "workarea_path"]
+      }
+    },
+    "oml_get": {
+      "fields": ["artifact_id", "attachments", "claim_key", "created_at", "derives_from", "kind", "promoted_at", "replaces", "retirement", "state", "text", "tip", "tokens", "version", "workarea", "workarea_path"]
+    },
+    "oml_supersede": {
+      "fields": ["artifact_id", "claim_key", "idempotent_replay", "replaces", "retirement", "state", "version", "workarea"]
+    },
+    "oml_my_work": {
+      "fields": ["items", "next_cursor"],
+      "items": {
+        "items": ["artifact_id", "claim_key", "created_at", "held_expires_at", "kind", "promoted_at", "replaces", "retirement", "state", "tip", "tokens", "version", "workarea", "workarea_path"]
+      }
+    },
+    "oml_workarea_info": {
+      "fields": ["children", "crew", "edges", "id", "my_effective_verbs", "name", "parent", "path", "permission_epoch", "status"]
+    },
+    "oml_events_tail": {
+      "fields": ["events", "head_seq", "idle", "next_after_seq"],
+      "items": {
+        "events": ["at", "event_type", "seq", "subject", "workarea"]
+      }
+    }
+  }
+}

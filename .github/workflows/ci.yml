@@ -112,11 +112,16 @@ jobs:
           OML_CLI=./target/release/oml OML_CLI_CREDENTIALS="$state/credentials" \
             bash scripts/quickstart.sh || { tail -n 50 "$state/stderr"; exit 1; }
 
+  # The repository's compose file, then `oml quickstart`'s own (ADR-0041
+  # d9): the image built here is tagged with the CLI's version, so the
+  # compose file the verb writes, pinned to that version, starts it without
+  # a pull.
   compose:
-    name: docker profile (compose up, quickstart)
+    name: docker profile (compose up, quickstart, oml quickstart)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build and start
         run: docker compose up -d --build
       - name: Quickstart inside the container
@@ -127,6 +132,27 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose down -v
+      - name: Build the CLI and tag the image with its version
+        run: |
+          cargo build --release --locked --bin oml
+          version="$(./target/release/oml --version | awk '{print $2}')"
+          docker tag ghcr.io/e8kor/open-memory-lab:latest "ghcr.io/e8kor/open-memory-lab:$version"
+      - name: oml quickstart, then a second run refused as quickstart.exists
+        run: |
+          ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml"
+          for f in .env keys keys/agent keys/reviewer credentials; do
+            stat -c '%a %n' "$RUNNER_TEMP/oml/$f"
+          done
+          if ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml" 2>"$RUNNER_TEMP/again"; then
+            echo "a second quickstart was not refused" >&2; exit 1
+          fi
+          grep -q quickstart.exists "$RUNNER_TEMP/again"
+      - name: oml quickstart's logs on failure
+        if: failure()
+        run: docker compose --project-directory "$RUNNER_TEMP/oml" logs
+      - name: Stop oml quickstart's stack
+        if: always()
+        run: docker compose --project-directory "$RUNNER_TEMP/oml" down -v || true
 
   image:
     name: release image (${{ matrix.platform }})
@@ -224,6 +250,61 @@ jobs:
       - name: The CLI's unit tests
         run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
 
+  # The installers of ADR-0041 against a real, published release, as a user
+  # runs them: install.sh piped to sh on Linux and macOS, install.ps1 under
+  # PowerShell 7 and, through Invoke-Expression, Windows PowerShell 5.1, each
+  # into a user directory, then the installed `oml --version`. One Linux leg
+  # has cosign and requires the signature; the others have no cosign and take
+  # the checksum-only path.
+  install-smoke:
+    name: installer (${{ matrix.runner }}${{ matrix.cosign && ', cosign' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04
+            cosign: true
+          - runner: macos-15
+          - runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The newest published release. The installers' default is the
+      # workspace version, which has no release until its tag.
+      OML_SMOKE_VERSION: 0.3.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+        if: matrix.cosign
+      - name: shellcheck install.sh
+        if: runner.os == 'Linux' && !matrix.cosign
+        run: shellcheck -s sh scripts/install/install.sh
+      - name: install.sh piped to sh, then oml --version
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          flags=(--version "$OML_SMOKE_VERSION" --dir "$RUNNER_TEMP/oml-bin")
+          if [ "${{ matrix.cosign }}" = "true" ]; then flags+=(--require-signature); fi
+          sh -s -- "${flags[@]}" < scripts/install/install.sh
+          got="$("$RUNNER_TEMP/oml-bin/oml" --version)"
+          [ "$got" = "oml $OML_SMOKE_VERSION" ] || { echo "got '$got'" >&2; exit 1; }
+      - name: install.ps1 under PowerShell 7, then oml --version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ./scripts/install/install.ps1 -Version $env:OML_SMOKE_VERSION -Dir "$env:RUNNER_TEMP\oml-pwsh"
+          $got = (& "$env:RUNNER_TEMP\oml-pwsh\oml.exe" --version | Out-String).Trim()
+          if ($got -ne "oml $env:OML_SMOKE_VERSION") { throw "got '$got'" }
+      - name: install.ps1 through Invoke-Expression under Windows PowerShell 5.1, then oml --version
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:OML_VERSION = $env:OML_SMOKE_VERSION
+          $env:OML_INSTALL_DIR = "$env:RUNNER_TEMP\oml-ps51"
+          Get-Content -Raw ./scripts/install/install.ps1 | Invoke-Expression
+          $got = (& "$env:RUNNER_TEMP\oml-ps51\oml.exe" --version | Out-String).Trim()
+          if ($got -ne "oml $env:OML_SMOKE_VERSION") { throw "got '$got'" }
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
@@ -243,6 +324,17 @@ jobs:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
       - run: python scripts/check_agent_kit.py
+      # Claude Code's own validator, which errors on a reference to an
+      # undeclared option and on an MCP url that is not absolute; 2.1.281 is
+      # the first that checks MCP entries (ADR-0040 d2, d5).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: claude plugin validate --strict
+        run: |
+          npm install --global @anthropic-ai/claude-code@2.1.312
+          claude plugin validate --strict plugins/oml
+          claude plugin validate --strict plugins/oml-admin
 
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md

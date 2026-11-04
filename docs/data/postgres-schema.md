@@ -381,7 +381,10 @@ issued-without-value (D9, declared in [roles-and-keys](../architecture/roles-and
 CREATE TABLE api_keys (
     id         uuid        PRIMARY KEY,
     tenant_id  uuid,                    -- NULL for provider-level operator keys
-    hash       bytea       NOT NULL UNIQUE,
+    hash       bytea       UNIQUE,      -- SHA-256 of the value; always NULL for a connector key,
+                                        -- and NULL for a bearer key only after a re-fold
+    credential text        NOT NULL     -- folded from key.issued.credential (ADR-0031 d7)
+        CHECK (credential IN ('bearer', 'connection')),
     role       text        NOT NULL
         CHECK (role IN ('reader', 'writer', 'dreamer', 'admin', 'operator')),
     principal  text        NOT NULL,
@@ -398,7 +401,7 @@ CREATE TABLE api_keys (
                                           -- satisfies it; 'service' never counts as review capacity
     default_workarea_id uuid,
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
-                                          -- names no workarea — this, or X-OML-Workarea, resolves it
+                                          -- names no workarea — this, or a sent workarea, resolves it
     issued_seq bigint      NOT NULL,      -- journal seq of this key's key.issued, or of the
                                           -- key.rotated that minted it; the floor of its
                                           -- permission epoch (ADR-0025 d14)
@@ -410,7 +413,8 @@ CREATE TABLE api_keys (
     UNIQUE (tenant_id, id),               -- target of the tenant-scoped grant and denial references
     FOREIGN KEY (tenant_id, rotated_from) REFERENCES api_keys (tenant_id, id),
     FOREIGN KEY (tenant_id, default_workarea_id) REFERENCES workareas (tenant_id, id),
-    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id)
+    FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    CHECK (credential = 'bearer' OR hash IS NULL)  -- a connector key never has a hash
 );
 
 CREATE TABLE grants (
@@ -518,6 +522,218 @@ constraint (ADR-0034 d12). The keys built this way:
   tenant table is a column built with no key, or not built; it takes the pair when its migration
   lands.
 
+## connections (ADR-0031)
+
+**Status:** built in `migrations/0012_connections.sql` (`api_keys.credential`, `connect_codes`,
+`oauth_connections`, `oauth_tokens`) and `migrations/0013_oauth_clients.sql` (`oauth_clients`,
+`oauth_authorizations`), and in `oml-pg`'s connection store · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
+[ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8).
+
+Connect codes, connections, their tokens, and the deployment-level state the authorization server
+keeps before a code names a key ([roles and keys](../architecture/roles-and-keys.md#connections),
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). No code, token or
+authorization code is stored, only its SHA-256, and no idempotency record holds a connect code
+([HTTP API — idempotency](../api/http-api.md#idempotency)).
+
+```sql
+CREATE TABLE oauth_clients (           -- clients the authorization server knows; deployment-level
+    client_id       text        PRIMARY KEY,   -- a metadata document's https URL, or server-minted
+    tenant_id       uuid        NOT NULL,      -- always the reserved provider tenant
+    kind            text        NOT NULL CHECK (kind IN ('cimd', 'dcr')),
+    client_name     text        NOT NULL,
+    redirect_uris   text[]      NOT NULL,      -- each inside the redirect allowlist
+    metadata_digest bytea       NOT NULL,      -- SHA-256 of the document or registration as received
+    fetched_at      timestamptz,               -- cimd: when the cached document was fetched;
+                                               -- kept at most 24 hours from it; at most 10 000
+                                               -- cimd rows, the least recently used one with no
+                                               -- connected_at evicted first (ADR-0031 d5)
+    max_age         integer     CHECK (max_age BETWEEN 0 AND 86400),
+                                               -- cimd: its Cache-Control lifetime in seconds
+                                               -- from fetched_at, capped at 24 hours; past it
+                                               -- the copy is served only when a fresh fetch
+                                               -- fails or a fetch cap is full (ADR-0031 d5)
+    last_used_at    timestamptz,               -- cimd: the eviction order
+    connected_at    timestamptz,               -- the first Connect that named this client; a
+                                               -- refetch keeps it; read by eviction and by the
+                                               -- removal of a dcr row (ADR-0031 d5)
+    created_at      timestamptz NOT NULL
+);
+
+CREATE TABLE oauth_authorizations (    -- an authorization request whose connect code verified;
+                                       -- before that the request is only its sealed handle and
+                                       -- has no row (ADR-0031 d9)
+    id             uuid        PRIMARY KEY,
+    tenant_id      uuid        NOT NULL,       -- always the reserved provider tenant
+    handle_hash    bytea       NOT NULL UNIQUE,-- SHA-256 of the confirmation's 256-bit handle
+    client_id      text        NOT NULL,       -- no reference: a cached document may be evicted
+    client_kind    text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
+    metadata_digest bytea      NOT NULL,       -- copied from the sealed handle
+    redirect_uri   text        NOT NULL,
+    redirect_uri_sent boolean  NOT NULL,       -- whether the request carried redirect_uri,
+                                               -- for the token endpoint's rule
+    code_challenge text        NOT NULL,       -- S256 only, 43 base64url characters
+    state          text,                       -- at most 512 bytes; echoed verbatim
+    expires_at     timestamptz NOT NULL,       -- the sealed handle's: ten minutes after the GET
+    code_id        uuid        NOT NULL,       -- the verified connect code; plain uuids, since
+    code_tenant_id uuid        NOT NULL,       -- the code is another tenant's row: these three
+    key_id         uuid        NOT NULL        -- are copied from it when it verifies
+);
+
+CREATE TABLE connect_codes (
+    id          uuid        PRIMARY KEY,
+    tenant_id   uuid        NOT NULL,
+    key_id      uuid        NOT NULL,
+    hash        bytea       NOT NULL UNIQUE,   -- SHA-256 of the 12 decoded symbols
+    issued_seq  bigint      NOT NULL,          -- journal seq of its connection.code_issued
+    expires_at  timestamptz NOT NULL,
+    redeemed_at timestamptz,                   -- its first correct entry on the page
+    voided_seq  bigint,                        -- seq of the connection.code_issued,
+                                               -- connection.revoked or key.revoked that voided it
+                                               -- (roles-and-keys Connections; ADR-0031 d8)
+    UNIQUE (tenant_id, id),                    -- target of oauth_connections' code reference
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id)
+);
+
+-- one live code per key: minting a code voids every unredeemed one of the key in its commit.
+CREATE UNIQUE INDEX connect_codes_live ON connect_codes (tenant_id, key_id)
+    WHERE redeemed_at IS NULL AND voided_seq IS NULL;
+
+CREATE TABLE oauth_connections (     -- a row is created at Connect, state 'authorized'
+    id                   uuid        PRIMARY KEY,
+    tenant_id            uuid        NOT NULL,
+    key_id               uuid        NOT NULL,
+    code_id              uuid        NOT NULL,
+    client_id            text        NOT NULL,  -- no reference: oauth_clients is the provider tenant's;
+                                                -- the token endpoint's client (ADR-0031 d5)
+    client_kind          text        NOT NULL CHECK (client_kind IN ('cimd', 'dcr')),
+    client_metadata_digest bytea     NOT NULL,  -- these two copied from the authorization request at
+                                                -- Connect, for connection.opened
+    redirect_uri         text        NOT NULL,
+    redirect_uri_sent    boolean     NOT NULL,  -- copied from the authorization request
+    resource             text        NOT NULL,  -- <issuer>/mcp at Connect; connection.opened
+                                                -- journals it; a token works only while it is
+                                                -- the current <issuer>/mcp (ADR-0031 d10, d11)
+    code_challenge       text        NOT NULL,
+    auth_code_hash       bytea       UNIQUE,    -- SHA-256 of the authorization code; kept after
+                                                -- redemption so a second redemption is detected
+                                                -- (ADR-0031 d10)
+    auth_code_expires_at timestamptz,
+    auth_code_redeemed_at timestamptz,          -- set at the token exchange; a presented code
+                                                -- whose row has it set goes to the reuse rule
+                                                -- (roles-and-keys Connections)
+    state                text        NOT NULL CHECK (state IN ('authorized', 'open', 'revoked')),
+    opened_seq           bigint,                -- journal seq of its connection.opened
+    revoked_seq          bigint,                -- its connection.revoked, or the connection.opened
+                                                -- that replaced it
+    revoked_cause        text        CHECK (revoked_cause IN
+                             ('admin', 'refresh_reuse', 'code_reuse', 'replaced')),
+    created_at           timestamptz NOT NULL,
+    UNIQUE (tenant_id, id),                     -- target of oauth_tokens' connection reference
+    UNIQUE (tenant_id, code_id),                -- one connect code, at most one connection
+    FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, code_id) REFERENCES connect_codes (tenant_id, id)
+);
+
+-- at most one open connection per key (ADR-0031 d7).
+CREATE UNIQUE INDEX oauth_connections_open ON oauth_connections (tenant_id, key_id)
+    WHERE state = 'open';
+
+CREATE TABLE oauth_tokens (
+    hash          bytea       PRIMARY KEY,      -- SHA-256 of the token string
+    tenant_id     uuid        NOT NULL,
+    connection_id uuid        NOT NULL,
+    kind          text        NOT NULL CHECK (kind IN ('access', 'refresh')),
+    expires_at    timestamptz NOT NULL,         -- set at minting; rotation never changes it
+    rotated_at    timestamptz,                  -- refresh only: presenting it after this is reuse
+    created_at    timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, connection_id) REFERENCES oauth_connections (tenant_id, id)
+);
+```
+
+`connect_codes`, `oauth_connections` and `oauth_tokens` carry their key's `tenant_id` and the
+tenant's RLS. Each of their uniqueness rules on an id, `connect_codes_live`,
+`oauth_connections_open` and `(tenant_id, code_id)`, leads with `tenant_id`: a unique check reads
+past row security and runs before the foreign-key check, so a rule on the bare id would refuse
+another tenant's insert naming a key with a live code or an open connection, or a redeemed code,
+as `23505`, and show that tenant's state to anyone holding the uuid. Led by `tenant_id`, such an
+insert is refused by the tenant-scoped key, `23503`, exactly as one naming no row is. The
+semantics are unchanged, since a key and a code each belong to one tenant through those keys.
+`oauth_clients` and `oauth_authorizations` hold state from before any code names a key, so they
+belong to the reserved provider tenant, under its RLS, and hold no tenant content: a client's
+self-description and a page's request in progress. The code, authorization-code and token
+digests are found by the same pre-tenant authentication lookup that finds `api_keys.hash`; the
+matched row's `tenant_id` then sets `oml.tenant_id` for everything after. At `/mcp` the lookup
+matches only a row of kind `access`, and at a refresh only a row of kind `refresh`
+([roles and keys](../architecture/roles-and-keys.md#connections)). The token endpoint never reads
+`oauth_clients`: the client is the connection's `client_id`, so evicting a cached `cimd` row, or
+its document lapsing, never affects a connection. A confirmation, Connect or Cancel, deletes
+its `oauth_authorizations` row by `handle_hash` under the provider tenant (`DELETE … RETURNING`),
+then sets `oml.tenant_id` from the returned `code_tenant_id` before it reads `connect_codes` and
+writes `oauth_connections`, in one transaction. Connect, before the switch, also stamps
+`oauth_clients.connected_at` for the returned `client_id` where it is null, and the stamp commits
+only with the connection row. A later confirmation with that handle finds no row and answers
+`oauth.authorization_expired`.
+
+**The client caps are counted under a lock.** Caching a new document and inserting a registration
+each take a transaction-scoped advisory lock of their own before they count, so two racing inserts
+cannot both pass a cap at its last free row. A new document in a cache holding 10 000 `cimd` rows
+first deletes the least recently used one whose `connected_at` is null (`last_used_at` nulls
+first), selected `FOR UPDATE` so a Connect that stamped it meanwhile keeps it; finding none, it
+writes nothing and the document serves its request uncached. A refetch updates its row in place,
+keeping `connected_at` and `created_at`. A registration counts the `dcr` rows whose `connected_at`
+is null and whose `created_at` is within 24 hours, and is refused at 10 000 as `limit.rate`; the
+removal of unused registrations deletes those 24 hours old or more (ADR-0031 d5).
+
+**Redemption and rotation are conditional updates.** Two racing requests with one code or one
+refresh token cannot both pass, because each mints only when its own update matched a row. The
+token exchange, in the transaction that commits `connection.opened` under the per-tenant chain
+lock, first reads the row by `auth_code_hash` and checks the client, the verifier, the
+`redirect_uri`, the code's voiding, the key and the resource, and a failed check consumes nothing;
+then:
+
+```sql
+UPDATE oauth_connections
+   SET auth_code_redeemed_at = now(), state = 'open', opened_seq = $seq
+ WHERE auth_code_hash = $h AND state = 'authorized'
+   AND auth_code_redeemed_at IS NULL AND auth_code_expires_at > now()
+RETURNING id;
+```
+
+A presented code whose row has `auth_code_redeemed_at` set, or whose update returns no row because
+a racing exchange redeemed it first, is judged by the reuse rule of
+[roles and keys](../architecture/roles-and-keys.md#connections); when it is reuse, the token
+endpoint revokes the connection (`connection.revoked`, cause `code_reuse`). A refresh runs in one
+transaction that
+does not take the chain lock:
+
+```sql
+SELECT connection_id FROM oauth_tokens WHERE hash = $h AND kind = 'refresh';   -- $c
+SELECT id FROM oauth_connections WHERE id = $c FOR UPDATE;
+UPDATE oauth_tokens SET rotated_at = now()
+ WHERE hash = $h AND kind = 'refresh' AND rotated_at IS NULL AND expires_at > now()
+RETURNING connection_id;
+-- one row: insert the new access and refresh rows for $c, then commit
+```
+
+When the update returns no row while the row with that hash has `rotated_at` set, the token was
+rotated already: that is reuse, and the revocation (`connection.revoked`, cause `refresh_reuse`)
+commits in a transaction that takes the per-tenant chain lock. When it returns no row because the
+token expired, the answer is `invalid_grant` and nothing is revoked. Before the update, under the
+row lock, the refresh checks that the connection is open, that the request's `client_id` is the
+connection's, and the key's state and the connection's resource; a failed check answers
+`invalid_grant` and rotates nothing. Removal is
+operational, run by the lead at its start and every hour after, journalling nothing (ADR-0031
+d5, d9, d10, d12): an authorization request's row at Connect or Cancel, in that step's commit, or 24
+hours after it lapses unused; a registered client 24 hours
+after its registration while its `connected_at` is null; an `authorized` connection row once its
+`auth_code_expires_at` has passed unexchanged; a token row only at its own `expires_at` or at its
+connection's revocation, so a rotated refresh token keeps its row, and reuse of it inside that
+window is always recognized; and `auth_code_hash`, cleared with the connection's token rows once
+the connection is revoked, so a second redemption is recognized for as long as the connection
+stands.
+
 ## vocabularies (ADR-0021)
 
 Vocabulary state is claims plus two folds of the journal and one per-release materialization:
@@ -593,6 +809,9 @@ CREATE TABLE lead_lease (        -- cluster-mode lead election (ADR-0023 d14); N
     singleton        boolean PRIMARY KEY DEFAULT true CHECK (singleton),  -- one row
     holder_node_id   text        NOT NULL,
     address          text        NOT NULL,   -- followers discover the lead here
+    oauth_issuer     text,                   -- the lead's oauth.issuer, NULL when unset; written when
+                                             -- it takes the lease; followers serve the OAuth surface
+                                             -- from it and have none of their own (ADR-0031 d14)
     lease_epoch      bigint      NOT NULL,
     expires_at       timestamptz NOT NULL    -- renewed on heartbeat; takeover journals
 );                                           -- system.lead_acquired; the chain lock is the fence
@@ -618,13 +837,14 @@ CREATE TABLE idempotency (
     key_id         uuid        NOT NULL,
     workarea_id    uuid        NOT NULL,  -- the resolved node id; the nil UUID
                                           -- (00000000-0000-0000-0000-000000000000) for endpoints
-                                          -- that name no workarea; for a /v1 X-OML-Workarea name
+                                          -- that name no workarea; for a /v1 workarea name
                                           -- that names no row, its version-8 unresolved value
                                           -- (http-api.md, the unresolved value), never an id
     idem_key       text        NOT NULL,
     request_digest bytea       NOT NULL,
     state          text        NOT NULL CHECK (state IN ('in_progress', 'committed')),
-    response       jsonb,
+    response       jsonb,                 -- a connect-code response is stored without
+                                          -- the code (http-api Idempotency)
     created_at     timestamptz NOT NULL,
     PRIMARY KEY (key_id, workarea_id, idem_key)
 );
@@ -924,11 +1144,21 @@ serving role until that migration grants its row here, under the sync rule.
 | `grants` | ✓ | ✓ | | | |
 | `key_denials` | ✓ | ✓ | ✓ | | |
 | `crews` | ✓ | ✓ | ✓ | | |
+| `connect_codes` | ✓ | ✓ | ✓ | | |
+| `oauth_connections` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_tokens` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_clients` | ✓ | ✓ | ✓ | ✓ | |
+| `oauth_authorizations` | ✓ | ✓ | | ✓ | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
   privilege (`42501`) before the guard trigger runs (ADR-0002 d4).
-- **`review_queue`** is the one table a statement deletes from, at a verdict.
+- **`review_queue`** is deleted from at a verdict; **`oauth_connections`** and **`oauth_tokens`**
+  only by the operational removal that [connections](#connections-adr-0031) states, which the lead
+  runs hourly (0012);
+  **`oauth_clients`** by the cache's eviction and that sweep's removal of an unused registration, and
+  **`oauth_authorizations`** by the confirmation's `DELETE … RETURNING` and the removal 24 hours
+  after a row lapses unused (0013). An `oauth_authorizations` row is never updated.
 - **`outbox`** is written, never read, by the adapter; its `INSERT` draws `seq` from the
   `bigserial` sequence.
 - **No table** grants `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`, whole-table operations
@@ -961,7 +1191,8 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `vocab_closure` | ratified `oml:is_a` claim edges, materialized per `vocab_release` ratification |
 | `grants`, `key_denials`, `bans` | keys/grants family events |
 | `simulations` | simulation open / end events |
-| `api_keys` (state columns) | key issue / rotate / revoke events, `system.names_assigned` |
+| `connect_codes`, `oauth_connections` (state columns, `resource` among them) | `connection.code_issued`, `connection.opened`, `connection.revoked`, and `key.revoked` for a voided code |
+| `api_keys` (state columns, `credential` among them) | key issue / rotate / revoke events, `system.names_assigned` |
 
 A chain's `system.names_assigned` sits later in the chain than the creation events of the rows it
 names, and those rows' `name` and `path` are `NOT NULL`. So a fold of a chain from genesis is two
@@ -975,18 +1206,25 @@ fills NULL columns, on rows the PoC wrote before the migration.
 
 One honest exception inside that last row: `api_keys.hash` is operational secret material. The
 journal records issuance **without the key value** (show-once ceremony), so a re-fold reconstructs
-every key's existence, role, issuer and revocation — but not its hash. Losing the `api_keys` table
-means re-issuing keys, not re-folding them.
+every key's existence, role, credential, issuer and revocation — but not its hash; `credential`,
+not a null hash, is what tells a connector key from a re-folded bearer key. Losing the `api_keys`
+table means re-issuing keys, not re-folding them. `connect_codes.hash` and
+`oauth_connections.auth_code_hash` are the same kind of material, never journalled: a re-fold
+restores which codes and connections existed and when they ended, not the digests.
 
 **Operational** — state the journal does not define; losing it costs availability or history, not
 truth: `outbox` (deliveries not yet applied are re-derivable from the journal fold, which is what a
-lake repair does), `lake_frontier` (cache), `lead_lease` (holder id, address, epoch, expiry — the
+lake repair does), `lake_frontier` (cache), `lead_lease` (holder id, address, the lead's
+`oauth.issuer`, epoch, expiry — the
 cluster-mode lead election row, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md);
 never load-bearing, the chain lock is), `dead_letter`, `idempotency` (replay protection; loss
 re-opens a replay window bounded by key behaviour), `read_events` (retention-bounded by design),
 `artifact_keys` (key material — loss is unintended erasure, which is why its durability posture
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
-exist), `upload_sessions` (in-flight uploads restart).
+exist), `upload_sessions` (in-flight uploads restart), `oauth_tokens` (loss ends every open
+connection at its next request or refresh, and each needs a new connect code),
+`oauth_authorizations` (pages in progress start again) and `oauth_clients` (documents are fetched
+again; registered clients register again).
 
 ## Migrations
 

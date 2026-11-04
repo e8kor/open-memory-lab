@@ -196,7 +196,12 @@ async fn drop_db(name: &str) {
 struct Call {
     token: Option<String>,
     idem: Option<String>,
+    /// The call's `workarea`: a query parameter on a GET, a body member
+    /// otherwise (ADR-0039 d7).
     workarea: Option<String>,
+    /// Headers sent as they are, beside the authorization and the
+    /// idempotency key.
+    headers: Vec<(String, String)>,
     content_type: Option<String>,
     body: Option<Value>,
 }
@@ -216,6 +221,10 @@ impl Call {
         self.workarea = Some(id.to_owned());
         self
     }
+    fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_owned(), value.to_owned()));
+        self
+    }
     fn body(mut self, body: Value) -> Self {
         self.body = Some(body);
         self
@@ -232,6 +241,17 @@ async fn send(
     path: &str,
     call: Call,
 ) -> (StatusCode, HeaderMap, Value) {
+    let mut path = path.to_owned();
+    let mut body = call.body.clone();
+    if let Some(workarea) = &call.workarea {
+        if method == "GET" {
+            path.push(if path.contains('?') { '&' } else { '?' });
+            path.push_str("workarea=");
+            path.push_str(&query_encoded(workarea));
+        } else if let Some(object) = body.get_or_insert_with(|| json!({})).as_object_mut() {
+            object.insert("workarea".to_owned(), json!(workarea));
+        }
+    }
     let mut builder = Request::builder().method(method).uri(path);
     if let Some(token) = &call.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
@@ -239,10 +259,10 @@ async fn send(
     if let Some(idem) = &call.idem {
         builder = builder.header("idempotency-key", idem);
     }
-    if let Some(workarea) = &call.workarea {
-        builder = builder.header("x-oml-workarea", workarea);
+    for (name, value) in &call.headers {
+        builder = builder.header(name.as_str(), value.as_str());
     }
-    let body = match &call.body {
+    let body = match &body {
         None => Body::empty(),
         Some(v) => {
             let ct = call
@@ -270,6 +290,20 @@ async fn send(
         serde_json::from_slice(&bytes).expect("responses are JSON")
     };
     (status, headers, value)
+}
+
+/// `value` percent-encoded for a query string: every byte but RFC 3986's
+/// unreserved characters.
+fn query_encoded(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 fn error_code(body: &Value) -> &str {
@@ -317,7 +351,7 @@ async fn issue_key(router: &Router, admin: &str, role: &str, principal: &str, wa
         admin,
         role,
         principal,
-        json!([{ "workarea_node_id": wa, "role": role }]),
+        json!([{ "workarea": wa, "role": role }]),
     )
     .await["value"]
         .as_str()
@@ -368,7 +402,7 @@ async fn create_workarea(router: &Router, admin: &str, parent: Uuid, name: &str)
         "/v2/workareas",
         Call::auth(admin)
             .idem(&format!("wa-{name}"))
-            .body(json!({ "parent_id": parent, "name": name })),
+            .body(json!({ "parent": parent, "name": name })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -776,7 +810,7 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
     }
 
     for start in 1..=2 {
-        let started = start_lead(&store, signing.clone())
+        let started = start_lead(&store, signing.clone(), None)
             .await
             .expect("the start reads the store");
         assert_eq!(started.fork_check, Ok(()), "start {start}");
@@ -834,7 +868,7 @@ async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
         return;
     };
     let foreign = SigningKey::from_bytes(&OsIds.new_secret());
-    let started = start_lead(&store, foreign)
+    let started = start_lead(&store, foreign, None)
         .await
         .expect("the start reads the store");
     assert!(started.fork_check.is_err(), "a chain the key did not sign");
@@ -934,7 +968,7 @@ async fn full_happy_path_over_http() {
         router,
         "POST",
         "/v2/workareas",
-        Call::auth(&admin).body(json!({"parent_id": root, "name": "metals-crew"})),
+        Call::auth(&admin).body(json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -947,7 +981,7 @@ async fn full_happy_path_over_http() {
         "/v2/workareas",
         Call::auth(&admin)
             .idem("wa-1")
-            .body(json!({"parent_id": root, "name": "metals-crew"})),
+            .body(json!({"parent": root, "name": "metals-crew"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -963,7 +997,7 @@ async fn full_happy_path_over_http() {
         Call::auth(&admin).idem("bad-key").body(json!({
             "role": "admin",
             "name": "bad-admin",
-            "grants": [{"workarea_node_id": crew, "role": "dreamer"}],
+            "grants": [{"workarea": crew, "role": "dreamer"}],
         })),
     )
     .await;
@@ -1095,7 +1129,7 @@ async fn full_happy_path_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "held");
-    assert_eq!(body["body"], submit_body["body"]);
+    assert_eq!(body["text"], submit_body["body"]);
     assert_eq!(body["tip"], false, "a held version is never the tip");
     let (status, _, body) = send(
         router,
@@ -1514,7 +1548,7 @@ async fn full_happy_path_over_http() {
         json!({ "artifact_id": successor["artifact_id"], "version": 2 })
     );
 
-    // X-OML-Workarea: the explicit per-request override (ADR-0022 d4),
+    // The body's workarea: the explicit per-request target (ADR-0039 d7),
     // honored within the key's grants — a child of the granted node is
     // inside them, the root above it is not (ADR-0025 d1).
     let (status, _, body) = send(
@@ -1551,7 +1585,7 @@ async fn full_happy_path_over_http() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
 
-    // A malformed override is refused as validation, not guessed.
+    // A malformed workarea is refused as validation, not guessed.
     let (status, _, body) = send(
         router,
         "POST",
@@ -1608,7 +1642,7 @@ async fn workarea_unresolved_is_422() {
     assert_eq!(issued["grants"], json!([]), "{issued}");
     let token = issued["value"].as_str().expect("show-once value");
 
-    // No default, no X-OML-Workarea: refused, never guessed for.
+    // No default, no workarea: refused, never guessed for.
     let submit = json!({
         "verb": "remember", "claim_key": "unresolved", "kind": "memory", "body": "x",
     });
@@ -1622,7 +1656,7 @@ async fn workarea_unresolved_is_422() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_envelope(&body, "request.workarea_unresolved");
 
-    // The override resolves a workarea, which no grant of the key covers.
+    // The workarea resolves, and no grant of the key covers it.
     let (status, _, body) = send(
         router,
         "POST",
@@ -1660,7 +1694,7 @@ async fn a_workarea_name_the_creation_grammar_refuses_is_request_validation_and_
     let create = |n: usize, name: &str| {
         Call::auth(&admin)
             .idem(&format!("names-{n}"))
-            .body(json!({ "parent_id": crew, "name": name }))
+            .body(json!({ "parent": crew, "name": name }))
     };
 
     for (n, value) in [
@@ -1825,8 +1859,8 @@ async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> 
         "writer",
         principal,
         json!([
-            { "workarea_node_id": node, "role": "writer" },
-            { "workarea_node_id": node, "role": "reader" },
+            { "workarea": node, "role": "writer" },
+            { "workarea": node, "role": "reader" },
         ]),
     )
     .await["value"]
@@ -1835,8 +1869,7 @@ async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> 
         .to_owned()
 }
 
-/// A submit of the claim `claim_key` under `token`, its `X-OML-Workarea`
-/// header `workarea`.
+/// A submit of the claim `claim_key` under `token` into `workarea`.
 fn submit_into(token: &str, idem: &str, workarea: &str, claim_key: &str) -> Call {
     Call::auth(token).idem(idem).workarea(workarea).body(json!({
         "verb": "remember",
@@ -1862,14 +1895,14 @@ async fn create_crew(router: &Router, admin: &str, name: &str) -> Value {
     crew
 }
 
-/// `X-OML-Workarea` takes the node's id or its name, and a name is replaced
-/// by the id before the idempotency record is looked up: a submit whose
-/// header names the node lands where the same submit by id lands, a retry
-/// that switches the header's spelling replays, and the listing's and the
-/// events tail's `workarea_id` answer one page by name and by id
-/// (http-api.md names and ids, idempotency; ADR-0026 d4).
+/// `workarea` takes the node's id or its name, and a name is replaced by
+/// the id before the idempotency record is looked up: a submit whose
+/// `workarea` names the node lands where the same submit by id lands, and
+/// the listing's and the events tail's `workarea` answer one page by name
+/// and by id (http-api.md names and ids, idempotency; ADR-0026 d4,
+/// ADR-0039 d7).
 #[tokio::test]
-async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
+async fn a_workarea_by_name_and_by_id_targets_the_same_workarea() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -1899,7 +1932,7 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
     assert_eq!(sent_by_id["workarea_id"], by_id.as_str());
 
     // The record's workarea component is the resolved node, so one
-    // Idempotency-Key under either spelling of the header is one request.
+    // Idempotency-Key under either spelling of the workarea is one request.
     let (status, headers, replay) = send(
         router,
         "POST",
@@ -1919,13 +1952,13 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
 
     // The filters answer one page by name and by id.
     let (status, page_by_name) =
-        list(router, Call::auth(&agent), "own=true&workarea_id=q1-2027").await;
+        list(router, Call::auth(&agent), "own=true&workarea=q1-2027").await;
     assert_eq!(status, StatusCode::OK, "{page_by_name}");
     assert_eq!(listed(&page_by_name).len(), 2, "{page_by_name}");
     let (_, page_by_id) = list(
         router,
         Call::auth(&agent),
-        &format!("own=true&workarea_id={by_id}"),
+        &format!("own=true&workarea={by_id}"),
     )
     .await;
     assert_eq!(listed(&page_by_name), listed(&page_by_id));
@@ -1935,7 +1968,7 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
             send(
                 router,
                 "GET",
-                &format!("/v2/events?workarea_id={workarea}"),
+                &format!("/v2/events?workarea={workarea}"),
                 call,
             )
             .await
@@ -1953,14 +1986,15 @@ async fn x_oml_workarea_by_name_and_by_id_target_the_same_workarea() {
     drop_db(&rig.db_name).await;
 }
 
-/// A derived path is never a reference: it holds `.`, so `X-OML-Workarea:
-/// universe.metals-crew` is neither an id nor a name, and the submit, the
+/// A derived path is never a reference: it holds `.`, so a `workarea` of
+/// `universe.metals-crew` is neither an id nor a name, and the submit, the
 /// recall and the listing that carry it are refused at parse,
-/// `request.validation` with `details.field` the header's name, before any
+/// `request.validation` with `details.field` naming the field, a body
+/// member by its JSON Pointer and a query parameter by its name, before any
 /// check that consults state, so nothing is journalled (errors.md
-/// `details.field`; ADR-0026 d3, d7).
+/// `details.field`; ADR-0026 d3, d7, ADR-0039 d7).
 #[tokio::test]
-async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
+async fn a_path_in_workarea_is_request_validation_naming_the_field() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -1970,11 +2004,12 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
     let head = head_seq(&rig, tenant).await;
     let path = "universe.metals-crew";
 
-    for (method, uri, call) in [
+    for (method, uri, call, field) in [
         (
             "POST",
             "/v1/memories",
             submit_into(&agent, "path-1", path, "quote-1"),
+            "/workarea",
         ),
         (
             "POST",
@@ -1982,14 +2017,20 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
             Call::auth(&agent)
                 .workarea(path)
                 .body(json!({ "query": "quote" })),
+            "/workarea",
         ),
-        ("GET", "/v1/memories", Call::auth(&agent).workarea(path)),
+        (
+            "GET",
+            "/v1/memories",
+            Call::auth(&agent).workarea(path),
+            "workarea",
+        ),
     ] {
         let (status, _, refused) = send(router, method, uri, call).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {refused}");
         assert_envelope(&refused, "request.validation");
         assert_eq!(
-            refused["error"]["details"]["field"], "X-OML-Workarea",
+            refused["error"]["details"]["field"], field,
             "{method} {uri}: {refused}"
         );
     }
@@ -2001,8 +2042,8 @@ async fn a_path_in_x_oml_workarea_is_request_validation_naming_the_field() {
 /// Every place that names a workarea, crew or key classifies its value at
 /// parse: a derived path, or hex-and-dash text of version 8, which no id
 /// carries, is `request.validation` with `details.field` naming its place as
-/// errors.md spells it — the parameter for a path or query parameter, the
-/// header for a header, a JSON Pointer for a body member — and nothing is
+/// errors.md spells it — the parameter for a path or query parameter, a
+/// JSON Pointer for a body member — and nothing is
 /// journalled (errors.md `details.field`; ADR-0026 d3).
 #[tokio::test]
 async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_its_place() {
@@ -2022,44 +2063,44 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             "GET",
             format!("/v2/workareas/{path}"),
             Call::auth(&admin),
-            "workarea_id",
+            "workarea",
         ),
         (
             "GET",
             format!("/v2/workareas/{version_8}"),
             Call::auth(&admin),
-            "workarea_id",
+            "workarea",
         ),
         (
             "GET",
-            format!("/v1/memories?workarea_id={path}"),
+            format!("/v1/memories?workarea={path}"),
             Call::auth(&agent),
-            "workarea_id",
+            "workarea",
         ),
         (
             "GET",
-            format!("/v2/events?workarea_id={path}"),
+            format!("/v2/events?workarea={path}"),
             Call::auth(&agent),
-            "workarea_id",
+            "workarea",
         ),
         (
             "POST",
             "/v1/memories".to_owned(),
             submit_into(&agent, "v8", version_8, "quote-8"),
-            "X-OML-Workarea",
+            "/workarea",
         ),
         (
             "POST",
             "/v2/workareas".to_owned(),
-            issue("wa-path", json!({ "parent_id": path, "name": "q1-2027" })),
-            "/parent_id",
+            issue("wa-path", json!({ "parent": path, "name": "q1-2027" })),
+            "/parent",
         ),
         (
             "POST",
             "/v2/workareas".to_owned(),
             issue(
                 "wa-crew",
-                json!({ "parent_id": crew, "name": "q1-2027", "crew": path }),
+                json!({ "parent": crew, "name": "q1-2027", "crew": path }),
             ),
             "/crew",
         ),
@@ -2069,11 +2110,11 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             issue(
                 "key-grant",
                 json!({ "role": "writer", "name": "agent-1", "grants": [
-                    { "workarea_node_id": crew, "role": "writer" },
-                    { "workarea_node_id": path, "role": "reader" },
+                    { "workarea": crew, "role": "writer" },
+                    { "workarea": path, "role": "reader" },
                 ] }),
             ),
-            "/grants/1/workarea_node_id",
+            "/grants/1/workarea",
         ),
         (
             "POST",
@@ -2081,21 +2122,21 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             issue(
                 "key-deny",
                 json!({ "role": "writer", "name": "agent-2", "grants": [
-                    { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": version_8 }] },
+                    { "workarea": crew, "role": "writer", "deny": [{ "workarea": version_8 }] },
                 ] }),
             ),
-            "/grants/0/deny/0/subtree_node_id",
+            "/grants/0/deny/0/workarea",
         ),
         (
             "POST",
             "/v2/keys".to_owned(),
             issue(
                 "key-default",
-                json!({ "role": "writer", "name": "agent-3", "default_workarea_id": path, "grants": [
-                    { "workarea_node_id": crew, "role": "writer" },
+                json!({ "role": "writer", "name": "agent-3", "default_workarea": path, "grants": [
+                    { "workarea": crew, "role": "writer" },
                 ] }),
             ),
-            "/default_workarea_id",
+            "/default_workarea",
         ),
         (
             "POST",
@@ -2109,26 +2150,21 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
         (
             "POST",
             format!("/v2/keys/{path}/denials"),
-            issue("deny-key", json!({ "workarea_node_id": crew })),
-            "key_id",
+            issue("deny-key", json!({ "workarea": crew })),
+            "key",
         ),
         (
             "POST",
             "/v2/keys/writer-crew-agent-7/denials".to_owned(),
-            issue("deny-node", json!({ "workarea_node_id": path })),
-            "/workarea_node_id",
+            issue("deny-node", json!({ "workarea": path })),
+            "/workarea",
         ),
-        (
-            "GET",
-            format!("/v2/keys/{path}"),
-            Call::auth(&admin),
-            "key_id",
-        ),
+        ("GET", format!("/v2/keys/{path}"), Call::auth(&admin), "key"),
         (
             "GET",
             format!("/v2/crews/{path}"),
             Call::auth(&admin),
-            "crew_id",
+            "crew",
         ),
         (
             "POST",
@@ -2137,13 +2173,13 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
                 "crew-update",
                 json!({ "external_manager": "crewd.example.com" }),
             ),
-            "crew_id",
+            "crew",
         ),
         (
             "POST",
             format!("/v2/workareas/{path}/crew"),
             issue("wa-crew-path", json!({ "crew": "metals-crew" })),
-            "workarea_id",
+            "workarea",
         ),
         (
             "POST",
@@ -2168,8 +2204,8 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
 /// Names compare byte for byte and are never case-mapped: with
 /// `metals-crew` a workarea and a crew of the tenant and `root-admin` its
 /// key, `Metals-Crew` and `Root-Admin` are `request.validation` naming their
-/// place wherever they are sent — a header, a path parameter, a reference
-/// body field, a creation's name — and never read as the lowercase name they
+/// place wherever they are sent — a path parameter, a reference body field,
+/// a creation's name — and never read as the lowercase name they
 /// resemble (http-api.md names and ids; errors.md; ADR-0026 d2).
 #[tokio::test]
 async fn an_uppercase_name_is_refused_never_lowercased() {
@@ -2196,28 +2232,23 @@ async fn an_uppercase_name_is_refused_never_lowercased() {
             "POST",
             "/v1/memories",
             submit_into(&agent, "upper-1", "Metals-Crew", "quote-1"),
-            "X-OML-Workarea",
+            "/workarea",
         ),
         (
             "GET",
             "/v2/workareas/Metals-Crew",
             Call::auth(&admin),
-            "workarea_id",
+            "workarea",
         ),
-        (
-            "GET",
-            "/v2/crews/Metals-Crew",
-            Call::auth(&admin),
-            "crew_id",
-        ),
-        ("GET", "/v2/keys/Root-Admin", Call::auth(&admin), "key_id"),
+        ("GET", "/v2/crews/Metals-Crew", Call::auth(&admin), "crew"),
+        ("GET", "/v2/keys/Root-Admin", Call::auth(&admin), "key"),
         (
             "POST",
             "/v2/workareas",
             Call::auth(&admin)
                 .idem("upper-wa")
-                .body(json!({ "parent_id": "Universe", "name": "q1-2027" })),
-            "/parent_id",
+                .body(json!({ "parent": "Universe", "name": "q1-2027" })),
+            "/parent",
         ),
         (
             "POST",
@@ -2268,10 +2299,10 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "held_by": "agent",
             "crew": "metals-crew",
             "grants": [
-                { "workarea_node_id": "metals-crew", "role": "writer" },
-                { "workarea_node_id": "metals-crew", "role": "reader" },
+                { "workarea": "metals-crew", "role": "writer" },
+                { "workarea": "metals-crew", "role": "reader" },
             ],
-            "default_workarea_id": "q1-2027",
+            "default_workarea": "q1-2027",
         })),
     )
     .await;
@@ -2288,7 +2319,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
         "/v2/keys/claude-laptop/denials",
         Call::auth(&admin)
             .idem("deny-laptop")
-            .body(json!({ "workarea_node_id": "q1-2027" })),
+            .body(json!({ "workarea": "q1-2027" })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
@@ -2325,6 +2356,9 @@ async fn get_v2_keys_by_name_answers_the_key() {
                 "lifted": false,
             }],
             "epoch": denial["epoch"],
+            // A bearer key, which holds no connection (ADR-0031 d7, d11).
+            "credential": "bearer",
+            "connections": [],
         })
     );
     let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
@@ -2429,7 +2463,7 @@ async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
         &admin,
         "writer",
         "claude/laptop",
-        json!([{ "workarea_node_id": crew, "role": "writer" }]),
+        json!([{ "workarea": crew, "role": "writer" }]),
     )
     .await;
     let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
@@ -2825,8 +2859,8 @@ async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
         ]),
     )
     .await;
@@ -2888,8 +2922,8 @@ async fn a_deny_mask_on_issuance_is_stored_never_dropped() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer", "deny": [{ "subtree_node_id": sealed }] },
-            { "workarea_node_id": crew, "role": "reader", "deny": [{ "subtree_node_id": sealed }] },
+            { "workarea": crew, "role": "writer", "deny": [{ "workarea": sealed }] },
+            { "workarea": crew, "role": "reader", "deny": [{ "workarea": sealed }] },
         ]),
     )
     .await;
@@ -2947,8 +2981,8 @@ async fn an_unknown_issuance_field_is_request_validation() {
     // d16).
     for (n, body) in [
         json!({ "role": "writer", "name": "agent-1", "scopes": ["all"] }),
-        json!({ "role": "writer", "name": "agent-2", "grants": [{ "workarea_node_id": crew, "role": "writer", "expires": "never" }] }),
-        json!({ "role": "writer", "name": "agent-3", "grants": [{ "workarea_node_id": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
+        json!({ "role": "writer", "name": "agent-2", "grants": [{ "workarea": crew, "role": "writer", "expires": "never" }] }),
+        json!({ "role": "writer", "name": "agent-3", "grants": [{ "workarea": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
     ]
     .into_iter()
     .enumerate()
@@ -2981,7 +3015,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
-    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    let grants = json!([{ "workarea": crew, "role": "writer" }]);
     for (n, name) in [
         Value::Null,
         json!("Claude Laptop"),
@@ -3013,7 +3047,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
         "/v2/keys",
         Call::auth(&admin).idem("unnamed-admin").body(json!({
             "role": "admin",
-            "grants": [{ "workarea_node_id": crew, "role": "dreamer" }],
+            "grants": [{ "workarea": crew, "role": "dreamer" }],
         })),
     )
     .await;
@@ -3069,7 +3103,7 @@ async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
         Call::auth(&admin).idem("expiring").body(json!({
             "role": "writer",
             "name": "expiring",
-            "grants": [{ "workarea_node_id": crew, "role": "writer" }],
+            "grants": [{ "workarea": crew, "role": "writer" }],
             "expiry": "2027-01-01T00:00:00Z",
         })),
     )
@@ -3102,8 +3136,8 @@ async fn access_refusals_carry_their_recovery_details() {
             "role": "writer",
             "name": "k-1",
             "grants": [
-                { "workarea_node_id": crew, "role": "reader" },
-                { "workarea_node_id": crew, "role": "dreamer" },
+                { "workarea": crew, "role": "reader" },
+                { "workarea": crew, "role": "dreamer" },
             ],
         })),
     )
@@ -3134,11 +3168,11 @@ async fn access_refusals_carry_their_recovery_details() {
     for (idem, body) in [
         (
             "k-3",
-            json!({ "role": "writer", "name": "k-3", "grants": [{ "workarea_node_id": quotes, "role": "writer", "deny": [{ "subtree_node_id": crew }] }] }),
+            json!({ "role": "writer", "name": "k-3", "grants": [{ "workarea": quotes, "role": "writer", "deny": [{ "workarea": crew }] }] }),
         ),
         (
             "k-4",
-            json!({ "role": "writer", "name": "k-4", "grants": [{ "workarea_node_id": quotes, "role": "writer" }], "default_workarea_id": crew }),
+            json!({ "role": "writer", "name": "k-4", "grants": [{ "workarea": quotes, "role": "writer" }], "default_workarea": crew }),
         ),
     ] {
         let (status, _, refused) = send(
@@ -3159,8 +3193,8 @@ async fn access_refusals_carry_their_recovery_details() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "reader" },
-            { "workarea_node_id": quotes, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
+            { "workarea": quotes, "role": "writer" },
         ]),
     )
     .await;
@@ -3195,7 +3229,7 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
         &admin,
         "reader",
         "crew/agent-recall",
-        json!([{ "workarea_node_id": crew, "role": "reader" }]),
+        json!([{ "workarea": crew, "role": "reader" }]),
     )
     .await;
     let reader = issued["value"].as_str().expect("value");
@@ -3219,7 +3253,7 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
         &path,
         Call::auth(reader)
             .idem("d-0")
-            .body(json!({ "workarea_node_id": crew })),
+            .body(json!({ "workarea": crew })),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
@@ -3228,7 +3262,7 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
         router,
         "POST",
         &path,
-        Call::auth(&admin).body(json!({ "workarea_node_id": crew })),
+        Call::auth(&admin).body(json!({ "workarea": crew })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -3239,7 +3273,7 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
         &format!("/v2/keys/{}/denials", Uuid::from_u128(0xBEEF)),
         Call::auth(&admin)
             .idem("d-1")
-            .body(json!({ "workarea_node_id": crew })),
+            .body(json!({ "workarea": crew })),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -3250,7 +3284,7 @@ async fn a_denial_is_journalled_with_its_own_seq_as_its_epoch_and_takes_the_subt
         "POST",
         &path,
         Call::auth(&admin).idem("d-2").body(json!({
-            "workarea_node_id": crew,
+            "workarea": crew,
             "reason": "quarantine the crew during incident 44",
         })),
     )
@@ -3317,7 +3351,7 @@ async fn tail_rig() -> Option<TailRig> {
         Value::Array(
             roles
                 .iter()
-                .map(|role| json!({ "workarea_node_id": crew, "role": role }))
+                .map(|role| json!({ "workarea": crew, "role": role }))
                 .collect(),
         )
     };
@@ -3378,7 +3412,7 @@ async fn tailed(router: &Router, key: &str, scope: Option<Uuid>) -> Vec<Value> {
     for _ in 0..100 {
         let mut path = format!("/v2/events?after_seq={after_seq}&limit=5");
         if let Some(scope) = scope {
-            path.push_str(&format!("&workarea_id={scope}"));
+            path.push_str(&format!("&workarea={scope}"));
         }
         let (status, _, page) = send(router, "GET", &path, Call::auth(key)).await;
         assert_eq!(status, StatusCode::OK, "{page}");
@@ -3515,7 +3549,7 @@ async fn lifecycle_promote_is_visible_to_readers_of_the_workarea() {
         "reader",
         "ledger/agent-recall",
         "issue-outsider",
-        json!([{ "workarea_node_id": ledger, "role": "reader" }]),
+        json!([{ "workarea": ledger, "role": "reader" }]),
     )
     .await;
     let mine = remember(
@@ -3585,7 +3619,7 @@ async fn the_tail_never_shows_review_or_key_administration_events() {
         &format!("/v2/keys/{}/denials", t.twin.key_id),
         Call::auth(&t.admin)
             .idem("deny-twin")
-            .body(json!({ "workarea_node_id": t.crew })),
+            .body(json!({ "workarea": t.crew })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
@@ -3702,7 +3736,7 @@ async fn a_filtered_page_advances_next_after_seq() {
             "reader",
             &format!("crew/extra-{n}"),
             &format!("issue-extra-{n}"),
-            json!([{ "workarea_node_id": t.crew, "role": "reader" }]),
+            json!([{ "workarea": t.crew, "role": "reader" }]),
         )
         .await;
     }
@@ -3783,7 +3817,7 @@ async fn a_tail_scope_outside_read_access_is_not_found() {
         let (status, _, body) = send(
             router,
             "GET",
-            &format!("/v2/events?workarea_id={scope}"),
+            &format!("/v2/events?workarea={scope}"),
             Call::auth(&t.reader.value),
         )
         .await;
@@ -3994,7 +4028,7 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
     for item in recall["steering"].as_array().expect("steering") {
         assert_eq!(item["kind"], "steering", "{item}");
         assert!(item.get("score").is_none(), "steering is unranked: {item}");
-        assert!(item["body"].is_string(), "{item}");
+        assert!(item["text"].is_string(), "{item}");
     }
     let mut served = hit_ids(&recall);
     served.sort_by_key(ToString::to_string);
@@ -4299,7 +4333,7 @@ fn hit_states(recall: &Value) -> Vec<(Value, Value)> {
 }
 
 #[tokio::test]
-async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
+async fn include_unreviewed_shows_the_authors_held_row_to_that_key_only() {
     let Some((rig, admin, crew, agent, _dreamer, reader)) = own_held_rig().await else {
         return;
     };
@@ -4313,7 +4347,7 @@ async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
     )
     .await;
 
-    let query = json!({"query": "aluminium price", "include_own_held": true});
+    let query = json!({"query": "aluminium price", "include_unreviewed": true});
     let recall = recall_ok(router, &agent, query.clone()).await;
     assert_eq!(hit_ids(&recall), vec![json!(row)], "{recall}");
     assert_eq!(hit_states(&recall), vec![(json!("held"), json!(false))]);
@@ -4330,8 +4364,8 @@ async fn include_own_held_shows_the_authors_held_row_to_that_key_only() {
             "dreamer",
             "crew/agent-7",
             json!([
-                { "workarea_node_id": crew, "role": "dreamer" },
-                { "workarea_node_id": crew, "role": "reader" },
+                { "workarea": crew, "role": "dreamer" },
+                { "workarea": crew, "role": "reader" },
             ]),
         )
         .await,
@@ -4358,7 +4392,7 @@ async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(
@@ -4399,7 +4433,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let with = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "k": 2, "include_own_held": true}),
+        json!({"query": "canary", "k": 2, "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&with), vec![json!(row), json!(two)], "{with}");
@@ -4409,7 +4443,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
     let filled = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true, "max_tokens": tokens(held_text)}),
+        json!({"query": "canary", "include_unreviewed": true, "max_tokens": tokens(held_text)}),
     )
     .await;
     assert_eq!(hit_ids(&filled), vec![json!(row)], "{filled}");
@@ -4463,7 +4497,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
     let recall = recall_ok(
         router,
         &agent,
-        json!({"query": "canary", "include_own_held": true}),
+        json!({"query": "canary", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(hit_ids(&recall), vec![json!(target)], "{recall}");
@@ -4486,7 +4520,7 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
 }
 
 #[tokio::test]
-async fn include_own_held_never_widens_the_workareas_served() {
+async fn include_unreviewed_never_widens_the_workareas_served() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4504,8 +4538,8 @@ async fn include_own_held_never_widens_the_workareas_served() {
         "crew/agent-7",
         "issue-agent",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": quotes, "role": "reader" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": quotes, "role": "reader" },
         ]),
     )
     .await;
@@ -4524,12 +4558,12 @@ async fn include_own_held_never_widens_the_workareas_served() {
         &format!("/v2/keys/{key_id}/denials"),
         Call::auth(&admin)
             .idem("d-1")
-            .body(json!({ "workarea_node_id": quarantine })),
+            .body(json!({ "workarea": quarantine })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
 
-    let query = json!({"query": "canary", "include_own_held": true});
+    let query = json!({"query": "canary", "include_unreviewed": true});
     let (status, recall) = recall_over_http(router, &agent, Some(quotes), query.clone()).await;
     assert_eq!(status, StatusCode::OK, "{recall}");
     assert_eq!(
@@ -4573,7 +4607,7 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
     let successor = proposal["artifact_id"].clone();
 
-    let query = json!({"query": "canary quote", "include_own_held": true});
+    let query = json!({"query": "canary quote", "include_unreviewed": true});
     let recall = recall_ok(router, &agent, query.clone()).await;
     let hits = recall["hits"].as_array().expect("hits");
     assert_eq!(hits.len(), 2, "never deduplicated: {recall}");
@@ -4710,7 +4744,7 @@ async fn steering_past_the_budget_is_served_whole_with_no_hits_and_truncated() {
     .await;
     assert_eq!(steering_ids(&recall), vec![steering], "{recall}");
     assert_eq!(
-        recall["steering"][0]["body"], "Quote every price in USD/t.",
+        recall["steering"][0]["text"], "Quote every price in USD/t.",
         "served whole"
     );
     assert_eq!(recall["hits"], json!([]), "{recall}");
@@ -4769,9 +4803,9 @@ async fn every_steering_item_and_hit_carries_its_tokens() {
 
     // With and without a budget, with and without bodies.
     for body in [
-        json!({"query": "canary", "include_own_held": true}),
-        json!({"query": "canary", "include_own_held": true, "include_bodies": false}),
-        json!({"query": "canary", "include_own_held": true, "max_tokens": 100}),
+        json!({"query": "canary", "include_unreviewed": true}),
+        json!({"query": "canary", "include_unreviewed": true, "include_text": false}),
+        json!({"query": "canary", "include_unreviewed": true, "max_tokens": 100}),
     ] {
         let recall = recall_ok(router, &agent, body).await;
         let served: Vec<(Value, Value)> = recall["steering"]
@@ -4834,7 +4868,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 }
 
 #[tokio::test]
-async fn max_tokens_with_include_bodies_false_is_request_validation() {
+async fn max_tokens_with_include_text_false_is_request_validation() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4843,13 +4877,13 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
     for body in [
-        json!({"query": "canary", "max_tokens": 500, "include_bodies": false}),
+        json!({"query": "canary", "max_tokens": 500, "include_text": false}),
         // max_tokens is an integer ≥ 1 that RFC 8785 digests exactly.
         json!({"query": "canary", "max_tokens": 0}),
         json!({"query": "canary", "max_tokens": 9_007_199_254_740_992_u64}),
         json!({"query": "canary", "max_tokens": -1}),
         json!({"query": "canary", "max_tokens": "500"}),
-        json!({"query": "canary", "include_own_held": "yes"}),
+        json!({"query": "canary", "include_unreviewed": "yes"}),
     ] {
         let (status, refused) = recall_over_http(router, &reader, None, body.clone()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {refused}");
@@ -4857,7 +4891,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
     }
     // Either alone is a recall.
     for body in [
-        json!({"query": "canary", "include_bodies": false}),
+        json!({"query": "canary", "include_text": false}),
         json!({"query": "canary", "max_tokens": 500}),
         json!({"query": "canary", "max_tokens": 9_007_199_254_740_991_u64}),
     ] {
@@ -4868,7 +4902,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
 }
 
 #[tokio::test]
-async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
+async fn query_digest_changes_when_max_tokens_or_include_unreviewed_change() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -4881,7 +4915,9 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     };
 
     // Every member is present with its default applied, the scope the
-    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    // resolved node, include_text and include_unreviewed under their
+    // v0.3.0 member names, so a digest logged before v0.4.0 compares with
+    // one logged after (retrieval.md, the read log; ADR-0025 d9).
     let base = digest(json!({"query": "canary"})).await;
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
@@ -4891,7 +4927,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
     assert_eq!(
         digest(
-            json!({"query": "canary", "k": 8, "include_bodies": true, "include_own_held": false})
+            json!({"query": "canary", "k": 8, "include_text": true, "include_unreviewed": false})
         )
         .await,
         base,
@@ -4905,9 +4941,9 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
         budget
     );
     assert_ne!(
-        digest(json!({"query": "canary", "include_own_held": true})).await,
+        digest(json!({"query": "canary", "include_unreviewed": true})).await,
         base,
-        "include_own_held is digested"
+        "include_unreviewed is digested"
     );
     assert_eq!(
         digest(json!({"query": "canary", "kinds": ["memory", "derived_fact"]})).await,
@@ -4936,8 +4972,8 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
         ]),
     )
     .await["value"]
@@ -5003,7 +5039,7 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
         tokens(composed),
         "budget tokens of the NFC body"
     );
-    assert_eq!(held["body"], composed);
+    assert_eq!(held["text"], composed);
     assert_eq!(held["retirement"], false);
     assert_eq!(held["replaces"], Value::Null);
     assert_eq!(
@@ -5154,7 +5190,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "POST",
             "/v2/workareas",
             Call::auth(&admin).idem(idem).body(json!({
-                "parent_id": root,
+                "parent": root,
                 "name": "orphan",
                 "crew": value,
             })),
@@ -5168,7 +5204,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         "POST",
         "/v2/workareas",
         Call::auth(&admin).idem("wa-crew").body(json!({
-            "parent_id": root,
+            "parent": root,
             "name": "metals-crew",
             "crew": "metals-crew",
         })),
@@ -5188,8 +5224,8 @@ async fn crew_given_at_create_is_persisted_and_returned() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
         ]),
     )
     .await;
@@ -5259,7 +5295,7 @@ async fn a_workarea_created_without_crew_answers_crew_null() {
         "/v2/workareas",
         Call::auth(&admin)
             .idem("wa-no-crew")
-            .body(json!({ "parent_id": root, "name": "metals-crew" })),
+            .body(json!({ "parent": root, "name": "metals-crew" })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -5288,7 +5324,7 @@ async fn create_named_workarea(
     name: &str,
     crew: Option<&str>,
 ) -> Value {
-    let mut body = json!({ "parent_id": parent, "name": name });
+    let mut body = json!({ "parent": parent, "name": name });
     if let Some(crew) = crew {
         body["crew"] = json!(crew);
     }
@@ -5490,11 +5526,11 @@ async fn get_v2_workareas_tree_under_a_reader_key_omits_the_nodes_outside_its_re
         "crew/recall-1",
         json!([
             {
-                "workarea_node_id": metals["id"],
+                "workarea": metals["id"],
                 "role": "reader",
-                "deny": [{ "subtree_node_id": q1["id"] }],
+                "deny": [{ "workarea": q1["id"] }],
             },
-            { "workarea_node_id": review["id"], "role": "reader" },
+            { "workarea": review["id"], "role": "reader" },
         ]),
     )
     .await;
@@ -5799,15 +5835,17 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(listed(&page), vec![second]);
 
-    // The own-work listing resolves no workarea, so the override is refused.
+    // The v0.3.0 header is refused on the own-work listing too, naming the
+    // query's workarea (ADR-0039 d7).
     let (status, body) = list(
         router,
-        Call::auth(&writer).workarea(&crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
         "own=true",
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_envelope(&body, "request.validation");
+    assert_eq!(body["error"]["details"]["renamed_to"], "workarea", "{body}");
 
     drop_db(&rig.db_name).await;
 }
@@ -5827,8 +5865,8 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": alloys, "role": "writer" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": alloys, "role": "writer" },
         ]),
     )
     .await["value"]
@@ -5864,7 +5902,7 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
     let (status, page) = list(
         router,
         Call::auth(&writer),
-        &format!("own=true&workarea_id={alloys}"),
+        &format!("own=true&workarea={alloys}"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -5874,7 +5912,7 @@ async fn the_own_listing_covers_every_workarea_the_key_wrote_to() {
         let (status, body) = list(
             router,
             Call::auth(&writer),
-            &format!("own=true&workarea_id={node}"),
+            &format!("own=true&workarea={node}"),
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -5892,7 +5930,7 @@ async fn the_own_listing_never_shows_another_keys_row() {
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // Two keys of one principal: principal equality never makes a row own.
-    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    let grants = json!([{ "workarea": crew, "role": "writer" }]);
     let (one, _) = key_with(
         router,
         &admin,
@@ -5950,8 +5988,8 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
         "crew/agent-7",
         "k-1",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": alloys, "role": "writer" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": alloys, "role": "writer" },
         ]),
     )
     .await;
@@ -5977,7 +6015,7 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
         &format!("/v2/keys/{key_id}/denials"),
         Call::auth(&admin)
             .idem("d-1")
-            .body(json!({ "workarea_node_id": alloys })),
+            .body(json!({ "workarea": alloys })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{denial}");
@@ -5990,7 +6028,7 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
     let (status, body) = list(
         router,
         Call::auth(&writer),
-        &format!("own=true&workarea_id={alloys}"),
+        &format!("own=true&workarea={alloys}"),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
@@ -6015,9 +6053,9 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": crew, "role": "reader" },
-            { "workarea_node_id": alloys, "role": "writer" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
+            { "workarea": alloys, "role": "writer" },
         ]),
     )
     .await["value"]
@@ -6030,8 +6068,8 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
         "dreamer",
         "crew/reviewer-3",
         json!([
-            { "workarea_node_id": crew, "role": "dreamer" },
-            { "workarea_node_id": alloys, "role": "dreamer" },
+            { "workarea": crew, "role": "dreamer" },
+            { "workarea": alloys, "role": "dreamer" },
         ]),
     )
     .await["value"]
@@ -6118,15 +6156,7 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
         Vec::<String>::new(),
         "no filter reaches a held row"
     );
-    // workarea_id intersects the scope's subtree; X-OML-Workarea moves it.
-    let (status, page) = list(
-        router,
-        Call::auth(&reader),
-        &format!("workarea_id={quotes}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert_eq!(listed(&page), vec![quote.clone()]);
+    // workarea moves the scope to its subtree (ADR-0039 d7).
     let (status, page) = list(
         router,
         Call::auth(&reader).workarea(&quotes.to_string()),
@@ -6136,15 +6166,10 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(listed(&page), vec![quote]);
     // A node without reader effective access is absent.
-    let (status, body) = list(
-        router,
-        Call::auth(&reader),
-        &format!("workarea_id={alloys}"),
-    )
-    .await;
+    let (status, body) = list(router, Call::auth(&reader), &format!("workarea={alloys}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_envelope(&body, "access.not_found");
-    // Without own, a key with neither a default nor the override is refused.
+    // Without own, a key with neither a default nor a workarea is refused.
     let unscoped =
         issue_key_with(router, &admin, "reader", "crew/no-default", json!([])).await["value"]
             .as_str()
@@ -6164,7 +6189,7 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let grants = json!([{ "workarea_node_id": crew, "role": "writer" }]);
+    let grants = json!([{ "workarea": crew, "role": "writer" }]);
     let (writer, key_id) = key_with(
         router,
         &admin,
@@ -6261,8 +6286,8 @@ async fn provider_operator_key(rig: &Rig) -> String {
         .await
         .expect("lift force");
     sqlx::query(
-        "INSERT INTO api_keys (tenant_id, hash, role, principal, held_by, issued_seq) \
-         VALUES (NULL, decode($1, 'hex'), 'operator', 'provider/operator-1', 'human', 0)",
+        "INSERT INTO api_keys (tenant_id, hash, credential, role, principal, held_by, issued_seq) \
+         VALUES (NULL, decode($1, 'hex'), 'bearer', 'operator', 'provider/operator-1', 'human', 0)",
     )
     .bind(hash.trim_start_matches("sha256:"))
     .execute(&mut conn)
@@ -6356,14 +6381,14 @@ async fn a_get_with_x_oml_workarea_is_request_validation() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["artifact_id"], written.as_str());
 
-    // Get resolves no workarea, so the override is refused, not ignored,
-    // even when it names the row's own workarea (http-api.md get;
-    // ADR-0025 d13).
+    // Get resolves no workarea, so the v0.3.0 header is refused, not
+    // ignored, even when it names the row's own workarea (http-api.md get;
+    // ADR-0025 d13, ADR-0039 d7).
     let (status, _, body) = send(
         router,
         "GET",
         &path,
-        Call::auth(&writer).workarea(&crew.to_string()),
+        Call::auth(&writer).header("x-oml-workarea", &crew.to_string()),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -6385,8 +6410,8 @@ async fn claim_key_filter_lists_one_claims_versions() {
         "writer",
         "crew/agent-7",
         json!([
-            { "workarea_node_id": crew, "role": "writer" },
-            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea": crew, "role": "writer" },
+            { "workarea": crew, "role": "reader" },
         ]),
     )
     .await["value"]
@@ -6464,8 +6489,8 @@ async fn supersession_keys(router: &Router, admin: &str, crew: Uuid) -> (String,
             "writer",
             "crew/agent-7",
             json!([
-                { "workarea_node_id": crew, "role": "writer" },
-                { "workarea_node_id": crew, "role": "reader" },
+                { "workarea": crew, "role": "writer" },
+                { "workarea": crew, "role": "reader" },
             ]),
         )
         .await,
@@ -6477,8 +6502,8 @@ async fn supersession_keys(router: &Router, admin: &str, crew: Uuid) -> (String,
             "dreamer",
             "crew/reviewer-3",
             json!([
-                { "workarea_node_id": crew, "role": "dreamer" },
-                { "workarea_node_id": crew, "role": "reader" },
+                { "workarea": crew, "role": "dreamer" },
+                { "workarea": crew, "role": "reader" },
             ]),
         )
         .await,
@@ -6606,7 +6631,7 @@ async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
     assert_eq!(serve["replaces"]["artifact_id"], first.as_str());
     assert_eq!(serve["replaces"]["version"], 1);
     assert_eq!(serve["replaces"]["tip"], true, "still the tip while held");
-    assert_eq!(serve["replaces"]["body"], "Accra Metals quoted 412 USD/t.");
+    assert_eq!(serve["replaces"]["text"], "Accra Metals quoted 412 USD/t.");
     assert_eq!(
         serve["served_digests"]["replaces"], target["plaintext_digest"],
         "the serve records the replaced version's digest"
@@ -6698,8 +6723,8 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
         "dreamer",
         "crew/editor-5",
         json!([
-            { "workarea_node_id": crew, "role": "dreamer" },
-            { "workarea_node_id": crew, "role": "reader" },
+            { "workarea": crew, "role": "dreamer" },
+            { "workarea": crew, "role": "reader" },
         ]),
     )
     .await["value"]
@@ -6766,4 +6791,890 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
     assert_eq!(status, StatusCode::OK, "{verdict}");
     assert_eq!(verdict["state"], "rejected");
     drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// GET /v2/whoami (ADR-0039 d15)
+// ---------------------------------------------------------------------------
+
+async fn whoami(router: &Router, token: &str) -> (StatusCode, Value) {
+    let (status, _, body) = send(router, "GET", "/v2/whoami", Call::auth(token)).await;
+    (status, body)
+}
+
+/// The grants an issuance echoed, as `whoami` serves them: each without its
+/// per-grant deny masks (ADR-0039 d15).
+fn whoami_grants(issued: &Value) -> Value {
+    let mut grants = issued["grants"].clone();
+    for grant in grants.as_array_mut().expect("grants") {
+        grant.as_object_mut().expect("grant").remove("deny");
+    }
+    grants
+}
+
+/// A tenant with a `metals-crew` workarea, a `q1-2027` workarea under it, a
+/// `metals-crew` crew record and the agent key `claude-laptop`, writer and
+/// reader on the crew workarea, defaulting to the quarter, its crew the
+/// record: (admin, tenant, crew workarea, quarter, the 201 body of the
+/// agent key's issuance, the crew record).
+async fn whoami_tenant(router: &Router) -> (String, Uuid, Uuid, Uuid, Value, Value) {
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let quarter = create_workarea(router, &admin, crew, "q1-2027").await;
+    let crew_record = create_crew(router, &admin, "metals-crew").await;
+    let (status, _, issued) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("issue-laptop").body(json!({
+            "role": "writer",
+            "name": "claude-laptop",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "crew": "metals-crew",
+            "grants": [
+                { "workarea": "metals-crew", "role": "writer" },
+                { "workarea": "metals-crew", "role": "reader" },
+            ],
+            "default_workarea": "q1-2027",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    (admin, tenant, crew, quarter, issued, crew_record)
+}
+
+/// `GET /v2/whoami` answers any live key with its own record: an agent key,
+/// a reviewer key and an admin key each read their id, name, role,
+/// principal and attestation, their tenant, their default workarea with its
+/// derived path and their crew record, each reference an id and a name,
+/// and their stored grants (http-api.md whoami; ADR-0039 d15).
+#[tokio::test]
+async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_workarea() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, crew, quarter, issued, crew_record) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+
+    let (status, me) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(
+        me,
+        json!({
+            "key_id": issued["key_id"],
+            "name": "claude-laptop",
+            "role": "writer",
+            "principal": "claude/laptop",
+            "held_by": "agent",
+            "tenant": { "id": tenant, "name": "test-tenant" },
+            "default_workarea": {
+                "id": quarter,
+                "name": "q1-2027",
+                "path": "universe.metals-crew.q1-2027",
+            },
+            "crew": { "id": crew_record["crew_id"], "name": "metals-crew" },
+            "grants": whoami_grants(&issued),
+        })
+    );
+
+    let reviewer = issue_key_with(
+        router,
+        &admin,
+        "dreamer",
+        "dana/review",
+        json!([
+            { "workarea": crew, "role": "reader" },
+            { "workarea": crew, "role": "dreamer" },
+        ]),
+    )
+    .await;
+    let (status, review) = whoami(router, reviewer["value"].as_str().expect("value")).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["key_id"], reviewer["key_id"], "{review}");
+    assert_eq!(review["name"], "dreamer-dana-review", "{review}");
+    assert_eq!(review["role"], "dreamer", "{review}");
+    assert_eq!(review["tenant"]["name"], "test-tenant", "{review}");
+    assert_eq!(
+        review["default_workarea"],
+        json!({ "id": crew, "name": "metals-crew", "path": "universe.metals-crew" })
+    );
+    assert_eq!(review["crew"], Value::Null, "{review}");
+    assert_eq!(review["grants"], whoami_grants(&reviewer), "{review}");
+
+    let (status, root) = whoami(router, &admin).await;
+    assert_eq!(status, StatusCode::OK, "{root}");
+    assert_eq!(root["name"], "root-admin", "{root}");
+    assert_eq!(root["role"], "admin", "{root}");
+    assert_eq!(root["principal"], "platform/admin", "{root}");
+    assert_eq!(root["held_by"], "human", "{root}");
+    assert_eq!(
+        root["tenant"],
+        json!({ "id": tenant, "name": "test-tenant" })
+    );
+    assert_eq!(root["grants"], json!([]), "{root}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The key's denials name subtrees it may not read, so `whoami` never
+/// serves them, a key under a denial included (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_omits_the_keys_denials() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let (status, _, denial) = send(
+        router,
+        "POST",
+        "/v2/keys/claude-laptop/denials",
+        Call::auth(&admin)
+            .idem("deny-laptop")
+            .body(json!({ "workarea": "q1-2027" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+
+    let (status, me) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert!(me.get("denials").is_none(), "{me}");
+    assert!(
+        !me.to_string()
+            .contains(denial["denial_id"].as_str().expect("denial id")),
+        "{me}"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A grant's per-grant deny mask names a subtree the key may not read
+/// through that grant, so `whoami` serves each grant without its masks: the
+/// masked subtree's id appears nowhere in the body (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_serves_each_grant_without_its_deny_masks() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let sealed = create_workarea(router, &admin, crew, "sealed").await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "crew/agent-7",
+        json!([
+            { "workarea": crew, "role": "writer", "deny": [{ "workarea": sealed }] },
+        ]),
+    )
+    .await;
+    assert_eq!(
+        issued["grants"][0]["deny"],
+        json!([{ "subtree_node_id": sealed.to_string() }]),
+        "{issued}"
+    );
+
+    let (status, me) = whoami(router, issued["value"].as_str().expect("value")).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(
+        me["grants"],
+        json!([{
+            "grant_id": issued["grants"][0]["grant_id"],
+            "workarea_node_id": crew.to_string(),
+            "role": "writer",
+            "epoch": issued["grants"][0]["epoch"],
+        }]),
+        "{me}"
+    );
+    assert!(!me.to_string().contains(&sealed.to_string()), "{me}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// `whoami` reads no claim, so it journals nothing: the tenant's chain head
+/// is where it was before the read (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_records_no_read_event() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let head = head_seq(&rig, tenant).await;
+    for token in [&agent, &admin] {
+        let (status, body) = whoami(router, token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(head_seq(&rig, tenant).await, head);
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A revoked key, like an unknown one, gets the refusal every route gives a
+/// value that names no live key, `401 auth.invalid` (errors.md; ADR-0039
+/// d15).
+#[tokio::test]
+async fn whoami_refuses_a_revoked_key_with_the_auth_code() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, _crew, _quarter, issued, _) = whoami_tenant(router).await;
+    let agent = issued["value"].as_str().expect("value").to_owned();
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
+    let (status, live) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::OK, "{live}");
+    let (_, _, root_admin) = send(router, "GET", "/v2/keys/root-admin", Call::auth(&admin)).await;
+    revoke_in_the_store(&rig, tenant, &root_admin, key_id).await;
+
+    let (status, revoked) = whoami(router, &agent).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{revoked}");
+    assert_envelope(&revoked, "auth.invalid");
+    let (status, unknown) = whoami(router, "oml_not_a_real_key").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{unknown}");
+    assert_envelope(&unknown, "auth.invalid");
+    let (status, _, missing) = send(router, "GET", "/v2/whoami", Call::default()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{missing}");
+    assert_envelope(&missing, "auth.missing");
+
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The served contract (ADR-0039 d9)
+// ---------------------------------------------------------------------------
+
+/// docs/api/openapi.yaml, read from the repository this test builds in.
+fn served_openapi() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/api/openapi.yaml"
+    );
+    std::fs::read_to_string(path).expect("docs/api/openapi.yaml reads")
+}
+
+/// Every `(METHOD, /path)` the document's `paths` declares. The layout is
+/// the document's own style: a path item at two spaces, its operations at
+/// four, and the next top-level key after the last path.
+fn declared_operations(document: &str) -> std::collections::BTreeSet<(String, String)> {
+    let mut operations = std::collections::BTreeSet::new();
+    let mut in_paths = false;
+    let mut path: Option<&str> = None;
+    for line in document.lines() {
+        if !line.is_empty() && !line.starts_with(' ') {
+            in_paths = line == "paths:";
+            path = None;
+            continue;
+        }
+        if !in_paths {
+            continue;
+        }
+        if line.starts_with("  /") {
+            path = line.trim().strip_suffix(':');
+            continue;
+        }
+        if let (Some(path), Some(method)) = (
+            path,
+            line.strip_prefix("    ").and_then(|m| m.strip_suffix(':')),
+        ) && ["get", "put", "post", "delete", "patch"].contains(&method)
+        {
+            operations.insert((method.to_uppercase(), path.to_owned()));
+        }
+    }
+    operations
+}
+
+/// A router over in-memory doubles, its bootstrap open under
+/// [`ENROLLMENT`]: what it routes is what the route table names.
+fn doubles_router() -> Router {
+    doubles_router_over(None)
+}
+
+/// [`doubles_router`] on a deployment that sets `oauth.issuer`, so it also
+/// routes what the OAuth route table names.
+fn doubles_router_with_issuer() -> Router {
+    doubles_router_over(Some("https://oml.example.com"))
+}
+
+fn doubles_router_over(issuer: Option<&str>) -> Router {
+    use oml_app::App;
+    use oml_app::domain::oauth::Issuer;
+    use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new([7; 32]),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let app = match issuer {
+        Some(issuer) => app.with_oauth_issuer(Issuer::parse(issuer).expect("a public origin")),
+        None => app,
+    };
+    let ping: DbPing = Arc::new(|| Box::pin(async { true }));
+    oml_transport_http::ApiState::new(
+        Arc::new(app),
+        store,
+        ping,
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router()
+}
+
+/// openapi.yaml declares exactly what the router routes, `GET /v2/whoami`
+/// among them and, where the deployment sets `oauth.issuer`, the six OAuth
+/// operations: the router builds its routes from the transport's two public
+/// tables, their union equals the document's operations, and a router with
+/// an issuer answers every one of them from a handler, never with its own
+/// empty 404 or 405 (ADR-0039 d9; ADR-0031 d1, d3, d4, d5, d9).
+#[tokio::test]
+async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_the_oauth_routes() {
+    let declared = declared_operations(&served_openapi());
+    let table = |entries: &[(&str, &str)]| -> std::collections::BTreeSet<(String, String)> {
+        entries
+            .iter()
+            .map(|(method, path)| ((*method).to_owned(), (*path).to_owned()))
+            .collect()
+    };
+    let rings = table(oml_transport_http::ROUTES);
+    let oauth = table(oml_transport_http::OAUTH_ROUTES);
+    assert_eq!(
+        rings.len(),
+        oml_transport_http::ROUTES.len(),
+        "the route table lists an operation twice"
+    );
+    assert_eq!(
+        oauth.len(),
+        oml_transport_http::OAUTH_ROUTES.len(),
+        "the OAuth route table lists an operation twice"
+    );
+    assert!(rings.is_disjoint(&oauth), "an operation is in both tables");
+    let routed: std::collections::BTreeSet<_> = rings.union(&oauth).cloned().collect();
+    let only_declared: Vec<_> = declared.difference(&routed).collect();
+    let only_routed: Vec<_> = routed.difference(&declared).collect();
+    assert!(
+        only_declared.is_empty() && only_routed.is_empty(),
+        "declared but not routed: {only_declared:?}; routed but not declared: {only_routed:?}"
+    );
+    assert!(
+        declared.contains(&("GET".to_owned(), "/v2/whoami".to_owned())),
+        "whoami is declared"
+    );
+    assert_eq!(
+        declared.len(),
+        31,
+        "the 24 routed operations, whoami and the six OAuth operations"
+    );
+    assert_eq!(oauth.len(), 6, "the six OAuth operations");
+
+    let router = doubles_router_with_issuer();
+    for (method, path) in &routed {
+        let uri = filled(path);
+        let request = Request::builder()
+            .method(method.as_str())
+            .uri(&uri)
+            .body(Body::empty())
+            .expect("request builds");
+        let response = router.clone().oneshot(request).await.expect("infallible");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 22).await.expect("body");
+        assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+        assert!(
+            status != StatusCode::NOT_FOUND || !bytes.is_empty(),
+            "{method} {uri} is not routed"
+        );
+    }
+}
+
+/// Without `oauth.issuer` the router routes none of the OAuth table: each
+/// of its operations answers what an unknown path does, while the ring
+/// table is routed unchanged (ADR-0031 d1).
+#[tokio::test]
+async fn without_an_issuer_the_router_routes_no_operation_of_the_oauth_table() {
+    let router = doubles_router();
+    for (method, path) in oml_transport_http::OAUTH_ROUTES {
+        let request = Request::builder()
+            .method(*method)
+            .uri(*path)
+            .body(Body::empty())
+            .expect("request builds");
+        let response = router.clone().oneshot(request).await.expect("infallible");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
+}
+
+/// `path` with each `{placeholder}` segment filled with a value.
+fn filled(path: &str) -> String {
+    path.split('/')
+        .map(|segment| {
+            if segment.starts_with('{') {
+                "00000000-0000-4000-8000-000000000000"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// docs/api/openapi-designed.yaml, read from the repository this test
+/// builds in.
+fn designed_openapi() -> String {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/api/openapi-designed.yaml"
+    );
+    std::fs::read_to_string(path).expect("docs/api/openapi-designed.yaml reads")
+}
+
+/// The lines of the block a `key:` line at `indent` spaces opens, the key
+/// line excluded: every following line indented deeper, or blank.
+fn block<'a>(document: &'a str, indent: usize, key: &str) -> Vec<&'a str> {
+    let opener = format!("{}{key}:", " ".repeat(indent));
+    let mut lines = document.lines().skip_while(|l| *l != opener);
+    assert!(lines.next().is_some(), "{opener:?} is in the document");
+    lines
+        .take_while(|l| l.is_empty() || l.len() - l.trim_start().len() > indent)
+        .collect()
+}
+
+/// `simulation_id` is a designed field: openapi-designed.yaml declares it
+/// for submitMemory and supersedeMemory under `x-oml-designed-fields`, the
+/// served openapi.yaml declares it on neither request, and a submit or a
+/// supersession carrying one still answers v0.3.0's 404 `access.not_found`,
+/// where the same request without it passes that check: a submit is
+/// accepted, and a supersession of a held target meets the tip check
+/// (ADR-0039 d9).
+#[tokio::test]
+async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
+    let designed = designed_openapi();
+    let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
+    for operation in ["submitMemory", "supersedeMemory"] {
+        let request = block(&fields, 2, operation).join("\n");
+        assert!(
+            block(&request, 4, "request")
+                .iter()
+                .any(|l| l.starts_with("      simulation_id:")),
+            "{operation} declares simulation_id as designed"
+        );
+    }
+    let served = served_openapi();
+    for schema in ["SubmitRequest", "SupersedeRequest"] {
+        assert!(
+            !block(&served, 4, schema)
+                .iter()
+                .any(|l| l.trim_start().starts_with("simulation_id:")),
+            "openapi.yaml {schema} serves no simulation_id"
+        );
+    }
+
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    let writer = issue_key(router, &admin, "writer", "agent/sim", root).await;
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&writer).idem("sim-1").body(json!({
+            "body": "a simulated quote",
+            "simulation_id": "00000000-0000-4000-8000-000000000001",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&writer)
+            .idem("sim-2")
+            .body(json!({ "body": "a real quote" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let target = accepted["artifact_id"].as_str().expect("artifact id");
+    let supersede = format!("/v1/memories/{target}/supersede");
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        &supersede,
+        Call::auth(&writer).idem("sim-3").body(json!({
+            "body": "a simulated revision",
+            "simulation_id": "00000000-0000-4000-8000-000000000001",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_envelope(&refused, "access.not_found");
+    // Without the field the same supersession passes that check and meets
+    // the next: a held target is no served tip.
+    let (status, _, revised) = send(
+        router,
+        "POST",
+        &supersede,
+        Call::auth(&writer)
+            .idem("sim-4")
+            .body(json!({ "body": "a real revision" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{revised}");
+    assert_envelope(&revised, "submission.tip_conflict");
+}
+
+/// `expiry` and `tenant` on key issuance and `workarea` on the review
+/// serve are designed fields: openapi-designed.yaml declares them for
+/// issueKey and reviewNext under `x-oml-designed-fields`, the served
+/// openapi.yaml declares them on neither request, and each sent still
+/// answers its v0.3.0 `request.validation`, where the same call without it
+/// passes that check: the issuance is created, and the serve finds an
+/// empty queue (ADR-0039 d9).
+#[tokio::test]
+async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_validation() {
+    let designed = designed_openapi();
+    let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
+    for (operation, field) in [
+        ("issueKey", "expiry"),
+        ("issueKey", "tenant"),
+        ("reviewNext", "workarea"),
+    ] {
+        let request = block(&fields, 2, operation).join("\n");
+        assert!(
+            block(&request, 4, "request")
+                .iter()
+                .any(|l| l.starts_with(&format!("      {field}:"))),
+            "{operation} declares {field} as designed"
+        );
+    }
+    let served = served_openapi();
+    for field in ["expiry", "tenant"] {
+        assert!(
+            !block(&served, 4, "KeyIssueRequest")
+                .iter()
+                .any(|l| l.trim_start().starts_with(&format!("{field}:"))),
+            "openapi.yaml KeyIssueRequest serves no {field}"
+        );
+    }
+    assert!(
+        !block(&served, 2, "/v2/review/next")
+            .iter()
+            .any(|l| l.trim_start().starts_with("workarea:")),
+        "openapi.yaml reviewNext serves no workarea"
+    );
+
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    for (n, (field, value)) in [
+        ("expiry", json!("2027-01-01T00:00:00Z")),
+        ("tenant", json!("test-tenant")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = json!({
+            "role": "reader",
+            "name": format!("designed-{n}"),
+            "grants": [{ "workarea": root, "role": "reader" }],
+        });
+        body[field] = value;
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("designed-{n}")).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
+        assert_envelope(&refused, "request.validation");
+    }
+    let dreamer = issue_key(router, &admin, "dreamer", "agent/designed", root).await;
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer)
+            .idem("designed-next-1")
+            .body(json!({ "workarea": root })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_envelope(&refused, "request.validation");
+    let (status, _, _) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("designed-next-2"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "an empty queue without the field"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Request renames on the key and workarea routes (ADR-0039 d7)
+// ---------------------------------------------------------------------------
+
+/// `call`'s refusal is `request.validation` naming the spelling sent in
+/// `details.field` and its successor in `details.renamed_to`, each a JSON
+/// Pointer (errors.md `request.validation`; ADR-0039 d7, d11).
+async fn assert_renamed(router: &Router, uri: &str, call: Call, field: &str, renamed_to: &str) {
+    let (status, _, refused) = send(router, "POST", uri, call).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{uri} {field}: {refused}");
+    assert_envelope(&refused, "request.validation");
+    assert_eq!(
+        refused["error"]["details"],
+        json!({ "field": field, "renamed_to": renamed_to }),
+        "{uri} {field}: {refused}"
+    );
+}
+
+/// A key issuance sending v0.3.0's `default_workarea_id` is refused as
+/// `request.validation` naming `/default_workarea_id` and its successor
+/// `/default_workarea`, never read as the default it meant nor dropped,
+/// and the same issuance under `default_workarea` is created with that
+/// default (ADR-0039 d7).
+#[tokio::test]
+async fn a_key_issue_naming_default_workarea_id_is_refused_naming_default_workarea() {
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    let quarter = create_workarea(router, &admin, root, "q1-2027").await;
+    let grants = json!([{ "workarea": root, "role": "reader" }]);
+    assert_renamed(
+        router,
+        "/v2/keys",
+        Call::auth(&admin).idem("old-default").body(json!({
+            "role": "reader",
+            "name": "agent-1",
+            "grants": grants,
+            "default_workarea_id": quarter,
+        })),
+        "/default_workarea_id",
+        "/default_workarea",
+    )
+    .await;
+
+    let (status, _, issued) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("new-default").body(json!({
+            "role": "reader",
+            "name": "agent-1",
+            "grants": grants,
+            "default_workarea": "q1-2027",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    // Responses keep their v0.3.0 names.
+    assert_eq!(
+        issued["default_workarea_id"],
+        quarter.to_string(),
+        "{issued}"
+    );
+}
+
+/// Every other v0.3.0 spelling of a reference on the key routes, `tenant_id`,
+/// a grant's `workarea_node_id`, a deny entry's `subtree_node_id` and a
+/// denial's `workarea_node_id`, is refused naming its pointer and its
+/// successor's (ADR-0039 d7).
+#[tokio::test]
+async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its_successor() {
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    let quarter = create_workarea(router, &admin, root, "q1-2027").await;
+    for (n, body, field, renamed_to) in [
+        (
+            0,
+            json!({ "role": "reader", "name": "agent-1", "tenant_id": "test-tenant" }),
+            "/tenant_id",
+            "/tenant",
+        ),
+        (
+            1,
+            json!({ "role": "reader", "name": "agent-1", "grants": [
+                { "workarea": root, "role": "reader" },
+                { "workarea_node_id": root, "role": "writer" },
+            ] }),
+            "/grants/1/workarea_node_id",
+            "/grants/1/workarea",
+        ),
+        (
+            2,
+            json!({ "role": "reader", "name": "agent-1", "grants": [
+                { "workarea": root, "role": "reader", "deny": [
+                    { "workarea": quarter },
+                    { "subtree_node_id": quarter },
+                ] },
+            ] }),
+            "/grants/0/deny/1/subtree_node_id",
+            "/grants/0/deny/1/workarea",
+        ),
+    ] {
+        assert_renamed(
+            router,
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("old-{n}")).body(body),
+            field,
+            renamed_to,
+        )
+        .await;
+    }
+    issue_key(router, &admin, "writer", "agent/denied", root).await;
+    assert_renamed(
+        router,
+        "/v2/keys/writer-agent-denied/denials",
+        Call::auth(&admin)
+            .idem("old-denial")
+            .body(json!({ "workarea_node_id": quarter })),
+        "/workarea_node_id",
+        "/workarea",
+    )
+    .await;
+}
+
+/// A workarea creation sending v0.3.0's `parent_id` is refused as
+/// `request.validation` naming `/parent_id` and its successor `/parent`,
+/// and the same creation under `parent` is created under it (ADR-0039 d7).
+#[tokio::test]
+async fn a_workarea_create_naming_parent_id_is_refused_naming_parent() {
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    assert_renamed(
+        router,
+        "/v2/workareas",
+        Call::auth(&admin)
+            .idem("old-parent")
+            .body(json!({ "parent_id": root, "name": "q1-2027" })),
+        "/parent_id",
+        "/parent",
+    )
+    .await;
+    let (status, _, created) = send(
+        router,
+        "POST",
+        "/v2/workareas",
+        Call::auth(&admin)
+            .idem("new-parent")
+            .body(json!({ "parent": "universe", "name": "q1-2027" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    // Responses keep their v0.3.0 names.
+    assert_eq!(created["parent_id"], root.to_string(), "{created}");
+}
+
+/// Each reference field and path parameter of the key and workarea routes,
+/// `parent`, `default_workarea`, a grant's `workarea`, a deny entry's
+/// `workarea`, a denial's `workarea` and the `{workarea}`, `{key}` and
+/// `{crew}` path parameters, takes an id or a name, and the two spellings
+/// answer the same record (ADR-0026 d4; ADR-0039 d7).
+#[tokio::test]
+async fn each_reference_field_takes_an_id_or_a_name() {
+    let router = &doubles_router();
+    let (admin, _, root) = bootstrap(router).await;
+    let crew_record = create_crew(router, &admin, "metals-crew").await;
+    let crew_id = crew_record["crew_id"].as_str().expect("crew id").to_owned();
+
+    let mut parents = Vec::new();
+    for (name, parent) in [("by-id", json!(root)), ("by-name", json!("universe"))] {
+        let (status, _, created) = send(
+            router,
+            "POST",
+            "/v2/workareas",
+            Call::auth(&admin)
+                .idem(&format!("wa-{name}"))
+                .body(json!({ "parent": parent, "name": name })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        parents.push(created["parent_id"].clone());
+    }
+    assert_eq!(parents, [json!(root.to_string()), json!(root.to_string())]);
+    let by_id = create_workarea(router, &admin, root, "sealed").await;
+
+    let mut issued = Vec::new();
+    for (name, default, grant, deny) in [
+        ("key-by-id", json!(root), json!(root), json!(by_id)),
+        (
+            "key-by-name",
+            json!("universe"),
+            json!("universe"),
+            json!("sealed"),
+        ),
+    ] {
+        let (status, _, key) = send(
+            router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&admin).idem(&format!("issue-{name}")).body(json!({
+                "role": "reader",
+                "name": name,
+                "default_workarea": default,
+                "grants": [{ "workarea": grant, "role": "reader", "deny": [{ "workarea": deny }] }],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        assert_eq!(key["default_workarea_id"], root.to_string(), "{key}");
+        assert_eq!(key["grants"][0]["workarea_node_id"], root.to_string());
+        assert_eq!(
+            key["grants"][0]["deny"],
+            json!([{ "subtree_node_id": by_id.to_string() }]),
+            "{key}"
+        );
+        issued.push(key);
+    }
+
+    let key_id = issued[0]["key_id"].as_str().expect("key id").to_owned();
+    for (n, key, workarea) in [
+        (0, key_id.as_str(), json!(by_id)),
+        (1, "key-by-id", json!("by-name")),
+    ] {
+        let (status, _, denial) = send(
+            router,
+            "POST",
+            &format!("/v2/keys/{key}/denials"),
+            Call::auth(&admin)
+                .idem(&format!("deny-{n}"))
+                .body(json!({ "workarea": workarea })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{denial}");
+    }
+
+    for (by_id, by_name) in [
+        (
+            format!("/v2/workareas/{root}"),
+            "/v2/workareas/universe".to_owned(),
+        ),
+        (
+            format!("/v2/workareas/{root}/tree"),
+            "/v2/workareas/universe/tree".to_owned(),
+        ),
+        (
+            format!("/v2/keys/{key_id}"),
+            "/v2/keys/key-by-id".to_owned(),
+        ),
+        (
+            format!("/v2/crews/{crew_id}"),
+            "/v2/crews/metals-crew".to_owned(),
+        ),
+    ] {
+        let (status, _, read_by_id) = send(router, "GET", &by_id, Call::auth(&admin)).await;
+        assert_eq!(status, StatusCode::OK, "{by_id}: {read_by_id}");
+        let (status, _, read_by_name) = send(router, "GET", &by_name, Call::auth(&admin)).await;
+        assert_eq!(status, StatusCode::OK, "{by_name}: {read_by_name}");
+        assert_eq!(read_by_id, read_by_name, "{by_id} and {by_name}");
+    }
 }

@@ -64,6 +64,13 @@ RELEASE = "oml"
 NAMESPACE = "oml"
 DIGEST = "sha256:" + "0" * 64
 KEPT_CLAIM = "kept-keyring"
+# The Ingress override NOTES.txt and docs/operations/deployment.md print, host placeholder filled.
+INGRESS_HOST_FLAGS = (
+    "--set", "ingress.enabled=true",
+    "--set", "ingress.hosts[0].host=oml.example",
+    "--set", "ingress.hosts[0].paths[0].path=/",
+    "--set", "ingress.hosts[0].paths[0].pathType=Prefix",
+)
 SERVER_COMPONENT = ("app.kubernetes.io/component", "server")
 LEAD_ROLE = ("oml.e8kor.github.io/role", "lead")
 PROBES = {"startupProbe": "/healthz", "livenessProbe": "/healthz", "readinessProbe": "/readyz"}
@@ -137,6 +144,17 @@ def main() -> int:
     )
     if options is not None:
         check_options(errors, options, app_version)
+
+    # The host override the install notes print replaces the whole hosts list,
+    # so it must carry its path or the Ingress routes nothing.
+    hosted = render(errors, *INGRESS_HOST_FLAGS)
+    if hosted is not None:
+        ingress = only(errors, "the notes' host override", hosted, "Ingress")
+        paths = [] if ingress is None else [
+            p for rule in ingress.get("spec", {}).get("rules") or [] for p in (rule.get("http") or {}).get("paths") or []
+        ]
+        if ingress is not None and not paths:
+            errors.append("the notes' host override: the Ingress rule has no paths and routes nothing")
 
     check_notes(errors)
     return report(errors)

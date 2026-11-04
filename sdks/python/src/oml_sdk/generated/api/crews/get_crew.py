@@ -11,13 +11,13 @@ from ...types import Response
 
 
 def _get_kwargs(
-    crew_id: str,
+    crew: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v2/crews/{crew_id}".format(
-            crew_id=quote(str(crew_id), safe=""),
+        "url": "/v2/crews/{crew}".format(
+            crew=quote(str(crew), safe=""),
         ),
     }
 
@@ -54,7 +54,7 @@ def _build_response(
 
 
 def sync_detailed(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Crew | ErrorEnvelope]:
@@ -63,7 +63,7 @@ def sync_detailed(
      Requires: admin key role.
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
 
     Raises:
@@ -75,7 +75,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        crew_id=crew_id,
+        crew=crew,
     )
 
     response = client.get_httpx_client().request(
@@ -86,7 +86,7 @@ def sync_detailed(
 
 
 def sync(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Crew | ErrorEnvelope | None:
@@ -95,7 +95,7 @@ def sync(
      Requires: admin key role.
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
 
     Raises:
@@ -107,13 +107,13 @@ def sync(
     """
 
     return sync_detailed(
-        crew_id=crew_id,
+        crew=crew,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Crew | ErrorEnvelope]:
@@ -122,7 +122,7 @@ async def asyncio_detailed(
      Requires: admin key role.
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
 
     Raises:
@@ -134,7 +134,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        crew_id=crew_id,
+        crew=crew,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -143,7 +143,7 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    crew_id: str,
+    crew: str,
     *,
     client: AuthenticatedClient | Client,
 ) -> Crew | ErrorEnvelope | None:
@@ -152,7 +152,7 @@ async def asyncio(
      Requires: admin key role.
 
     Args:
-        crew_id (str): A crew record, by its id or its name, resolved server-side like every
+        crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
 
     Raises:
@@ -165,7 +165,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            crew_id=crew_id,
+            crew=crew,
             client=client,
         )
     ).parsed

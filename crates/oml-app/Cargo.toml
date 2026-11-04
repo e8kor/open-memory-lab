@@ -15,7 +15,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
 
 [lints]
 workspace = true

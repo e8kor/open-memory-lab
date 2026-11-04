@@ -91,6 +91,12 @@ def sync_detailed(
     whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
     is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+    serve_id is optional: omitted, the verdict applies to the one review item this key has claimed
+    through review next, and with none or several it is refused with request.validation, details.field
+    /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record
+    (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked
+    up before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         idempotency_key (str):
@@ -132,6 +138,12 @@ def sync(
     whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
     is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+    serve_id is optional: omitted, the verdict applies to the one review item this key has claimed
+    through review next, and with none or several it is refused with request.validation, details.field
+    /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record
+    (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked
+    up before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         idempotency_key (str):
@@ -168,6 +180,12 @@ async def asyncio_detailed(
     whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
     is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+    serve_id is optional: omitted, the verdict applies to the one review item this key has claimed
+    through review next, and with none or several it is refused with request.validation, details.field
+    /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record
+    (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked
+    up before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         idempotency_key (str):
@@ -207,6 +225,12 @@ async def asyncio(
     whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409
     submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id
     is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+    serve_id is optional: omitted, the verdict applies to the one review item this key has claimed
+    through review next, and with none or several it is refused with request.validation, details.field
+    /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record
+    (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked
+    up before the default resolves: a retry of a committed verdict replays its stored response with
+    Idempotency-Replay: true and never applies to another item.
 
     Args:
         idempotency_key (str):

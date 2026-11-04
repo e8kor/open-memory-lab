@@ -3,8 +3,8 @@
 
 use ed25519_dalek::SigningKey;
 use oml_domain::{
-    ChainError, EventDraft, EventTime, Sha256Hash, cross_sign_rotation, event_types,
-    key_fingerprint, next_envelope, rotation_message, verify_rotation_cross_sig,
+    ChainError, EventDraft, EventTime, Sha256Hash, cross_sign_rotation, derive_claim_key,
+    event_types, key_fingerprint, next_envelope, rotation_message, verify_rotation_cross_sig,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -24,6 +24,22 @@ fn rotation_message_is_the_ascii_rule() {
             hex::encode(new_key.as_bytes())
         )
     );
+}
+
+#[test]
+fn the_derived_claim_key_is_auto_plus_sixteen_hex_of_author_zero_byte_and_nfc_text() {
+    // ADR-0039 d6: `auto-` plus the first 16 lowercase hex digits of
+    // SHA-256(key id || 0x00 || NFC(text)), the id in its hyphenated
+    // lowercase spelling. The vector was computed outside this crate
+    // (Python hashlib and unicodedata).
+    let author = Uuid::parse_str("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b").unwrap();
+    let nfc = "Caf\u{e9} au lait costs 3 EUR.";
+    let nfd = "Cafe\u{301} au lait costs 3 EUR.";
+    assert_ne!(nfc, nfd);
+    assert_eq!(derive_claim_key(author, nfc), "auto-8e0d50e5a1715b9e");
+    assert_eq!(derive_claim_key(author, nfd), "auto-8e0d50e5a1715b9e");
+    // Another author's key for the same text is another key.
+    assert_eq!(derive_claim_key(Uuid::nil(), nfc), "auto-8004c59f3e3c23a6");
 }
 
 #[test]
@@ -95,6 +111,23 @@ fn an_event_time_counts_microseconds_from_the_unix_epoch() {
         micros("2026-10-29T14:03:17.250000Z") - micros("2026-10-29T13:03:17.000000Z"),
         3_600 * 1_000_000 + 250_000
     );
+}
+
+#[test]
+fn an_event_time_is_written_back_from_its_microseconds_exactly() {
+    for s in [
+        "1970-01-01T00:00:00.000000Z",
+        "2024-02-29T23:59:59.999999Z",
+        "2026-10-29T12:10:00.000001Z",
+        "0000-01-01T00:00:00.000000Z",
+        "9999-12-31T23:59:59.999999Z",
+        "1969-12-31T23:59:59.999999Z",
+    ] {
+        let time = EventTime::parse(s).expect("fixed width");
+        assert_eq!(EventTime::from_unix_micros(time.unix_micros()), Some(time));
+    }
+    let last = EventTime::parse("9999-12-31T23:59:59.999999Z").expect("fixed width");
+    assert_eq!(EventTime::from_unix_micros(last.unix_micros() + 1), None);
 }
 
 fn draft(event_type: &str) -> EventDraft {

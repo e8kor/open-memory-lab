@@ -9,17 +9,31 @@ use oml_app::App;
 use oml_app::domain::access::{admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
 use oml_app::domain::name::{Name, NamedKind, Reference};
+use oml_app::domain::oauth::{
+    AuthorizationCodeInvalid, AuthorizationExpired, AuthorizationRequest, CLAUDE_CALLBACK,
+    ConnectCode, ConnectRefused, ConnectionState, Issuer, RefreshInvalid, Refusal, RevokedCause,
+    Token, Validation, open_request,
+};
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, event_types, next_envelope, sha256_digest_string, sign, verify_chain,
+    SignedEnvelope, derive_claim_key, event_types, next_envelope, sha256_digest_string, sign,
+    verify_chain,
 };
-use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+use oml_app::doubles::{
+    FixedClock, MarkerScanner, MemDocuments, MemSigner, MemStore, PlainSealer, SeqIdGen,
+};
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{JournalStore as _, StoreError};
+use oml_app::ports::{
+    CommitRequest, ConnectionStore as _, HandleSealer as _, JournalStore as _, MetadataFold,
+    OutboxRow, StoreError,
+};
 use oml_app::types::{
-    AppError, BootstrapRequest, BootstrapResult, CrewCreateRequest, CrewUpdate, GrantRequest,
-    IssueKeyRequest, IssuedKey, ListRequest, NamingRefusal, RecallRequest, RecallResult,
-    SubmitRequest, SupersedeRequest, Verdict, VersionRef,
+    AppError, AuthorizationRecord, AuthorizeOutcome, AuthorizeParams, BootstrapRequest,
+    BootstrapResult, ClientAuthentication, ClientKind, CodeEntryOutcome, ConfirmAction,
+    ConfirmOutcome, ConfirmationView, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential,
+    CrewCreateRequest, CrewUpdate, ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey,
+    KeyRecord, ListRequest, MintedToken, NamingRefusal, RecallRequest, RecallResult, RefreshForm,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -123,6 +137,7 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         default_workarea: None,
         crew: None,
         grants,
+        connect_code: false,
     }
 }
 
@@ -163,17 +178,18 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         idempotency_key: idem.to_owned(),
-        claim_key: format!("claim-{idem}"),
+        claim_key: Some(format!("claim-{idem}")),
+        verb: None,
         kind: MemoryKind::Memory,
         body: body.to_owned(),
-        workarea_id: None,
+        workarea: None,
         derives_from: Vec::new(),
     }
 }
 
 fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
     SubmitRequest {
-        workarea_id: Some(workarea_id.into()),
+        workarea: Some(workarea_id.into()),
         ..submit_req(idem, body)
     }
 }
@@ -182,10 +198,10 @@ fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
         query: query.to_owned(),
         k: 10,
-        workarea_id: None,
+        workarea: None,
         kinds: Vec::new(),
-        include_bodies: true,
-        include_own_held: false,
+        include_text: true,
+        include_unreviewed: false,
         max_tokens: None,
     }
 }
@@ -201,7 +217,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         retirement: false,
         derives_from: Vec::new(),
         reason: None,
-        workarea_id: None,
+        workarea: None,
         refuse_vocabulary_target: false,
     }
 }
@@ -730,7 +746,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     .await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str, workarea: Uuid| SubmitRequest {
-        claim_key: "fleet-order".to_owned(),
+        claim_key: Some("fleet-order".to_owned()),
         ..submit_into(idem, "the fleet follows the canary", workarea)
     };
 
@@ -778,7 +794,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str| SubmitRequest {
-        claim_key: "fleet-order".to_owned(),
+        claim_key: Some("fleet-order".to_owned()),
         ..submit_req(idem, "the fleet follows the canary")
     };
 
@@ -1130,7 +1146,7 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
             .recall(
                 &agent.value,
                 &RecallRequest {
-                    workarea_id: Some(node.into()),
+                    workarea: Some(node.into()),
                     ..recall_req("x")
                 },
             )
@@ -1232,7 +1248,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         .recall(
             &reader.value,
             &RecallRequest {
-                workarea_id: Some(quarantine.into()),
+                workarea: Some(quarantine.into()),
                 ..recall_req("canary")
             },
         )
@@ -1520,7 +1536,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
         .receipt
         .memory_id;
     let derive = |idem: &str| SubmitRequest {
-        claim_key: format!("derived-{idem}"),
+        claim_key: Some(format!("derived-{idem}")),
         derives_from: vec![held],
         ..submit_req(idem, "a derived fact")
     };
@@ -1577,7 +1593,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
         &author.value,
         &dreamer.value,
         &SubmitRequest {
-            claim_key: "fleet-order".to_owned(),
+            claim_key: Some("fleet-order".to_owned()),
             derives_from: vec![held],
             ..submit_req("i2", "the fleet follows the canary")
         },
@@ -1632,7 +1648,7 @@ fn hit_ids_of(recall: &RecallResult) -> Vec<Uuid> {
 /// A recall of `query` at `scope`.
 fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
     RecallRequest {
-        workarea_id: Some(scope.into()),
+        workarea: Some(scope.into()),
         ..recall_req(query)
     }
 }
@@ -2049,6 +2065,37 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
     assert_eq!(app.verify_chain(admin).await.expect("verify").seq, head);
 }
 
+/// `key.issued` journals the key's credential, so a re-fold or a follower
+/// rebuilds `api_keys.credential` from the journal alone (event-catalog.md
+/// `key.issued`; ADR-0031 d7, d12).
+#[tokio::test]
+async fn key_issued_journals_the_keys_credential() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let issued = issue_with(
+        &app,
+        &boot.admin_key.value,
+        Role::Writer,
+        "crew/agent-credential",
+        vec![grant(crew, Role::Reader)],
+    )
+    .await;
+    let tail = journal(&store, boot.tenant_id).await;
+    let key_issued = &tail[usize::try_from(issued.access.issued_seq - 1).expect("seq")].envelope;
+    assert_eq!(key_issued.event_type, event_types::KEY_ISSUED);
+    assert_eq!(key_issued.payload["credential"], "bearer");
+    let admin_issued = tail
+        .iter()
+        .map(|e| &e.envelope)
+        .find(|e| {
+            e.event_type == event_types::KEY_ISSUED
+                && e.payload["key_id"] == boot.admin_key.key_id.to_string()
+        })
+        .expect("the admin key's key.issued");
+    assert_eq!(admin_issued.payload["credential"], "bearer");
+}
+
 #[tokio::test]
 async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch() {
     let store = MemStore::new();
@@ -2106,6 +2153,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             // (event-catalog.md `key.issued`; ADR-0026 d8, d9).
             "name": issued.name.as_str(),
             "crew_id": null,
+            "credential": "bearer",
         })
     );
     for record in &issued.access.grants {
@@ -3591,7 +3639,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
-                workarea_id: Some(boot.root_workarea_id.into()),
+                workarea: Some(boot.root_workarea_id.into()),
                 ..supersede_req("sup-1", first, "revised")
             },
         )
@@ -3601,7 +3649,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
     app.supersede(
         &writer.value,
         &SupersedeRequest {
-            workarea_id: Some(crew.into()),
+            workarea: Some(crew.into()),
             ..supersede_req("sup-2", first, "revised")
         },
     )
@@ -3839,7 +3887,7 @@ fn tokens(text: &str) -> u64 {
 /// A recall of `query` that takes the calling key's own held rows too.
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
-        include_own_held: true,
+        include_unreviewed: true,
         ..recall_req(query)
     }
 }
@@ -4136,7 +4184,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
         .recall(
             &author.value,
             &RecallRequest {
-                workarea_id: Some(quotes.into()),
+                workarea: Some(quotes.into()),
                 ..own_held("canary")
             },
         )
@@ -4153,7 +4201,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
             .recall(
                 &author.value,
                 &RecallRequest {
-                    workarea_id: Some(scope.into()),
+                    workarea: Some(scope.into()),
                     ..own_held("canary")
                 },
             )
@@ -4428,7 +4476,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let (app, reader, _steering, _hits, _s, _t) = budget_fixture().await;
     let bodiless = RecallRequest {
-        include_bodies: false,
+        include_text: false,
         ..recall_req("canary")
     };
     let err = app
@@ -4478,7 +4526,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_eq!(
         digest(RecallRequest {
-            workarea_id: Some(crew.into()),
+            workarea: Some(crew.into()),
             ..recall_req("canary")
         })
         .await,
@@ -4496,7 +4544,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_ne!(
         digest(RecallRequest {
-            include_bodies: false,
+            include_text: false,
             ..recall_req("canary")
         })
         .await,
@@ -4534,7 +4582,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
 /// A first version of a claim into the workarea `target` names.
 fn submit_to(idem: &str, body: &str, target: Reference) -> SubmitRequest {
     SubmitRequest {
-        workarea_id: Some(target),
+        workarea: Some(target),
         ..submit_req(idem, body)
     }
 }
@@ -4593,7 +4641,7 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
         .submit_memory(
             &writer.value,
             &SubmitRequest {
-                workarea_id: Some(metals.into()),
+                workarea: Some(metals.into()),
                 ..req.clone()
             },
         )
@@ -4637,7 +4685,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
             app.recall(
                 key,
                 &RecallRequest {
-                    workarea_id: Some(target),
+                    workarea: Some(target),
                     ..recall_req("copper")
                 },
             )
@@ -5579,8 +5627,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
             admin,
             &ListRequest {
                 own: false,
-                scope: Some(by_name("crew")),
-                workarea_id: None,
+                workarea: Some(by_name("crew")),
                 state: None,
                 kind: None,
                 claim_key: None,
@@ -5614,7 +5661,7 @@ async fn an_admin_keys_recall_is_refused() {
             .recall(
                 &boot.admin_key.value,
                 &RecallRequest {
-                    workarea_id: scope,
+                    workarea: scope,
                     ..recall_req("anything")
                 },
             )
@@ -5634,11 +5681,11 @@ async fn an_admin_keys_recall_is_refused() {
 }
 
 /// Denials attenuate grants and an admin key holds none, so a global denial
-/// on an admin key is refused, `request.validation` naming `key_id`, and
+/// on an admin key is refused, `request.validation` naming `key`, and
 /// journals nothing: no structure read would honour it (http-api.md keys,
 /// grants, denials; ADR-0026 d15).
 #[tokio::test]
-async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
+async fn a_global_denial_on_an_admin_key_is_refused_naming_key() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -5664,4 +5711,2834 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key_id() {
     app.deny_key(admin, writer.key_id.into(), by_name("crew"))
         .await
         .expect("a denial on a writer key");
+}
+
+/// `whoami` answers the calling key's own record and nothing of any other
+/// key: its id, name, role, principal and attestation, its tenant, its
+/// default workarea with the derived path and its crew record, each as an
+/// id and a name, and its stored grants. It reads no claim, so it journals
+/// nothing, and a value that names no live key is refused as every request
+/// is (ADR-0039 d15).
+#[tokio::test]
+async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let metals = metals_crew(&app, admin).await;
+    let quarter = workarea(&app, admin, "q1-2027", crew).await;
+    let agent = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                name: name("claude-laptop"),
+                crew: Some(by_name("metals-crew")),
+                default_workarea: Some(by_name("q1-2027")),
+                ..issue_req(
+                    Role::Writer,
+                    "claude/laptop",
+                    vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("issue the agent key");
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let me = app.whoami(&agent.value).await.expect("whoami");
+    assert_eq!(me.key.key_id, agent.key_id);
+    assert_eq!(me.key.name, Some(name("claude-laptop")));
+    assert_eq!(me.key.role, Role::Writer);
+    assert_eq!(me.key.principal, "claude/laptop");
+    assert_eq!(me.key.held_by, HeldBy::Agent);
+    let tenant = me.tenant.expect("a tenant key names its tenant");
+    assert_eq!((tenant.id, tenant.name), (boot.tenant_id, name("acme")));
+    let default = me.default_workarea.expect("the journalled default");
+    assert_eq!(
+        (default.id, default.name, default.path.as_str()),
+        (quarter, name("q1-2027"), "universe.crew.q1-2027")
+    );
+    let named_crew = me.crew.expect("the crew record named at issuance");
+    assert_eq!(
+        (named_crew.id, named_crew.name),
+        (metals.crew_id, name("metals-crew"))
+    );
+    assert_eq!(
+        me.grants
+            .iter()
+            .map(|g| (g.grant.node, g.grant.role))
+            .collect::<Vec<_>>(),
+        vec![(crew, Role::Writer), (crew, Role::Reader)]
+    );
+
+    // Another key answers its own record, never the first key's.
+    let other = app.whoami(&reader.value).await.expect("whoami");
+    assert_eq!(other.key.key_id, reader.key_id);
+    assert_eq!(other.key.role, Role::Reader);
+    assert_eq!(other.crew, None);
+    assert_eq!(
+        other.default_workarea.map(|w| (w.id, w.path)),
+        Some((crew, "universe.crew".to_owned()))
+    );
+    assert_eq!(other.grants.len(), 1);
+    // The admin key holds no grant and reads itself the same way.
+    let root = app.whoami(admin).await.expect("whoami");
+    assert_eq!(root.key.key_id, boot.admin_key.key_id);
+    assert_eq!(root.key.role, Role::Admin);
+
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let err = app.whoami("oml_not_a_real_key").await.unwrap_err();
+    assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_submission_without_claim_key_is_held_under_the_key_derived_from_its_author_and_text() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let first = agent(&app, admin, "crew/agent-7", crew).await;
+    let second = agent(&app, admin, "crew/agent-7", crew).await;
+    let text = "the canary drains first";
+    let derived = |idem: &str| SubmitRequest {
+        claim_key: None,
+        ..submit_req(idem, text)
+    };
+
+    let receipt = app
+        .submit_memory(&first.value, &derived("d1"))
+        .await
+        .expect("submit")
+        .receipt;
+    assert_eq!(receipt.claim_key, derive_claim_key(first.key_id, text));
+    // Another key's derived key differs, so its claim is a second claim and
+    // no conflict tells it the first key's held text (ADR-0039 d6).
+    let other = app
+        .submit_memory(&second.value, &derived("d2"))
+        .await
+        .expect("a second claim")
+        .receipt;
+    assert_eq!(other.claim_key, derive_claim_key(second.key_id, text));
+    assert_ne!(other.claim_key, receipt.claim_key);
+    let err = app
+        .submit_memory(&first.value, &derived("d3"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClaimKeyConflict), "{err:?}");
+    let events = journal(&store, boot.tenant_id).await;
+    let capture = &events
+        .iter()
+        .find(|e| e.envelope.payload["artifact_id"] == receipt.memory_id.to_string())
+        .expect("the capture")
+        .envelope;
+    assert_eq!(capture.event_type, event_types::SUBMISSION_REMEMBER);
+    assert_eq!(capture.payload["claim_key"], receipt.claim_key);
+}
+
+#[tokio::test]
+async fn an_explicit_claim_key_starting_auto_is_refused_naming_claim_key() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "crew/agent-7", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("auto-0123456789abcdef".to_owned()),
+                ..submit_req("a1", "a fact")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::DerivedClaimKeySent), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_submission_with_derives_from_and_no_verb_journals_learn_and_an_explicit_verb_keeps_its_event()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "crew/agent-7", crew).await;
+    let ancestor = app
+        .submit_memory(&writer.value, &submit_req("a0", "an ancestor"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    for (idem, verb, expected) in [
+        ("v1", None, event_types::SUBMISSION_LEARN),
+        (
+            "v2",
+            Some(SubmitVerb::Remember),
+            event_types::SUBMISSION_REMEMBER,
+        ),
+        ("v3", Some(SubmitVerb::Learn), event_types::SUBMISSION_LEARN),
+    ] {
+        app.submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                verb,
+                derives_from: vec![ancestor],
+                ..submit_req(idem, &format!("derived {idem}"))
+            },
+        )
+        .await
+        .expect("submit");
+        let events = journal(&store, boot.tenant_id).await;
+        let capture = &events.last().expect("an event").envelope;
+        assert_eq!(capture.event_type, expected, "{idem}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The default serve: a verdict without serve_id (ADR-0039 d10)
+// ---------------------------------------------------------------------------
+
+/// A verdict sent without `serve_id`, under Idempotency-Key `idem`.
+fn default_verdict(verdict: Verdict, reason: Option<&str>, idem: &str) -> VerdictRequest {
+    VerdictRequest {
+        serve: None,
+        verdict,
+        reason: reason.map(str::to_owned),
+        idempotency_key: idem.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dana) = crew_keys(&app, admin, crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let idle = issue(&app, admin, Role::Dreamer, "ida", crew).await;
+    let first = held(
+        &app,
+        &writer.value,
+        &submit_req("d1", "the first held claim"),
+    )
+    .await;
+    let second = held(
+        &app,
+        &writer.value,
+        &submit_req("d2", "the second held claim"),
+    )
+    .await;
+
+    // Each reviewer claims one item: dana the oldest, dora the next, since
+    // a row another key claimed is skipped (admission.md review).
+    let served = app
+        .review_next(&dana.value)
+        .await
+        .expect("next")
+        .expect("item");
+    assert_eq!(served.memory.memory_id, first);
+    let served = app
+        .review_next(&dora.value)
+        .await
+        .expect("next")
+        .expect("item");
+    assert_eq!(served.memory.memory_id, second);
+
+    // dora's default is dora's claim, never dana's older one.
+    let outcome = app
+        .review_verdict(&dora.value, &default_verdict(Verdict::Approve, None, "dv1"))
+        .await
+        .expect("verdict");
+    assert_eq!(outcome.memory_id, second);
+    assert_eq!(outcome.state, MemoryStatus::Promoted);
+    let first_row = app
+        .get_memory(&writer.value, first)
+        .await
+        .expect("own read");
+    assert_eq!(first_row.memory.status, MemoryStatus::Held);
+
+    // A key holding no claim is refused, naming serve_id, and nothing moves.
+    let err = app
+        .review_verdict(&idle.value, &default_verdict(Verdict::Approve, None, "dv2"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::ServeIdUnresolved { several: false }),
+        "{err:?}"
+    );
+    let first_row = app
+        .get_memory(&writer.value, first)
+        .await
+        .expect("own read");
+    assert_eq!(first_row.memory.status, MemoryStatus::Held);
+
+    // dana's default is dana's own claim.
+    let outcome = app
+        .review_verdict(
+            &dana.value,
+            &default_verdict(Verdict::Reject, Some("superseded by the second"), "dv3"),
+        )
+        .await
+        .expect("verdict");
+    assert_eq!(outcome.memory_id, first);
+    assert_eq!(outcome.state, MemoryStatus::Rejected);
+}
+
+// ---------------------------------------------------------------------------
+// Connector keys, connect codes and connections (ADR-0031 d1, d7, d8, d11)
+// ---------------------------------------------------------------------------
+
+/// The fixture deployment's `oauth.issuer`.
+const ISSUER: &str = "https://oml.example.com";
+
+/// An app over `store` whose deployment sets `oauth.issuer` (ADR-0031 d1).
+fn oauth_app_over(store: MemStore) -> TestApp {
+    app_over(store).with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"))
+}
+
+/// A writer connector key's issuance: `connect_code: true` (ADR-0031 d7).
+fn connector_req(principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
+    IssueKeyRequest {
+        connect_code: true,
+        ..issue_req(Role::Writer, principal, grants)
+    }
+}
+
+/// The `details.reason` of an `oauth.connect_refused`, else `None`.
+fn connect_refused(err: &AppError) -> Option<ConnectRefused> {
+    match err {
+        AppError::OAuth(Refusal::ConnectRefused(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+fn at(value: &str) -> EventTime {
+    EventTime::parse(value).expect("a fixed-width fixture time")
+}
+
+static FIXTURE_EVENT: AtomicU64 = AtomicU64::new(0);
+
+/// Seals one event on `tenant`'s head with the test key and commits it with
+/// `fold`, as the lead would: for the acts this suite drives beneath the use
+/// cases (an operator key, a key's revocation, a token exchange).
+async fn seal_onto(
+    store: &MemStore,
+    tenant: Uuid,
+    event_type: &str,
+    when: &str,
+    payload: Value,
+    fold: MetadataFold,
+) -> u64 {
+    let events = journal(store, tenant).await;
+    let draft = EventDraft {
+        tenant_id: tenant,
+        event_id: Uuid::from_u128(
+            0xF1C5_0000 + u128::from(FIXTURE_EVENT.fetch_add(1, Ordering::Relaxed)),
+        ),
+        event_type: event_type.to_owned(),
+        principal: "fixture".to_owned(),
+        api_key_id: None,
+        at: at(when),
+        payload,
+    };
+    let envelope = next_envelope(events.last(), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    let seq = event.envelope.seq;
+    store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event_type.to_owned(),
+                payload: json!({ "seq": seq }),
+            },
+            event,
+            fold,
+            idempotency: None,
+        })
+        .await
+        .expect("the fixture commit");
+    seq
+}
+
+/// An operator key in `tenant`, which no use case issues there: its value.
+async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
+    let value = "oml_operator-fixture-value".to_owned();
+    let key_id = Uuid::from_u128(0x0BE7_0001);
+    let record = KeyRecord {
+        key_id,
+        tenant_id: tenant,
+        role: Role::Operator,
+        principal: "operator".to_owned(),
+        held_by: HeldBy::Human,
+        default_workarea: None,
+        issued_by: None,
+        credential: Credential::Bearer,
+        key_hash: Some(sha256_digest_string(value.as_bytes())),
+        name: Some(name("operator-fixture")),
+        crew_id: None,
+        revoked_at: None,
+    };
+    seal_onto(
+        store,
+        tenant,
+        event_types::KEY_ISSUED,
+        "2026-10-29T12:00:30.000000Z",
+        json!({ "key_id": key_id.to_string(), "role": "operator" }),
+        MetadataFold::KeyIssued(record),
+    )
+    .await;
+    value
+}
+
+/// The fixture authorization code's digest for `connection`.
+fn auth_code(connection: Uuid) -> Sha256Hash {
+    Sha256Hash::digest(&[b"auth-code:".as_slice(), connection.as_bytes()].concat())
+}
+
+/// Enters the key's code on the authorization page and confirms Connect,
+/// on the store, as the page does: `connection` is created `authorized`
+/// (roles-and-keys.md connections lifecycle; ADR-0031 d9).
+async fn authorize(store: &MemStore, tenant: Uuid, key_id: Uuid, code_id: Uuid, connection: Uuid) {
+    assert!(
+        store
+            .spend_code(tenant, code_id, &at("2026-10-29T12:05:00.000000Z"))
+            .await
+            .expect("code entry"),
+        "the code's first correct entry spends it"
+    );
+    let handle = Sha256Hash::digest(&[b"handle:".as_slice(), connection.as_bytes()].concat());
+    store
+        .authorization_insert(AuthorizationRecord {
+            authorization_id: Uuid::from_u128(connection.as_u128() ^ 0xA000_0000),
+            handle_hash: handle,
+            client_id: "https://claude.ai/oauth/mcp-oauth-client-metadata".to_owned(),
+            client_kind: ClientKind::Cimd,
+            metadata_digest: Sha256Hash::digest(b"client metadata"),
+            redirect_uri: "https://claude.ai/api/mcp/auth_callback".to_owned(),
+            redirect_uri_sent: true,
+            code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_owned(),
+            state: None,
+            expires_at: at("2026-10-29T12:09:00.000000Z"),
+            code_id,
+            code_tenant_id: tenant,
+            key_id,
+        })
+        .await
+        .expect("the authorization request");
+    let outcome = store
+        .connection_connect(
+            &handle,
+            ConnectGrant {
+                connection_id: connection,
+                resource: format!("{ISSUER}/mcp"),
+                auth_code_hash: auth_code(connection),
+                auth_code_expires_at: at("2026-10-29T12:07:00.000000Z"),
+                at: at("2026-10-29T12:05:30.000000Z"),
+            },
+        )
+        .await
+        .expect("Connect");
+    assert!(
+        matches!(outcome, ConnectOutcome::Authorized { .. }),
+        "{outcome:?}"
+    );
+}
+
+/// The token exchange's `connection.opened` for an `authorized`
+/// connection, replacing none (event-catalog.md `connection.opened`).
+async fn open(store: &MemStore, tenant: Uuid, connection: Uuid) {
+    let token = |kind: &[u8]| MintedToken {
+        token_hash: Sha256Hash::digest(&[kind, connection.as_bytes()].concat()),
+        expires_at: at("2026-11-28T12:06:00.000000Z"),
+    };
+    seal_onto(
+        store,
+        tenant,
+        event_types::CONNECTION_OPENED,
+        "2026-10-29T12:06:00.000000Z",
+        json!({ "connection_id": connection.to_string(), "replaces_connection_id": Value::Null }),
+        MetadataFold::ConnectionOpened {
+            connection_id: connection,
+            replaces: None,
+            auth_code_hash: auth_code(connection),
+            tokens: TokenPair {
+                access: token(b"access:"),
+                refresh: token(b"refresh:"),
+            },
+        },
+    )
+    .await;
+}
+
+/// `POST /v2/keys` with `connect_code: true` mints no value: the key's
+/// credential is `connection` and it has no hash, `key.issued`, every
+/// `grant.issued` and `connection.code_issued` commit in that order, and the
+/// response carries the code, its id, its expiry ten minutes on and the
+/// connector URL `<issuer>/mcp` in the value's place (roles-and-keys.md
+/// issuance order, step 7; event-catalog.md `connection.code_issued`;
+/// ADR-0031 d7, d8).
+#[tokio::test]
+async fn a_connector_key_is_issued_with_a_connect_code_and_no_value() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let issued = app
+        .issue_key(
+            &admin.value,
+            &connector_req(
+                "crew/claude-mobile",
+                vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+            ),
+        )
+        .await
+        .expect("a connector key");
+
+    assert!(issued.value.is_empty(), "a connector key has no value");
+    let code = issued.connect_code.as_ref().expect("the connect code");
+    assert_eq!(code.connector_url, format!("{ISSUER}/mcp"));
+    let symbols = code
+        .code
+        .as_deref()
+        .expect("a fresh answer carries the code");
+    let parsed = ConnectCode::parse(symbols).expect("twelve Crockford symbols");
+    assert_eq!(parsed.grouped(), symbols, "shown as three groups of four");
+
+    let events = journal(&store, boot.tenant_id).await;
+    let types: Vec<&str> = events[head..]
+        .iter()
+        .map(|e| e.envelope.event_type.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            event_types::KEY_ISSUED,
+            event_types::GRANT_ISSUED,
+            event_types::GRANT_ISSUED,
+            event_types::CONNECTION_CODE_ISSUED,
+        ]
+    );
+    let key_issued = &events[head].envelope;
+    assert_eq!(key_issued.payload["credential"], "connection");
+    assert_eq!(issued.access.issued_seq, key_issued.seq);
+    let grant_seqs: Vec<u64> = issued.access.grants.iter().map(|g| g.epoch).collect();
+    assert_eq!(
+        grant_seqs,
+        [events[head + 1].envelope.seq, events[head + 2].envelope.seq]
+    );
+    let code_issued = &events[head + 3].envelope;
+    assert_eq!(
+        code_issued.payload,
+        json!({
+            "code_id": code.code_id.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "issued_by_key_id": admin.key_id.to_string(),
+            "expires_at": code.expires_at.as_str(),
+            "voids_code_id": Value::Null,
+        })
+    );
+    let ttl = code.expires_at.unix_micros() - code_issued.at.unix_micros();
+    assert!(
+        (599_000_000..=600_000_000).contains(&ttl),
+        "the code lives oauth.connect_code_ttl's shipped ten minutes: {ttl} µs"
+    );
+
+    let key = store
+        .key(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("the key's row");
+    assert_eq!(key.credential, Credential::Connection);
+    assert_eq!(key.key_hash, None);
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert_eq!(codes.len(), 1);
+    assert_eq!(codes[0].code_id, code.code_id);
+    assert_eq!(codes[0].code_hash, Sha256Hash(parsed.digest()));
+    assert_eq!(codes[0].issued_seq, code_issued.seq);
+    assert_eq!(codes[0].expires_at, code.expires_at);
+}
+
+/// Step 7 refuses a connect code for a key role of `admin` or `operator`
+/// with `oauth.connect_refused` and `details.reason: role`, journalling
+/// nothing (roles-and-keys.md issuance order, step 7; ADR-0031 d7).
+#[tokio::test]
+async fn an_admin_or_operator_role_is_refused_a_connect_code_by_its_reason() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, _) = tenant(&app).await;
+    let operator = operator_key(&store, boot.tenant_id).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .issue_key(
+            &boot.admin_key.value,
+            &IssueKeyRequest {
+                connect_code: true,
+                ..issue_req(Role::Admin, "second-admin", Vec::new())
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(connect_refused(&err), Some(ConnectRefused::Role), "{err:?}");
+    let err = app
+        .issue_key(
+            &operator,
+            &IssueKeyRequest {
+                connect_code: true,
+                ..issue_req(Role::Operator, "second-operator", Vec::new())
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(connect_refused(&err), Some(ConnectRefused::Role), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// Step 7 refuses a connect code for a key attested `held_by: service`
+/// with `held_by_service`, journalling nothing (ADR-0031 d7).
+#[tokio::test]
+async fn a_service_held_key_is_refused_a_connect_code() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .issue_key(
+            &boot.admin_key.value,
+            &IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                ..connector_req("reconciler", vec![grant(crew, Role::Writer)])
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::HeldByService),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A deployment that has not named its public origin cannot advertise
+/// one: step 7 refuses a connector key with `not_configured`, journalling
+/// nothing, while a bearer key issues as before (ADR-0031 d1, d7).
+#[tokio::test]
+async fn a_connector_key_is_refused_when_oauth_issuer_is_unset() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .issue_key(
+            &boot.admin_key.value,
+            &connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::NotConfigured),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let bearer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
+    assert!(bearer.value.starts_with("oml_"));
+    assert!(bearer.connect_code.is_none());
+}
+
+/// The connect-code step is the seventh, after the default workarea and
+/// before the name, which ADR-0026 d5 checks after every other check: a
+/// taken name with a refused connect code answers the connect code's
+/// refusal, an uncovered default answers before step 7, and only a key that
+/// can hold a connection reaches `name.taken`, which journals nothing
+/// (roles-and-keys.md issuance order, steps 6–8; ADR-0031 d7).
+#[tokio::test]
+async fn the_name_check_runs_after_the_connect_code_step() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            name: name("claude-mobile"),
+            ..issue_req(Role::Writer, "wanda", vec![grant(crew, Role::Writer)])
+        },
+    )
+    .await
+    .expect("the name's first key");
+    let head = journal(&store, boot.tenant_id).await.len();
+    let taken = |req: IssueKeyRequest| IssueKeyRequest {
+        name: name("claude-mobile"),
+        ..req
+    };
+
+    let err = app
+        .issue_key(
+            admin,
+            &taken(IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                ..connector_req("p", vec![grant(crew, Role::Writer)])
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::HeldByService),
+        "{err:?}"
+    );
+    let unset = app_over(store.clone());
+    let err = unset
+        .issue_key(
+            admin,
+            &taken(connector_req("p", vec![grant(crew, Role::Writer)])),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::NotConfigured),
+        "{err:?}"
+    );
+    let err = app
+        .issue_key(
+            admin,
+            &taken(IssueKeyRequest {
+                held_by: Some(HeldBy::Service),
+                default_workarea: Some(other.into()),
+                ..connector_req("p", vec![grant(crew, Role::Writer)])
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::DefaultUncovered { .. }),
+        "step 6 answers before step 7: {err:?}"
+    );
+    let err = app
+        .issue_key(
+            admin,
+            &taken(connector_req("p", vec![grant(crew, Role::Writer)])),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::NameTaken { kind: NamedKind::Key, name } if name.as_str() == "claude-mobile"),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A key is a bearer key or a connector key, never both: a connect code for
+/// a key that has a value answers `oauth.connect_refused` (`bearer_key`)
+/// and journals nothing (ADR-0031 d7, d8).
+#[tokio::test]
+async fn minting_a_code_for_a_bearer_key_is_refused() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let bearer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .mint_connect_code(admin, bearer.key_id.into())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::BearerKey),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A revoked connector key is refused a code with `revoked`, and a
+/// deployment without `oauth.issuer` with `not_configured`, each
+/// journalling nothing (http-api.md `POST /v2/keys/{key_id}/connect-codes`;
+/// ADR-0031 d1, d8).
+#[tokio::test]
+async fn minting_a_code_for_a_revoked_key_or_without_oauth_issuer_is_refused() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let live = app
+        .issue_key(
+            admin,
+            &connector_req("crew/a", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let revoked = app
+        .issue_key(
+            admin,
+            &connector_req("crew/b", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    seal_onto(
+        &store,
+        boot.tenant_id,
+        event_types::KEY_REVOKED,
+        "2026-10-29T12:01:00.000000Z",
+        json!({ "key_id": revoked.key_id.to_string() }),
+        MetadataFold::KeyRevoked {
+            key_id: revoked.key_id,
+        },
+    )
+    .await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let err = app
+        .mint_connect_code(admin, revoked.key_id.into())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::Revoked),
+        "{err:?}"
+    );
+    let err = app_over(store.clone())
+        .mint_connect_code(admin, live.key_id.into())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::NotConfigured),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A key has at most one live code: minting one names the key's unredeemed
+/// code in `voids_code_id` and voids it in the same commit, so the first
+/// code's `voided_seq` is the second's `issued_seq` (event-catalog.md
+/// `connection.code_issued`; ADR-0031 d8).
+#[tokio::test]
+async fn minting_a_second_code_voids_the_first() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let first = issued.connect_code.expect("the first code");
+
+    let second = app
+        .mint_connect_code(admin, by_name(issued.name.as_str()))
+        .await
+        .expect("a second code");
+    assert_ne!(second.code_id, first.code_id);
+    assert_ne!(second.code, first.code);
+    assert_eq!(second.connector_url, format!("{ISSUER}/mcp"));
+
+    let events = journal(&store, boot.tenant_id).await;
+    let minted = &events.last().expect("the mint").envelope;
+    assert_eq!(minted.event_type, event_types::CONNECTION_CODE_ISSUED);
+    assert_eq!(
+        minted.payload["voids_code_id"],
+        json!(first.code_id.to_string())
+    );
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert_eq!(codes.len(), 2);
+    assert_eq!(codes[0].code_id, first.code_id);
+    assert_eq!(codes[0].voided_seq, Some(minted.seq));
+    assert_eq!(codes[1].code_id, second.code_id);
+    assert_eq!(codes[1].voided_seq, None);
+}
+
+/// An `authorized` connection is not journalled, not listed and cannot be
+/// named: revoking it answers `access.not_found`, as an unknown id does,
+/// and journals nothing (http-api.md
+/// `POST /v2/keys/{key_id}/connections/{connection_id}/revoke`; ADR-0031
+/// d11).
+#[tokio::test]
+async fn revoking_an_authorized_connection_answers_not_found() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let code = issued.connect_code.expect("the code");
+    let connection = Uuid::from_u128(0xC0_0001);
+    authorize(
+        &store,
+        boot.tenant_id,
+        issued.key_id,
+        code.code_id,
+        connection,
+    )
+    .await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    for named in [connection, Uuid::from_u128(0xC0_DEAD)] {
+        let err = app
+            .revoke_connection(admin, issued.key_id.into(), named, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    assert!(
+        app.list_connections(admin, issued.key_id.into())
+            .await
+            .expect("the listing")
+            .is_empty(),
+        "an authorized connection is not listed"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let row = store
+        .connection(boot.tenant_id, connection)
+        .await
+        .expect("read")
+        .expect("the row");
+    assert_eq!(row.state, ConnectionState::Authorized);
+}
+
+/// Listing a key's connections and revoking one are served whether or not
+/// `oauth.issuer` is set, so an admin can clean up while the surface is
+/// off: the open connection is listed, its revocation journals
+/// `connection.revoked` with the cause `admin` and the digest of the reason
+/// given, and the listing then still holds the connection as revoked by an
+/// admin at that event's seq: a key's open and revoked connections are
+/// listed, an `authorized` one is not (ADR-0031 d1, d11, d12).
+#[tokio::test]
+async fn connections_are_listed_and_revoked_with_oauth_issuer_unset() {
+    let store = MemStore::new();
+    let (boot, crew) = tenant(&oauth_app_over(store.clone())).await;
+    let admin = &boot.admin_key;
+    let issued = oauth_app_over(store.clone())
+        .issue_key(
+            &admin.value,
+            &connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let code = issued.connect_code.expect("the code");
+    let connection = Uuid::from_u128(0xC0_0002);
+    authorize(
+        &store,
+        boot.tenant_id,
+        issued.key_id,
+        code.code_id,
+        connection,
+    )
+    .await;
+    open(&store, boot.tenant_id, connection).await;
+
+    let app = app_over(store.clone());
+    let listed = app
+        .list_connections(&admin.value, by_name(issued.name.as_str()))
+        .await
+        .expect("the listing");
+    let ids: Vec<Uuid> = listed.iter().map(|c| c.connection_id).collect();
+    assert_eq!(ids, [connection]);
+    assert_eq!(listed[0].state, ConnectionState::Open);
+
+    let revoked = app
+        .revoke_connection(
+            &admin.value,
+            issued.key_id.into(),
+            connection,
+            Some("lost phone"),
+        )
+        .await
+        .expect("the revocation");
+    assert_eq!(revoked.state, ConnectionState::Revoked(RevokedCause::Admin));
+    let events = journal(&store, boot.tenant_id).await;
+    let event = &events.last().expect("the revocation").envelope;
+    assert_eq!(event.event_type, event_types::CONNECTION_REVOKED);
+    assert_eq!(revoked.revoked_seq, Some(event.seq));
+    assert_eq!(event.api_key_id, Some(admin.key_id));
+    assert_eq!(
+        event.payload,
+        json!({
+            "connection_id": connection.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "revoked_by_key_id": admin.key_id.to_string(),
+            "cause": "admin",
+            "reason_digest": sha256_digest_string(b"lost phone"),
+        })
+    );
+    let listed = app
+        .list_connections(&admin.value, issued.key_id.into())
+        .await
+        .expect("the listing");
+    let ids: Vec<Uuid> = listed.iter().map(|c| c.connection_id).collect();
+    assert_eq!(ids, [connection], "a revoked connection is still listed");
+    assert_eq!(
+        listed[0].state,
+        ConnectionState::Revoked(RevokedCause::Admin)
+    );
+    assert_eq!(listed[0].revoked_seq, Some(event.seq));
+    let err = app
+        .revoke_connection(&admin.value, issued.key_id.into(), connection, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::NotFound),
+        "a revoked connection is not open: {err:?}"
+    );
+}
+
+/// The code appears in the issuance's answer and nowhere else: no payload
+/// of the issuance's or a mint's events carries its symbols, its grouped
+/// form or its digest in any spelling (event-catalog.md
+/// `connection.code_issued`; ADR-0031 d8).
+#[tokio::test]
+async fn no_journal_payload_of_the_issuance_carries_the_code_or_its_digest() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let minted = app
+        .mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a second code");
+    let mut secrets = Vec::new();
+    for shown in [issued.connect_code.expect("the code"), minted] {
+        let grouped = shown.code.expect("a fresh answer carries the code");
+        let code = ConnectCode::parse(&grouped).expect("a code");
+        let digest = Sha256Hash(code.digest());
+        let hex: String = code.digest().iter().map(|b| format!("{b:02x}")).collect();
+        secrets.extend([
+            grouped,
+            code.symbols().to_owned(),
+            digest.to_string(),
+            hex.clone(),
+            hex.to_uppercase(),
+        ]);
+    }
+    for event in &journal(&store, boot.tenant_id).await[head..] {
+        let payload = event.envelope.payload.to_string();
+        for secret in &secrets {
+            assert!(
+                !payload.contains(secret.as_str()),
+                "{} carries {secret}",
+                event.envelope.event_type
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The authorization page: code entry, Connect and Cancel (ADR-0031 d8, d9)
+// ---------------------------------------------------------------------------
+
+/// The fixture client's metadata document URL.
+const DOC_URL: &str = "https://client.example.com/oauth/metadata.json";
+
+/// The fixture authorize request's `state`.
+const STATE: &str = "opaque state";
+
+/// The fixture client's document, served for an hour.
+fn client_documents() -> MemDocuments {
+    let docs = MemDocuments::new();
+    let body = format!(
+        r#"{{"client_id":"{DOC_URL}","client_name":"Claude","redirect_uris":["{CLAUDE_CALLBACK}"]}}"#
+    );
+    docs.serve(DOC_URL, Ok((body.into_bytes(), 3_600)));
+    docs
+}
+
+/// A valid authorize request's sealed handle: the page that asks for the
+/// code (ADR-0031 d9 step 1).
+async fn code_page(app: &TestApp) -> String {
+    let params = AuthorizeParams {
+        client_id: Some(DOC_URL.to_owned()),
+        redirect_uri: Some(CLAUDE_CALLBACK.to_owned()),
+        response_type: Some("code".to_owned()),
+        code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_owned()),
+        code_challenge_method: Some("S256".to_owned()),
+        state: Some(STATE.to_owned()),
+        resource: Some(format!("{ISSUER}/mcp")),
+        scope: Some("mcp".to_owned()),
+        repeated: false,
+    };
+    match app
+        .authorize_request(params, &client_documents(), &PlainSealer)
+        .await
+        .expect("an authorize request is answered")
+    {
+        AuthorizeOutcome::Page(page) => page.handle,
+        other => panic!("a valid request is a page: {other:?}"),
+    }
+}
+
+/// A writer connector key on `grants` and its connect code's symbols.
+async fn connector_with_code(
+    app: &TestApp,
+    admin: &str,
+    grants: Vec<GrantRequest>,
+) -> (IssuedKey, String) {
+    let issued = app
+        .issue_key(admin, &connector_req("crew/claude-mobile", grants))
+        .await
+        .expect("a connector key");
+    let code = issued
+        .connect_code
+        .as_ref()
+        .and_then(|c| c.code.clone())
+        .expect("a fresh answer carries the code");
+    (issued, code)
+}
+
+/// The confirmation a correct code answers.
+async fn entered(app: &TestApp, handle: &str, code: &str) -> ConfirmationView {
+    match app
+        .enter_code(handle, code, &PlainSealer)
+        .await
+        .expect("code entry is answered")
+    {
+        CodeEntryOutcome::Confirmation(view) => *view,
+        other => panic!("a correct code shows the confirmation: {other:?}"),
+    }
+}
+
+/// The attempts a sealed handle's request has left.
+fn attempts_left(handle: &str) -> u8 {
+    let now = at("2026-10-29T12:00:01.000000Z");
+    open_request(PlainSealer.open(handle).as_deref(), &now)
+        .expect("a live request")
+        .attempts_left
+}
+
+/// The redirect a refusal of a known request answers: `access_denied` to
+/// the fixture request's redirect URI with its `state` and `iss` (errors.md
+/// `oauth.authorization_expired`; ADR-0031 d9).
+fn denied_redirect(reason: AuthorizationExpired) -> ConfirmOutcome {
+    ConfirmOutcome::Denied {
+        error: Refusal::AuthorizationExpired(reason),
+        redirect_uri: CLAUDE_CALLBACK.to_owned(),
+        state: Some(STATE.to_owned()),
+        iss: ISSUER.to_owned(),
+    }
+}
+
+fn authorization_expired(err: &AppError) -> Option<AuthorizationExpired> {
+    match err {
+        AppError::OAuth(Refusal::AuthorizationExpired(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+/// After a correct code the confirmation shows the tenant by its name, the
+/// key's name, principal and role, every granted workarea by name with the
+/// grant's role, the workareas each verb-kind sentence names, and no
+/// self-signed workarea; the code is spent and the request's row is written
+/// under the SHA-256 of the confirmation's handle (http-api.md
+/// `POST /oauth/authorize`; ADR-0031 d8, d9 step 2).
+#[tokio::test]
+async fn a_correct_code_shows_the_keys_tenant_name_role_and_granted_workareas() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let notes = workarea(&app, admin, "notes", boot.root_workarea_id).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        admin,
+        vec![grant(crew, Role::Writer), grant(notes, Role::Reader)],
+    )
+    .await;
+    let handle = code_page(&app).await;
+
+    let view = entered(&app, &handle, &code.to_lowercase()).await;
+
+    assert_eq!(view.tenant_name, name("acme"));
+    assert_eq!(view.key_name, Some(issued.name.clone()));
+    assert_eq!(view.principal, "crew/claude-mobile");
+    assert_eq!(view.role, Role::Writer);
+    let grants: Vec<(Uuid, Name, Role)> = view
+        .grants
+        .iter()
+        .map(|g| (g.workarea_id, g.workarea.clone(), g.role))
+        .collect();
+    assert_eq!(
+        grants,
+        [
+            (crew, name("crew"), Role::Writer),
+            (notes, name("notes"), Role::Reader)
+        ]
+    );
+    assert_eq!(view.writes_in, [name("crew")]);
+    assert_eq!(view.reads_in, [name("notes")]);
+    assert!(view.proposes_in.is_empty());
+    assert!(view.self_signed_in.is_empty());
+
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_some(), "the correct entry spent it");
+    let row = store
+        .authorization(&Sha256Hash::digest(view.handle.as_bytes()))
+        .await
+        .expect("read")
+        .expect("the request's row, by the handle's digest");
+    assert_eq!(row.code_id, codes[0].code_id);
+    assert_eq!(row.code_tenant_id, boot.tenant_id);
+    assert_eq!(row.key_id, issued.key_id);
+    assert_eq!(row.client_id, DOC_URL);
+    assert_eq!(row.client_kind, ClientKind::Cimd);
+    assert_eq!(row.redirect_uri, CLAUDE_CALLBACK);
+    assert_eq!(row.state.as_deref(), Some(STATE));
+    assert_eq!(view.handle.len(), 43, "a 256-bit handle in base62");
+    assert_eq!(app.connect_code_failures(), 0);
+}
+
+/// An unknown, malformed, expired, voided or spent code answers the one
+/// refusal, `oauth.connect_code_invalid`, with one attempt fewer under a
+/// new sealed handle, writes no request row and counts one deployment-wide
+/// failure for each (http-api.md `POST /oauth/authorize`; ADR-0031 d8, d9
+/// step 2, d14).
+#[tokio::test]
+async fn a_wrong_code_of_any_kind_answers_the_same_refusal_with_one_attempt_fewer() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    // Voided: a newer code replaced it.
+    let (voided_key, voided) =
+        connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    app.mint_connect_code(admin, voided_key.key_id.into())
+        .await
+        .expect("a newer code");
+    // Spent: entered correctly on another page.
+    let (_, spent) = connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    entered(&app, &code_page(&app).await, &spent).await;
+    // Expired: a code whose ten minutes are over.
+    let (expired_key, _) = connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    let expired = "EXPD-EXPD-EXPD";
+    let live = store
+        .connect_codes(boot.tenant_id, expired_key.key_id)
+        .await
+        .expect("codes")[0]
+        .code_id;
+    seal_onto(
+        &store,
+        boot.tenant_id,
+        event_types::CONNECTION_CODE_ISSUED,
+        "2026-10-29T11:50:00.000000Z",
+        json!({ "code_id": Uuid::from_u128(0xE5_0001).to_string() }),
+        MetadataFold::ConnectCodeIssued {
+            code: oml_app::types::ConnectCode {
+                code_id: Uuid::from_u128(0xE5_0001),
+                key_id: expired_key.key_id,
+                code_hash: Sha256Hash(ConnectCode::parse(expired).expect("a code").digest()),
+                expires_at: at("2026-10-29T11:59:00.000000Z"),
+            },
+            voids: Some(live),
+        },
+    )
+    .await;
+    let rows = store.authorization_count();
+
+    for (kind, entry) in [
+        ("unknown", "ZZZZ-ZZZZ-ZZZZ"),
+        ("malformed", "not a code"),
+        ("expired", expired),
+        ("voided", voided.as_str()),
+        ("spent", spent.as_str()),
+    ] {
+        let handle = code_page(&app).await;
+        let outcome = app
+            .enter_code(&handle, entry, &PlainSealer)
+            .await
+            .expect("code entry is answered");
+        let CodeEntryOutcome::WrongCode {
+            handle: next,
+            attempts_left: left,
+        } = outcome
+        else {
+            panic!("a {kind} code answers connect_code_invalid: {outcome:?}");
+        };
+        assert_eq!(left, 4, "a {kind} code costs one attempt");
+        assert_ne!(next, handle, "a {kind} code answers a new handle");
+        assert_eq!(attempts_left(&next), 4, "the new handle carries it");
+    }
+    assert_eq!(
+        store.authorization_count(),
+        rows,
+        "no wrong code writes a row"
+    );
+    assert_eq!(app.connect_code_failures(), 5);
+}
+
+/// The fifth wrong entry on one page ends the request: a redirect with
+/// `access_denied` (`oauth.authorization_expired`), the `state` and `iss`
+/// (http-api.md `POST /oauth/authorize`; ADR-0031 d9 step 2).
+#[tokio::test]
+async fn the_fifth_wrong_entry_ends_the_request_with_access_denied() {
+    let app = oauth_app_over(MemStore::new());
+    tenant(&app).await;
+    let mut handle = code_page(&app).await;
+    for left in (1..=4).rev() {
+        match app
+            .enter_code(&handle, "ZZZZ-ZZZZ-ZZZZ", &PlainSealer)
+            .await
+            .expect("code entry is answered")
+        {
+            CodeEntryOutcome::WrongCode {
+                handle: next,
+                attempts_left,
+            } => {
+                assert_eq!(attempts_left, left);
+                handle = next;
+            }
+            other => panic!("a wrong entry with attempts left is the form: {other:?}"),
+        }
+    }
+    let outcome = app
+        .enter_code(&handle, "ZZZZ-ZZZZ-ZZZZ", &PlainSealer)
+        .await
+        .expect("code entry is answered");
+    let CodeEntryOutcome::Denied {
+        error,
+        redirect_uri,
+        state,
+        iss,
+    } = outcome
+    else {
+        panic!("the fifth wrong entry is a redirect: {outcome:?}");
+    };
+    assert_eq!(
+        error,
+        Refusal::AuthorizationExpired(AuthorizationExpired::AttemptsSpent)
+    );
+    assert_eq!(error.authorize_error(), "access_denied");
+    assert_eq!(redirect_uri, CLAUDE_CALLBACK);
+    assert_eq!(state.as_deref(), Some(STATE));
+    assert_eq!(iss, ISSUER);
+    assert_eq!(app.connect_code_failures(), 5);
+}
+
+/// The code of a revoked key answers what any code that is not valid
+/// answers, so the page never shows a dead key's grants (ADR-0031 d8).
+#[tokio::test]
+async fn a_revoked_keys_code_answers_connect_code_invalid() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    seal_onto(
+        &store,
+        boot.tenant_id,
+        event_types::KEY_REVOKED,
+        "2026-10-29T12:01:00.000000Z",
+        json!({ "key_id": issued.key_id.to_string() }),
+        MetadataFold::KeyRevoked {
+            key_id: issued.key_id,
+        },
+    )
+    .await;
+    let rows = store.authorization_count();
+
+    let outcome = app
+        .enter_code(&code_page(&app).await, &code, &PlainSealer)
+        .await
+        .expect("code entry is answered");
+
+    assert!(
+        matches!(
+            outcome,
+            CodeEntryOutcome::WrongCode {
+                attempts_left: 4,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(store.authorization_count(), rows);
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_none(), "the code is not spent");
+    assert_eq!(
+        app.connect_code_failures(),
+        1,
+        "the entry counts one failure"
+    );
+}
+
+/// Connect deletes the request's row in its own commit, so a second
+/// Connect with the same handle names no row, answers
+/// `oauth.authorization_expired`, and one connect code yields one
+/// connection (ADR-0031 d9 step 3).
+#[tokio::test]
+async fn connect_twice_with_one_handle_opens_at_most_one_connection() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    let first = app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .expect("Connect");
+    assert!(
+        matches!(first, ConfirmOutcome::Connected { .. }),
+        "{first:?}"
+    );
+    let err = app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        authorization_expired(&err),
+        Some(AuthorizationExpired::NoRequest),
+        "{err:?}"
+    );
+    let connections = store
+        .connections(boot.tenant_id, issued.key_id)
+        .await
+        .expect("connections");
+    assert_eq!(connections.len(), 1);
+}
+
+/// A newer code voids the key's spent code, so a Connect on the page that
+/// verified it answers `oauth.authorization_expired` as `access_denied` on
+/// the request's redirect, with its `state` and `iss`, since the handle
+/// names a row, and opens nothing (errors.md; ADR-0031 d8, d9 step 3).
+#[tokio::test]
+async fn connect_after_a_newer_code_was_minted_answers_authorization_expired() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+    app.mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a newer code");
+
+    let outcome = app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .expect("a known handle is answered on its redirect");
+
+    assert_eq!(
+        outcome,
+        denied_redirect(AuthorizationExpired::CodeVoided),
+        "{outcome:?}"
+    );
+    assert!(
+        store
+            .connections(boot.tenant_id, issued.key_id)
+            .await
+            .expect("connections")
+            .is_empty()
+    );
+}
+
+/// Cancel redirects with `access_denied`, the `state` and `iss`, and takes
+/// the request's row; the code stays spent, so it neither verifies again
+/// nor lets the handle Connect (ADR-0031 d9 step 3).
+#[tokio::test]
+async fn the_connect_code_stays_spent_after_cancel() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    let cancelled = app
+        .confirm(&view.handle, ConfirmAction::Cancel)
+        .await
+        .expect("Cancel");
+
+    assert_eq!(
+        cancelled,
+        ConfirmOutcome::Cancelled {
+            redirect_uri: CLAUDE_CALLBACK.to_owned(),
+            state: Some(STATE.to_owned()),
+            iss: ISSUER.to_owned(),
+        }
+    );
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_some(), "the code stays spent");
+    let err = app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        authorization_expired(&err),
+        Some(AuthorizationExpired::NoRequest)
+    );
+    let again = app
+        .enter_code(&code_page(&app).await, &code, &PlainSealer)
+        .await
+        .expect("code entry is answered");
+    assert!(
+        matches!(again, CodeEntryOutcome::WrongCode { .. }),
+        "{again:?}"
+    );
+    assert!(
+        store
+            .connections(boot.tenant_id, issued.key_id)
+            .await
+            .expect("connections")
+            .is_empty()
+    );
+}
+
+/// Connect stamps the client's `connected_at`, creates the connection
+/// `authorized` with the digest of a 256-bit authorization code alive 60
+/// seconds, and redirects with that code, the `state` and `iss`
+/// (postgres-schema.md `oauth_clients`; ADR-0031 d5, d9 step 3).
+#[tokio::test]
+async fn connect_stamps_the_clients_connected_at() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+    let client = store.oauth_client(DOC_URL).await.expect("read");
+    assert_eq!(client.expect("the cached document").connected_at, None);
+
+    let outcome = app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .expect("Connect");
+
+    let ConfirmOutcome::Connected {
+        redirect_uri,
+        code: auth_code,
+        state,
+        iss,
+    } = outcome
+    else {
+        panic!("Connect redirects with a code: {outcome:?}");
+    };
+    assert_eq!(redirect_uri, CLAUDE_CALLBACK);
+    assert_eq!(state.as_deref(), Some(STATE));
+    assert_eq!(iss, ISSUER);
+    assert_eq!(auth_code.len(), 43, "a 256-bit code in base62");
+    let client = store
+        .oauth_client(DOC_URL)
+        .await
+        .expect("read")
+        .expect("the cached document");
+    assert!(client.connected_at.is_some(), "Connect stamps connected_at");
+    let connections = store
+        .connections(boot.tenant_id, issued.key_id)
+        .await
+        .expect("connections");
+    let [connection] = connections.as_slice() else {
+        panic!("one connection: {connections:?}");
+    };
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.resource, format!("{ISSUER}/mcp"));
+    assert_eq!(
+        connection.auth_code_hash,
+        Some(Sha256Hash::digest(auth_code.as_bytes()))
+    );
+    let lifetime = connection
+        .auth_code_expires_at
+        .as_ref()
+        .expect("an expiry")
+        .unix_micros()
+        - connection.created_at.unix_micros();
+    assert_eq!(lifetime, 60_000_000, "the authorization code lives 60 s");
+}
+
+/// A confirmation row whose request outlived its ten minutes, copied from
+/// the row `view` wrote under a new handle: the handle it answers to.
+async fn lapsed_confirmation(store: &MemStore, view: &ConfirmationView) -> String {
+    let handle = "a-confirmation-past-its-ten-minutes";
+    let row = store
+        .authorization(&Sha256Hash::digest(view.handle.as_bytes()))
+        .await
+        .expect("read")
+        .expect("the request's row");
+    store
+        .authorization_insert(AuthorizationRecord {
+            authorization_id: Uuid::from_u128(0x1A_75ED),
+            handle_hash: Sha256Hash::digest(handle.as_bytes()),
+            expires_at: at("2026-10-29T11:59:59.000000Z"),
+            ..row
+        })
+        .await
+        .expect("a lapsed row");
+    handle.to_owned()
+}
+
+/// A Connect or a Cancel after the request's ten minutes answers
+/// `oauth.authorization_expired` as `access_denied` on the request's
+/// redirect, with its `state` and `iss`, and opens nothing (errors.md;
+/// ADR-0031 d9 step 3).
+#[tokio::test]
+async fn connect_or_cancel_after_ten_minutes_answers_authorization_expired() {
+    for action in [ConfirmAction::Connect, ConfirmAction::Cancel] {
+        let store = MemStore::new();
+        let app = oauth_app_over(store.clone());
+        let (boot, crew) = tenant(&app).await;
+        let (issued, code) =
+            connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+        let view = entered(&app, &code_page(&app).await, &code).await;
+        let handle = lapsed_confirmation(&store, &view).await;
+
+        let outcome = app
+            .confirm(&handle, action)
+            .await
+            .expect("a known handle is answered on its redirect");
+
+        assert_eq!(
+            outcome,
+            denied_redirect(AuthorizationExpired::Lapsed),
+            "{action:?}"
+        );
+        assert!(
+            store
+                .connections(boot.tenant_id, issued.key_id)
+                .await
+                .expect("connections")
+                .is_empty(),
+            "{action:?} opens nothing"
+        );
+    }
+}
+
+/// A Cancel on a confirmation whose code a newer code voided answers
+/// `oauth.authorization_expired` as `access_denied` on the request's
+/// redirect, with its `state` and `iss` (errors.md; ADR-0031 d8, d9 step 3).
+#[tokio::test]
+async fn cancel_after_a_newer_code_answers_authorization_expired() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connector_with_code(&app, admin, vec![grant(crew, Role::Writer)]).await;
+    let view = entered(&app, &code_page(&app).await, &code).await;
+    app.mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a newer code");
+
+    let outcome = app
+        .confirm(&view.handle, ConfirmAction::Cancel)
+        .await
+        .expect("a known handle is answered on its redirect");
+
+    assert_eq!(outcome, denied_redirect(AuthorizationExpired::CodeVoided));
+}
+
+/// A code entered on a handle whose request outlived its ten minutes ends
+/// the request as `access_denied` on its redirect, with its `state` and
+/// `iss`, since the handle opens and so is known; one that does not open
+/// answers `oauth.authorization_expired` on the page. Either is checked
+/// before the code: neither spends it, writes a row nor counts a failure
+/// (errors.md; ADR-0031 d8, d9 steps 1 and 2).
+#[tokio::test]
+async fn a_code_entered_on_a_lapsed_or_unopened_handle_spends_nothing_and_counts_no_failure() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) =
+        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Writer)]).await;
+    let live = code_page(&app).await;
+    let request = open_request(
+        PlainSealer.open(&live).as_deref(),
+        &at("2026-10-29T12:00:01.000000Z"),
+    )
+    .expect("a live request");
+    let lapsed = PlainSealer.seal(
+        &AuthorizationRequest {
+            expires_at: at("2026-10-29T11:59:59.000000Z"),
+            ..request
+        }
+        .encode(),
+    );
+    let rows = store.authorization_count();
+
+    let outcome = app
+        .enter_code(&lapsed, &code, &PlainSealer)
+        .await
+        .expect("a handle that opens is answered on its redirect");
+    let CodeEntryOutcome::Denied {
+        error,
+        redirect_uri,
+        state,
+        iss,
+    } = outcome
+    else {
+        panic!("a lapsed handle is a redirect: {outcome:?}");
+    };
+    assert_eq!(
+        error,
+        Refusal::AuthorizationExpired(AuthorizationExpired::Lapsed)
+    );
+    assert_eq!(error.authorize_error(), "access_denied");
+    assert_eq!(redirect_uri, CLAUDE_CALLBACK);
+    assert_eq!(state.as_deref(), Some(STATE));
+    assert_eq!(iss, ISSUER);
+
+    let err = app
+        .enter_code("not a sealed handle", &code, &PlainSealer)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        authorization_expired(&err),
+        Some(AuthorizationExpired::Unopened),
+        "{err:?}"
+    );
+
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_none(), "the code is not spent");
+    assert_eq!(store.authorization_count(), rows, "no row is written");
+    assert_eq!(app.connect_code_failures(), 0, "no failure is counted");
+    entered(&app, &live, &code).await;
+}
+
+/// Without `oauth.issuer` the authorization page does not exist: a code
+/// entry and a confirmation answer `access.not_found` (http-api.md;
+/// ADR-0031 d1).
+#[tokio::test]
+async fn the_page_does_not_exist_without_an_issuer() {
+    let store = MemStore::new();
+    let oauth = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&oauth).await;
+    let (_, code) = connector_with_code(
+        &oauth,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Writer)],
+    )
+    .await;
+    let handle = code_page(&oauth).await;
+    let view = entered(&oauth, &code_page(&oauth).await, &code).await;
+    let app = app_over(store);
+
+    let entry = app.enter_code(&handle, &code, &PlainSealer).await;
+    assert!(matches!(entry, Err(AppError::NotFound)), "{entry:?}");
+    for action in [ConfirmAction::Connect, ConfirmAction::Cancel] {
+        let outcome = app.confirm(&view.handle, action).await;
+        assert!(
+            matches!(outcome, Err(AppError::NotFound)),
+            "{action:?}: {outcome:?}"
+        );
+    }
+}
+
+/// A dreamer connector key's confirmation names its granted workareas in
+/// the propose sentence and in no write or read sentence (http-api.md
+/// "The authorization page"; ADR-0031 d9 step 2).
+#[tokio::test]
+async fn a_dreamer_key_is_shown_as_proposing() {
+    let app = oauth_app_over(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let issued = app
+        .issue_key(
+            &boot.admin_key.value,
+            &IssueKeyRequest {
+                connect_code: true,
+                ..issue_req(
+                    Role::Dreamer,
+                    "crew/claude-mobile",
+                    vec![grant(crew, Role::Dreamer)],
+                )
+            },
+        )
+        .await
+        .expect("a dreamer connector key");
+    let code = issued
+        .connect_code
+        .and_then(|c| c.code)
+        .expect("a fresh answer carries the code");
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    assert_eq!(view.role, Role::Dreamer);
+    assert_eq!(view.proposes_in, [name("crew")]);
+    assert!(view.writes_in.is_empty(), "{view:?}");
+    assert!(view.reads_in.is_empty(), "{view:?}");
+}
+
+/// A workarea a grant's own deny or a global denial masks is named in no
+/// verb sentence that grant or the denied grant would give, while every
+/// grant is still listed (http-api.md
+/// "The authorization page"; roles-and-keys.md denials; ADR-0031 d9
+/// step 2).
+#[tokio::test]
+async fn a_denied_workarea_is_named_in_no_sentence() {
+    let app = oauth_app_over(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let notes = workarea(&app, admin, "notes", crew).await;
+    let archive = workarea(&app, admin, "archive", boot.root_workarea_id).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        admin,
+        vec![
+            GrantRequest {
+                deny: vec![notes.into()],
+                ..grant(crew, Role::Writer)
+            },
+            grant(notes, Role::Reader),
+            grant(archive, Role::Reader),
+        ],
+    )
+    .await;
+    app.deny_key(admin, issued.key_id.into(), archive.into())
+        .await
+        .expect("a global denial");
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    let listed: Vec<Name> = view.grants.iter().map(|g| g.workarea.clone()).collect();
+    assert_eq!(listed, [name("crew"), name("notes"), name("archive")]);
+    assert_eq!(view.writes_in, [name("crew")], "crew's deny masks notes");
+    assert_eq!(
+        view.reads_in,
+        [name("notes")],
+        "the global denial masks archive"
+    );
+}
+
+/// A code of one tenant shows that tenant's name and that key's grants and
+/// nothing of another tenant's, and its row is written under the code's
+/// tenant (ADR-0031 d8, d9 step 2, d10).
+#[tokio::test]
+async fn a_code_of_one_tenant_shows_only_that_tenants_name_and_grants() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (acme, acme_crew) = tenant(&app).await;
+    connector_with_code(
+        &app,
+        &acme.admin_key.value,
+        vec![grant(acme_crew, Role::Writer)],
+    )
+    .await;
+    let globex = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("a second tenant");
+    let admin = &globex.admin_key.value;
+    let lab = workarea(&app, admin, "lab", globex.root_workarea_id).await;
+    let (issued, code) = connector_with_code(&app, admin, vec![grant(lab, Role::Reader)]).await;
+
+    let view = entered(&app, &code_page(&app).await, &code).await;
+
+    assert_eq!(view.tenant_name, name("globex"));
+    let grants: Vec<(Uuid, Name)> = view
+        .grants
+        .iter()
+        .map(|g| (g.workarea_id, g.workarea.clone()))
+        .collect();
+    assert_eq!(grants, [(lab, name("lab"))]);
+    assert_eq!(view.reads_in, [name("lab")]);
+    assert!(view.writes_in.is_empty(), "{view:?}");
+    let row = store
+        .authorization(&Sha256Hash::digest(view.handle.as_bytes()))
+        .await
+        .expect("read")
+        .expect("the request's row");
+    assert_eq!(row.code_tenant_id, globex.tenant_id);
+    assert_eq!(row.key_id, issued.key_id);
+}
+
+// ---------------------------------------------------------------------------
+// The token endpoint and dynamic registration (ADR-0031 d5, d10, d11, d12)
+// ---------------------------------------------------------------------------
+
+/// The fixture request's S256 verifier: `code_page`'s challenge is its
+/// digest (RFC 7636 appendix B).
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+/// A writer connector key whose code was entered and connected on the page,
+/// and the authorization code Connect answered (ADR-0031 d9 step 3).
+async fn connected(app: &TestApp, admin: &str, crew: Uuid) -> (IssuedKey, String) {
+    let (issued, code) = connector_with_code(app, admin, vec![grant(crew, Role::Writer)]).await;
+    (issued, connect_with(app, &code).await)
+}
+
+/// Enters `code` on a fresh page and confirms Connect: the authorization
+/// code.
+async fn connect_with(app: &TestApp, code: &str) -> String {
+    let view = entered(app, &code_page(app).await, code).await;
+    match app
+        .confirm(&view.handle, ConfirmAction::Connect)
+        .await
+        .expect("Connect")
+    {
+        ConfirmOutcome::Connected { code, .. } => code,
+        other => panic!("Connect answers an authorization code: {other:?}"),
+    }
+}
+
+/// The fixture client's exchange of `code` with its verifier.
+fn exchange_form(code: &str) -> ExchangeForm {
+    ExchangeForm {
+        code: code.to_owned(),
+        client_id: DOC_URL.to_owned(),
+        redirect_uri: Some(CLAUDE_CALLBACK.to_owned()),
+        code_verifier: VERIFIER.to_owned(),
+        resource: Some(format!("{ISSUER}/mcp")),
+        client_authentication: None,
+    }
+}
+
+/// The fixture client's refresh with `token`.
+fn refresh_form(token: &Token) -> RefreshForm {
+    RefreshForm {
+        refresh_token: token.as_str().to_owned(),
+        client_id: DOC_URL.to_owned(),
+        resource: None,
+        client_authentication: None,
+    }
+}
+
+fn code_invalid(err: &AppError) -> Option<AuthorizationCodeInvalid> {
+    match err {
+        AppError::OAuth(Refusal::AuthorizationCodeInvalid(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+fn refresh_invalid(err: &AppError) -> Option<RefreshInvalid> {
+    match err {
+        AppError::OAuth(Refusal::RefreshInvalid(reason)) => Some(*reason),
+        _ => None,
+    }
+}
+
+/// The key's one connection in any state.
+async fn only_connection(store: &MemStore, tenant: Uuid, key_id: Uuid) -> ConnectionRecord {
+    let connections = store.connections(tenant, key_id).await.expect("read");
+    assert_eq!(connections.len(), 1, "{connections:?}");
+    connections.into_iter().next().expect("one connection")
+}
+
+/// The first exchange redeems the code, opens the connection and answers a
+/// Bearer pair whose access token lives an hour; `connection.opened`
+/// names the connector key on its envelope and the client, its kind and
+/// digest, the redirect URI and the resource in its payload (event-catalog.md
+/// `connection.opened`; ADR-0031 d10, d12).
+#[tokio::test]
+async fn the_first_exchange_opens_the_connection_and_journals_connection_opened_with_the_client_and_resource()
+ {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    assert!(tokens.access_token.as_str().starts_with("oml_at_"));
+    assert!(tokens.refresh_token.as_str().starts_with("oml_rt_"));
+    assert_eq!(tokens.expires_in, 3_600);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+    let events = journal(&store, boot.tenant_id).await;
+    let opened = &events.last().expect("an event").envelope;
+    assert_eq!(opened.event_type, event_types::CONNECTION_OPENED);
+    assert_eq!(opened.api_key_id, Some(issued.key_id));
+    assert_eq!(opened.principal, "crew/claude-mobile");
+    assert_eq!(connection.opened_seq, Some(opened.seq));
+    assert_eq!(
+        opened.payload,
+        json!({
+            "connection_id": connection.connection_id.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "code_id": connection.code_id.to_string(),
+            "client_id": DOC_URL,
+            "client_kind": "cimd",
+            "client_metadata_digest": connection.client_metadata_digest.to_prefixed(),
+            "redirect_uri": CLAUDE_CALLBACK,
+            "resource": format!("{ISSUER}/mcp"),
+            "replaces_connection_id": Value::Null,
+        })
+    );
+}
+
+/// A key holds at most one open connection: a newer code's exchange names
+/// the open one in `replaces_connection_id`, and that one is revoked
+/// `replaced` at the newer `connection.opened`'s seq, with no event of its
+/// own (roles-and-keys.md connections; ADR-0031 d7, d12).
+#[tokio::test]
+async fn opening_a_second_connection_for_a_key_revokes_the_first_as_replaced() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    app.exchange(exchange_form(&code)).await.expect("first");
+    let first = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    let newer = app
+        .mint_connect_code(admin, Reference::Id(issued.key_id))
+        .await
+        .expect("a newer code")
+        .code
+        .expect("shown once");
+
+    let second_code = connect_with(&app, &newer).await;
+    app.exchange(exchange_form(&second_code))
+        .await
+        .expect("second");
+
+    let events = journal(&store, boot.tenant_id).await;
+    let opened = &events.last().expect("an event").envelope;
+    assert_eq!(opened.event_type, event_types::CONNECTION_OPENED);
+    assert_eq!(
+        opened.payload["replaces_connection_id"],
+        json!(first.connection_id.to_string())
+    );
+    let connections = store
+        .connections(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read");
+    let states: Vec<_> = connections
+        .iter()
+        .map(|c| (c.state, c.revoked_seq))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (
+                ConnectionState::Revoked(RevokedCause::Replaced),
+                Some(opened.seq)
+            ),
+            (ConnectionState::Open, None),
+        ]
+    );
+}
+
+/// A redeemed code presented again by the connection's client with the
+/// verifier is reuse: `invalid_grant`, and `connection.revoked` with the
+/// cause `code_reuse`, `revoked_by_key_id` null and the connector key on
+/// the envelope, after which the connection's access token resolves to
+/// nothing (roles-and-keys.md connections; event-catalog.md
+/// `connection.revoked`; ADR-0031 d10, d12).
+#[tokio::test]
+async fn a_code_redeemed_twice_by_its_verifiers_holder_revokes_the_connection() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("first");
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Reused),
+        "{err:?}"
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::CodeReuse)
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    let revoked = &events.last().expect("an event").envelope;
+    assert_eq!(revoked.event_type, event_types::CONNECTION_REVOKED);
+    assert_eq!(revoked.api_key_id, Some(issued.key_id));
+    assert_eq!(
+        revoked.payload,
+        json!({
+            "connection_id": connection.connection_id.to_string(),
+            "key_id": issued.key_id.to_string(),
+            "revoked_by_key_id": Value::Null,
+            "cause": "code_reuse",
+            "reason_digest": Value::Null,
+        })
+    );
+    let resolved = app.resolve_access_token(tokens.access_token.as_str()).await;
+    assert!(
+        matches!(resolved, Err(AppError::Unauthorized)),
+        "{resolved:?}"
+    );
+}
+
+/// A redeemed code presented without the verifier, or by another client,
+/// is `invalid_grant` and revokes nothing: only the verifier's holder can
+/// have redeemed first (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_redeemed_code_presented_without_the_verifier_revokes_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    app.exchange(exchange_form(&code)).await.expect("first");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let wrong_verifier = app
+        .exchange(ExchangeForm {
+            code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl".to_owned(),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+    let other_client = app
+        .exchange(ExchangeForm {
+            client_id: "https://other.example.com/client.json".to_owned(),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+
+    for err in [&wrong_verifier, &other_client] {
+        assert_eq!(
+            code_invalid(err),
+            Some(AuthorizationCodeInvalid::Redeemed),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+}
+
+/// A failed exchange consumes nothing: after a wrong verifier, a wrong
+/// client and a wrong `redirect_uri`, the right presentation still opens
+/// the connection (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_wrong_verifier_does_not_consume_the_code() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let failures = [
+        (
+            ExchangeForm {
+                code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXl".to_owned(),
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::VerifierMismatch,
+        ),
+        (
+            ExchangeForm {
+                client_id: "https://other.example.com/client.json".to_owned(),
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::ClientMismatch,
+        ),
+        (
+            ExchangeForm {
+                redirect_uri: None,
+                ..exchange_form(&code)
+            },
+            AuthorizationCodeInvalid::RedirectMismatch,
+        ),
+    ];
+
+    for (form, reason) in failures {
+        let err = app.exchange(form).await.unwrap_err();
+        assert_eq!(code_invalid(&err), Some(reason), "{err:?}");
+    }
+    let before = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(before.state, ConnectionState::Authorized);
+    assert_eq!(before.auth_code_redeemed_at, None);
+    app.exchange(exchange_form(&code))
+        .await
+        .expect("the code is still redeemable");
+    let after = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(after.state, ConnectionState::Open);
+}
+
+/// A refresh answers a new pair and marks the presented token rotated; the
+/// rotated token presented again is `invalid_grant` and revokes the
+/// connection with `refresh_reuse` in a `connection.revoked` of its own,
+/// after which the newer refresh token refreshes nothing (roles-and-keys.md
+/// connections; ADR-0031 d10, d11, d12).
+#[tokio::test]
+async fn a_refresh_rotates_and_the_old_refresh_token_presented_again_revokes_the_connection() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let first = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let second = app
+        .refresh(refresh_form(&first.refresh_token))
+        .await
+        .expect("a refresh rotates");
+    assert_ne!(second.refresh_token, first.refresh_token);
+    assert_ne!(second.access_token, first.access_token);
+    let err = app
+        .refresh(refresh_form(&first.refresh_token))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::Reused),
+        "{err:?}"
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::RefreshReuse)
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    let revoked = &events.last().expect("an event").envelope;
+    assert_eq!(revoked.event_type, event_types::CONNECTION_REVOKED);
+    assert_eq!(revoked.api_key_id, Some(issued.key_id));
+    assert_eq!(revoked.payload["cause"], json!("refresh_reuse"));
+    assert_eq!(revoked.payload["revoked_by_key_id"], Value::Null);
+    assert_eq!(connection.revoked_seq, Some(revoked.seq));
+    let after = app
+        .refresh(refresh_form(&second.refresh_token))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refresh_invalid(&after),
+        Some(RefreshInvalid::ConnectionNotOpen),
+        "{after:?}"
+    );
+}
+
+/// A refresh token presented with another `client_id` is `invalid_grant`
+/// and rotates nothing, so its own client still refreshes with it
+/// (http-api.md `POST /oauth/token`; ADR-0031 d5, d10).
+#[tokio::test]
+async fn a_refresh_token_of_another_client_is_invalid_grant() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let err = app
+        .refresh(RefreshForm {
+            client_id: "https://other.example.com/client.json".to_owned(),
+            ..refresh_form(&tokens.refresh_token)
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::ClientMismatch),
+        "{err:?}"
+    );
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("its own client still refreshes");
+}
+
+/// A connection is bound to `<issuer>/mcp` at Connect: under another
+/// `oauth.issuer` its refresh is `invalid_grant` and rotates nothing, so
+/// with the origin set back the same token refreshes (roles-and-keys.md
+/// connections, live; ADR-0031 d1, d10).
+#[tokio::test]
+async fn a_refresh_after_the_issuer_changed_is_invalid_grant_and_rotates_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let moved = app_over(store.clone())
+        .with_oauth_issuer(Issuer::parse("https://memory.example.org").expect("an origin"));
+
+    let err = moved
+        .refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::ResourceNotCurrent),
+        "{err:?}"
+    );
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("nothing rotated");
+}
+
+/// A rotation journals nothing: it is no actor's act on the connection
+/// (event-catalog.md `connection.*`; ADR-0031 d12).
+#[tokio::test]
+async fn a_refresh_is_not_journalled() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let before = hashes(&journal(&store, boot.tenant_id).await);
+
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("refresh");
+
+    assert_eq!(hashes(&journal(&store, boot.tenant_id).await), before);
+}
+
+/// An access token of an open connection, on the current resource, of a
+/// live key resolves to the caller that key's own authentication builds:
+/// the key's row and its grants and denials, read on the request
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn an_access_token_resolves_to_exactly_its_keys_caller() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    let caller = app
+        .resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("an open connection's access token resolves");
+
+    let key = store
+        .key(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("the connector key");
+    assert_eq!(caller.key(), &key);
+    let access = store
+        .key_access(boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("its access");
+    let grants: Vec<_> = access.grants.iter().map(|g| g.grant.clone()).collect();
+    assert_eq!(caller.grants(), grants.as_slice());
+    assert!(caller.denials().is_empty());
+    assert_eq!(caller.permission_epoch(), access.permission_epoch());
+}
+
+/// A refresh token's digest finds no access row, so it never authenticates
+/// a request, nor does a key value (roles-and-keys.md connections;
+/// ADR-0031 d11).
+#[tokio::test]
+async fn a_refresh_token_never_resolves_as_an_access_credential() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    for presented in [tokens.refresh_token.as_str(), boot.admin_key.value.as_str()] {
+        let resolved = app.resolve_access_token(presented).await;
+        assert!(
+            matches!(resolved, Err(AppError::Unauthorized)),
+            "{resolved:?}"
+        );
+    }
+}
+
+/// An app over `store` whose deployment sets `oauth.issuer`, and a handle
+/// on its clock that moves its time forward.
+fn oauth_app_with_clock(store: MemStore) -> (TestApp, FixedClock) {
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"));
+    (app, clock)
+}
+
+/// `key.revoked` of `key_id`, sealed onto `tenant`'s chain as a fixture.
+async fn revoke_key(store: &MemStore, tenant: Uuid, key_id: Uuid) {
+    seal_onto(
+        store,
+        tenant,
+        event_types::KEY_REVOKED,
+        "2026-10-29T12:01:00.000000Z",
+        json!({ "key_id": key_id.to_string() }),
+        MetadataFold::KeyRevoked { key_id },
+    )
+    .await;
+}
+
+/// Whether `token` resolves to no caller.
+async fn unauthorized(app: &TestApp, token: &Token) -> bool {
+    matches!(
+        app.resolve_access_token(token.as_str()).await,
+        Err(AppError::Unauthorized)
+    )
+}
+
+/// Each event's type, in chain order from `from`.
+fn types_from(events: &[SignedEnvelope], from: usize) -> Vec<&str> {
+    events[from..]
+        .iter()
+        .map(|e| e.envelope.event_type.as_str())
+        .collect()
+}
+
+/// An access token lives its hour: the last microsecond of it resolves,
+/// and the token presented at its expiry is refused (roles-and-keys.md
+/// connections; ADR-0031 d11).
+#[tokio::test]
+async fn an_access_token_presented_after_its_hour_is_unauthorized() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    clock.advance(tokens.expires_in - 1);
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("within its hour the token resolves");
+    clock.advance(1);
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+}
+
+/// A connection's access token resolves to nothing once its key's
+/// `key.revoked` commits, the connection's own state untouched
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn after_its_keys_key_revoked_a_connections_access_token_is_unauthorized() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+
+    revoke_key(&store, boot.tenant_id, issued.key_id).await;
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Open);
+}
+
+/// A connection is bound to `<issuer>/mcp` at Connect: under another
+/// `oauth.issuer` its access token resolves to nothing, and with the
+/// origin set back the same token resolves again (roles-and-keys.md
+/// connections, live; ADR-0031 d1, d11).
+#[tokio::test]
+async fn an_access_token_under_a_moved_issuer_is_unauthorized_and_resolves_once_it_is_set_back() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let moved = app_over(store.clone())
+        .with_oauth_issuer(Issuer::parse("https://memory.example.org").expect("an origin"));
+
+    assert!(unauthorized(&moved, &tokens.access_token).await);
+
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("the origin set back resolves the token");
+}
+
+/// An admin's revocation of the connection ends its access token at once
+/// (roles-and-keys.md connections; ADR-0031 d11).
+#[tokio::test]
+async fn after_an_admin_revokes_the_connection_its_access_token_is_unauthorized() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    let tokens = app.exchange(exchange_form(&code)).await.expect("exchange");
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+
+    app.revoke_connection(admin, issued.key_id.into(), connection.connection_id, None)
+        .await
+        .expect("an admin revokes the open connection");
+
+    assert!(unauthorized(&app, &tokens.access_token).await);
+}
+
+/// Two tenants' connections each resolve to their own tenant's connector
+/// key, whatever tenant the token's digest is found under
+/// (roles-and-keys.md connections; ADR-0031 d10, d11).
+#[tokio::test]
+async fn each_tenants_access_token_resolves_to_its_own_tenants_key() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (acme, acme_crew) = tenant(&app).await;
+    let (acme_key, acme_code) = connected(&app, &acme.admin_key.value, acme_crew).await;
+    let acme_tokens = app
+        .exchange(exchange_form(&acme_code))
+        .await
+        .expect("acme's exchange");
+    let globex = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("globex"),
+            admin_key_name: name("globex-admin"),
+            admin_principal: "gina-admin".to_owned(),
+        })
+        .await
+        .expect("a second tenant");
+    let lab = workarea(
+        &app,
+        &globex.admin_key.value,
+        "lab",
+        globex.root_workarea_id,
+    )
+    .await;
+    let (globex_key, globex_code) = connected(&app, &globex.admin_key.value, lab).await;
+    let globex_tokens = app
+        .exchange(exchange_form(&globex_code))
+        .await
+        .expect("globex's exchange");
+
+    for (tokens, tenant_id, key_id) in [
+        (&acme_tokens, acme.tenant_id, acme_key.key_id),
+        (&globex_tokens, globex.tenant_id, globex_key.key_id),
+    ] {
+        let caller = app
+            .resolve_access_token(tokens.access_token.as_str())
+            .await
+            .expect("each token resolves");
+        assert_eq!(
+            (caller.key().tenant_id, caller.key().key_id),
+            (tenant_id, key_id)
+        );
+    }
+}
+
+/// A key revoked after Connect ends its authorized connection at the
+/// exchange: `invalid_grant` with the reason `key_ended`, no
+/// `connection.opened`, and the code stays unredeemed (roles-and-keys.md
+/// connections; ADR-0031 d10, d11).
+#[tokio::test]
+async fn a_code_whose_key_was_revoked_after_connect_is_key_ended_and_opens_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    revoke_key(&store, boot.tenant_id, issued.key_id).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::KeyEnded),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// A newer connect code minted after Connect voids the earlier code, so
+/// the earlier authorization code is `invalid_grant` with the reason
+/// `code_voided` and opens nothing (roles-and-keys.md connections;
+/// ADR-0031 d8, d10).
+#[tokio::test]
+async fn a_newer_code_minted_after_connect_makes_the_earlier_authorization_code_code_voided() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (issued, code) = connected(&app, admin, crew).await;
+    app.mint_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("a newer code");
+    let before = journal(&store, boot.tenant_id).await.len();
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::CodeVoided),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// An authorization code lives 60 seconds from Connect: presented at its
+/// expiry it is `invalid_grant` with the reason `expired`, and it stays
+/// unredeemed (roles-and-keys.md connections; ADR-0031 d9, d10).
+#[tokio::test]
+async fn an_authorization_code_presented_sixty_seconds_after_connect_is_expired_and_stays_unredeemed()
+ {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    clock.advance(60);
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Expired),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// A `key.revoked` that commits after the exchange read the key live and
+/// before its `connection.opened` is refused by the opening's fold under
+/// the chain lock; the exchange judges the code once more on a fresh read
+/// and answers `invalid_grant` with the reason `key_ended`, so the journal
+/// gains the `key.revoked` alone (roles-and-keys.md connections; ADR-0031
+/// d10, d11).
+#[tokio::test]
+async fn a_key_revoked_between_the_exchanges_read_and_its_commit_is_key_ended_and_opens_nothing() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let racing = store.clone();
+    let tenant_id = boot.tenant_id;
+    let key_id = issued.key_id;
+    store.before_next_head_read(async move { revoke_key(&racing, tenant_id, key_id).await });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::KeyEnded),
+        "{err:?}"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(types_from(&events, before), [event_types::KEY_REVOKED]);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.state, ConnectionState::Authorized);
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// Two presentations of one code by its verifier's holder race: the one
+/// whose `connection.opened` commits first opens the connection, and the
+/// one the fold then refuses is judged by the reuse rule on its fresh
+/// read, `invalid_grant` with the reason `reused`, revoking the
+/// connection with `code_reuse` (roles-and-keys.md connections; ADR-0031
+/// d10, d12).
+#[tokio::test]
+async fn an_exchange_that_loses_the_race_for_its_code_is_judged_reused_and_revokes_the_connection()
+{
+    let store = MemStore::new();
+    let app = std::sync::Arc::new(oauth_app_over(store.clone()));
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let winner = std::sync::Arc::clone(&app);
+    let form = exchange_form(&code);
+    store.before_next_head_read(async move {
+        winner.exchange(form).await.expect("the winning exchange");
+    });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Reused),
+        "{err:?}"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(
+        types_from(&events, before),
+        [
+            event_types::CONNECTION_OPENED,
+            event_types::CONNECTION_REVOKED
+        ]
+    );
+    assert_eq!(
+        events.last().expect("an event").envelope.payload["cause"],
+        json!("code_reuse")
+    );
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(
+        connection.state,
+        ConnectionState::Revoked(RevokedCause::CodeReuse)
+    );
+}
+
+/// A code whose 60 seconds end after the exchange read it and before its
+/// commit is refused by the fold at the commit's time, and the fresh read
+/// answers `invalid_grant` with the reason `expired`, opening nothing
+/// (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn a_code_that_expires_between_the_exchanges_read_and_its_commit_is_expired() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let later = clock.clone();
+    store.before_next_head_read(async move { later.advance(60) });
+
+    let err = app.exchange(exchange_form(&code)).await.unwrap_err();
+
+    assert_eq!(
+        code_invalid(&err),
+        Some(AuthorizationCodeInvalid::Expired),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
+    let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+    assert_eq!(connection.auth_code_redeemed_at, None);
+}
+
+/// Refuses the next `times` openings of `connection_id`, each armed at the
+/// head read before its commit.
+fn refuse_openings(store: &MemStore, connection_id: Uuid, times: u32) {
+    if times == 0 {
+        return;
+    }
+    let handle = store.clone();
+    store.before_next_head_read(async move {
+        handle.refuse_next_commit_of(
+            event_types::CONNECTION_OPENED,
+            StoreError::ConnectionNotOpenable { connection_id },
+        );
+        refuse_openings(&handle, connection_id, times - 1);
+    });
+}
+
+/// An opening the fold refuses once is judged again on a fresh read and,
+/// still redeemable, opens; one refused on that second try too answers
+/// `invalid_grant` with the reason `unknown` and opens nothing
+/// (roles-and-keys.md connections; ADR-0031 d10).
+#[tokio::test]
+async fn an_opening_refused_once_opens_on_its_fresh_read_and_one_refused_twice_is_unknown() {
+    for (times, opens) in [(1, true), (2, false)] {
+        let store = MemStore::new();
+        let app = oauth_app_over(store.clone());
+        let (boot, crew) = tenant(&app).await;
+        let (issued, code) = connected(&app, &boot.admin_key.value, crew).await;
+        let authorized = only_connection(&store, boot.tenant_id, issued.key_id).await;
+        let before = journal(&store, boot.tenant_id).await.len();
+        refuse_openings(&store, authorized.connection_id, times);
+
+        let answer = app.exchange(exchange_form(&code)).await;
+
+        let connection = only_connection(&store, boot.tenant_id, issued.key_id).await;
+        let events = journal(&store, boot.tenant_id).await;
+        if opens {
+            answer.expect("the second try opens");
+            assert_eq!(connection.state, ConnectionState::Open);
+            assert_eq!(
+                types_from(&events, before),
+                [event_types::CONNECTION_OPENED]
+            );
+        } else {
+            let err = answer.unwrap_err();
+            assert_eq!(
+                code_invalid(&err),
+                Some(AuthorizationCodeInvalid::Unknown),
+                "{err:?}"
+            );
+            assert_eq!(connection.state, ConnectionState::Authorized);
+            assert_eq!(events.len(), before);
+        }
+    }
+}
+
+/// A token request that sends client authentication is
+/// `oauth.client_invalid`, by the scheme it used, before any lookup
+/// (http-api.md `POST /oauth/token`; ADR-0031 d5).
+#[tokio::test]
+async fn a_token_request_that_sends_client_authentication_is_client_invalid_with_its_scheme() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (_, code) = connected(&app, &boot.admin_key.value, crew).await;
+
+    let err = app
+        .exchange(ExchangeForm {
+            client_authentication: Some(ClientAuthentication::Header {
+                scheme: "Basic".to_owned(),
+            }),
+            ..exchange_form(&code)
+        })
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, AppError::ClientAuthentication { scheme: Some(s) } if s == "Basic"),
+        "{err:?}"
+    );
+    app.exchange(exchange_form(&code))
+        .await
+        .expect("the refused request consumed nothing");
+}
+
+/// The page shows `client_name`, so a registration without it is
+/// `request.validation`, carried as `invalid_client_metadata`, and writes
+/// no client (http-api.md `POST /oauth/register`; ADR-0031 d5).
+#[tokio::test]
+async fn a_registration_without_client_name_is_invalid_client_metadata() {
+    let app = oauth_app_over(MemStore::new());
+    let body = format!(r#"{{"redirect_uris":["{CLAUDE_CALLBACK}"]}}"#);
+
+    let err = app.register(body.as_bytes()).await.unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            AppError::OAuth(Refusal::RequestValidation(Validation::ClientNameMissing))
+        ),
+        "{err:?}"
+    );
+}
+
+/// An absent `token_endpoint_auth_method` is registered and echoed as
+/// `none`, under a server-minted `client_id` and with no secret, and the
+/// registration's row is a `dcr` client (http-api.md `POST /oauth/register`;
+/// ADR-0031 d5).
+#[tokio::test]
+async fn an_absent_auth_method_registers_as_none() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let body = format!(r#"{{"client_name":"Desk","redirect_uris":["{CLAUDE_CALLBACK}"]}}"#);
+
+    let registered = app.register(body.as_bytes()).await.expect("registered");
+
+    assert_eq!(registered.token_endpoint_auth_method, "none");
+    assert_eq!(registered.client_name, "Desk");
+    assert_eq!(registered.redirect_uris, [CLAUDE_CALLBACK]);
+    let row = store
+        .oauth_client(&registered.client_id)
+        .await
+        .expect("read")
+        .expect("the registration's row");
+    assert_eq!(row.kind, ClientKind::Dcr);
+    assert_eq!(row.metadata_digest, Sha256Hash::digest(body.as_bytes()));
 }

@@ -36,3 +36,8 @@ fn scanner_double_is_deterministic() {
 fn clock_and_idgen_doubles_pass() {
     contracts::clock_and_idgen_contract(&FixedClock::new(), &SeqIdGen::new());
 }
+
+#[tokio::test]
+async fn connection_store_double_passes_the_suite() {
+    contracts::run_connection_store_suite(|| async { MemStore::new() }).await;
+}

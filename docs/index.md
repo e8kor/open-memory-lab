@@ -7,13 +7,13 @@ answers: what Open Memory Lab is, the problem it solves, what it guarantees in p
 
 # Open Memory Lab
 
-Design revision **0.3.0-design** — see the [changelog](changelog.md).
+Design revision **0.4.0-design** — see the [changelog](changelog.md).
 **See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
 memory through OML — recall along grants, remember, review, supersede, and the grants a freeze
 opens — over mocked data.
 
 **Status:** design draft for review · decided — and since 2026-10-30 the critical path's M1
-slice runs as a PoC in this repository (see the README's *Running the PoC*)
+slice runs in this repository, and v0.4.0 is the current release ([releases](product/releases.md))
 
 Open Memory Lab (OML) is an external memory provider for AI agents and crews, built on one
 premise: **what an agent learns is a claim, not a fact.** A memory written by an agent is held
@@ -71,8 +71,8 @@ This is a design under review with one proof-of-concept behind it. **The M1 slic
 (the signed chain, the commit point, submit → review → promote → recall, standalone profile),
 and so is the part of M2 that lets an agent keep its whole memory in OML: one key that both
 stores and searches, reading back its own writes while they wait for review, searching within a
-budget, and replacing or proposing to retire a memory through review, served by eight of the
-agent plugin's twelve tools. Everything else described here is not built, and nothing has been
+budget, and replacing or proposing to retire a memory through review, served by the agent
+plugin's three tools, `oml_write`, `oml_read` and `oml_workarea`, since v0.4.0. Everything else described here is not built, and nothing has been
 measured.** Every page in this
 documentation is a design commitment with a tracked exit criterion, not a description of
 running software; where the PoC diverges from a page, the page wins and the code says so. Where a claim depends on a measurement
@@ -89,6 +89,10 @@ on a particular machine. (Design commitment, not yet exercised.)
 
 ## Where to go next
 
+- **New here?** Start with [Get started](start/index.md): use OML with a server and a key, run
+  it with Docker, or add an agent, each in one command. The [guides](guides/claude-code.md) and
+  the [quick scenarios](product/scenarios.md) follow from there, and the
+  [use cases](product/use-cases.md) list every use case with its status.
 - **New to the design?** Start with [Concepts](concepts.md) — the vocabulary, one concept at a
   time, each linked to the page that decides it.
 - **Reviewing this design?** Start with the [review guide](review-guide.md) — the decisions that

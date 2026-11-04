@@ -2,14 +2,14 @@
 id: architecture/overview
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the system looks like end to end — context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
+answers: what the system looks like end to end — what the v0.4.0 build runs, the clients and the one pair each starts from, the per-platform artifacts, plugins and kit, OAuth on the same origin, context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
 -->
 
 # Architecture overview
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the first slice since v0.1.0, see each page; most containers are not scheduled ([releases](../product/releases.md)).
+**Release:** the first slice since v0.1.0, see each page; the clients section as of v0.4.0; most containers are not scheduled ([releases](../product/releases.md)).
 
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory
 asserts a claim; every claim is held on arrival, scanned, reviewed by an identity that did not
@@ -18,6 +18,33 @@ containers inside the Kubernetes boundary, the module structure inside every con
 runtime scenarios that exercise them, and where each constitutional rule is enforced. Contracts live on the pages that own them — this page
 links, it does not restate. The constitution itself (rules R1–R4 and their one bounded exception)
 is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
+
+## 0. What the build runs
+
+Sections 1 to 6 are the design. Release v0.4.0 runs a subset of it:
+
+| Part | As built | Decision |
+|---|---|---|
+| Server | one binary, `oml-server-lead`, holding the signing key; no follower, lake-writer, reconciler or indexer | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md); the rest [not scheduled](../product/releases.md#not-scheduled) |
+| Store | PostgreSQL alone: journal, metadata, outbox rows nothing drains, full-text search per tenant. No object store, no lake, no vector search | [ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md), [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) |
+| Database roles | the lead migrates as the owner role (`postgres.owner_url`) and serves as a role that owns nothing (`postgres.url`), and refuses to start when both log in as one role | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4 |
+| Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answer hidden through v0.4.x, logging `mcp_alias_called` | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2, d12 |
+| OAuth | the lead is the protected resource and its own authorization server, on the origin that serves `/mcp`, only where `oauth.issuer` names that origin | [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1 |
+| Release artifacts | the CLI per platform (four Unix targets and Windows x86_64), the server for Intel and Arm Linux, one image index for both, the chart, the plugins as an archive and a pinned marketplace, and the agent kit, each signed with cosign and summed in `SHA256SUMS` | [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance) |
+| Installers | `install.sh` and `install.ps1` fetch the CLI archive and `SHA256SUMS`, verify with cosign when present, and write one file | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1, d2 |
+
+## Clients and how they start
+
+Every client starts from one pair, the server's URL without `/mcp` and a key, and reads
+everything else from `GET /v2/whoami` (ADR-0039 d15).
+
+| Client | Reaches | Its pair comes from | Adds |
+|---|---|---|---|
+| `oml` CLI | `/v1`, `/v2` | `--url`/`--api-key`, then `OML_URL`/`OML_API_KEY`, then the credentials file `oml login` writes | `oml setup claude-code`, `oml quickstart` |
+| Claude Code plugin `oml` | `/mcp` | the plugin's `userConfig` options `url` and `api_key`, the key in the system keychain, set by `oml setup claude-code` or the install dialog ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d1) | the skill, the SessionStart, PostToolUseFailure and SessionEnd hooks through `oml hook`, the librarian |
+| Agent kit: Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop | `/mcp` | `OML_API_KEY`, and `OML_URL` where the tool expands it in a URL ([kit](https://github.com/e8kor/open-memory-lab/blob/main/kit/README.md)) | the `AGENTS.md` block; Gemini CLI's session-start hook |
+| claude.ai, Claude Desktop connectors, the Claude apps | `/mcp` | no pair: an OAuth connection bound to one connector key through a connect code | nothing beyond the three tools |
+| Python and TypeScript SDKs | `/v1`, `/v2` | `OML_URL` and `OML_API_KEY` ([client SDKs](../engineering/sdks.md)) | typed wrappers |
 
 ## 1. System context (C4 level 1)
 
@@ -36,7 +63,7 @@ flowchart LR
     subgraph k8s ["Kubernetes boundary"]
         OML["Open Memory Lab<br/>agentic external memory provider"]
     end
-    AG -- "MCP plugin over streamable HTTP:<br/>remember, recall, learn, attach …" --> OML
+    AG -- "MCP over streamable HTTP:<br/>oml_write, oml_read, oml_workarea" --> OML
     RC -- "HTTP API:<br/>review next, verdict, ratify edges" --> OML
     AD -- "oml CLI → HTTP API:<br/>keys, workareas, status, simulations,<br/>erasure, evidence export" --> OML
 ```
