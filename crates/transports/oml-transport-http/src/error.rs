@@ -435,6 +435,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             if several { "several" } else { "no" }
         ))
         .with_details(json!({ "field": "/serve_id" })),
+        // A claim-edge label the domain refused, naming the body field
+        // (errors.md request.validation; ADR-0021 d5).
+        AppError::ClaimEdgeLabel { field, reason } => {
+            ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
+        }
         AppError::ClaimKeyConflict => ApiError::new(
             StatusCode::CONFLICT,
             "submission.claim_key_conflict",
