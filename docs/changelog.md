@@ -32,6 +32,35 @@ implementation milestone where it changes what the repository holds.
 Entries for the guardrails record and its build, kept apart from the released revisions until
 the release that carries them, newest first.
 
+### 2026-11-04 — Guardrails S1 and S2 on the wire, and the CLI's flags (implementation, ADR-0037, proposed)
+
+An implementation milestone on the v0.5.1 branch, on top of v0.4.1; no decision changes, and the
+record stays proposed. The build takes d18's readings in brackets: `guardrail_scope` defaults to
+`ancestors`, a key issued before it folds as `ancestors`, a guardrail never self-signs, and `oml
+write` takes the guardrail fields.
+
+- **The kind** (d1, d2, d10). `POST /v1/memories` and its supersede take `kind: guardrail` with a
+  required `severity` and an optional `rule`, each refused on any other kind and on a retirement
+  (`request.validation`, `details.field`); the scan's `guardrail.rule_unparsable` and
+  `guardrail.too_long` veto as `submission.scan_veto`; R2 holds and nothing self-signs; a claim item
+  of kind guardrail carries its `severity` and `rule`, and a held one its `load_warning`.
+  `oml_write`, and its hidden aliases, refuse `kind: guardrail` and a `replaces` naming one.
+- **The key's scope** (d4). `POST /v2/keys` takes `guardrail_scope`, `workarea` or `ancestors`,
+  journals it in `key.issued` and stores it in `api_keys`; `GET /v2/keys/{key}` and
+  `GET /v2/whoami` serve it; `oml keys issue` and `issue-agent` take `--guardrail-scope`.
+- **The read** (d3, d4, d5, d7). `GET /v1/guardrails`, `workarea` its one parameter, serves the
+  promoted set at the scope node under the key's reader access and scope, ordered by severity,
+  depth, `promoted_at` and `artifact_id`, with conflicts, verdicts by attestation and time,
+  `over_cap` past twelve and the caller's own held guardrails by key and version; recall never
+  serves the kind. Declared in [openapi.yaml](api/openapi.yaml) and the
+  [HTTP API](api/http-api.md#guardrails-get-v1guardrails).
+- **The store.** Migration `0016_guardrails.sql`, numbered behind v0.5.0's `0014` and `0015`, adds
+  `memories.severity`, `memories.rule` and `api_keys.guardrail_scope`
+  ([Postgres schema](data/postgres-schema.md#guardrail-columns)).
+- **Not built:** the hooks (S3, S4), which wait for d18 Q10; the export and the MCP prompt (S5);
+  user roots and the pages (S6), which wait for v0.5.0; rotation and simulation writes; the
+  regenerated SDKs, owed by `scripts/generate_sdks.py`. `info.version` is unchanged (d18 Q9).
+
 ### 2026-11-04 — ADR-0037 rebased onto the v0.4.0 API, user roots and the web pages, and planned for v0.5.1
 
 [ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
@@ -51,7 +80,7 @@ two records v0.5.0 builds first.
 - **The web pages, d17** (proposed [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):
   session keys load nothing; the user page may show the set in force at the person's root;
   a held guardrail on review carries the load warning; no page writes one.
-- **Open, d18:** nine questions the maintainer's decisions do not settle, each with the reading
+- **Open, d18:** ten questions the maintainer's decisions do not settle, each with the reading
   the build takes until answered. **The build, d15:** six steps; S6 waits for ADR-0044 and
   ADR-0045 W3.
 - **Pages:** the record, its register row, this entry, and the two v0.5.0 mentions of guardrails
