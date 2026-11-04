@@ -358,7 +358,7 @@ time.
 
 #### Readings the build takes
 
-[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave six points open
+[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave seven points open
 that code cannot leave open. Each line below is **the build's reading**, with
 the rule it follows; none is a new decision about the ladder.
 
@@ -398,6 +398,18 @@ the rule it follows; none is a new decision about the ladder.
   number of pending proposals on one node is unbounded and none can be
   withdrawn; one key can add rows on a node without end, bounded only by the
   key's write quota.
+- **The status read names the proposing key only to its own key set.** Each
+  live proposal is served with the fields of the `Transition` schema
+  ([OpenAPI](../api/openapi.yaml)) a pending row has, `transition_id`,
+  `workarea_id`, `to`, `state` and `proposed_by_key_id`, and the `from` rung
+  the live-proposal filter reads. The proposer's principal and the
+  tenant are never served, and `proposed_by_key_id` is null to every key
+  outside the proposer's own key set, an admin key reading structure
+  included, as it is on `workarea.status_proposed` in the
+  [events tail](../api/http-api.md#events-tail). It follows the tail's rule
+  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15): a reader
+  learns that a proposal waits on a node it reads, never which identity made
+  it, so the two reads of one proposal never disagree.
 - **The policy snapshot is the policy in force plus the precondition.**
   `policy_snapshot` holds the review policy in force, which the PoC fixes as the
   one constant `{k: 1, required_roles: ["dreamer"]}`, and the precondition the
