@@ -2782,7 +2782,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
 /// verdicts (attestation and time, never a reviewer key) and conflicts, and
 /// the caller's own held guardrails by key and version (proposed ADR-0037
 /// d3, d5, d7).
-fn guardrail_set_json(set: &GuardrailSet) -> Value {
+pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
     json!({
         "scope_node": set.scope_node,
         "scope_path": set.scope_path,

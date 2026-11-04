@@ -1993,10 +1993,9 @@ async fn the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_write
     let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
     let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
     assert!(page.contains("Guardrails"), "{page}");
-    assert!(
-        page.contains("Held, not in force"),
-        "the person's own held guardrail by key and version: {page}"
-    );
+    // Held, it is no rule yet: the set holds none (d3); the memories view
+    // lists the agents' held rows.
+    assert!(page.contains("No guardrail applies here."), "{page}");
     // Approved by the person's reviewer key, it is in force.
     act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
     let serve_id = format!("srv_{}", id.simple());
@@ -2044,5 +2043,44 @@ async fn the_review_page_shows_a_held_guardrails_load_warning() {
     assert!(
         page.contains("every key that reads this workarea will load this rule"),
         "{page}"
+    );
+}
+
+#[tokio::test]
+async fn the_admin_page_supersedes_and_retires_no_guardrail() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    for retirement in [None, Some(("retirement", "yes"))] {
+        let target = id.to_string();
+        let mut fields = vec![
+            ("action", "supersede"),
+            ("memory", target.as_str()),
+            ("text", "Run the tests sometimes."),
+        ];
+        fields.extend(retirement);
+        let (status, _, body) = act(&rig, &admin, "/web/admin", &fields).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("guardrail"), "{body}");
+    }
+    // The admin read itself is journalled; no version was written.
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("submission.")),
+        "{:?}",
+        events
+            .iter()
+            .map(|e| &e.envelope.event_type)
+            .collect::<Vec<_>>()
     );
 }

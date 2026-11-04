@@ -369,9 +369,10 @@ answered all ten on 2026-11-04, and d18 records the answers.
       `/mcp` (ADR-0045 d6), and no hook ever runs under one; its `guardrail_scope` matters only
       to a page that reads the set through it.
     - **The user page may show the set in force at the person's root**, read-only: d5's use case
-      under `<user>-web` at `universe.<user>`, rendered as d6's lines with their provenance, and
-      the person's own held guardrails as d3 lists them. It reads no rule cache and checks no
-      call.
+      under `<user>-web` at `universe.<user>`, rendered as d6's lines with their provenance. Its
+      own-held list is `<user>-web`'s, which writes no guardrail, so the person's agents' held
+      guardrails show where every held row does, on the memories view. It reads no rule cache
+      and checks no call.
     - **Review shows the load warning.** A held guardrail served on either page's review view
       carries d10's sentence, since the page serves the same ceremony (ADR-0045 d11).
     - **No page writes, supersedes, retires or exports a guardrail** in v0.5.1: a guardrail is
