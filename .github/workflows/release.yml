@@ -5,8 +5,8 @@ name: Release
 # equal to the workspace version, ships:
 #   - oml-cli-X.Y.Z-<target>.tar.gz (.zip on Windows), the `oml` CLI alone, for
 #     x86_64-unknown-linux-musl, aarch64-unknown-linux-musl (static, any
-#     distro), aarch64-apple-darwin, x86_64-apple-darwin and
-#     x86_64-pc-windows-msvc, each built on a native runner;
+#     distro) and x86_64-pc-windows-msvc, each built on a native runner
+#     (macOS paused: docs/engineering/ci-and-toolchain.md "Paused targets");
 #   - oml-server-lead-X.Y.Z-<target>.tar.gz for x86_64-unknown-linux-gnu and
 #     aarch64-unknown-linux-gnu;
 #   - one CycloneDX SBOM per archive (<archive stem>.cdx.json), one SHA256SUMS
@@ -71,10 +71,8 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
-          - target: aarch64-apple-darwin
-            runner: macos-15
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
+          # macOS targets are paused while GitHub's macOS runners are unreliable; see
+          # docs/engineering/ci-and-toolchain.md "Paused targets".
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
@@ -203,8 +201,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       CLI_TARGETS: >-
-        x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin
-        x86_64-apple-darwin x86_64-pc-windows-msvc
+        x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-msvc
       SERVER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
@@ -438,8 +435,9 @@ jobs:
           linux/amd64 and linux/arm64.
 
           The \`oml\` CLI: \`oml-cli-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-musl,
-          aarch64-unknown-linux-musl (static, any distribution), aarch64-apple-darwin and
-          x86_64-apple-darwin, and \`oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip\`.
+          aarch64-unknown-linux-musl (static, any distribution), and
+          \`oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip\`. No macOS build in this release: macOS
+          targets are paused; on a Mac, build the CLI from source with \`cargo install\`.
           The server: \`oml-server-lead-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-gnu
           and aarch64-unknown-linux-gnu.
 
@@ -454,7 +452,7 @@ jobs:
                 --certificate-identity-regexp '${identity}' \\
                 ${IMAGE}@${DIGEST}
 
-          Verify an archive, then extract it (Linux; on macOS the same, with that target's name):
+          Verify an archive, then extract it (Linux):
 
               cosign verify-blob \\
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com \\

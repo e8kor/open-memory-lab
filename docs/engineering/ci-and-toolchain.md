@@ -55,7 +55,7 @@ ratchet that only ever loosens, so it starts tight:
 | Chart | `scripts/check_chart.py`, then job `chart`: a kind cluster, `pgvector/pgvector:pg17` in it, the image built from the checkout, `helm install`, the claim through `kubectl port-forward`, `scripts/quickstart.sh`, a restart, and an uninstall and reinstall | the Helm chart renders the one lead [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) decides, at the workspace version and as the image's own user, and that lead serves the quickstart after a real install and keeps its signing key across a restart and a reinstall |
 | Quick start | job `compose`: the repository's `docker-compose.yml` built and started, `scripts/quickstart.sh` inside it, then `oml quickstart` from a release build against the same image tagged with the CLI's version, the owner-only modes of what it wrote, and a second run refused as `quickstart.exists` | the compose file `oml quickstart` writes starts the lead over its owner and serving roles, and the verb claims it, issues its keys and passes its self-check ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9) |
 | CLI platforms | job `cli-matrix`: `cargo build --bin oml`, `oml --version` and `cargo test -p oml-cli --lib --bins`, each on the native runner of one CLI release target | every platform the CLI ships for still builds and passes its unit tests, before a tag ([release artifacts](#release-artifacts-sbom-signing-provenance)) |
-| Installers | job `install-smoke`: `scripts/install/install.sh` piped to `sh` on `ubuntu-24.04` (once with cosign and `--require-signature`) and `macos-15`, `install.ps1` under PowerShell 7 and Windows PowerShell 5.1 on `windows-2025`, each against the newest published release, then the installed `oml --version`; `shellcheck` on `install.sh` | the one-line install still works on each OS, against real signed release files ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d8) |
+| Installers | job `install-smoke`: `scripts/install/install.sh` piped to `sh` on `ubuntu-24.04` (once with cosign and `--require-signature`) (macOS paused), `install.ps1` under PowerShell 7 and Windows PowerShell 5.1 on `windows-2025`, each against the newest published release, then the installed `oml --version`; `shellcheck` on `install.sh` | the one-line install still works on each OS, against real signed release files ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d8) |
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
 | M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
 
@@ -124,11 +124,11 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
 - **The CLI and server archives (built, not yet released).** The CLI ships apart from the server,
   a decision the maintainer made on 2026-10-31. A tag ships `oml-cli-X.Y.Z-<target>.tar.gz`, the
   `oml` binary with the README and licence, for `x86_64-unknown-linux-musl` and
-  `aarch64-unknown-linux-musl` (static, so they run on any distribution), `aarch64-apple-darwin`
-  and `x86_64-apple-darwin`, and `oml-cli-X.Y.Z-x86_64-pc-windows-msvc.zip`; and
+  `aarch64-unknown-linux-musl` (static, so they run on any distribution) and
+  `oml-cli-X.Y.Z-x86_64-pc-windows-msvc.zip` (the macOS targets are [paused](#paused-targets)); and
   `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
   `aarch64-unknown-linux-gnu`. `release.yml` job `cli` builds each CLI target on a runner of its
-  own OS and architecture — `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel` and
+  own OS and architecture — `ubuntu-24.04`, `ubuntu-24.04-arm` and
   `windows-2025`, labels GitHub lists for public repositories
   ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
   fetched 2026-11-03) — and packages it only after the binary prints the tag's version; a musl
@@ -236,3 +236,13 @@ CI carries a bench job wired to the [benchmark harness](benchmark-harness.md):
   roadmap's rules, never pipeline side effects.
 - No doc deployment on PR branches: the site deploys from the default branch only, so an
   unreviewed page is never public.
+
+## Paused targets
+
+**macOS, since 2026-11-04.** `aarch64-apple-darwin` and `x86_64-apple-darwin` are out of `cli-matrix`,
+`install-smoke` and `release.yml`'s `cli` job, by the maintainer's decision: GitHub's macOS runners
+were repeatedly cancelled without a runner during the v0.5.1 and v0.5.2 releases, and a release waits
+for every target. Releases up to v0.5.2 carry macOS archives; later ones do not. `install.sh` stops on
+macOS with a message naming `cargo install` from source, and `check_release.py` no longer requires a
+macOS runner. To restore: put the two rows back in both matrices and `CLI_TARGETS`, the `macos-15`
+runner back in `install-smoke`, and the `Darwin` branch of `install.sh`.
