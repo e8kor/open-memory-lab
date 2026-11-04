@@ -5936,3 +5936,353 @@ async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_va
         .expect("the chain verifies after the races");
     drop_dbs(&created).await;
 }
+
+// ---------------------------------------------------------------------------
+// claim_edges (0011): the keys, the checks, the fence and the grant
+// ---------------------------------------------------------------------------
+
+/// One tenant's two memories and two writer keys, under its `universe`, for
+/// the claim-edge laws: the edge's endpoints and its proposer and ratifier.
+struct EdgeTenant {
+    rig: ChainRig,
+    src: Uuid,
+    dst: Uuid,
+    proposer: Uuid,
+    ratifier: Uuid,
+}
+
+/// Seeds `seed`'s chain with a `universe`, two keys and two held memories,
+/// ids drawn from `base` so two tenants in one database never share one.
+async fn edge_tenant(store: &PgStore, seed: u64, base: u128) -> EdgeTenant {
+    let mut rig = ChainRig::new(seed);
+    rig.seed_chain(store, 0).await;
+    let root = Uuid::from_u128(base);
+    rig.create_workarea(
+        store,
+        workarea_record(rig.tenant_id, root, None, "universe"),
+    )
+    .await;
+    let (proposer, ratifier) = (Uuid::from_u128(base + 1), Uuid::from_u128(base + 2));
+    for key in [proposer, ratifier] {
+        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Writer, None))
+            .await;
+    }
+    let (src, dst) = (Uuid::from_u128(base + 3), Uuid::from_u128(base + 4));
+    hold(store, &mut rig, root, src, proposer, false).await;
+    hold(store, &mut rig, root, dst, proposer, false).await;
+    EdgeTenant {
+        rig,
+        src,
+        dst,
+        proposer,
+        ratifier,
+    }
+}
+
+/// One `claim_edges` row as the serving login inserts it under `tenant`.
+struct EdgeRow {
+    id: Uuid,
+    src: Uuid,
+    dst: Uuid,
+    state: &'static str,
+    proposer: Uuid,
+    ratifier: Option<Uuid>,
+}
+
+/// Inserts `edge` over the serving login under `tenant`, committed when
+/// `commit` is set and rolled back otherwise; the refusal's SQLSTATE and
+/// constraint, or the rows it inserted.
+async fn edge_under(
+    store: &PgStore,
+    tenant: Uuid,
+    edge: &EdgeRow,
+    commit: bool,
+) -> Result<u64, (String, Option<String>)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let result = sqlx::query(
+        "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+                                  state, proposer_key_id, ratifier_key_id) \
+         VALUES ($1, $2, $3, $4, 'relates_to', $5, $6, $7)",
+    )
+    .bind(edge.id)
+    .bind(tenant)
+    .bind(edge.src)
+    .bind(edge.dst)
+    .bind(edge.state)
+    .bind(edge.proposer)
+    .bind(edge.ratifier)
+    .execute(&mut *tx)
+    .await;
+    match result {
+        Ok(done) => {
+            if commit {
+                tx.commit().await.expect("commit");
+            } else {
+                tx.rollback().await.expect("rollback");
+            }
+            Ok(done.rows_affected())
+        }
+        Err(e) => {
+            let db = e
+                .as_database_error()
+                .unwrap_or_else(|| panic!("not a database error: {e}"));
+            Err((
+                db.code().map(|c| c.into_owned()).unwrap_or_default(),
+                db.constraint().map(str::to_owned),
+            ))
+        }
+    }
+}
+
+/// A pending edge between `t`'s two memories, proposed by its proposer.
+fn pending_edge(t: &EdgeTenant, id: u128) -> EdgeRow {
+    EdgeRow {
+        id: Uuid::from_u128(id),
+        src: t.src,
+        dst: t.dst,
+        state: "pending",
+        proposer: t.proposer,
+        ratifier: None,
+    }
+}
+
+/// Under tenant A, a claim edge whose endpoint or key is tenant B's row is
+/// refused as one naming no row is: `23503`, from the one constraint, so
+/// the edge neither stores a cross-tenant id nor answers whether another
+/// tenant holds one; tenant A's own rows are accepted. A foreign-key check
+/// runs without row-level security, so each key carries `tenant_id`
+/// (postgres-schema.md "Keys into tenant tables"; ADR-0034 d12, ADR-0008).
+#[tokio::test]
+async fn a_claim_edge_naming_tenant_bs_memory_is_refused_as_one_naming_no_memory() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 300, 0x3000).await;
+    let b = edge_tenant(&store, 301, 0x3100).await;
+    let tenant = a.rig.tenant_id;
+    let nothing = Uuid::from_u128(0x0BAD_0011);
+
+    let own = EdgeRow {
+        ratifier: Some(a.ratifier),
+        state: "ratified",
+        ..pending_edge(&a, 0x3E00)
+    };
+    assert_eq!(
+        edge_under(&store, tenant, &own, false).await,
+        Ok(1),
+        "tenant A's own memories and keys are accepted"
+    );
+
+    type Point = fn(&mut EdgeRow, Uuid);
+    let references: [(&str, Point, Uuid); 4] = [
+        ("claim_edges_src_artifact_id_fkey", |e, v| e.src = v, b.src),
+        ("claim_edges_dst_artifact_id_fkey", |e, v| e.dst = v, b.dst),
+        (
+            "claim_edges_proposer_key_id_fkey",
+            |e, v| e.proposer = v,
+            b.proposer,
+        ),
+        (
+            "claim_edges_ratifier_key_id_fkey",
+            |e, v| e.ratifier = Some(v),
+            b.ratifier,
+        ),
+    ];
+    for (constraint, point, foreign) in references {
+        let mut random_row = EdgeRow {
+            ratifier: Some(a.ratifier),
+            state: "ratified",
+            ..pending_edge(&a, 0x3E01)
+        };
+        point(&mut random_row, nothing);
+        let mut foreign_row = EdgeRow {
+            ratifier: Some(a.ratifier),
+            state: "ratified",
+            ..pending_edge(&a, 0x3E02)
+        };
+        point(&mut foreign_row, foreign);
+        let random = edge_under(&store, tenant, &random_row, false).await;
+        assert_eq!(
+            random,
+            Err(("23503".to_owned(), Some(constraint.to_owned()))),
+            "{constraint}: an id no row holds is refused by the one constraint"
+        );
+        assert_eq!(
+            edge_under(&store, tenant, &foreign_row, false).await,
+            random,
+            "{constraint}: tenant B's row is refused as an id no row holds is"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// 0011 grants `claim_edges` SELECT, INSERT and UPDATE alone: nothing
+/// deletes an edge, so the serving role's DELETE fails on privilege
+/// (`42501`) while its insert, ratifying update and read succeed
+/// (postgres-schema.md "Privileges"; ADR-0034 d3).
+#[tokio::test]
+async fn the_serving_role_is_refused_delete_on_claim_edges_by_privilege() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 302, 0x3200).await;
+    let tenant = a.rig.tenant_id;
+    let edge = pending_edge(&a, 0x3E10);
+    assert_eq!(edge_under(&store, tenant, &edge, true).await, Ok(1));
+
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    let ratified = sqlx::query(
+        "UPDATE claim_edges SET state = 'ratified', ratifier_key_id = $1 WHERE id = $2",
+    )
+    .bind(a.ratifier)
+    .bind(edge.id)
+    .execute(&mut *tx)
+    .await
+    .expect("the serving role ratifies an edge")
+    .rows_affected();
+    assert_eq!(ratified, 1);
+    let read: i64 = sqlx::query_scalar("SELECT count(*) FROM claim_edges WHERE state = 'ratified'")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the serving role reads its edges");
+    assert_eq!(read, 1);
+    let result = sqlx::query("DELETE FROM claim_edges WHERE id = $1")
+        .bind(edge.id)
+        .execute(&mut *tx)
+        .await;
+    assert_eq!(
+        refused_code(result, "DELETE FROM claim_edges"),
+        "42501",
+        "the serving role is refused DELETE on claim_edges"
+    );
+    drop(tx);
+    drop_dbs(&created).await;
+}
+
+/// `claim_edges` carries the FORCE `tenant_isolation` policy 0009 gave
+/// `memories`: under tenant A's `oml.tenant_id`, or none, no row of tenant
+/// B's shows, while tenant B reads its own (postgres-schema.md "Row-level
+/// security"; security.md).
+#[tokio::test]
+async fn tenant_as_context_reads_none_of_tenant_bs_claim_edges() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 304, 0x3400).await;
+    let b = edge_tenant(&store, 305, 0x3500).await;
+    assert_eq!(
+        edge_under(&store, b.rig.tenant_id, &pending_edge(&b, 0x3E20), true).await,
+        Ok(1)
+    );
+
+    let flags: (bool, bool) = sqlx::query_as(
+        "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'claim_edges'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("table flags");
+    assert_eq!(flags, (true, true), "row security is enabled and forced");
+
+    let mut seen = Vec::new();
+    for tenant in [Some(a.rig.tenant_id), None, Some(b.rig.tenant_id)] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        if let Some(tenant) = tenant {
+            sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                .bind(tenant.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("set tenant");
+        }
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM claim_edges")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+        tx.rollback().await.expect("rollback");
+        seen.push(n);
+    }
+    assert_eq!(
+        seen,
+        vec![0, 0, 1],
+        "tenant A and no tenant read none of tenant B's edges; tenant B reads its own"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The key-inequality CHECK is R2's cheap spelling on edges: a ratifier key
+/// equal to the proposer key is refused (`23514`) by
+/// `claim_edges_ratifier_is_not_proposer`; the principal rule is the
+/// ratification transaction's (postgres-schema.md; ADR-0012).
+#[tokio::test]
+async fn a_claim_edge_whose_ratifier_is_its_proposer_is_refused_by_its_check() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 306, 0x3600).await;
+    let selfish = EdgeRow {
+        state: "ratified",
+        ratifier: Some(a.proposer),
+        ..pending_edge(&a, 0x3E30)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &selfish, false).await,
+        Err((
+            "23514".to_owned(),
+            Some("claim_edges_ratifier_is_not_proposer".to_owned())
+        ))
+    );
+    drop_dbs(&created).await;
+}
+
+/// An edge is ratified exactly when it names a ratifier: a ratified row
+/// without one, and a pending row with one, are refused (`23514`) by
+/// `claim_edges_ratified_has_ratifier` (postgres-schema.md; ADR-0008).
+#[tokio::test]
+async fn a_ratified_claim_edge_without_a_ratifier_is_refused_by_its_check() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let a = edge_tenant(&store, 307, 0x3700).await;
+    let refusal = Err((
+        "23514".to_owned(),
+        Some("claim_edges_ratified_has_ratifier".to_owned()),
+    ));
+    let unratified = EdgeRow {
+        state: "ratified",
+        ..pending_edge(&a, 0x3E40)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &unratified, false).await,
+        refusal,
+        "a ratified edge without a ratifier"
+    );
+    let premature = EdgeRow {
+        ratifier: Some(a.ratifier),
+        ..pending_edge(&a, 0x3E41)
+    };
+    assert_eq!(
+        edge_under(&store, a.rig.tenant_id, &premature, false).await,
+        refusal,
+        "a pending edge with a ratifier"
+    );
+    drop_dbs(&created).await;
+}

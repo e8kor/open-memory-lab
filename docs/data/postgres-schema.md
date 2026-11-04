@@ -428,16 +428,6 @@ CREATE TABLE workarea_transitions (
 CREATE INDEX workarea_transitions_by_state                  -- the status read's pending list
     ON workarea_transitions (tenant_id, workarea_id, state);
 
-CREATE TABLE claim_edges (
-    id              uuid PRIMARY KEY,
-    tenant_id       uuid NOT NULL,
-    src_artifact_id uuid NOT NULL,
-    dst_artifact_id uuid NOT NULL,
-    label           text NOT NULL,     -- derives_from | relates_to | …
-    state           text NOT NULL CHECK (state IN ('pending', 'ratified')),
-    proposer_key_id uuid NOT NULL,
-    ratifier_key_id uuid
-);
 ```
 
 The key-inequality `CHECK` is the cheap spelling of R2 on edges; the full rule — ratifier principal
@@ -448,6 +438,61 @@ the names, so a re-parent is a single-transaction descendant rewrite rather than
 Every name is a valid `ltree` label — PostgreSQL 17 admits "alphanumeric characters, underscores,
 and hyphens" up to 1000 characters per label
 ([ltree](https://www.postgresql.org/docs/17/ltree.html), fetched 2026-10-30) — so every path is.
+
+### claim_edges
+
+**Status:** built in `migrations/0017_claim_edges.sql` · its checks run only where a superuser
+mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8). The proposal and
+ratification use cases that write it are not built yet.
+
+A labelled edge between two claims ([ADR-0008](../adr/ADR-0008-workarea-algebra.md) d5), `pending`
+until a key that is not its proposer ratifies it, and never deleted:
+
+```sql
+CREATE TABLE claim_edges (
+    id              uuid NOT NULL PRIMARY KEY,
+    tenant_id       uuid NOT NULL REFERENCES tenants (id),
+    src_artifact_id uuid NOT NULL,
+    dst_artifact_id uuid NOT NULL,
+    label           text NOT NULL,     -- derives_from | relates_to | oml:is_a | …
+    state           text NOT NULL
+        CONSTRAINT claim_edges_state CHECK (state IN ('pending', 'ratified')),
+    proposer_key_id uuid NOT NULL,
+    ratifier_key_id uuid,
+    UNIQUE (tenant_id, id),
+    FOREIGN KEY (tenant_id, src_artifact_id) REFERENCES memories (tenant_id, id),
+    FOREIGN KEY (tenant_id, dst_artifact_id) REFERENCES memories (tenant_id, id),
+    FOREIGN KEY (tenant_id, proposer_key_id) REFERENCES api_keys (tenant_id, id),
+    FOREIGN KEY (tenant_id, ratifier_key_id) REFERENCES api_keys (tenant_id, id),
+    CONSTRAINT claim_edges_ratifier_is_not_proposer
+        CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id),
+    CONSTRAINT claim_edges_ratified_has_ratifier
+        CHECK ((state = 'ratified') = (ratifier_key_id IS NOT NULL))
+);
+
+CREATE INDEX claim_edges_src ON claim_edges (tenant_id, src_artifact_id);
+CREATE INDEX claim_edges_dst ON claim_edges (tenant_id, dst_artifact_id);
+CREATE INDEX claim_edges_ratified_label ON claim_edges (tenant_id, label)
+    WHERE state = 'ratified';                -- the cycle refusal's read (ADR-0021)
+```
+
+- **Keys.** Each key into `memories` and `api_keys` carries `tenant_id`, so an edge naming
+  another tenant's memory or key is refused as one naming no row is: `23503`, from the one
+  constraint ([Keys into tenant tables](#keys-into-tenant-tables)). A NOT NULL `tenant_id` never
+  matches a provider-level key, so an operator key neither proposes nor ratifies.
+- **Checks.** `claim_edges_ratifier_is_not_proposer` is R2's key-inequality spelling
+  ([ADR-0012](../adr/ADR-0012-admission-and-review.md)); the principal and lineage rule is
+  the ratification transaction's. `claim_edges_ratified_has_ratifier` makes a row ratified
+  exactly when it names a ratifier. Each refuses with `23514`.
+- **States.** `pending` and `ratified` only. A `rejected` state and a `term_curie` column belong
+  to ADR-0027, which is not accepted; the domain's `EdgeState::Rejected` is not stored.
+- **Fence.** Row-level security is enabled and forced, under the `tenant_isolation` policy
+  `memories` carries ([Row-level security](#row-level-security)); the serving role holds
+  `SELECT`, `INSERT` and `UPDATE`, and no `DELETE` ([Privileges](#privileges)).
+- **Not partitioned.** ADR-0034 d11 partitions `memories` alone, for its FTS index's
+  statistics; `claim_edges` holds no indexed text. This is a reading 0011's header records, not
+  a decision of d11.
 
 ## api_keys, grants, key_denials, bans
 
@@ -590,6 +635,8 @@ constraint (ADR-0034 d12). The keys built this way:
 | `workareas.namespace_root_id` | `(tenant_id, namespace_root_id)` | `workareas (tenant_id, id)` |
 | `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
 | `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
+| `claim_edges.src_artifact_id`, `dst_artifact_id` | `(tenant_id, src_artifact_id)`, `(tenant_id, dst_artifact_id)` | `memories (tenant_id, id)` (0011) |
+| `claim_edges.proposer_key_id`, `ratifier_key_id` | `(tenant_id, proposer_key_id)`, `(tenant_id, ratifier_key_id)` | `api_keys (tenant_id, id)` (0011) |
 
 - **The targets.** 0008 adds `UNIQUE (tenant_id, event_id)` on `journal` and `UNIQUE (tenant_id,
   id)` on `memories`; `workareas` and `api_keys` have theirs from 0004. Each key keeps its 0001
@@ -1289,6 +1336,7 @@ serving role until that migration grants its row here, under the sync rule.
 | `oauth_clients` | ✓ | ✓ | ✓ | ✓ | |
 | `oauth_authorizations` | ✓ | ✓ | | ✓ | |
 | `workarea_transitions` | ✓ | ✓ | ✓ | | |
+| `claim_edges` | ✓ | ✓ | ✓ | | |
 | `_sqlx_migrations` | | | | | |
 
 - **`journal`** takes `SELECT` and `INSERT` alone, so a serving `UPDATE` or `DELETE` fails on
