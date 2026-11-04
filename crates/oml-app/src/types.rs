@@ -7,7 +7,7 @@ use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
-use oml_domain::vocab_edges::EdgeState;
+use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::{
     ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
     MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
@@ -1589,11 +1589,12 @@ pub struct ClaimEdgeProposal {
     /// The edge's target version, `dst_artifact_id` as stored.
     pub to_artifact_id: Uuid,
     pub label: String,
-    /// Always `pending`: a proposal confers nothing until a key that is not
-    /// its proposer ratifies it (ADR-0008 d5; ADR-0012 R2).
+    /// `pending` on a proposal, which confers nothing until a key that is
+    /// not its proposer ratifies it, and `ratified` on that ratification
+    /// (ADR-0008 d5; ADR-0012 R2).
     pub state: String,
     pub proposer_key_id: Uuid,
-    /// Always `None` on a proposal.
+    /// `None` on a proposal; the ratifying key on a ratification.
     pub ratifier_key_id: Option<Uuid>,
 }
 
@@ -1614,6 +1615,18 @@ impl From<&ClaimEdgeRecord> for ClaimEdgeProposal {
 #[derive(Debug, Clone)]
 pub struct ClaimEdgeProposalOutcome {
     pub proposal: ClaimEdgeProposal,
+    pub replayed: bool,
+}
+
+/// `POST /v2/claim-edges/{edge_id}/ratify` as the use-case answers it: the
+/// ratified edge as openapi.yaml's `ClaimEdge` serves it, which is also its
+/// stored idempotent response (http-api.md, claim edges and idempotency).
+#[derive(Debug, Clone)]
+pub struct ClaimEdgeRatification {
+    pub edge: ClaimEdgeProposal,
+    /// The seq of the `review.ratify` this call committed; `None` on a
+    /// replay, whose record holds the `ClaimEdge` alone.
+    pub journal_seq: Option<u64>,
     pub replayed: bool,
 }
 
@@ -1775,6 +1788,27 @@ pub enum AppError {
         field: EdgeField,
         reason: LabelRefusal,
     },
+    /// The ratifier's key or principal is in either endpoint's lineage
+    /// closure (errors.md `review.author_in_lineage`; ADR-0012 R2).
+    #[error("the ratifier is in an endpoint's lineage closure (review.author_in_lineage)")]
+    AuthorInLineage,
+    /// The edge is decided: ratified before this call, or by a commit that
+    /// won the store's compare-and-set. Nothing was journalled.
+    // reading: errors.md declares no edge-specific code; a verdict on a
+    // decided row answers `review.serve_invalid` with `details.reason`
+    // `consumed`, and a decided edge answers alike.
+    #[error("claim edge {edge_id} is already decided (review.serve_invalid, consumed)")]
+    EdgeConsumed { edge_id: Uuid },
+    /// Ratifying the edge would close a cycle over its label's ratified
+    /// edges (errors.md `vocab.cycle_refused`; ADR-0021 d5).
+    #[error(transparent)]
+    CycleRefused(#[from] CycleRefused),
+    /// A term endpoint of an `oml:is_a` or `oml:replaced_by` edge whose
+    /// `claim_key` is not a CURIE, or an endpoint of one that is not a
+    /// term: the cycle check cannot run, so the ratification fails closed
+    /// and journals nothing (ADR-0021 d2, d5).
+    #[error("claim_key {claim_key:?} of a term edge's endpoint is not a term's CURIE")]
+    TermEndpoint { claim_key: String },
     #[error(
         "a sent claim_key starts auto-, the prefix only the server derives (ADR-0039 d6, request.validation)"
     )]
@@ -1847,8 +1881,8 @@ pub enum AppError {
     #[error("workarea {workarea_id} is validated and refuses {op:?} (errors.md workarea.frozen)")]
     WorkareaFrozen { workarea_id: Uuid, op: FrozenOp },
     /// The ratifying key is the proposing key or holds the proposer's
-    /// principal (errors.md `review.ratifier_is_proposer`; ADR-0009 d3;
-    /// ADR-0010 R2).
+    /// principal, of a status transition or a claim edge (errors.md
+    /// `review.ratifier_is_proposer`; ADR-0009 d3; ADR-0010 R2; ADR-0012).
     #[error(
         "the ratifier is the proposer: proposal and ratification are two identities (errors.md review.ratifier_is_proposer)"
     )]

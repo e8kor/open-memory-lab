@@ -20,7 +20,7 @@ use oml_domain::access::{
     effective_verbs, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
-use oml_domain::claim_edges::check_label;
+use oml_domain::claim_edges::{Ratifier, RatifyRefusal, check_label, check_ratifier};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_value,
@@ -36,12 +36,14 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
-use oml_domain::vocab_edges::EdgeState;
+use oml_domain::vocab::{Curie, OmlLabel};
+use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
-    LadderRefusal, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
-    canonical_bytes, check_reviewer, derive_claim_key, event_types, frozen_refuses, next_envelope,
-    nfc, propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string, transition,
+    LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
+    WorkareaStatus, canonical_bytes, check_reviewer, derive_claim_key, event_types, frozen_refuses,
+    next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string,
+    transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -54,19 +56,19 @@ use crate::ports::{
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
     Bearer, BootstrapRequest, BootstrapResult, ClaimEdgeProposal, ClaimEdgeProposalOutcome,
-    ClaimEdgeRecord, ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome,
-    ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode,
-    ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord,
-    CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
-    MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord, PROVIDER_TENANT, ProposeClaimEdge,
-    RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
-    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    ClaimEdgeRatification, ClaimEdgeRecord, ClientAuthentication, ClientDescription, ClientKind,
+    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
+    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
+    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
+    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
+    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord,
+    PROVIDER_TENANT, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord, WorkareaStatusView,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -439,6 +441,32 @@ fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError>
         },
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// The request digest of a claim-edge ratification: SHA-256 over the RFC
+/// 8785 JSON of the method, the route template, the edge id as its path
+/// parameter and a `null` body, as the route takes none (http-api.md
+/// idempotency, claim edges).
+fn claim_edge_ratify_request_digest(edge_id: Uuid) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/claim-edges/{edge_id}/ratify",
+        "path_params": { "edge_id": edge_id.to_string() },
+        "body": Value::Null,
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// A term endpoint's CURIE, its `claim_key` (ADR-0021 d2); anything else
+/// fails the cycle check closed.
+fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
+    let refused = || AppError::TermEndpoint {
+        claim_key: claim_key.to_owned(),
+    };
+    if kind != MemoryKind::Term {
+        return Err(refused());
+    }
+    Curie::parse(claim_key).map_err(|_| refused())
 }
 
 /// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
@@ -4038,6 +4066,227 @@ where
             proposal,
             replayed: false,
         })
+    }
+
+    /// Ratify the pending claim edge `edge_id`: journalled `review.ratify`
+    /// with `subject_kind: "claim_edge"`, the edge's one review act at k = 1,
+    /// and stored ratified naming the ratifier (event-catalog.md; ADR-0008
+    /// d5). The refusal order: the verb ceiling, a `held_by: service` key
+    /// before any lookup, the idempotency record, the edge and both its
+    /// endpoints present and in read scope, dreamer on both endpoints'
+    /// workareas, R2 — the proposer's key or principal, then either
+    /// endpoint's lineage closure — then the edge's state, then for
+    /// `oml:is_a` and `oml:replaced_by` the cycle invariant over that
+    /// label's ratified edges (roles-and-keys.md; ADR-0012; ADR-0021 d5).
+    /// The head is read before the edges the cycle check reads, so a
+    /// ratification committing between them conflicts this one and the
+    /// transport's head retry reads them again (ADR-0002).
+    // reading: the docs state each refusal but not their order; this is
+    // propose_claim_edge's order with review's service refusal after the
+    // ceiling, and edge authority's dreamer on both ends, which also reads
+    // ADR-0021 d6's both-vocabularies rule for a term mapping.
+    pub async fn ratify_claim_edge(
+        &self,
+        api_key: &str,
+        edge_id: Uuid,
+        idempotency_key: Option<&str>,
+    ) -> Result<ClaimEdgeRatification, AppError> {
+        const VERB: &str = "claim_edge.ratify";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Dreamer, VERB)?;
+        refuse_service(key, VERB)?;
+
+        // The route names no workarea, so the scope's workarea is nil
+        // (http-api.md idempotency), as for the proposal.
+        let request_digest = claim_edge_ratify_request_digest(edge_id)?;
+        let scope = idempotency_key.map(|idem_key| IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: idem_key.to_owned(),
+        });
+        if let Some(scope) = &scope
+            && let Some(edge) = self.recorded(scope, &request_digest).await?
+        {
+            return Ok(ClaimEdgeRatification {
+                edge,
+                journal_seq: None,
+                replayed: true,
+            });
+        }
+
+        let prev = self.head_event(key.tenant_id).await?;
+
+        let edge = self
+            .journal
+            .claim_edge(key.tenant_id, edge_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let mut endpoints = Vec::with_capacity(2);
+        for id in [edge.src_artifact_id, edge.dst_artifact_id] {
+            let memory = self
+                .journal
+                .memory(key.tenant_id, id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+            // An endpoint outside read scope answers as an absent edge
+            // (roles-and-keys.md footnote 5; `readable`).
+            let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
+            if !(caller.effective(&ancestry).contains(&Role::Reader)
+                && self.readable(&caller, &memory).await?)
+            {
+                return Err(AppError::NotFound);
+            }
+            endpoints.push(memory);
+        }
+        for memory in &endpoints {
+            self.require_access(&caller, memory.workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let (src, dst) = (&endpoints[0], &endpoints[1]);
+
+        // R2 against both endpoints' flattened closures plus their authors,
+        // pending and ratified edges alike (http-api.md, claim edges).
+        let mut principals = BTreeSet::new();
+        let mut key_ids = BTreeSet::new();
+        for memory in &endpoints {
+            principals.insert(memory.author_principal.clone());
+            principals.extend(memory.lineage_principals.iter().cloned());
+            key_ids.insert(memory.author_key_id);
+            key_ids.extend(memory.lineage_key_ids.iter().copied());
+        }
+        let mut closure = LineageClosure::new();
+        for principal in &principals {
+            closure.add_principal(principal.clone());
+        }
+        for key_id in &key_ids {
+            closure.add_key_id(*key_id);
+        }
+        check_ratifier(
+            &Ratifier {
+                role: key.role,
+                principal: &key.principal,
+                key_id: key.key_id,
+            },
+            edge.proposer_key_id,
+            &edge.proposer_principal,
+            &closure,
+        )
+        .map_err(|refusal| match refusal {
+            RatifyRefusal::NotDreamer(role) => AppError::VerbCeiling { role, verb: VERB },
+            RatifyRefusal::RatifierIsProposer => AppError::RatifierIsProposer,
+            RatifyRefusal::AuthorInLineage => AppError::AuthorInLineage,
+        })?;
+
+        let state = edge_transition(&edge.label, edge.state, EdgeState::Ratified)
+            .map_err(|_| AppError::EdgeConsumed { edge_id })?;
+
+        if let Some(label @ (OmlLabel::IsA | OmlLabel::ReplacedBy)) = OmlLabel::parse(&edge.label) {
+            let candidate = TermEdge {
+                label,
+                from: term_curie(src.kind, &src.claim_key)?,
+                to: term_curie(dst.kind, &dst.claim_key)?,
+            };
+            let mut ratified = Vec::new();
+            for (from, to) in self
+                .journal
+                .ratified_term_edges(key.tenant_id, &edge.label)
+                .await?
+            {
+                ratified.push(TermEdge {
+                    label,
+                    from: term_curie(MemoryKind::Term, &from)?,
+                    to: term_curie(MemoryKind::Term, &to)?,
+                });
+            }
+            check_acyclic(&ratified, &candidate)?;
+        }
+
+        let closure_doc = json!({
+            "principals": principals.iter().collect::<Vec<_>>(),
+            "key_ids": key_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        });
+        let payload = json!({
+            "subject_kind": "claim_edge",
+            "artifact_id": Value::Null,
+            "version": Value::Null,
+            "edge_id": edge_id.to_string(),
+            // At k = 1 the ratify call is the edge's one review act, so no
+            // verdict precedes it.
+            "verdict_event_ids": [],
+            "ratifier_key_id": key.key_id.to_string(),
+            "policy_snapshot": {
+                "k": 1,
+                "required_roles": ["dreamer"],
+                "independence_axis": "principal",
+                "human_required": false,
+            },
+            "lineage_closure_digest": sha256_digest_string(&canonical_bytes(&closure_doc)?),
+        });
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::REVIEW_RATIFY,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
+        let seq = event.envelope.seq;
+        let ratified_edge = ClaimEdgeProposal::from(&ClaimEdgeRecord {
+            state,
+            ratifier_key_id: Some(key.key_id),
+            ..edge
+        });
+        let idempotency = match &scope {
+            Some(scope) => Some(IdempotencyPut {
+                scope: scope.clone(),
+                record: IdempotencyRecord {
+                    request_digest: request_digest.clone(),
+                    response: serde_json::to_value(&ratified_edge)
+                        .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+                },
+            }),
+            None => None,
+        };
+        let committed = self
+            .commit(
+                event,
+                MetadataFold::ClaimEdgeRatified {
+                    edge_id,
+                    ratifier_key_id: key.key_id,
+                },
+                idempotency,
+            )
+            .await;
+        match (committed, &scope) {
+            (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(scope)) => {
+                // A concurrent attempt under the same key committed first
+                // and this one wrote nothing: its record answers.
+                let edge = self
+                    .recorded(scope, &request_digest)
+                    .await?
+                    .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
+                Ok(ClaimEdgeRatification {
+                    edge,
+                    journal_seq: None,
+                    replayed: true,
+                })
+            }
+            // A commit before this one decided the edge: nothing was
+            // written, this event included.
+            (Err(AppError::Store(StoreError::EdgeNotPending { .. })), _) => {
+                Err(AppError::EdgeConsumed { edge_id })
+            }
+            (committed, _) => {
+                committed?;
+                Ok(ClaimEdgeRatification {
+                    edge: ratified_edge,
+                    journal_seq: Some(seq),
+                    replayed: false,
+                })
+            }
+        }
     }
 
     /// Verify the tenant chain end to end with the domain procedure
