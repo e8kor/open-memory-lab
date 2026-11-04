@@ -56,12 +56,12 @@ use oml_app::ports::{
     Signer, StoreError, WebStore,
 };
 use oml_app::types::{
-    AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
-    CrewRecord, CrewUpdate, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet,
-    IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, NamedServe, RecallRequest, ServedMemory,
-    BriefEdgeView, ClaimEdgeProposal, ClaimEdgeQuery, EdgeRatification, ProposeBriefEdge, ProposeClaimEdge,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
-    WorkareaInfo, WorkareaRecord,
+    AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal, ClaimEdgeQuery,
+    ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
+    EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
+    IssuedKey, KeyDetail, ListRequest, NamedServe, ProposeBriefEdge, ProposeClaimEdge,
+    RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
+    VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};

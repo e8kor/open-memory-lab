@@ -36,15 +36,13 @@ use oml_app::ports::{
     Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::types::{
-    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord,
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
-    GrantRecord, GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
-    ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
-    TransitionRecord, TransitionState,
-    ClaimEdgeSelection,
-    BriefEdgeRecord,
+    AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
+    GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -6530,11 +6528,24 @@ where
     ))
     .await;
     Box::pin(steering_is_never_returned_as_a_hit(&new_store().await)).await;
-    Box::pin(retired_claims_are_absent_from_recall_and_steering(&new_store().await)).await;
-    Box::pin(steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await)).await;
-    Box::pin(guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await)).await;
-    Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await)).await;
-    Box::pin(memories_reads_the_named_rows_in_the_order_named(&new_store().await)).await;
+    Box::pin(retired_claims_are_absent_from_recall_and_steering(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await),
+    )
+    .await;
+    Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
+        .await;
+    Box::pin(memories_reads_the_named_rows_in_the_order_named(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
     Box::pin(journal_key_lookup_by_hash(&new_store().await)).await;
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(

@@ -10,8 +10,8 @@ use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
-    AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
-    RecallRequest, SubmitRequest, Verdict,
+    AppError, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest, GuardrailSet,
+    IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, Verdict,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -1175,7 +1175,6 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
 // ---------------------------------------------------------------------------
 
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
-use oml_app::types::{GuardrailRequest, GuardrailSet};
 
 fn guardrail(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {

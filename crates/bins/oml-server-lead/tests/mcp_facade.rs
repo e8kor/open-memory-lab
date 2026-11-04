@@ -2242,7 +2242,15 @@ async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
                 "remember", "learn", "attach", "supersede",
             ],
             "permission_epoch": view["permission_epoch"],
+            "policy": {"k": 1, "required_roles": ["dreamer"]},
+            "pending_transitions": [],
+            "brief": view["brief"],
         })
+    );
+    assert_eq!(
+        view["brief"]["items"],
+        json!([]),
+        "no brief edge, no member"
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
     // By id and by name, the same node (ADR-0026 d4).

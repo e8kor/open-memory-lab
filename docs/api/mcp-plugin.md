@@ -438,8 +438,7 @@ fields more (*built for v0.5.2, not released*;
 `pending_transitions`, the status proposals waiting for a second identity;
 and `brief`, `{items, budget}`, the claims the workarea's reviewers agreed an
 agent entering it reads first, each the claim item every tool returns, with
-its text, cut by the server's `brief.max_tokens`. The hidden v0.3.0 name
-keeps its v0.3.0 output without them. No tool proposes or ratifies a
+its text, cut by the server's `brief.max_tokens`. No tool proposes or ratifies a
 transition or an edge: those run on the HTTP API and the CLI.
 
 ## The prompt `guardrails`

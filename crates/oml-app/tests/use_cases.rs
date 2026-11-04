@@ -36,10 +36,10 @@ use oml_app::types::{
     BootstrapResult, ClaimEdgePage, ClaimEdgeQuery, ClaimEdgeRecord, ClientAuthentication,
     ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationView, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, EdgeRatification,
-    ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken,
-    NamingRefusal, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, RecallResult, RefreshForm,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, TransitionState, TransitionView,
-    Verdict, VerdictRequest, VersionRef,
+    ExchangeForm, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest, IssuedKey,
+    KeyRecord, ListRequest, MintedToken, NamingRefusal, ProposeBriefEdge, ProposeClaimEdge,
+    RecallRequest, RecallResult, RefreshForm, SubmitRequest, SubmitVerb, SupersedeRequest,
+    TokenPair, TransitionState, TransitionView, Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8675,7 +8675,6 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
 // ---------------------------------------------------------------------------
 
 use oml_app::domain::guardrail::{GuardrailScope, LOAD_WARNING, SET_CAP, Severity};
-use oml_app::types::{GuardrailRequest, GuardrailSet};
 
 fn deny_push() -> Value {
     json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"})
