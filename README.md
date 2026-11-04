@@ -85,9 +85,10 @@ These lines are for v0.4.0, which is built and not yet released: until its relea
 installer line answers "not found". On Windows, and to read the script before it runs, see
 [install](docs/start/install.md).
 
-**No server yet?** On a machine with Docker, `oml quickstart` starts one, creates a workarea,
-issues an agent key and a reviewer key into private files, checks one save end to end and
-prints the line that connects Claude Code ([self-hosting](docs/guides/self-hosting.md)).
+**No server yet?** On a machine with Docker, `oml quickstart` is built to start one, create a
+workarea, issue an agent key and a reviewer key into private files, check one save end to end and
+print the line that connects Claude Code ([self-hosting](docs/guides/self-hosting.md)).
+Unverified: its compose file has no recorded green run under Docker yet.
 [Get started](docs/start/index.md) has all three paths: use OML, run OML, and add an agent.
 
 ## What works today
@@ -107,7 +108,7 @@ Each row names the release that built it; [releases](docs/product/releases.md) h
 | **Three agent tools** | `oml_write`, `oml_read` and `oml_workarea`, in place of eight. | Built for v0.4.0 |
 | **One address and one key** | The only settings any client needs: the command line, the Claude Code plugin, the kit for other tools and the SDKs. | Built for v0.4.0 |
 | **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Built for v0.4.0 |
-| **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. No live claude.ai connection has been made yet. | Built for v0.4.0 |
+| **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Built for v0.4.0 |
 | **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Built for v0.4.0 |
 
 ## Planned
@@ -263,7 +264,7 @@ it.
 | Profile | Use it for | Release |
 | --- | --- | --- |
 | **One host** | A laptop or a single server, from the server archive. | Since v0.1.0; the archive since v0.3.1 |
-| **Docker** | A laptop, with `oml quickstart`, or a small team with the compose file. | Compose since v0.1.0; `oml quickstart` built for v0.4.0 |
+| **Docker** | One person's laptop, with `oml quickstart` (unverified: no recorded green compose run yet) or the compose file, whose passwords are for a laptop and which listens on `127.0.0.1` only. | Compose since v0.1.0; `oml quickstart` built for v0.4.0 |
 | **Kubernetes** | One server instance from the Helm chart. | Since v0.3.0; more than one instance not scheduled |
 
 Every profile runs the same server and the same history format. See

@@ -90,3 +90,5 @@ ready, for a window that is unmeasured. Read followers and cluster mode are not 
 
 Give each agent its own key with `oml keys issue-agent --out` ([get
 started](../start/index.md#add-an-agent-you-administer-a-server)), and give reviewers their own.
+Against the quick start's stack, run it as `OML_CLI_CREDENTIALS=./oml/credentials oml keys
+issue-agent …`: the quick start keeps its admin pair there, not in the file `oml login` writes.

@@ -16,7 +16,8 @@ conversation. Install it beside, not instead of, the agent plugin `oml`; an agen
 ```
 
 It needs the `oml` CLI on your `PATH`, logged in with an admin key (`oml login <url>`), or the
-admin pair `oml quickstart` or `oml bootstrap claim` stored.
+admin pair `oml bootstrap claim` stored. For a stack `oml quickstart` started, start Claude Code
+with `OML_CLI_CREDENTIALS=./oml/credentials`, the file where the quick start keeps its admin pair.
 
 ## What it does
 

@@ -17,9 +17,11 @@ on the same origin that serves `/mcp`: there is no separate host, port or servic
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), proposed). Claude never
 receives the key, only a connection the server can withdraw.
 
-**What is proven.** The connect flow passes end to end over HTTP against the real server in
-`oml-server-lead`'s `oauth_flow` suite. No connection from claude.ai itself has been made yet, so
-every step below that names a claude.ai screen is Anthropic's documentation, not a recorded run.
+**Unverified.** `oml-server-lead`'s `oauth_flow` suite and `oml-cli`'s `connect_flow` suite run
+the connect flow end to end over HTTP against the real server, but they run only where the database
+role can create roles, as CI's does, and no green run of either is recorded yet. No connection from
+claude.ai itself has been made either, so every step below that names a claude.ai screen is
+Anthropic's documentation, not a recorded run.
 
 ## What the server needs
 

@@ -61,6 +61,9 @@ agent, approves it as the reviewer and finds it as the agent, and stops naming t
 failed if one does. Last, it prints the line that connects Claude Code on this machine and the
 `oml login` line for another one.
 
+**Unverified.** The verb's own suite runs against a fake `docker`; its compose file has no
+recorded green run under Docker yet ([self-hosting](../guides/self-hosting.md)).
+
 The target is about five minutes on a machine with Docker, most of it the image download; no run
 has timed it yet. A second run in the same directory is refused, so nothing is overwritten. The
 laptop setup is one trust domain: anyone with root on the machine can read every file of it. The
@@ -68,10 +71,17 @@ laptop setup is one trust domain: anyone with root on the machine can read every
 
 ## Add an agent: you administer a server
 
-With the administrator's key stored by `oml login` or by the quick start:
+With the administrator's key stored by `oml login`:
 
 ```sh
 oml keys issue-agent agent-7 --principal crew/agent-7 --workarea crew --out "$HOME/.config/oml/keys/crew-agent-7"
+```
+
+The quick start keeps its administrator pair in `./oml/credentials`, not in the file `oml login`
+writes, so against that stack name the file, as the quick start prints it:
+
+```sh
+OML_CLI_CREDENTIALS=./oml/credentials oml keys issue-agent agent-7 --principal crew/agent-7 --workarea crew --out "$HOME/.config/oml/keys/crew-agent-7"
 ```
 
 It issues one key for one agent: it may save in the workarea and read it, and the workarea is its
