@@ -1,0 +1,2923 @@
+{
+ "method": "bm25",
+ "summary": {
+  "exact": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 0.879,
+   "mrr": 1.0,
+   "ndcg10": 0.945,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "paraphrase": {
+   "s1": 0.273,
+   "s5": 0.636,
+   "r10": 0.606,
+   "mrr": 0.443,
+   "ndcg10": 0.443,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "inflection": {
+   "s1": 0.909,
+   "s5": 0.909,
+   "r10": 1.0,
+   "mrr": 0.924,
+   "ndcg10": 0.959,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "partial": {
+   "s1": 0.545,
+   "s5": 0.818,
+   "r10": 0.818,
+   "mrr": 0.682,
+   "ndcg10": 0.742,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "typo": {
+   "s1": 0.727,
+   "s5": 0.818,
+   "r10": 0.773,
+   "mrr": 0.758,
+   "ndcg10": 0.748,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "identifier": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 1.0,
+   "ndcg10": 0.997,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "question": {
+   "s1": 0.909,
+   "s5": 1.0,
+   "r10": 0.955,
+   "mrr": 0.939,
+   "ndcg10": 0.932,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "long": {
+   "s1": 0.909,
+   "s5": 1.0,
+   "r10": 0.924,
+   "mrr": 0.955,
+   "ndcg10": 0.944,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "negation": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 0.97,
+   "mrr": 1.0,
+   "ndcg10": 0.963,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "temporal": {
+   "s1": 0.455,
+   "s5": 1.0,
+   "r10": 0.924,
+   "mrr": 0.658,
+   "ndcg10": 0.769,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "multihop": {
+   "s1": 0.909,
+   "s5": 0.909,
+   "r10": 0.917,
+   "mrr": 0.92,
+   "ndcg10": 0.853,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 11
+  },
+  "overall": {
+   "s1": 0.785,
+   "s5": 0.917,
+   "r10": 0.888,
+   "mrr": 0.844,
+   "ndcg10": 0.845,
+   "zero": 0.0,
+   "median_latency_ms": null,
+   "n": 121
+  }
+ },
+ "per_query": {
+  "q001": {
+   "ranked": [
+    "m001",
+    "m091",
+    "m081",
+    "m148",
+    "m119",
+    "m177",
+    "m059"
+   ],
+   "matched_terms": [
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q002": {
+   "ranked": [
+    "m035",
+    "m036",
+    "m032"
+   ],
+   "matched_terms": [
+    "tech:pgbouncer"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q003": {
+   "ranked": [
+    "m054",
+    "m055",
+    "m181",
+    "m182",
+    "m071",
+    "m030",
+    "m044",
+    "m082",
+    "m084",
+    "m042"
+   ],
+   "matched_terms": [
+    "topic:idempotency"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9832184408687481,
+    "zero": 0.0
+   }
+  },
+  "q004": {
+   "ranked": [
+    "m126",
+    "m123",
+    "m136",
+    "m135"
+   ],
+   "matched_terms": [
+    "tech:datastream"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q005": {
+   "ranked": [
+    "m150",
+    "m193",
+    "m151"
+   ],
+   "matched_terms": [
+    "topic:dunning"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q006": {
+   "ranked": [
+    "m146",
+    "m147",
+    "m197",
+    "m038",
+    "m181",
+    "m154",
+    "m161",
+    "m149",
+    "m144",
+    "m183"
+   ],
+   "matched_terms": [
+    "topic:payments",
+    "topic:tax"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q007": {
+   "ranked": [
+    "m097",
+    "m003",
+    "m098",
+    "m140",
+    "m127",
+    "m005",
+    "m031"
+   ],
+   "matched_terms": [
+    "tech:playwright"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q008": {
+   "ranked": [
+    "m020",
+    "m132",
+    "m155",
+    "m021",
+    "m059",
+    "m079"
+   ],
+   "matched_terms": [
+    "tech:external-secrets",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.8304853296300547,
+    "zero": 0.0
+   }
+  },
+  "q009": {
+   "ranked": [
+    "m140",
+    "m127",
+    "m137",
+    "m124"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q010": {
+   "ranked": [
+    "m179",
+    "m037",
+    "m068",
+    "m053",
+    "m168",
+    "m175",
+    "m176",
+    "m177",
+    "m184",
+    "m052"
+   ],
+   "matched_terms": [
+    "proc:incident-response",
+    "topic:alerting"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q011": {
+   "ranked": [
+    "m091",
+    "m090",
+    "m027",
+    "m044",
+    "m178",
+    "m130"
+   ],
+   "matched_terms": [
+    "tech:tanstack-query"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q012": {
+   "ranked": [
+    "m116",
+    "m117",
+    "m005",
+    "m006"
+   ],
+   "matched_terms": [
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.25,
+    "ndcg10": 0.35583989829307827,
+    "zero": 0.0
+   }
+  },
+  "q013": {
+   "ranked": [
+    "m015",
+    "m152",
+    "m177",
+    "m021",
+    "m058",
+    "m067",
+    "m024",
+    "m169",
+    "m009",
+    "m012"
+   ],
+   "matched_terms": [
+    "tech:kubernetes",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.5,
+    "mrr": 0.0,
+    "ndcg10": 0.11861329943102608,
+    "zero": 0.0
+   }
+  },
+  "q014": {
+   "ranked": [
+    "m158",
+    "m151",
+    "m136",
+    "m180",
+    "m085",
+    "m154",
+    "m157",
+    "m084",
+    "m183",
+    "m088"
+   ],
+   "matched_terms": [
+    "proc:planning"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.5,
+    "ndcg10": 0.3868528072345416,
+    "zero": 0.0
+   }
+  },
+  "q015": {
+   "ranked": [
+    "m048",
+    "m025",
+    "m096",
+    "m081",
+    "m047",
+    "m029",
+    "m035",
+    "m132",
+    "m014",
+    "m023"
+   ],
+   "matched_terms": [
+    "cmp:database"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.5,
+    "ndcg10": 0.52129602861432,
+    "zero": 0.0
+   }
+  },
+  "q016": {
+   "ranked": [
+    "m160",
+    "m161",
+    "m195",
+    "m137",
+    "m162",
+    "m171",
+    "m199",
+    "m072",
+    "m079"
+   ],
+   "matched_terms": [
+    "topic:logging"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.944847956559586,
+    "zero": 0.0
+   }
+  },
+  "q017": {
+   "ranked": [
+    "m091",
+    "m171",
+    "m086",
+    "m027",
+    "m090",
+    "m044",
+    "m178",
+    "m130"
+   ],
+   "matched_terms": [
+    "cmp:analytics",
+    "topic:cost"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 1.0,
+    "mrr": 0.125,
+    "ndcg10": 0.3154648767857287,
+    "zero": 0.0
+   }
+  },
+  "q018": {
+   "ranked": [
+    "m140",
+    "m061",
+    "m002",
+    "m023",
+    "m004"
+   ],
+   "matched_terms": [
+    "tech:argo-cd",
+    "tech:kubernetes"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q019": {
+   "ranked": [
+    "m064",
+    "m152",
+    "m027",
+    "m040",
+    "m123",
+    "m134",
+    "m177",
+    "m058",
+    "m067",
+    "m048"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q020": {
+   "ranked": [
+    "m052",
+    "m043",
+    "m138",
+    "m130",
+    "m163",
+    "m031",
+    "m033",
+    "m199",
+    "m042",
+    "m098"
+   ],
+   "matched_terms": [
+    "topic:alerting",
+    "topic:invoicing",
+    "topic:performance"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6309297535714574,
+    "zero": 0.0
+   }
+  },
+  "q021": {
+   "ranked": [
+    "m054",
+    "m188",
+    "m056",
+    "m032",
+    "m172",
+    "m055",
+    "m193",
+    "m101",
+    "m029",
+    "m030"
+   ],
+   "matched_terms": [
+    "topic:idempotency",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9243382314975351,
+    "zero": 0.0
+   }
+  },
+  "q022": {
+   "ranked": [
+    "m063",
+    "m064",
+    "m094",
+    "m169",
+    "m068",
+    "m075",
+    "m144",
+    "m119",
+    "m177",
+    "m071"
+   ],
+   "matched_terms": [
+    "topic:money"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.6732934624429354,
+    "zero": 0.0
+   }
+  },
+  "q023": {
+   "ranked": [
+    "m006",
+    "m008",
+    "m186",
+    "m013",
+    "m021",
+    "m007",
+    "m016",
+    "m017",
+    "m088",
+    "m004"
+   ],
+   "matched_terms": [
+    "topic:deployment",
+    "topic:rollback"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q024": {
+   "ranked": [
+    "m141",
+    "m142",
+    "m043",
+    "m052",
+    "m193",
+    "m190",
+    "m171",
+    "m110",
+    "m143",
+    "m189"
+   ],
+   "matched_terms": [
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q025": {
+   "ranked": [
+    "m011",
+    "m010",
+    "m184",
+    "m115",
+    "m060",
+    "m109",
+    "m083",
+    "m110",
+    "m077",
+    "m163"
+   ],
+   "matched_terms": [
+    "topic:encryption"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q026": {
+   "ranked": [
+    "m023",
+    "m032",
+    "m173",
+    "m041",
+    "m081",
+    "m178",
+    "m009",
+    "m109",
+    "m047",
+    "m083"
+   ],
+   "matched_terms": [
+    "cmp:database",
+    "topic:schema-migration"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9832184408687481,
+    "zero": 0.0
+   }
+  },
+  "q027": {
+   "ranked": [
+    "m111",
+    "m110",
+    "m097",
+    "m109",
+    "m076",
+    "m098"
+   ],
+   "matched_terms": [
+    "topic:flaky-tests",
+    "topic:testing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q028": {
+   "ranked": [
+    "m060",
+    "m155",
+    "m059",
+    "m061",
+    "m083",
+    "m058",
+    "m174"
+   ],
+   "matched_terms": [
+    "topic:webhooks"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9514426589871553,
+    "zero": 0.0
+   }
+  },
+  "q029": {
+   "ranked": [
+    "m033",
+    "m034",
+    "m152",
+    "m052",
+    "m138",
+    "m130",
+    "m128",
+    "m137",
+    "m143",
+    "m189"
+   ],
+   "matched_terms": [
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q030": {
+   "ranked": [
+    "m163",
+    "m168",
+    "m167",
+    "m165",
+    "m053",
+    "m052",
+    "m179",
+    "m088",
+    "m043",
+    "m199"
+   ],
+   "matched_terms": [
+    "topic:alerting"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q031": {
+   "ranked": [
+    "m183",
+    "m181",
+    "m182",
+    "m146",
+    "m149",
+    "m129",
+    "m130"
+   ],
+   "matched_terms": [
+    "topic:idempotency",
+    "topic:payments"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q032": {
+   "ranked": [
+    "m021",
+    "m020",
+    "m169",
+    "m155",
+    "m166",
+    "m082",
+    "m024",
+    "m176",
+    "m009",
+    "m012"
+   ],
+   "matched_terms": [
+    "proc:on-call",
+    "tech:kubernetes",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.91311732856428,
+    "zero": 0.0
+   }
+  },
+  "q033": {
+   "ranked": [
+    "m019",
+    "m200",
+    "m009",
+    "m018",
+    "m168",
+    "m198",
+    "m143",
+    "m189",
+    "m054",
+    "m145"
+   ],
+   "matched_terms": [
+    "cmp:pdf-rendering",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 1.0,
+    "mrr": 0.16666666666666666,
+    "ndcg10": 0.7014089108759172,
+    "zero": 0.0
+   }
+  },
+  "q034": {
+   "ranked": [
+    "m105",
+    "m050",
+    "m116"
+   ],
+   "matched_terms": [
+    "tech:postgresql",
+    "topic:api-conventions"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q035": {
+   "ranked": [
+    "m002",
+    "m005",
+    "m080",
+    "m016",
+    "m003",
+    "m193",
+    "m015",
+    "m127",
+    "m056",
+    "m089"
+   ],
+   "matched_terms": [
+    "cmp:cluster",
+    "tech:kubernetes",
+    "topic:naming"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9327783893101107,
+    "zero": 0.0
+   }
+  },
+  "q036": {
+   "ranked": [
+    "m017",
+    "m013",
+    "m040"
+   ],
+   "matched_terms": [
+    "topic:scaling"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q037": {
+   "ranked": [
+    "m139"
+   ],
+   "matched_terms": [
+    "topic:personal-data"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q038": {
+   "ranked": [
+    "m181",
+    "m182",
+    "m055",
+    "m040",
+    "m054"
+   ],
+   "matched_terms": [
+    "topic:idempotency"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q039": {
+   "ranked": [
+    "m162",
+    "m012"
+   ],
+   "matched_terms": [
+    "tech:opentelemetry",
+    "topic:tracing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q040": {
+   "ranked": [
+    "m157",
+    "m143",
+    "m189",
+    "m054",
+    "m145",
+    "m146",
+    "m043",
+    "m033",
+    "m131",
+    "m107"
+   ],
+   "matched_terms": [
+    "topic:e-invoicing",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q041": {
+   "ranked": [
+    "m112"
+   ],
+   "matched_terms": [
+    "topic:dependencies"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q042": {
+   "ranked": [
+    "m073",
+    "m139",
+    "m080",
+    "m127",
+    "m170",
+    "m060",
+    "m066",
+    "m104",
+    "m161",
+    "m196"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q043": {
+   "ranked": [
+    "m010"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q044": {
+   "ranked": [
+    "m074",
+    "m078"
+   ],
+   "matched_terms": [
+    "topic:authentication"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6309297535714574,
+    "zero": 0.0
+   }
+  },
+  "q045": {
+   "ranked": [
+    "m036"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q046": {
+   "ranked": [
+    "m002",
+    "m108",
+    "m023",
+    "m080",
+    "m016",
+    "m004",
+    "m003",
+    "m015"
+   ],
+   "matched_terms": [
+    "cmp:cluster",
+    "tech:kubernetes"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q047": {
+   "ranked": [
+    "m011",
+    "m010",
+    "m184"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q048": {
+   "ranked": [
+    "m055",
+    "m054",
+    "m181",
+    "m182",
+    "m071",
+    "m030",
+    "m044",
+    "m082",
+    "m084",
+    "m042"
+   ],
+   "matched_terms": [
+    "topic:idempotency"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9871451602176229,
+    "zero": 0.0
+   }
+  },
+  "q049": {
+   "ranked": [
+    "m026",
+    "m028",
+    "m027",
+    "m129",
+    "m153",
+    "m004",
+    "m199"
+   ],
+   "matched_terms": [
+    "topic:dependencies"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q050": {
+   "ranked": [
+    "m126",
+    "m064",
+    "m145"
+   ],
+   "matched_terms": [
+    "topic:money"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q051": {
+   "ranked": [
+    "m111",
+    "m110"
+   ],
+   "matched_terms": [
+    "topic:flaky-tests"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q052": {
+   "ranked": [
+    "m158",
+    "m136",
+    "m085"
+   ],
+   "matched_terms": [
+    "proc:planning"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q053": {
+   "ranked": [
+    "m193",
+    "m054",
+    "m061",
+    "m111",
+    "m181",
+    "m057"
+   ],
+   "matched_terms": [
+    "topic:idempotency"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.3333333333333333,
+    "ndcg10": 0.5,
+    "zero": 0.0
+   }
+  },
+  "q054": {
+   "ranked": [
+    "m156",
+    "m129",
+    "m044",
+    "m132",
+    "m137"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q055": {
+   "ranked": [
+    "m091",
+    "m027",
+    "m090",
+    "m044",
+    "m178",
+    "m130"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9197207891481876,
+    "zero": 0.0
+   }
+  },
+  "q056": {
+   "ranked": [
+    "m128",
+    "m129",
+    "m127"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q057": {
+   "ranked": [
+    "m197",
+    "m145",
+    "m144",
+    "m146",
+    "m125",
+    "m191",
+    "m153",
+    "m147",
+    "m161",
+    "m199"
+   ],
+   "matched_terms": [
+    "topic:tax"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q058": {
+   "ranked": [
+    "m200",
+    "m032",
+    "m168",
+    "m009",
+    "m018",
+    "m019",
+    "m002",
+    "m039",
+    "m123",
+    "m049"
+   ],
+   "matched_terms": [
+    "cmp:pdf-rendering"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q059": {
+   "ranked": [
+    "m103",
+    "m117",
+    "m118",
+    "m119",
+    "m161",
+    "m105"
+   ],
+   "matched_terms": [
+    "cmp:ci",
+    "tech:github-actions"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q060": {
+   "ranked": [
+    "m089"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q061": {
+   "ranked": [
+    "m045",
+    "m046",
+    "m171",
+    "m161",
+    "m070",
+    "m154",
+    "m088",
+    "m147",
+    "m084",
+    "m004"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q062": {
+   "ranked": [
+    "m108",
+    "m002",
+    "m109",
+    "m117",
+    "m092",
+    "m159",
+    "m170",
+    "m012",
+    "m179",
+    "m116"
+   ],
+   "matched_terms": [
+    "tech:docker"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q063": {
+   "ranked": [
+    "m110"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q064": {
+   "ranked": [
+    "m198",
+    "m199",
+    "m150",
+    "m113",
+    "m019",
+    "m066",
+    "m104",
+    "m114",
+    "m151",
+    "m160"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q065": {
+   "ranked": [
+    "m154",
+    "m183",
+    "m155",
+    "m070",
+    "m153",
+    "m161",
+    "m180",
+    "m147",
+    "m156",
+    "m148"
+   ],
+   "matched_terms": [
+    "tech:stripe"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q066": {
+   "ranked": [
+    "m009"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q067": {
+   "ranked": [
+    "m053",
+    "m168",
+    "m052",
+    "m179",
+    "m088",
+    "m163",
+    "m102",
+    "m043",
+    "m199",
+    "m106"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:alerting",
+    "topic:api-conventions"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q068": {
+   "ranked": [
+    "m048",
+    "m132",
+    "m195",
+    "m037",
+    "m142",
+    "m075",
+    "m199",
+    "m081",
+    "m119",
+    "m177"
+   ],
+   "matched_terms": [
+    "cmp:database",
+    "topic:backup-recovery"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.6131471927654584,
+    "zero": 0.0
+   }
+  },
+  "q069": {
+   "ranked": [
+    "m015",
+    "m016",
+    "m017"
+   ],
+   "matched_terms": [
+    "tech:argo-cd"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q070": {
+   "ranked": [
+    "m007",
+    "m091",
+    "m008",
+    "m186",
+    "m013",
+    "m021",
+    "m016",
+    "m017",
+    "m088",
+    "m004"
+   ],
+   "matched_terms": [
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.3333333333333333,
+    "ndcg10": 0.7094472026641538,
+    "zero": 0.0
+   }
+  },
+  "q071": {
+   "ranked": [
+    "m074",
+    "m078",
+    "m096",
+    "m011",
+    "m141",
+    "m185",
+    "m085"
+   ],
+   "matched_terms": [
+    "topic:authorization"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q072": {
+   "ranked": [
+    "m061",
+    "m059",
+    "m060",
+    "m083",
+    "m073",
+    "m174",
+    "m037",
+    "m132",
+    "m026",
+    "m142"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:webhooks"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q073": {
+   "ranked": [
+    "m071",
+    "m082",
+    "m057",
+    "m176",
+    "m075",
+    "m079",
+    "m119",
+    "m177",
+    "m189",
+    "m102"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q074": {
+   "ranked": [
+    "m194",
+    "m183",
+    "m106",
+    "m074",
+    "m136",
+    "m042",
+    "m051",
+    "m191",
+    "m197",
+    "m152"
+   ],
+   "matched_terms": [
+    "proc:code-review",
+    "topic:cost"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q075": {
+   "ranked": [
+    "m066",
+    "m160",
+    "m102",
+    "m106",
+    "m004",
+    "m188",
+    "m101",
+    "m104",
+    "m013",
+    "m090"
+   ],
+   "matched_terms": [
+    "cmp:api"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q076": {
+   "ranked": [
+    "m166",
+    "m021",
+    "m080",
+    "m082",
+    "m176",
+    "m015",
+    "m153",
+    "m133",
+    "m174"
+   ],
+   "matched_terms": [
+    "proc:on-call"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q077": {
+   "ranked": [
+    "m124",
+    "m127",
+    "m126",
+    "m138",
+    "m125",
+    "m131",
+    "m159",
+    "m128",
+    "m041",
+    "m003"
+   ],
+   "matched_terms": [
+    "tech:dbt"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q078": {
+   "ranked": [
+    "m031",
+    "m178",
+    "m043",
+    "m187",
+    "m029",
+    "m037",
+    "m136",
+    "m054",
+    "m131",
+    "m200"
+   ],
+   "matched_terms": [
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.7959761332981399,
+    "zero": 0.0
+   }
+  },
+  "q079": {
+   "ranked": [
+    "m009",
+    "m200",
+    "m168",
+    "m019",
+    "m018",
+    "m198",
+    "m097",
+    "m083",
+    "m174",
+    "m176"
+   ],
+   "matched_terms": [
+    "cmp:pdf-rendering",
+    "cmp:worker",
+    "topic:deployment",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q080": {
+   "ranked": [
+    "m058",
+    "m057",
+    "m077",
+    "m053",
+    "m118",
+    "m165",
+    "m138",
+    "m109",
+    "m056",
+    "m169"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:invoicing",
+    "topic:rate-limiting"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.9072836011519267,
+    "zero": 0.0
+   }
+  },
+  "q081": {
+   "ranked": [
+    "m176",
+    "m021",
+    "m082",
+    "m174",
+    "m061",
+    "m166",
+    "m011",
+    "m095",
+    "m133",
+    "m079"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "proc:on-call",
+    "topic:invoicing",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q082": {
+   "ranked": [
+    "m180",
+    "m064",
+    "m063",
+    "m094",
+    "m145",
+    "m106",
+    "m088",
+    "m189",
+    "m197",
+    "m157"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "cmp:console",
+    "topic:invoicing",
+    "topic:money"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.68349402851663,
+    "zero": 0.0
+   }
+  },
+  "q083": {
+   "ranked": [
+    "m144",
+    "m145",
+    "m146",
+    "m107",
+    "m042",
+    "m132",
+    "m197",
+    "m131",
+    "m147",
+    "m199"
+   ],
+   "matched_terms": [
+    "proc:decision-records",
+    "topic:invoicing",
+    "topic:money",
+    "topic:tax"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q084": {
+   "ranked": [
+    "m172",
+    "m171",
+    "m131",
+    "m159",
+    "m144",
+    "m086",
+    "m043",
+    "m197",
+    "m004",
+    "m194"
+   ],
+   "matched_terms": [
+    "tech:prometheus",
+    "topic:cost",
+    "topic:invoicing",
+    "topic:monitoring"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q085": {
+   "ranked": [
+    "m072",
+    "m079",
+    "m133",
+    "m161",
+    "m160",
+    "m099",
+    "m037",
+    "m132",
+    "m142",
+    "m152"
+   ],
+   "matched_terms": [
+    "cmp:console",
+    "topic:authentication",
+    "topic:logging"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q086": {
+   "ranked": [
+    "m077",
+    "m070",
+    "m057",
+    "m163",
+    "m133",
+    "m157",
+    "m183",
+    "m053",
+    "m169",
+    "m095"
+   ],
+   "matched_terms": [
+    "tech:auth0",
+    "topic:rate-limiting"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q087": {
+   "ranked": [
+    "m113",
+    "m114",
+    "m028",
+    "m129",
+    "m153",
+    "m104",
+    "m142",
+    "m105",
+    "m111",
+    "m152"
+   ],
+   "matched_terms": [
+    "proc:planning",
+    "tech:ktor",
+    "topic:api-conventions",
+    "topic:dependencies",
+    "topic:subscriptions"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q088": {
+   "ranked": [
+    "m135",
+    "m136",
+    "m134",
+    "m123",
+    "m155",
+    "m163",
+    "m101",
+    "m125",
+    "m139",
+    "m191"
+   ],
+   "matched_terms": [
+    "tech:airflow",
+    "topic:schema-migration"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q089": {
+   "ranked": [
+    "m195",
+    "m029",
+    "m106",
+    "m102",
+    "m180",
+    "m063"
+   ],
+   "matched_terms": [
+    "topic:money"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8315546295836226,
+    "zero": 0.0
+   }
+  },
+  "q090": {
+   "ranked": [
+    "m186",
+    "m008",
+    "m095",
+    "m013",
+    "m021",
+    "m007",
+    "m016",
+    "m017",
+    "m088",
+    "m004"
+   ],
+   "matched_terms": [
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q091": {
+   "ranked": [
+    "m012",
+    "m006",
+    "m116",
+    "m108",
+    "m065",
+    "m169",
+    "m042",
+    "m117",
+    "m173",
+    "m089"
+   ],
+   "matched_terms": [
+    "tech:docker"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q092": {
+   "ranked": [
+    "m063",
+    "m163",
+    "m195",
+    "m145"
+   ],
+   "matched_terms": [
+    "topic:money"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.8344475896326595,
+    "zero": 0.0
+   }
+  },
+  "q093": {
+   "ranked": [
+    "m188",
+    "m101",
+    "m102",
+    "m030",
+    "m143",
+    "m062",
+    "m117",
+    "m036",
+    "m106",
+    "m004"
+   ],
+   "matched_terms": [
+    "cmp:api"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q094": {
+   "ranked": [
+    "m044",
+    "m186",
+    "m073",
+    "m140",
+    "m029",
+    "m038",
+    "m111",
+    "m065",
+    "m142",
+    "m169"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q095": {
+   "ranked": [
+    "m020",
+    "m012",
+    "m016",
+    "m167",
+    "m107",
+    "m121",
+    "m085",
+    "m106",
+    "m124",
+    "m118"
+   ],
+   "matched_terms": [
+    "proc:git-workflow"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q096": {
+   "ranked": [
+    "m171",
+    "m172",
+    "m125",
+    "m131",
+    "m159",
+    "m008",
+    "m086",
+    "m004"
+   ],
+   "matched_terms": [
+    "proc:change-management",
+    "topic:monitoring"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q097": {
+   "ranked": [
+    "m047",
+    "m083",
+    "m148",
+    "m118",
+    "m177",
+    "m174"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q098": {
+   "ranked": [
+    "m185",
+    "m002",
+    "m013",
+    "m073",
+    "m186",
+    "m025",
+    "m041",
+    "m125",
+    "m132",
+    "m081"
+   ],
+   "matched_terms": [],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q099": {
+   "ranked": [
+    "m142",
+    "m056",
+    "m141",
+    "m055",
+    "m052",
+    "m193",
+    "m190",
+    "m171",
+    "m110",
+    "m143"
+   ],
+   "matched_terms": [
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q100": {
+   "ranked": [
+    "m007",
+    "m012",
+    "m042",
+    "m091",
+    "m008",
+    "m186",
+    "m013",
+    "m021",
+    "m016",
+    "m017"
+   ],
+   "matched_terms": [
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.2,
+    "ndcg10": 0.5950427489208391,
+    "zero": 0.0
+   }
+  },
+  "q101": {
+   "ranked": [
+    "m026",
+    "m028",
+    "m027",
+    "m129",
+    "m153",
+    "m004",
+    "m199"
+   ],
+   "matched_terms": [
+    "tech:postgresql",
+    "topic:dependencies"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.8145672023038535,
+    "zero": 0.0
+   }
+  },
+  "q102": {
+   "ranked": [
+    "m129",
+    "m179",
+    "m011",
+    "m191",
+    "m175",
+    "m176",
+    "m177",
+    "m184",
+    "m174",
+    "m074"
+   ],
+   "matched_terms": [
+    "proc:incident-response"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 0.2,
+    "ndcg10": 0.35381584886646106,
+    "zero": 0.0
+   }
+  },
+  "q103": {
+   "ranked": [
+    "m050",
+    "m105",
+    "m045",
+    "m116",
+    "m102",
+    "m106",
+    "m004",
+    "m066",
+    "m188",
+    "m101"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:api-conventions"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q104": {
+   "ranked": [
+    "m105",
+    "m026",
+    "m028",
+    "m050",
+    "m116",
+    "m027",
+    "m129",
+    "m153",
+    "m004",
+    "m199"
+   ],
+   "matched_terms": [
+    "tech:postgresql",
+    "topic:api-conventions",
+    "topic:dependencies"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6309297535714574,
+    "zero": 0.0
+   }
+  },
+  "q105": {
+   "ranked": [
+    "m182",
+    "m181",
+    "m183",
+    "m129",
+    "m078",
+    "m146",
+    "m191",
+    "m149",
+    "m008",
+    "m130"
+   ],
+   "matched_terms": [
+    "topic:idempotency",
+    "topic:payments"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q106": {
+   "ranked": [
+    "m179",
+    "m175",
+    "m176",
+    "m177",
+    "m184",
+    "m174"
+   ],
+   "matched_terms": [
+    "proc:incident-response"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.3333333333333333,
+    "ndcg10": 0.5,
+    "zero": 0.0
+   }
+  },
+  "q107": {
+   "ranked": [
+    "m078",
+    "m182",
+    "m106",
+    "m192",
+    "m008",
+    "m152",
+    "m110",
+    "m001"
+   ],
+   "matched_terms": [
+    "topic:authentication"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q108": {
+   "ranked": [
+    "m114",
+    "m152",
+    "m158",
+    "m050",
+    "m087",
+    "m192",
+    "m028",
+    "m129",
+    "m153"
+   ],
+   "matched_terms": [
+    "proc:planning",
+    "topic:subscriptions"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.944847956559586,
+    "zero": 0.0
+   }
+  },
+  "q109": {
+   "ranked": [
+    "m018",
+    "m019",
+    "m168",
+    "m200",
+    "m009",
+    "m120",
+    "m055",
+    "m038",
+    "m115",
+    "m151"
+   ],
+   "matched_terms": [
+    "cmp:cluster",
+    "cmp:pdf-rendering"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q110": {
+   "ranked": [
+    "m075",
+    "m191",
+    "m074",
+    "m022",
+    "m106",
+    "m136",
+    "m017",
+    "m102",
+    "m194",
+    "m129"
+   ],
+   "matched_terms": [
+    "topic:security"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q111": {
+   "ranked": [
+    "m198",
+    "m018",
+    "m019",
+    "m200",
+    "m009",
+    "m029",
+    "m195",
+    "m102",
+    "m168",
+    "m143"
+   ],
+   "matched_terms": [
+    "cmp:pdf-rendering",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q112": {
+   "ranked": [
+    "m149",
+    "m148",
+    "m193",
+    "m150",
+    "m181",
+    "m123",
+    "m056",
+    "m163",
+    "m182",
+    "m043"
+   ],
+   "matched_terms": [
+    "topic:dunning",
+    "topic:payments"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9128781396400242,
+    "zero": 0.0
+   }
+  },
+  "q113": {
+   "ranked": [
+    "m001",
+    "m173",
+    "m165"
+   ],
+   "matched_terms": [
+    "proc:incident-response",
+    "topic:deployment"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q114": {
+   "ranked": [
+    "m176",
+    "m174",
+    "m021",
+    "m020",
+    "m082",
+    "m175",
+    "m079",
+    "m179",
+    "m155",
+    "m166"
+   ],
+   "matched_terms": [
+    "proc:incident-response",
+    "proc:on-call",
+    "topic:secrets"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.75,
+    "mrr": 1.0,
+    "ndcg10": 0.9260446319296772,
+    "zero": 0.0
+   }
+  },
+  "q115": {
+   "ranked": [
+    "m161",
+    "m171",
+    "m081",
+    "m160",
+    "m045",
+    "m070",
+    "m046",
+    "m057",
+    "m079",
+    "m084"
+   ],
+   "matched_terms": [
+    "cmp:database",
+    "topic:logging"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8333149206801492,
+    "zero": 0.0
+   }
+  },
+  "q116": {
+   "ranked": [
+    "m124",
+    "m123",
+    "m127",
+    "m126",
+    "m138",
+    "m134",
+    "m131",
+    "m130",
+    "m098",
+    "m058"
+   ],
+   "matched_terms": [
+    "cmp:analytics",
+    "tech:dbt",
+    "topic:invoicing"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q117": {
+   "ranked": [
+    "m182",
+    "m181",
+    "m023",
+    "m096",
+    "m148",
+    "m055",
+    "m054",
+    "m123",
+    "m056",
+    "m009"
+   ],
+   "matched_terms": [
+    "cmp:api",
+    "topic:idempotency",
+    "topic:payments"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8077836860495015,
+    "zero": 0.0
+   }
+  },
+  "q118": {
+   "ranked": [
+    "m105",
+    "m187",
+    "m112",
+    "m050",
+    "m116",
+    "m066",
+    "m104",
+    "m114",
+    "m115",
+    "m194"
+   ],
+   "matched_terms": [
+    "tech:kotlin",
+    "topic:api-conventions",
+    "topic:dependencies"
+   ],
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.6666666666666666,
+    "mrr": 0.125,
+    "ndcg10": 0.2373035365971257,
+    "zero": 0.0
+   }
+  },
+  "q119": {
+   "ranked": [
+    "m139",
+    "m084",
+    "m123",
+    "m124",
+    "m137",
+    "m136",
+    "m130",
+    "m081",
+    "m098",
+    "m047"
+   ],
+   "matched_terms": [
+    "cmp:analytics",
+    "cmp:database",
+    "topic:personal-data"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.9072836011519267,
+    "zero": 0.0
+   }
+  },
+  "q120": {
+   "ranked": [
+    "m178",
+    "m173",
+    "m023",
+    "m041",
+    "m031",
+    "m032",
+    "m083",
+    "m163",
+    "m043"
+   ],
+   "matched_terms": [
+    "topic:schema-migration"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8375564833796824,
+    "zero": 0.0
+   }
+  },
+  "q121": {
+   "ranked": [
+    "m184",
+    "m010",
+    "m011"
+   ],
+   "matched_terms": [
+    "topic:encryption"
+   ],
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9197207891481876,
+    "zero": 0.0
+   }
+  }
+ },
+ "tags": "curated"
+}
