@@ -93,10 +93,11 @@ pub struct Config {
 pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 3] =
     [Pipeline::KeywordAny, Pipeline::Bm25, Pipeline::Bm25Trigram];
 
-/// `search.default`'s default: the pipeline with the highest success@5 on
-/// the recall eval among those that pass their gate in CI (ADR-0049 d9;
-/// eval/recall/REPORT.md).
-pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25Trigram;
+/// `search.default`'s default: `bm25`, chosen on the recall eval's gate
+/// together with the external sets: it passes its gate, ranks best on
+/// SciFact, NFCorpus and LoCoMo, and answers in a fraction of
+/// `bm25-trigram`'s time (ADR-0049 d9, d12; eval/bench/REPORT.md).
+pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25;
 
 /// The search settings of a deployment that sets none.
 #[must_use]
@@ -1166,7 +1167,7 @@ mod tests {
         };
         let cfg = load(&[]).expect("defaults load");
         assert_eq!(cfg.search, default_search());
-        assert_eq!(cfg.search.default_pipeline(), Pipeline::Bm25Trigram);
+        assert_eq!(cfg.search.default_pipeline(), Pipeline::Bm25);
         assert!(
             !cfg.search.serves(Pipeline::KeywordAll),
             "keyword-all is opt-in"
@@ -1187,7 +1188,7 @@ mod tests {
             (&[("OML_SEARCH__ENABLED", "hybrid")][..], "hybrid"),
             (
                 &[("OML_SEARCH__ENABLED", "keyword-any")][..],
-                "search.default bm25-trigram",
+                "search.default bm25",
             ),
             (&[("OML_SEARCH__DEFAULT", "dense")][..], "dense"),
             (&[("OML_SEARCH__ENABLED", " , ")][..], "empty"),

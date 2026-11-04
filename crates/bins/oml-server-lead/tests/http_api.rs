@@ -4938,12 +4938,12 @@ async fn query_digest_changes_when_max_tokens_or_include_unreviewed_change() {
     // resolved node, include_text and include_unreviewed under their
     // v0.3.0 member names, so a digest logged before v0.4.0 compares with
     // one logged after, and the search pipeline that ran and match since
-    // v0.5.3 (retrieval.md, the read log; ADR-0025 d9, ADR-0049 d6).
+    // v0.5.5 (retrieval.md, the read log; ADR-0025 d9, ADR-0049 d6).
     let base = digest(json!({"query": "canary"})).await;
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
          \"k\":8,\"kinds\":[],\"match\":\"any\",\"max_tokens\":null,\"query\":\"canary\",\
-         \"scope\":\"{crew}\",\"search\":\"bm25-trigram\",\"terms\":[]}}"
+         \"scope\":\"{crew}\",\"search\":\"bm25\",\"terms\":[]}}"
     );
     assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
     assert_eq!(
@@ -8323,8 +8323,8 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
         "The hook lives in useInvoiceFilters.ts and deploys nightly",
     )
     .await;
-    // Any word, an identifier's part, a stem and a misspelling all find it
-    // under the shipped default; v0.5.0's every-word recall found none.
+    // Any word, an identifier's part, a stem, and a misspelt identifier by
+    // its other parts, all find it under the shipped default; v0.5.0's every-word recall found none.
     for query in [
         "invoice filters",
         "deployed",
@@ -8333,7 +8333,7 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     ] {
         let recall = recall_ok(router, &reader, json!({"query": query})).await;
         assert_eq!(hit_ids(&recall), vec![json!(quote)], "{query}: {recall}");
-        assert_eq!(recall["search"]["pipeline"], "bm25-trigram", "{recall}");
+        assert_eq!(recall["search"]["pipeline"], "bm25", "{recall}");
         assert_eq!(recall["search"]["match"], "any", "{recall}");
         assert_eq!(recall["search"]["fallback"], Value::Null, "{recall}");
         let matched = &recall["hits"][0]["matched"];
@@ -8423,9 +8423,9 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
         settings,
         json!({
             "enabled": ["keyword-any", "bm25", "bm25-trigram"],
-            "deployment_default": "bm25-trigram",
+            "deployment_default": "bm25",
             "tenant_default": null,
-            "effective": "bm25-trigram",
+            "effective": "bm25",
         })
     );
     let (status, _, refused) = send(router, "GET", "/v2/search", Call::auth(&reader)).await;
@@ -8463,7 +8463,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["tenant_default"], Value::Null);
     let recall = recall_ok(router, &reader, json!({"query": "deployed"})).await;
-    assert_eq!(recall["search"]["pipeline"], "bm25-trigram", "{recall}");
+    assert_eq!(recall["search"]["pipeline"], "bm25", "{recall}");
     assert_eq!(recall["hits"].as_array().map(Vec::len), Some(1), "{recall}");
 
     drop_db(&rig.db_name).await;

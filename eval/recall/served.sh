@@ -10,7 +10,7 @@
 # OML_BIN_DIR names the directory holding oml-server-lead and oml (default
 # target/release). EVAL_PIPELINES lists the pipelines measured (default all
 # four, keyword-all included for comparison); EVAL_DEFAULT is the pipeline
-# that must pass its gate (default the lead's own default, bm25-trigram).
+# that must pass its gate (default the lead's own default, bm25).
 # The database and its role pair are dropped on exit; key values go to
 # owner-only files in the out directory and are never printed.
 set -u -o pipefail
@@ -20,7 +20,7 @@ OUT="${1:?usage: served.sh <out-dir>}"
 mkdir -p "$OUT"
 BIN="${OML_BIN_DIR:-target/release}"
 PIPELINES="${EVAL_PIPELINES:-keyword-all keyword-any bm25 bm25-trigram}"
-DEFAULT="${EVAL_DEFAULT:-bm25-trigram}"
+DEFAULT="${EVAL_DEFAULT:-bm25}"
 PGHOST="${PGHOST:-127.0.0.1}"
 PGPORT="${PGPORT:-5432}"
 PGUSER="${PGUSER:-oml}"

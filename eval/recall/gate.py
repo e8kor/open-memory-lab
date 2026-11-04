@@ -38,7 +38,11 @@ GATES = {
         ("typo", "s5", ">=", 0.91),
     ],
 }
-ONE_QUERY = 1 / 11 + 1e-9
+# One query of a category of 11, plus the 0.001 the summaries' rounding to
+# three decimals can take from a difference (metrics.py): 10/11 is stored as
+# 0.909, which is below 1.0 - 1/11 by 0.0001, so a fall of exactly one query
+# read as two before this allowance.
+ONE_QUERY = 1 / 11 + 0.001
 
 
 def file_of(pipeline):
