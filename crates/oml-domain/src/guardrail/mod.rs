@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::envelope::EventTime;
+use crate::envelope::{EventTime, sha256_digest_string};
 use crate::jcs::canonical_bytes;
 
 pub use argument::{normalise_path, url_host};
@@ -59,6 +59,76 @@ pub const SET_CAP: usize = 12;
 /// Cache files older than 30 days are removed at a session start
 /// (ADR-0037 d9).
 pub const CACHE_MAX_AGE_DAYS: u32 = 30;
+
+/// What the serve of a held guardrail adds, to its author and to its
+/// reviewers alike (ADR-0037 d10, amending ADR-0012 d5).
+pub const LOAD_WARNING: &str = "every key that reads this workarea will load this rule, here and below it unless its guardrail scope is workarea";
+
+/// A key's guardrail scope, the issuance attribute that bounds which
+/// applicable guardrails the key loads (ADR-0037 d4): `workarea` serves the
+/// guardrails on the scope node alone, `ancestors` those of the node and of
+/// every ancestor of it the key reads. An admin sets it at issuance and only
+/// a rotation changes it; no client sets it, and no `off` value exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GuardrailScope {
+    Workarea,
+    Ancestors,
+}
+
+impl GuardrailScope {
+    /// The issuance default, *the maintainer's reading to confirm*
+    /// (ADR-0037 d4).
+    pub const ISSUANCE_DEFAULT: Self = GuardrailScope::Ancestors;
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GuardrailScope::Workarea => "workarea",
+            GuardrailScope::Ancestors => "ancestors",
+        }
+    }
+
+    /// The scope an exact word spells; `None` for any other string, `off`
+    /// included, which a caller refuses rather than coerces.
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "workarea" => Some(GuardrailScope::Workarea),
+            "ancestors" => Some(GuardrailScope::Ancestors),
+            _ => None,
+        }
+    }
+
+    /// The scope a journalled `key.issued` names in its `guardrail_scope`
+    /// field: an issuance without the field, every key issued before the
+    /// build included, folds as the issuance default; nothing in the journal
+    /// is rewritten (ADR-0037 d4, *the maintainer's reading to confirm*).
+    /// `None` for a value the field cannot hold, which a caller fails closed
+    /// on.
+    #[must_use]
+    pub fn of_issuance(field: Option<&Value>) -> Option<Self> {
+        match field {
+            None | Some(Value::Null) => Some(Self::ISSUANCE_DEFAULT),
+            Some(Value::String(word)) => Self::parse(word),
+            Some(_) => None,
+        }
+    }
+}
+
+/// The served set's `set_digest` (ADR-0037 d5): `sha256:` over the RFC 8785
+/// canonical form of the served `[artifact_id, version]` pairs, in the
+/// served order. Clients only compare it (d11); its form is this module's
+/// reading.
+#[must_use]
+pub fn set_digest(served: &[(Uuid, u32)]) -> String {
+    let pairs: Vec<Value> = served
+        .iter()
+        .map(|(id, version)| Value::Array(vec![Value::from(id.to_string()), Value::from(*version)]))
+        .collect();
+    // An array of strings and small integers always has a canonical form.
+    let bytes = canonical_bytes(&Value::Array(pairs)).unwrap_or_default();
+    sha256_digest_string(&bytes)
+}
 
 /// How binding a guardrail is (ADR-0037 d2): `never` and `must` are
 /// binding, after RFC 2119's MUST NOT and MUST, and `should` is the

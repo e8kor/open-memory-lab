@@ -995,6 +995,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                         Name::parse(oml_app::domain::name::UNIVERSE).expect("a name"),
                     )),
                     derives_from: vec![source],
+                    severity: None,
+                    rule: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1030,6 +1032,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     reason: None,
                     workarea: None,
                     refuse_vocabulary_target: false,
+                    severity: None,
+                    rule: None,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await

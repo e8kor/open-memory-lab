@@ -140,6 +140,7 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         grants,
         connect_code: false,
         user: None,
+        guardrail_scope: None,
     }
 }
 
@@ -186,6 +187,8 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         body: body.to_owned(),
         workarea: None,
         derives_from: Vec::new(),
+        severity: None,
+        rule: None,
     }
 }
 
@@ -221,6 +224,8 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         reason: None,
         workarea: None,
         refuse_vocabulary_target: false,
+        severity: None,
+        rule: None,
     }
 }
 
@@ -2163,6 +2168,8 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             "credential": "bearer",
             // A tenant key names no user (ADR-0044 d2).
             "user": null,
+            // Sent none, the issuance default (proposed ADR-0037 d4).
+            "guardrail_scope": "ancestors",
         })
     );
     for record in &issued.access.grants {
@@ -6088,6 +6095,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         revoked_at: None,
         user: None,
         session_user: None,
+        guardrail_scope: GuardrailScope::Ancestors,
     };
     seal_onto(
         store,
@@ -8602,5 +8610,884 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
             format!("workarea {crew}"),
             "no key".to_owned(),
         ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails (proposed ADR-0037): the kind, its admission and review (S1),
+// and its read under the key's guardrail scope (S2)
+// ---------------------------------------------------------------------------
+
+use oml_app::domain::guardrail::{GuardrailScope, LOAD_WARNING, SET_CAP, Severity};
+use oml_app::types::{GuardrailRequest, GuardrailSet};
+
+fn deny_push() -> Value {
+    json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"], "effect": "deny"})
+}
+
+/// A guardrail of its own `claim_key` on `workarea_id` with `severity` and
+/// no rule.
+fn guardrail_req(idem: &str, severity: Severity, body: &str, workarea_id: Uuid) -> SubmitRequest {
+    SubmitRequest {
+        severity: Some(severity),
+        ..submit_kind(idem, MemoryKind::Guardrail, body, workarea_id)
+    }
+}
+
+/// The set the key loads at its default workarea.
+async fn guardrail_set(app: &TestApp, key: &str) -> GuardrailSet {
+    app.guardrails(key, &GuardrailRequest::default())
+        .await
+        .expect("the guardrail read")
+}
+
+fn served_guardrail_ids(set: &GuardrailSet) -> Vec<Uuid> {
+    set.guardrails.iter().map(|g| g.artifact_id).collect()
+}
+
+/// A reader key on `node` with `scope`.
+async fn reader_scoped(
+    app: &TestApp,
+    admin: &str,
+    principal: &str,
+    node: Uuid,
+    scope: Option<GuardrailScope>,
+) -> IssuedKey {
+    app.issue_key(
+        admin,
+        &IssueKeyRequest {
+            guardrail_scope: scope,
+            ..issue_req(Role::Reader, principal, vec![grant(node, Role::Reader)])
+        },
+    )
+    .await
+    .expect("issue key")
+}
+
+#[tokio::test]
+async fn a_guardrail_without_a_severity_is_refused() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &submit_kind("g1", MemoryKind::Guardrail, "Never push to main.", crew),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::GuardrailSeverityRequired),
+        "{err:?}"
+    );
+
+    // Both fields are a guardrail's own: refused on any other kind.
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                severity: Some(Severity::Must),
+                ..submit_into("m1", "a fact", crew)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::GuardrailFieldRefused { field: "severity" }),
+        "{err:?}"
+    );
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                rule: Some(deny_push()),
+                ..submit_into("m2", "a fact", crew)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::GuardrailFieldRefused { field: "rule" }),
+        "{err:?}"
+    );
+    assert!(
+        journal(&store, boot.tenant_id)
+            .await
+            .iter()
+            .all(|e| e.envelope.event_type != event_types::SUBMISSION_REMEMBER),
+        "a refusal journals nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_guardrail_target_admits_only_kind_guardrail() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let rail = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Must, "Run the tests before a commit.", crew),
+    )
+    .await;
+    let fact = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_into("m1", "a fact", crew),
+    )
+    .await;
+
+    for sent in [
+        MemoryKind::Memory,
+        MemoryKind::Steering,
+        MemoryKind::DerivedFact,
+    ] {
+        let err = app
+            .supersede(
+                &writer.value,
+                &SupersedeRequest {
+                    kind: Some(sent),
+                    ..supersede_req(&format!("s-{}", sent.as_str()), rail, "now a fact")
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::KindChangeRefused { .. }), "{err:?}");
+    }
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                kind: Some(MemoryKind::Guardrail),
+                severity: Some(Severity::Must),
+                ..supersede_req("s-fact", fact, "now a rule")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::KindChangeRefused {
+                target: MemoryKind::Memory,
+                sent: MemoryKind::Guardrail
+            }
+        ),
+        "no other target admits it: {err:?}"
+    );
+
+    // A guardrail successor re-sends its severity; a retirement sends none.
+    let err = app
+        .supersede(&writer.value, &supersede_req("s-bare", rail, "Run them."))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::GuardrailSeverityRequired),
+        "{err:?}"
+    );
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                severity: Some(Severity::Must),
+                ..retire_req("s-retire-sev", rail, "no longer needed")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::GuardrailFieldRefused { field: "severity" }),
+        "{err:?}"
+    );
+    let successor = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                severity: Some(Severity::Should),
+                ..supersede_req("s-ok", rail, "Run the tests before a push.")
+            },
+        )
+        .await
+        .expect("a guardrail successor");
+    let row = app
+        .get_memory(&writer.value, successor.receipt.memory_id)
+        .await
+        .expect("get");
+    assert_eq!(row.memory.kind, MemoryKind::Guardrail);
+    assert_eq!(
+        row.memory.guardrail.map(|g| g.severity),
+        Some(Severity::Should)
+    );
+}
+
+#[tokio::test]
+async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
+    let refused = [
+        (
+            Severity::Must,
+            json!({"rule": "oml-gr/2", "tool": "shell", "command": ["git"], "effect": "deny"}),
+        ),
+        (
+            Severity::Must,
+            json!({"rule": "oml-gr/1", "tool": "shell", "command": ["git"], "effect": "allow"}),
+        ),
+        (Severity::Should, deny_push()),
+    ];
+    for (i, (severity, rule)) in refused.into_iter().enumerate() {
+        let err = app
+            .submit_memory(
+                &writer.value,
+                &SubmitRequest {
+                    rule: Some(rule.clone()),
+                    ..guardrail_req(&format!("g{i}"), severity, "Never push.", crew)
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::ScanVeto(finding) if finding == "guardrail.rule_unparsable"),
+            "{rule}: {err:?}"
+        );
+    }
+    let held = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                rule: Some(deny_push()),
+                ..guardrail_req("ok", Severity::Never, "Never push.", crew)
+            },
+        )
+        .await
+        .expect("an oml-gr/1 deny under never");
+    assert_eq!(held.receipt.state, "held");
+}
+
+#[tokio::test]
+async fn a_body_over_300_bytes_is_vetoed_as_guardrail_too_long() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Writer, "wanda", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Must, &"x".repeat(301), crew),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::ScanVeto(finding) if finding == "guardrail.too_long"),
+        "{err:?}"
+    );
+    app.submit_memory(
+        &writer.value,
+        &guardrail_req("g2", Severity::Must, &"x".repeat(300), crew),
+    )
+    .await
+    .expect("300 bytes is under the cap");
+}
+
+#[tokio::test]
+async fn a_guardrail_promotes_under_its_workarea_policy_and_no_author_verdict_counts() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let author_dreamer = issue(&app, admin, Role::Dreamer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let id = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let err = app
+        .post_verdict(&author_dreamer.value, id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(oml_app::domain::VerdictError::PrincipalInLineage(_))
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        app.get_memory(&writer.value, id)
+            .await
+            .expect("get")
+            .memory
+            .status,
+        MemoryStatus::Held
+    );
+    let outcome = app
+        .post_verdict(&dreamer.value, id, Verdict::Approve, None)
+        .await
+        .expect("a non-author verdict");
+    assert_eq!(outcome.state, MemoryStatus::Promoted);
+}
+
+#[tokio::test]
+async fn a_guardrail_is_never_self_signed_whatever_the_tenant_policy() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let id = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
+    )
+    .await;
+    let events = journal(&store, boot.tenant_id).await;
+    let promote = events
+        .iter()
+        .find(|e| {
+            e.envelope.event_type == event_types::LIFECYCLE_PROMOTE
+                && e.envelope.payload["artifact_id"] == id.to_string()
+        })
+        .expect("the promotion");
+    assert_eq!(promote.envelope.payload["self_signed"], json!(false));
+    let ratifying = promote.envelope.payload["ratification_event_id"].clone();
+    let verdict = events
+        .iter()
+        .find(|e| json!(e.envelope.event_id.to_string()) == ratifying)
+        .expect("the ratifying verdict");
+    assert_eq!(verdict.envelope.event_type, event_types::REVIEW_APPROVE);
+    assert_ne!(
+        verdict.envelope.principal, "wanda",
+        "a non-author ratified it"
+    );
+}
+
+#[tokio::test]
+async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let rail = app
+        .submit_memory(
+            &writer.value,
+            &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.submit_memory(&writer.value, &submit_into("m1", "a fact", crew))
+        .await
+        .expect("submit");
+    let own = app.get_memory(&writer.value, rail).await.expect("get");
+    assert_eq!(own.load_warning, Some(LOAD_WARNING));
+    let mut warned = Vec::new();
+    while let Some(served) = app.review_next(&dreamer.value).await.expect("review") {
+        warned.push((served.memory.kind, served.load_warning));
+        app.post_verdict(
+            &dreamer.value,
+            served.memory.memory_id,
+            Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("verdict");
+    }
+    warned.sort_by_key(|(kind, _)| kind.as_str());
+    assert_eq!(
+        warned,
+        vec![
+            (MemoryKind::Guardrail, Some(LOAD_WARNING)),
+            (MemoryKind::Memory, None)
+        ]
+    );
+    let promoted_row = app.get_memory(&writer.value, rail).await.expect("get");
+    assert_eq!(
+        promoted_row.load_warning, None,
+        "a promoted rule is in force"
+    );
+}
+
+#[tokio::test]
+async fn oml_supersede_refuses_a_guardrail_target() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let rail = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
+    )
+    .await;
+    let err = app
+        .supersede(
+            &writer.value,
+            &SupersedeRequest {
+                refuse_vocabulary_target: true,
+                severity: Some(Severity::Must),
+                ..supersede_req("s1", rail, "Run the tests before a push.")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::GuardrailTarget), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_key_is_issued_with_guardrail_scope_ancestors_unless_the_admin_names_workarea() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let unnamed = reader_scoped(&app, admin, "rhea", crew, None).await;
+    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workarea)).await;
+    assert_eq!(unnamed.guardrail_scope, GuardrailScope::Ancestors);
+    assert_eq!(named.guardrail_scope, GuardrailScope::Workarea);
+    assert_eq!(boot.admin_key.guardrail_scope, GuardrailScope::Ancestors);
+    for (issued, scope) in [
+        (&unnamed, GuardrailScope::Ancestors),
+        (&named, GuardrailScope::Workarea),
+    ] {
+        let detail = app
+            .key(admin, issued.key_id.into())
+            .await
+            .expect("the key read");
+        assert_eq!(detail.guardrail_scope, scope);
+        assert_eq!(detail.key.guardrail_scope, scope);
+    }
+}
+
+#[tokio::test]
+async fn key_issued_journals_the_guardrail_scope() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let unnamed = reader_scoped(&app, admin, "rhea", crew, None).await;
+    let named = reader_scoped(&app, admin, "rhea-2", crew, Some(GuardrailScope::Workarea)).await;
+    let events = journal(&store, boot.tenant_id).await;
+    let journalled = |key_id: Uuid| {
+        events
+            .iter()
+            .find(|e| {
+                e.envelope.event_type == event_types::KEY_ISSUED
+                    && e.envelope.payload["key_id"] == key_id.to_string()
+            })
+            .map(|e| e.envelope.payload["guardrail_scope"].clone())
+    };
+    assert_eq!(journalled(unnamed.key_id), Some(json!("ancestors")));
+    assert_eq!(journalled(named.key_id), Some(json!("workarea")));
+    assert_eq!(journalled(boot.admin_key.key_id), Some(json!("ancestors")));
+}
+
+/// A `key.issued` journalled before the build carries no `guardrail_scope`:
+/// its key holds the issuance default, and nothing in the journal is
+/// rewritten (proposed ADR-0037 d4).
+#[tokio::test]
+async fn a_key_issued_without_guardrail_scope_folds_as_ancestors() {
+    let tenant = Uuid::from_u128(0xA700);
+    let key_id = Uuid::from_u128(0xD700);
+    let mut poc = PocChain::new(tenant);
+    poc.push(event_types::TENANT_GENESIS, json!({ "tenant_name": "oml" }))
+        .workarea(Uuid::from_u128(0xB700), None, "root", Value::Null)
+        .key(key_id, "writer", "crew/agent-7");
+    assert!(
+        poc.events[2]
+            .envelope
+            .payload
+            .get("guardrail_scope")
+            .is_none(),
+        "the issuance names no scope"
+    );
+    let store = MemStore::new();
+    store
+        .migrated_poc_chain(poc.events.clone())
+        .expect("the PoC chain as 0006 leaves it");
+    let key = store
+        .key(tenant, key_id)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(key.guardrail_scope, GuardrailScope::Ancestors);
+    assert_eq!(hashes(&journal(&store, tenant).await), hashes(&poc.events));
+}
+
+// --- S2: the read ---------------------------------------------------------
+
+/// A tenant with `crew` and `crew.team`, a writer on both and a dreamer:
+/// (boot, crew, team, writer, dreamer).
+async fn guardrail_tenant(app: &TestApp) -> (BootstrapResult, Uuid, Uuid, IssuedKey, IssuedKey) {
+    let (boot, crew) = tenant(app).await;
+    let admin = boot.admin_key.value.clone();
+    let team = workarea(app, &admin, "team", crew).await;
+    let writer = issue(app, &admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(app, &admin, Role::Dreamer, "dana", crew).await;
+    (boot, crew, team, writer, dreamer)
+}
+
+#[tokio::test]
+async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_workarea() {
+    let app = app();
+    let (boot, crew, _team, writer, _dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    app.submit_memory(
+        &writer.value,
+        &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+    )
+    .await
+    .expect("submit");
+    // The author holds reader on the node too, so it loads the set there.
+    let author = agent(&app, admin, "wanda-agent", crew).await;
+    app.submit_memory(
+        &author.value,
+        &guardrail_req("g2", Severity::Must, "Run the tests first.", crew),
+    )
+    .await
+    .expect("submit");
+    let set = guardrail_set(&app, &author.value).await;
+    assert!(
+        set.guardrails.is_empty(),
+        "{:?}",
+        served_guardrail_ids(&set)
+    );
+    assert_eq!(set.own_held.len(), 1, "its own held row, listed");
+    assert_eq!(set.own_held[0].claim_key, "claim-g2");
+    assert_eq!(set.own_held[0].version, 1);
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert!(set.guardrails.is_empty() && set.own_held.is_empty());
+}
+
+#[tokio::test]
+async fn recall_never_serves_kind_guardrail() {
+    let app = app();
+    let (boot, crew, _team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let rail = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Must, "Rotate the canary weekly.", crew),
+    )
+    .await;
+    let author = agent(&app, admin, "wanda-agent", crew).await;
+    app.submit_memory(
+        &author.value,
+        &guardrail_req("g2", Severity::Must, "Rotate the canary daily.", crew),
+    )
+    .await
+    .expect("submit");
+    let recall = app
+        .recall(
+            &author.value,
+            &RecallRequest {
+                include_unreviewed: true,
+                ..recall_req("canary")
+            },
+        )
+        .await
+        .expect("recall");
+    assert!(recall.hits.is_empty(), "{:?}", hit_ids_of(&recall));
+    assert!(recall.steering.is_empty());
+    assert_eq!(
+        served_guardrail_ids(&guardrail_set(&app, &author.value).await),
+        vec![rail]
+    );
+}
+
+#[tokio::test]
+async fn an_ancestor_guardrail_is_served_only_to_a_key_whose_reader_access_covers_that_ancestor() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let parent = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
+    )
+    .await;
+    let child = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
+    )
+    .await;
+    let narrow = issue(&app, admin, Role::Reader, "rhea", team).await;
+    assert_eq!(
+        served_guardrail_ids(&guardrail_set(&app, &narrow.value).await),
+        vec![child]
+    );
+    let wide = issue_with(
+        &app,
+        admin,
+        Role::Reader,
+        "rhea-wide",
+        vec![grant(team, Role::Reader), grant(crew, Role::Reader)],
+    )
+    .await;
+    assert_eq!(
+        served_guardrail_ids(&guardrail_set(&app, &wide.value).await),
+        vec![parent, child],
+        "depth from the root orders one severity"
+    );
+}
+
+#[tokio::test]
+async fn guardrail_scope_workarea_serves_the_scope_node_alone() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+    )
+    .await;
+    let child = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
+    )
+    .await;
+    let key = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                guardrail_scope: Some(GuardrailScope::Workarea),
+                default_workarea: Some(team.into()),
+                ..issue_req(Role::Reader, "rhea", vec![grant(crew, Role::Reader)])
+            },
+        )
+        .await
+        .expect("issue key");
+    let set = guardrail_set(&app, &key.value).await;
+    assert_eq!(set.scope_node, team);
+    assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+    assert_eq!(served_guardrail_ids(&set), vec![child]);
+}
+
+#[tokio::test]
+async fn no_parameter_or_header_changes_the_guardrail_scope() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let parent = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g1", Severity::Never, "Never push to main.", crew),
+    )
+    .await;
+    let child = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g2", Severity::Must, "Ask before a migration.", team),
+    )
+    .await;
+    let narrow = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                guardrail_scope: Some(GuardrailScope::Workarea),
+                ..issue_req(Role::Reader, "rhea", vec![grant(crew, Role::Reader)])
+            },
+        )
+        .await
+        .expect("issue key");
+    // X-OML-Workarea picks the node within the grants, never the scope.
+    for node in [crew, team] {
+        let set = app
+            .guardrails(
+                &narrow.value,
+                &GuardrailRequest {
+                    workarea: Some(node.into()),
+                },
+            )
+            .await
+            .expect("read");
+        assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+        assert_eq!(set.scope_node, node);
+        let expected = if node == crew { parent } else { child };
+        assert_eq!(served_guardrail_ids(&set), vec![expected]);
+    }
+}
+
+#[tokio::test]
+async fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (w, d) = (&writer.value, &dreamer.value);
+    let req = |idem, severity, node| guardrail_req(idem, severity, "A rule.", node);
+    let should_root = promoted(&app, w, d, &req("g1", Severity::Should, crew)).await;
+    let must_child = promoted(&app, w, d, &req("g2", Severity::Must, team)).await;
+    let must_root_a = promoted(&app, w, d, &req("g3", Severity::Must, crew)).await;
+    let never_child = promoted(&app, w, d, &req("g4", Severity::Never, team)).await;
+    let must_root_b = promoted(&app, w, d, &req("g5", Severity::Must, crew)).await;
+    let reader = issue_with(
+        &app,
+        admin,
+        Role::Reader,
+        "rhea",
+        vec![grant(team, Role::Reader), grant(crew, Role::Reader)],
+    )
+    .await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert_eq!(
+        served_guardrail_ids(&set),
+        vec![
+            never_child,
+            must_root_a,
+            must_root_b,
+            must_child,
+            should_root
+        ],
+        "severity, then depth, then promoted_at, then artifact_id"
+    );
+    let depths: Vec<u32> = set.guardrails.iter().map(|g| g.depth).collect();
+    assert_eq!(depths, vec![2, 1, 1, 2, 1]);
+    assert_eq!(
+        set.guardrails[0].workarea_path.as_deref(),
+        Some("universe.crew.team")
+    );
+    assert_eq!(set.guardrails[0].verdicts.len(), 1);
+    assert_eq!(set.guardrails[0].verdicts[0].held_by, HeldBy::Agent);
+    assert_eq!(
+        set.guardrails[0].tokens,
+        budget_tokens("A rule.".len() as u64)
+    );
+}
+
+#[tokio::test]
+async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in_conflict() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let topic = |severity, node, idem: &str| SubmitRequest {
+        claim_key: Some("push-policy".to_owned()),
+        ..guardrail_req(idem, severity, "Pushing to main.", node)
+    };
+    let root = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &topic(Severity::Must, crew, "g1"),
+    )
+    .await;
+    let child = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &topic(Severity::Never, team, "g2"),
+    )
+    .await;
+    let same = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &SubmitRequest {
+            claim_key: Some("tests".to_owned()),
+            ..guardrail_req("g3", Severity::Must, "Run the tests.", crew)
+        },
+    )
+    .await;
+    let reader = issue_with(
+        &app,
+        admin,
+        Role::Reader,
+        "rhea",
+        vec![grant(team, Role::Reader), grant(crew, Role::Reader)],
+    )
+    .await;
+    let set = guardrail_set(&app, &reader.value).await;
+    let conflict = |id: Uuid| {
+        set.guardrails
+            .iter()
+            .find(|g| g.artifact_id == id)
+            .expect("served")
+            .conflict
+            .clone()
+    };
+    assert_eq!(conflict(child), vec![root]);
+    assert_eq!(conflict(root), vec![child]);
+    assert!(conflict(same).is_empty());
+}
+
+#[tokio::test]
+async fn a_set_over_twelve_is_served_whole_with_over_cap_true() {
+    let app = app();
+    let (boot, crew, _team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    for i in 0..SET_CAP {
+        promoted(
+            &app,
+            &writer.value,
+            &dreamer.value,
+            &guardrail_req(&format!("g{i}"), Severity::Must, "A rule.", crew),
+        )
+        .await;
+    }
+    let set = guardrail_set(&app, &reader.value).await;
+    assert_eq!(set.guardrails.len(), SET_CAP);
+    assert!(!set.over_cap, "twelve is the cap, not over it");
+    promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &guardrail_req("g-over", Severity::Must, "A rule.", crew),
+    )
+    .await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert_eq!(set.guardrails.len(), SET_CAP + 1, "served whole");
+    assert!(set.over_cap);
+}
+
+#[tokio::test]
+async fn the_read_logs_the_served_ids() {
+    let app = app();
+    let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    for (idem, node) in [("g1", crew), ("g2", team)] {
+        promoted(
+            &app,
+            &writer.value,
+            &dreamer.value,
+            &guardrail_req(idem, Severity::Must, "A rule.", node),
+        )
+        .await;
+    }
+    let reader = issue(&app, admin, Role::Reader, "rhea", team).await;
+    let set = guardrail_set(&app, &reader.value).await;
+    assert_eq!(set.served_ids, served_guardrail_ids(&set));
+    assert_eq!(set.served_ids.len(), 1);
+    let versions: Vec<(Uuid, u32)> = set
+        .guardrails
+        .iter()
+        .map(|g| (g.artifact_id, g.version))
+        .collect();
+    assert_eq!(
+        set.set_digest,
+        oml_app::domain::guardrail::set_digest(&versions)
     );
 }

@@ -591,6 +591,7 @@ async fn issue_connector(rig: &Rig) -> String {
                 }],
                 connect_code: true,
                 user: None,
+                guardrail_scope: None,
             },
         )
         .await

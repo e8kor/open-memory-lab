@@ -93,6 +93,7 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
         grants,
         user: Some(name(user)),
         connect_code: false,
+        guardrail_scope: None,
     }
 }
 
@@ -184,6 +185,8 @@ fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
         body: body.to_owned(),
         workarea: workarea.map(by_name),
         derives_from: Vec::new(),
+        severity: None,
+        rule: None,
     }
 }
 

@@ -321,6 +321,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
                 }],
                 connect_code: true,
                 user: None,
+                guardrail_scope: None,
             },
         )
         .await

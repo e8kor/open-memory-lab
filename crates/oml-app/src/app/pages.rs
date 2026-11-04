@@ -179,6 +179,9 @@ where
                 Capacity::Admin | Capacity::Curate => (Role::Admin, Vec::new(), None),
             };
             let req = IssueKeyRequest {
+                // The issuance default; a page offers no scope (proposed ADR-0037
+                // d17, d18 Q5).
+                guardrail_scope: None,
                 role,
                 principal: name.as_str().to_owned(),
                 name,
@@ -319,6 +322,9 @@ where
             _ => return Err(field("role", "a key you issue is a reader or a writer")),
         };
         let req = IssueKeyRequest {
+            // The issuance default; a page offers no scope (proposed ADR-0037
+            // d17, d18 Q5).
+            guardrail_scope: None,
             role,
             principal: name.as_str().to_owned(),
             name,
@@ -503,6 +509,9 @@ where
         }
         let name = key_name(user, Capacity::Curate.suffix())?;
         let req = IssueKeyRequest {
+            // The issuance default; a page offers no scope (proposed ADR-0037
+            // d17, d18 Q5).
+            guardrail_scope: None,
             role: Role::Writer,
             principal: name.as_str().to_owned(),
             name,

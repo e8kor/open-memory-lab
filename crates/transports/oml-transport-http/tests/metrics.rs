@@ -79,6 +79,7 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                 }],
                 connect_code: false,
                 user: None,
+                guardrail_scope: None,
             },
         )
         .await

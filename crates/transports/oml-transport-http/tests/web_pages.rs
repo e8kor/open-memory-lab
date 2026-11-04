@@ -1102,6 +1102,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                 }],
                 connect_code: false,
                 user: None,
+                guardrail_scope: None,
             },
         )
         .await
@@ -1301,6 +1302,8 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 body: body.to_owned(),
                 workarea: None,
                 derives_from: Vec::new(),
+                severity: None,
+                rule: None,
             },
         )
         .await
