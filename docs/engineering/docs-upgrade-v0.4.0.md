@@ -21,7 +21,7 @@ software exists.
 |---|---|---|---|
 | **R** | the API rewrite, proposed ADR-0039 | branch `feat/api-rewrite` | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`; one `OML_URL` and `OML_API_KEY` pair on every client (d15); `oml login` and `oml doctor`; `GET /v2/whoami` |
 | **P** | plugin configuration in Claude Code, proposed ADR-0040 | branch `feat/api-rewrite` | `userConfig` with `url` and a sensitive `api_key`; `claude plugin configure --values-stdin`; Claude Code 2.1.285 or later |
-| **Q** | the quick start, proposed [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) | `main` once merged | `install.sh` and `install.ps1` (built); `oml setup claude-code` and `oml quickstart` (not built); the time targets, FR-68 |
+| **Q** | the quick start, proposed [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) | branch `feat/v0.4.0` | `install.sh` and `install.ps1`, `oml setup claude-code` and `oml quickstart` (built; `install.sh --quickstart` not built); the time targets, FR-68 |
 | **O** | OAuth through a connect code, proposed ADR-0031 | branch `feat/oauth-connect` | claude.ai and mobile reach OML without pasting a key |
 | **U** | the use cases and their call map | PR #26, branch `feat/use-cases` | `docs/product/use-cases.md` and `docs/engineering/use-case-call-map.md`, which this upgrade rewrites |
 

@@ -112,11 +112,16 @@ jobs:
           OML_CLI=./target/release/oml OML_CLI_CREDENTIALS="$state/credentials" \
             bash scripts/quickstart.sh || { tail -n 50 "$state/stderr"; exit 1; }
 
+  # The repository's compose file, then `oml quickstart`'s own (ADR-0041
+  # d9): the image built here is tagged with the CLI's version, so the
+  # compose file the verb writes, pinned to that version, starts it without
+  # a pull.
   compose:
-    name: docker profile (compose up, quickstart)
+    name: docker profile (compose up, quickstart, oml quickstart)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build and start
         run: docker compose up -d --build
       - name: Quickstart inside the container
@@ -127,6 +132,27 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose down -v
+      - name: Build the CLI and tag the image with its version
+        run: |
+          cargo build --release --locked --bin oml
+          version="$(./target/release/oml --version | awk '{print $2}')"
+          docker tag ghcr.io/e8kor/open-memory-lab:latest "ghcr.io/e8kor/open-memory-lab:$version"
+      - name: oml quickstart, then a second run refused as quickstart.exists
+        run: |
+          ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml"
+          for f in .env keys keys/agent keys/reviewer credentials; do
+            stat -c '%a %n' "$RUNNER_TEMP/oml/$f"
+          done
+          if ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml" 2>"$RUNNER_TEMP/again"; then
+            echo "a second quickstart was not refused" >&2; exit 1
+          fi
+          grep -q quickstart.exists "$RUNNER_TEMP/again"
+      - name: oml quickstart's logs on failure
+        if: failure()
+        run: docker compose --project-directory "$RUNNER_TEMP/oml" logs
+      - name: Stop oml quickstart's stack
+        if: always()
+        run: docker compose --project-directory "$RUNNER_TEMP/oml" down -v || true
 
   image:
     name: release image (${{ matrix.platform }})

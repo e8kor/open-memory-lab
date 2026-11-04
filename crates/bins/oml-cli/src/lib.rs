@@ -10,4 +10,6 @@ pub mod discovery;
 pub mod hook;
 pub mod issue;
 pub mod owner_only;
+pub mod quickstart;
+pub mod setup;
 pub mod verify;

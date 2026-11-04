@@ -27,7 +27,7 @@ beyond HTTPS (each installer's source, fetched 2026-11-03). The proposed
 ADR-0039 d15 and ADR-0040, on branch `feat/api-rewrite`, already give every client one pair,
 `OML_URL` and `OML_API_KEY`, add `oml login <url>` and `oml doctor`, and move the plugin's
 settings into Claude Code's own configuration. This record decides the path a person takes
-through them. d1 to d3 and d8 are built; the rest is decided, not built.
+through them. Where each item stands is under [Consequences](#consequences).
 
 ## Decision
 
@@ -168,11 +168,23 @@ through them. d1 to d3 and d8 are built; the rest is decided, not built.
 
 ## Consequences
 
-- **Built:** d1–d3 and d8's scripts, job and checks. `install.sh` was run against
-  v0.3.1 on Linux x86_64 with cosign, without it, and with `latest`. `install.ps1` has not run
-  until `install-smoke` runs on Windows.
-- **Build order for the rest:** d6 with ADR-0039's build; d7 after ADR-0040; d9 after both, with
-  the `oml-bootstrap` service; then d4's redirect at the v0.4.0 tag.
+- **Where each item stands**, on `feat/v0.4.0` on 2026-11-04:
+
+    | Item | Status |
+    |---|---|
+    | d1, d2 | Built. `install.sh` was run against v0.3.1 on Linux x86_64 with cosign, without it, and with `latest`. `install.ps1` runs only in `install-smoke` on Windows. |
+    | d3 | Built: both scripts default to the workspace version. |
+    | d4 | Decided, not built: the redirect is set up at the v0.4.0 tag. |
+    | d5 | Decided, not built: the install page is in the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md). |
+    | d6 | Built with ADR-0039's `oml login` and `oml doctor`; nothing was added to them. |
+    | d7 | Built: `oml setup claude-code`, with `--key-file` and `--print`, and its `setup.admin_key` and `setup.claude_code_version` refusals. `oml-cli`'s `setup_claude_code` suite runs it against a fake `claude` that records each call; no test has run it against a real Claude Code. |
+    | d8 | Built. |
+    | d9 | Built in part: `oml quickstart` with `--dir` and `--port` and steps 1 to 7, the token read from the lead's log, and `quickstart.exists`, with `quickstart.docker` for a machine without compose. Its compose file has run only in CI's `compose` job; `oml-cli`'s `quickstart` suite runs the verb against a fake `docker` and the real lead. Not built: `install.sh --quickstart`. `scripts/quickstart.sh` stays, because the `e2e` and `chart` jobs run it where there is no compose stack, so the script is not deleted yet. |
+    | d10 | Unmeasured, tracked as FR-68. |
+
+- **Build order for the rest:** `install.sh --quickstart` and moving the `e2e` and `chart` jobs
+  off `scripts/quickstart.sh`; the `oml-bootstrap` service, from which the quickstart then reads
+  the token; d5's install page with the documentation upgrade; d4's redirect at the v0.4.0 tag.
 - **Pages:** the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md) names each
   page this record changes, its source of truth and what it waits for. The [CLI
   reference](../cli/reference.md#installing-oml-and-what-differs-on-windows) gains the installer

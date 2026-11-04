@@ -34,6 +34,33 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The quick start's two verbs: `oml setup claude-code` and `oml quickstart` (ADR-0041 d7, d9, implementation)
+
+The quick start ([ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md), proposed)
+is merged into this branch, and two of its decided verbs are built. No decision changes, no HTTP
+surface moves, and the record stays proposed; its Consequences now give each item's status.
+
+- **`oml setup claude-code`** (d7) refuses an `admin` or `operator` key as `setup.admin_key` after
+  `GET /v2/whoami`, and a Claude Code older than 2.1.285 as `setup.claude_code_version`. It then
+  installs the plugin from the marketplace at the CLI's own tag and writes the URL and key to
+  `claude plugin configure --values-stdin`, never to argv. `--key-file` reads the file
+  `issue-agent --out` wrote. `--print`, or no `claude` on `PATH`, prints the commands instead.
+- **`oml quickstart`** (d9) writes a compose file embedded in the binary, its image pinned to the
+  CLI's version, and an owner-only `.env` of generated passwords for the superuser and the
+  owner and serving roles. It runs `docker compose up --detach --wait` on `127.0.0.1`, claims the
+  token the lead logged, and issues an agent key and a reviewer key into owner-only files. It
+  checks a write end to end, then prints the agent's key file, the `oml setup claude-code` line
+  and the `oml login` line. A directory a quickstart wrote into is refused as `quickstart.exists`.
+- **Not built:** `install.sh --quickstart`. `scripts/quickstart.sh` stays for the `e2e` and
+  `chart` jobs.
+- **The checks.** `oml-cli`'s `setup_claude_code` suite runs the verb against a fake `claude`, and
+  its `quickstart` suite against a fake `docker` and the real lead. CI's `compose` job runs `oml
+  quickstart` against the image built from the checkout, then a second run that must be refused.
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (the
+  status of each item), [CLI reference](cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start),
+  [CI and toolchain](engineering/ci-and-toolchain.md), the
+  [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md) and this page.
+
 ### 2026-11-04 — Connections on the rewritten surface: `/mcp` takes an access token as its key, and `/v2` mints and revokes (ADR-0031, ADR-0039 d9, implementation)
 
 No decision changes, and ADR-0031 stays proposed.

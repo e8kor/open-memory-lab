@@ -170,11 +170,54 @@ enum Command {
     },
     /// Each health signal with a verdict; exit 1 on any fail.
     Doctor,
+    /// Start OML on this machine with Docker: write the compose profile and
+    /// its owner-only .env into --dir, `docker compose up`, claim the lead,
+    /// issue an agent key and a reviewer key into owner-only files, check a
+    /// write end to end, and print the agent's key file and the oml login
+    /// line (ADR-0041 d9).
+    Quickstart(QuickstartArgs),
+    /// Install and configure an agent tool's OML plugin (ADR-0041 d7).
+    Setup {
+        #[command(subcommand)]
+        command: SetupCommand,
+    },
     /// Claude Code hooks of the agent plugin, run under the agent's own key.
     Hook {
         #[command(subcommand)]
         command: HookCommand,
     },
+}
+
+#[derive(Args)]
+struct QuickstartArgs {
+    /// Where the compose file, its .env, the admin credentials and the keys
+    /// are written; refused if a quickstart already wrote there.
+    #[arg(long, default_value = "oml")]
+    dir: PathBuf,
+    /// The port on 127.0.0.1 the lead is published on.
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+}
+
+#[derive(Subcommand)]
+enum SetupCommand {
+    /// Install the oml plugin at this CLI's own release through the claude
+    /// CLI and hand it the URL and key on stdin, refusing an admin or
+    /// operator key; with --print, or with no claude on PATH, print the
+    /// commands instead (ADR-0041 d7).
+    ClaudeCode(SetupClaudeCodeArgs),
+}
+
+#[derive(Args)]
+struct SetupClaudeCodeArgs {
+    /// The key file `oml keys issue-agent --out` wrote, read in place of
+    /// --api-key and paired with --url.
+    #[arg(long)]
+    key_file: Option<PathBuf>,
+    /// Run nothing: print the claude commands, whose configure line reads
+    /// the key file, or OML_API_KEY without one.
+    #[arg(long)]
+    print: bool,
 }
 
 #[derive(Subcommand)]
@@ -1273,6 +1316,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Quickstart(args) => run_quickstart(args),
+        Command::Setup {
+            command: SetupCommand::ClaudeCode(args),
+        } => run_setup_claude_code(cli, &stored, args),
         Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
 }
@@ -2150,6 +2197,535 @@ fn read_secret(what: &str) -> Result<String, CliError> {
         )));
     }
     Ok(secret.to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// oml quickstart
+// ---------------------------------------------------------------------------
+
+/// `oml quickstart` (ADR-0041 d9): refuse a directory a quickstart wrote
+/// into and a machine without `docker compose`, before anything is written;
+/// then the compose file and its `.env`, `docker compose up --detach
+/// --wait`, the claim of the token the lead logged, the crew workarea, an
+/// agent key and a reviewer key in owner-only files, a write held, approved
+/// and recalled, and the lines that hand the agent key on. No key value is
+/// printed.
+fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::quickstart;
+    let dir = std::path::absolute(&args.dir)
+        .map_err(|e| CliError::local(format!("cannot resolve {}: {e}", args.dir.display())))?;
+    let shown = dir.display().to_string();
+    if let Some(name) = quickstart::existing(&dir) {
+        return Err(CliError::local(format!(
+            "refused: quickstart.exists — {shown} already holds {name} from a quickstart; \
+             `docker compose --project-directory {shown} down -v` removes that stack and its \
+             data, or pass another --dir; nothing was changed (ADR-0041 d9)"
+        )));
+    }
+    let compose = |rest: &[&str]| {
+        let mut command = std::process::Command::new("docker");
+        command
+            .arg("compose")
+            .arg("--project-directory")
+            .arg(&dir)
+            .args(rest)
+            .stdin(std::process::Stdio::null());
+        command
+    };
+    match std::process::Command::new("docker")
+        .args(["compose", "version"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(out) if out.status.success() => {}
+        _ => {
+            return Err(CliError::local(
+                "refused: quickstart.docker — `docker compose version` did not answer, and the \
+                 quickstart needs Docker with compose v2; nothing was written (ADR-0041 d9)",
+            ));
+        }
+    }
+
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| CliError::local(format!("cannot create {shown}: {e}")))?;
+    let version = env!("CARGO_PKG_VERSION");
+    std::fs::write(
+        dir.join("compose.yaml"),
+        quickstart::compose(version, args.port),
+    )
+    .map_err(|e| CliError::local(format!("cannot write {shown}/compose.yaml: {e}")))?;
+    write_owner_only(&dir.join(".env"), &quickstart::env_file())?;
+    let keys = dir.join("keys");
+    owner_only_dir(&keys)?;
+
+    eprintln!("starting the stack: docker compose --project-directory {shown} up --detach --wait");
+    let status = compose(&["up", "--detach", "--wait"])
+        .stdout(std::process::Stdio::from(std::io::stderr()))
+        .status()
+        .map_err(|e| CliError::local(format!("cannot run docker compose up: {e}")))?;
+    if !status.success() {
+        return Err(CliError::local(format!(
+            "docker compose up failed ({status}); `docker compose --project-directory {shown} \
+             logs` shows why"
+        )));
+    }
+    let url = format!("http://127.0.0.1:{}", args.port);
+    wait_ready(&url)?;
+    let logs = compose(&["logs", "oml-server"])
+        .output()
+        .map_err(|e| CliError::local(format!("cannot run docker compose logs: {e}")))?;
+    let logs = String::from_utf8_lossy(&logs.stdout);
+    let token = quickstart::enrollment_token(&logs).ok_or_else(|| {
+        CliError::local(format!(
+            "no enrollment token in the lead's log: a lead prints one on its first start \
+             against an empty database only; `docker compose --project-directory {shown} logs \
+             oml-server` shows what it printed"
+        ))
+    })?;
+
+    let admin = Child {
+        dir: &dir,
+        pair: None,
+    };
+    admin.json(
+        &[
+            "--url",
+            &url,
+            "bootstrap",
+            "claim",
+            "quickstart-admin",
+            "--token-stdin",
+            "--tenant-name",
+            "quickstart",
+            "--principal",
+            "platform/admin",
+        ],
+        Some(token),
+    )?;
+    admin.json(&["workareas", "create", "universe", "crew"], None)?;
+    let agent_file = keys.join("agent");
+    let agent_shown = agent_file.display().to_string();
+    admin.text(&[
+        "keys",
+        "issue-agent",
+        "quickstart-agent",
+        "--principal",
+        "crew/agent",
+        "--workarea",
+        "crew",
+        "--out",
+        &agent_shown,
+    ])?;
+    let reviewer_file =
+        oml_cli::issue::KeyFile::create(&keys.join("reviewer")).map_err(CliError::Local)?;
+    let reviewer_shown = reviewer_file.shown().to_owned();
+    let issued = admin
+        .json(
+            &[
+                "keys",
+                "issue",
+                "quickstart-reviewer",
+                "--role",
+                "dreamer",
+                "--held-by",
+                "human",
+                "--principal",
+                "crew/reviewer",
+                "--default-workarea",
+                "crew",
+                "--grant",
+                "crew:dreamer",
+            ],
+            None,
+        )
+        .and_then(|reviewer| {
+            reviewer["value"]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    CliError::Unanswered("the reviewer key's issuance carried no value".to_owned())
+                })
+        });
+    let reviewer_key = match issued {
+        Ok(key) => key,
+        Err(e) => {
+            // The empty file would only mislead; the refusal is the issuance's.
+            let _ = reviewer_file.discard();
+            return Err(e);
+        }
+    };
+    reviewer_file
+        .write_value(&reviewer_key)
+        .map_err(CliError::Local)?;
+    let agent_key = std::fs::read_to_string(&agent_file)
+        .map_err(|e| CliError::local(format!("cannot read {agent_shown}: {e}")))?;
+    let agent_key = agent_key.trim_end().to_owned();
+
+    // The self-check: written as the agent, held, approved by a different
+    // identity, recalled.
+    let agent = Child {
+        dir: &dir,
+        pair: Some((&url, &agent_key)),
+    };
+    let reviewer = Child {
+        dir: &dir,
+        pair: Some((&url, &reviewer_key)),
+    };
+    let held = agent.json(
+        &[
+            "write",
+            "The quickstart wrote this memory as the agent, and a reviewer approved it.",
+            "--idempotency-key",
+            "quickstart/1",
+        ],
+        None,
+    )?;
+    let check = |ok: bool, what: &str, answer: &Value| {
+        if ok {
+            Ok(())
+        } else {
+            Err(CliError::local(format!(
+                "the self-check failed: {what}: {answer}"
+            )))
+        }
+    };
+    check(held["state"] == "held", "the write was not held", &held)?;
+    reviewer.json(&["review", "next"], None)?;
+    let approved = reviewer.json(&["review", "approve"], None)?;
+    check(
+        approved["state"] == "promoted",
+        "the approval did not promote",
+        &approved,
+    )?;
+    let recalled = agent.json(&["read", "--query", "quickstart wrote"], None)?;
+    let found = recalled["hits"].as_array().is_some_and(|hits| {
+        hits.iter()
+            .any(|h| h["memory"]["artifact_id"] == held["artifact_id"])
+    });
+    check(found, "the approved memory was not recalled", &recalled)?;
+
+    println!("OML {version} is running at {url}, from {shown}/compose.yaml.");
+    println!(
+        "The self-check passed: a write by the agent key was held, approved by the reviewer \
+         key, and recalled."
+    );
+    println!();
+    println!("Keys, each in an owner-only file and printed nowhere:");
+    println!("  agent    (writes and recalls in crew)  {agent_shown}");
+    println!("  reviewer (a person approves writes)    {reviewer_shown}");
+    println!("  admin    (url and api_key)             {shown}/credentials");
+    println!();
+    println!("Give Claude Code on this machine the agent key:");
+    println!("  oml setup claude-code --url {url} --key-file {agent_shown}");
+    println!("Or store the agent key for the CLI, pasting it when asked:");
+    println!("  oml login {url}");
+    println!("Review what agents write as the reviewer:");
+    println!(
+        "  OML_URL={url} OML_API_KEY=\"$(cat {})\" oml review next",
+        sh_quote(&reviewer_shown)
+    );
+    println!("Run admin verbs against this stack:");
+    println!(
+        "  OML_CLI_CREDENTIALS={} oml keys issue-agent …",
+        sh_quote(&format!("{shown}/credentials"))
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One run of this same `oml` binary under the quickstart's own credentials
+/// file, `<dir>/credentials`, and with `pair` as `OML_URL` and
+/// `OML_API_KEY`; the caller's own pair and file are never read.
+struct Child<'a> {
+    dir: &'a std::path::Path,
+    pair: Option<(&'a str, &'a str)>,
+}
+
+impl Child<'_> {
+    fn command(&self, args: &[&str]) -> Result<std::process::Command, CliError> {
+        let exe = std::env::current_exe()
+            .map_err(|e| CliError::local(format!("cannot find the oml binary: {e}")))?;
+        let mut command = std::process::Command::new(exe);
+        command
+            .env("OML_CLI_CREDENTIALS", self.dir.join("credentials"))
+            .env_remove("OML_URL")
+            .env_remove("OML_API_KEY")
+            .env_remove("OML_CLI_SERVER")
+            .env_remove("OML_CLI_KEY");
+        if let Some((url, key)) = self.pair {
+            command.env("OML_URL", url).env("OML_API_KEY", key);
+        }
+        command.args(args);
+        Ok(command)
+    }
+
+    /// The verb's output, or its refusal with what it printed, which holds
+    /// no key: a refusal envelope or a local reason.
+    fn run(&self, args: &[&str], stdin: Option<&str>) -> Result<std::process::Output, CliError> {
+        use std::io::Write as _;
+        use std::process::Stdio;
+        let verb = args
+            .iter()
+            .find(|a| !a.starts_with('-') && !a.contains("://"))
+            .map_or("oml", |v| *v);
+        let mut child = self
+            .command(args)?
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| CliError::local(format!("cannot run oml {verb}: {e}")))?;
+        if let Some(mut pipe) = child.stdin.take() {
+            let text = stdin.map(|s| format!("{s}\n")).unwrap_or_default();
+            pipe.write_all(text.as_bytes())
+                .map_err(|e| CliError::local(format!("cannot write to oml {verb}: {e}")))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| CliError::local(format!("oml {verb} did not finish: {e}")))?;
+        if out.status.success() {
+            Ok(out)
+        } else {
+            let said = |b: &[u8]| String::from_utf8_lossy(b).trim().to_owned();
+            Err(CliError::local(format!(
+                "the quickstart's `oml {}` failed ({}): {} {}",
+                args.iter()
+                    .take_while(|a| !a.starts_with("--"))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                out.status,
+                said(&out.stdout),
+                said(&out.stderr),
+            )))
+        }
+    }
+
+    /// The verb run with `--json`: its one document.
+    fn json(&self, args: &[&str], stdin: Option<&str>) -> Result<Value, CliError> {
+        let mut with = vec!["--json"];
+        with.extend_from_slice(args);
+        let out = self.run(&with, stdin)?;
+        serde_json::from_slice(&out.stdout).map_err(|e| {
+            CliError::Unanswered(format!("oml {} printed no JSON document: {e}", args[0]))
+        })
+    }
+
+    /// The verb run for its effect, its output dropped.
+    fn text(&self, args: &[&str]) -> Result<(), CliError> {
+        self.run(args, None).map(drop)
+    }
+}
+
+/// Polls `url`'s `/readyz` for up to two minutes, the image's start
+/// included.
+fn wait_ready(url: &str) -> Result<(), CliError> {
+    let probe = Client::with_timeout(url.to_owned(), None, std::time::Duration::from_secs(2));
+    for _ in 0..120 {
+        if matches!(probe.probe("/readyz"), Ok((200, _))) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Err(CliError::local(format!(
+        "no ready lead at {url}/readyz after two minutes"
+    )))
+}
+
+/// Writes `text` to the new file `path`, owner-only from its creation.
+fn write_owner_only(path: &std::path::Path, text: &str) -> Result<(), CliError> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    oml_cli::owner_only::open_options(&mut options);
+    let shown = path.display();
+    let mut file = options
+        .open(path)
+        .map_err(|e| CliError::local(format!("cannot create {shown}: {e}")))?;
+    oml_cli::owner_only::restrict(&file)
+        .and_then(|()| file.write_all(text.as_bytes()))
+        .and_then(|()| file.sync_all())
+        .map_err(|e| CliError::local(format!("cannot write {shown}: {e}")))
+}
+
+/// Creates the directory `path`, owner-only (0700 on Unix).
+fn owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+        .create(path)
+        .map_err(|e| CliError::local(format!("cannot create {}: {e}", path.display())))
+}
+
+// ---------------------------------------------------------------------------
+// oml setup claude-code
+// ---------------------------------------------------------------------------
+
+/// The pair `oml setup claude-code` hands the plugin: `--key-file`'s key
+/// with the `--url` flag, a flag source of its own, or the pair as
+/// [`resolve`] takes it (ADR-0039 d15, ADR-0041 d7 step 1).
+fn setup_pair(
+    cli: &Cli,
+    stored: &Credentials,
+    key_file: Option<&std::path::Path>,
+) -> Result<(Client, String), CliError> {
+    let Some(path) = key_file else {
+        let client = resolve(cli, stored)?;
+        let key = first_source(cli, stored)
+            .and_then(|s| s.key.cloned())
+            .ok_or_else(|| missing(NO_PAIR))?;
+        return Ok((client, key));
+    };
+    if cli.start.flag_key.is_some() {
+        return Err(CliError::local(
+            "refused: --key-file with --api-key, which each name the key; nothing was sent",
+        ));
+    }
+    let url = cli.start.flag_url.clone().ok_or_else(|| {
+        CliError::local(
+            "refused: --key-file is set without --url, and a key is sent only to the URL given \
+             beside it; nothing was sent (ADR-0039 d15)",
+        )
+    })?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| CliError::local(format!("cannot read {}: {e}", path.display())))?;
+    let key = text.trim_end_matches(['\n', '\r']);
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(CliError::local(format!(
+            "refused: {} holds no key on one line of printable ASCII; nothing was sent",
+            path.display()
+        )));
+    }
+    Ok((Client::new(url, Some(key.to_owned())), key.to_owned()))
+}
+
+/// `oml setup claude-code` (ADR-0041 d7): check the key through whoami and
+/// refuse an admin or operator key, then install the plugin at this CLI's
+/// own tag and save the pair through `claude plugin configure
+/// --values-stdin`, or print the commands with `--print` or with no `claude`
+/// on `PATH`. The key goes to the configure command's stdin alone.
+fn run_setup_claude_code(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &SetupClaudeCodeArgs,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::setup;
+    let (client, key) = setup_pair(cli, stored, args.key_file.as_deref())?;
+    let me = client.whoami()?;
+    let role = me["role"].as_str().unwrap_or_default();
+    if setup::refuses_role(role) {
+        return Err(CliError::local(format!(
+            "refused: setup.admin_key — key {} is an {role} key, and the agent plugin takes an \
+             agent's key, never an admin's; issue one with `oml keys issue-agent --out`; \
+             nothing was installed (ADR-0041 d7)",
+            field(&me, "name"),
+        )));
+    }
+    let version = env!("CARGO_PKG_VERSION");
+    let url = client.server();
+    let print = |why: &str| {
+        println!("{why}; run these to install and configure the plugin:");
+        let shown = args.key_file.as_deref().map(|p| {
+            std::path::absolute(p)
+                .unwrap_or_else(|_| p.to_owned())
+                .display()
+                .to_string()
+        });
+        for line in setup::printed(version, url, shown.as_deref()) {
+            println!("  {line}");
+        }
+        if shown.is_none() {
+            println!("with OML_API_KEY set to the key in the shell that runs the last line");
+        }
+        Ok(ExitCode::SUCCESS)
+    };
+    if args.print {
+        return print("--print");
+    }
+    let claude_version = match std::process::Command::new("claude")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return print("no claude on PATH");
+        }
+        Err(e) => {
+            return Err(CliError::local(format!(
+                "cannot run `claude --version`: {e}"
+            )));
+        }
+        Ok(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
+    };
+    let min = setup::dotted(setup::MIN_CLAUDE_CODE);
+    match setup::claude_code_version(&claude_version) {
+        Some(found) if found >= setup::MIN_CLAUDE_CODE => {}
+        found => {
+            return Err(CliError::local(format!(
+                "refused: setup.claude_code_version — `claude --version` printed {}, and \
+                 `claude plugin configure --values-stdin` needs Claude Code {min} or later; \
+                 nothing was installed (ADR-0040 d5)",
+                found.map_or_else(|| format!("{:?}", claude_version.trim()), setup::dotted),
+            )));
+        }
+    }
+    for command in setup::install_commands(version) {
+        run_claude(&command, None)?;
+    }
+    run_claude(&setup::configure_command(), Some(&setup::values(url, &key)))?;
+    if cli.json {
+        print_json(&json!({
+            "plugin": setup::PLUGIN,
+            "version": version,
+            "url": url,
+            "key": me["name"],
+            "role": role,
+        }));
+    } else {
+        println!(
+            "{} installed from {}#v{version} and configured for {url} as key {} (role {role}); \
+             run /reload-plugins in a running Claude Code session, or restart it",
+            setup::PLUGIN,
+            setup::MARKETPLACE,
+            field(&me, "name"),
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Runs `claude <args>`, writing `stdin` to it when given, else none; a
+/// failure names the command, which never holds the key.
+fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
+    use std::io::Write as _;
+    use std::process::{Command as Process, Stdio};
+    let shown = format!("claude {}", args.join(" "));
+    let mut child = Process::new("claude")
+        .args(args)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        // Its own output goes to stderr, so --json's stdout stays one
+        // document.
+        .stdout(Stdio::from(std::io::stderr()))
+        .spawn()
+        .map_err(|e| CliError::local(format!("cannot run `{shown}`: {e}")))?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        pipe.write_all(text.as_bytes())
+            .and_then(|()| pipe.write_all(b"\n"))
+            .map_err(|e| CliError::local(format!("cannot write to `{shown}`: {e}")))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| CliError::local(format!("`{shown}` did not finish: {e}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CliError::local(format!(
+            "`{shown}` failed ({status}); the commands before it ran"
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------------
