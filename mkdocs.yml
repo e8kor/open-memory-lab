@@ -166,3 +166,4 @@ nav:
       - ADR-0039: adr/ADR-0039-the-api-rewritten-for-v0-4-0.md
       - ADR-0040: adr/ADR-0040-plugin-setup-in-claude-code.md
       - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md
+      - ADR-0042: adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md

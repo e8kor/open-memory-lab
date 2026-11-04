@@ -84,8 +84,29 @@ the constitution.
 | Timestamps | RFC 3339, UTC, e.g. `2026-10-29T14:03:17Z`. |
 | Digests | `sha256:<64 hex>`. An attachment is named by the SHA-256 of its plaintext ([storage.md](../architecture/storage.md)). |
 | Identifiers | Opaque strings (`artifact_id`, `workarea_id`, `key_id`, `serve_id`, …). Clients never parse them. The ids of workareas, crews, keys and tenants are UUIDs in RFC 9562 hex-and-dash text, so that the server can tell an id from a [name](#names-and-ids). |
-| Request id | Every response carries `X-Request-Id`; error bodies repeat it as `request_id`. |
+| Request id | Every response carries `X-Request-Id`; error bodies repeat it as `request_id`. From v0.4.1, as planned, a valid inbound `X-Request-Id` is the id, and every response also carries `X-Correlation-Id` ([request ids](#request-ids-correlation-and-trace-context)). |
 | Deletion | No endpoint is `DELETE`. Every removal is a journalled `POST` act — demote keeps bytes, erase is crypto-shredding (constitution R4; [audit-and-lineage.md](../architecture/audit-and-lineage.md)). |
+
+## Request ids, correlation and trace context
+
+*Planned for v0.4.1 · [releases](../product/releases.md)*
+
+Three request headers are read and two response headers returned on every route, the probes,
+`/mcp` and the OAuth endpoints included ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d4–d6, d13). None of them is refused:
+a value the rule does not admit is replaced, and the request goes on.
+
+| Header | Direction | Rule |
+|---|---|---|
+| `X-Request-Id` | request and response | Honoured when there is one instance and its value is 1 to 128 characters from `A`–`Z`, `a`–`z`, `0`–`9`, `-`, `_`, `.` and `:`; otherwise the server mints `req_<32 hex>`. Every response returns the id, an error's included, and the error envelope's `request_id` and an MCP tool refusal's `request_id` are the same value ([errors.md](errors.md)). |
+| `X-Correlation-Id` | request and response | The same rule. Absent or not admitted, the correlation id is the request id. Every response returns it. |
+| `traceparent` | request only | W3C Trace Context, version `00`. Read only while the deployment exports traces (`server.otlp_endpoint`, [configuration](../operations/configuration.md)): a valid value makes the server's span its child, an invalid one starts a new trace. `tracestate` is not read, and no response carries `traceparent`. |
+
+A request id the client sends is a label it chose. Another client can send the same one, so the
+server never uses it as an idempotency key, which stays `Idempotency-Key` scoped to the
+authenticating key ([Idempotency](#idempotency)), nor for any authorization or rate decision, and
+never stores it. The server's log records whether each id was the caller's or minted
+([observability](../operations/observability.md#the-request-line)). The headers enter
+[openapi.yaml](openapi.yaml) in the change that serves them ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
 
 ## Versioning and deprecation
 
