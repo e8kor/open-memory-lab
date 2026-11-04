@@ -96,9 +96,12 @@ def sync_detailed(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
+        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+            Resolved server-side before any check that reads state; an unknown name answers exactly
+            what an unknown id answers. A user key resolves a bare name in its own user root's
+            namespace, plus universe and its root's name; every other key in the shared namespace
+            (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -150,9 +153,12 @@ def sync(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
+        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+            Resolved server-side before any check that reads state; an unknown name answers exactly
+            what an unknown id answers. A user key resolves a bare name in its own user root's
+            namespace, plus universe and its root's name; every other key in the shared namespace
+            (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -199,9 +205,12 @@ async def asyncio_detailed(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
+        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+            Resolved server-side before any check that reads state; an unknown name answers exactly
+            what an unknown id answers. A user key resolves a bare name in its own user root's
+            namespace, plus universe and its root's name; every other key in the shared namespace
+            (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
@@ -251,9 +260,12 @@ async def asyncio(
 
     Args:
         kind (ListEdgesKind):
-        workarea_id (str | Unset): A workarea, by its node id or its name. Resolved server-side
-            before any check that reads state; an unknown name answers exactly what an unknown id
-            answers. A derived path is neither, and is refused (request.validation).
+        workarea_id (str | Unset): A workarea, by its node id, its name or its qualified name.
+            Resolved server-side before any check that reads state; an unknown name answers exactly
+            what an unknown id answers. A user key resolves a bare name in its own user root's
+            namespace, plus universe and its root's name; every other key in the shared namespace
+            (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
         artifact_id (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
