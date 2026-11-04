@@ -1281,6 +1281,39 @@ fn apply_fold(
             state.claim_edges.insert(edge.edge_id, edge);
             widen_lineage(state, src, dst);
         }
+        MetadataFold::ClaimEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            // The compare-and-set: a pending edge of this tenant, else the
+            // commit writes nothing, its event included (postgres-schema.md
+            // `claim_edges`; ADR-0021 d5).
+            let Some(edge) = state
+                .claim_edges
+                .get(&edge_id)
+                .filter(|e| e.state == EdgeState::Pending)
+            else {
+                return Err(StoreError::EdgeNotPending { edge_id });
+            };
+            if edge.proposer_key_id == ratifier_key_id {
+                return Err(StoreError::Backend(format!(
+                    "claim edge {edge_id}'s ratifier is its proposer"
+                )));
+            }
+            if !state
+                .keys_by_hash
+                .values()
+                .any(|k| k.key_id == ratifier_key_id)
+            {
+                return Err(StoreError::Backend(format!(
+                    "key {ratifier_key_id} is not held by this tenant"
+                )));
+            }
+            if let Some(edge) = state.claim_edges.get_mut(&edge_id) {
+                edge.state = EdgeState::Ratified;
+                edge.ratifier_key_id = Some(ratifier_key_id);
+            }
+        }
     }
     Ok(())
 }
@@ -2396,6 +2429,32 @@ impl JournalStore for MemStore {
             .take(limit)
             .cloned()
             .collect())
+    }
+
+    async fn ratified_term_edges(
+        &self,
+        tenant_id: Uuid,
+        label: &str,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let term_key = |id: Uuid| {
+            state
+                .memories
+                .get(&id)
+                .filter(|m| m.kind == MemoryKind::Term)
+                .map(|m| m.claim_key.clone())
+        };
+        let mut edges: Vec<(String, String)> = state
+            .claim_edges
+            .values()
+            .filter(|e| e.state == EdgeState::Ratified && e.label == label)
+            .filter_map(|e| Some((term_key(e.src_artifact_id)?, term_key(e.dst_artifact_id)?)))
+            .collect();
+        edges.sort();
+        Ok(edges)
     }
 }
 

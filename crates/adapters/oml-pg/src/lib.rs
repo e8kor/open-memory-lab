@@ -1726,6 +1726,11 @@ async fn apply_fold(
                 edge.edge_id
             )));
         }
+        MetadataFold::ClaimEdgeRatified { edge_id, .. } => {
+            return Err(StoreError::Backend(format!(
+                "claim edge {edge_id} is not ratified: the Postgres claim-edge fold is not built"
+            )));
+        }
     }
     Ok(())
 }
@@ -3262,6 +3267,17 @@ impl JournalStore for PgStore {
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
         Err(StoreError::Backend(
             "claim edges are not listed: the Postgres claim-edge read is not built".to_owned(),
+        ))
+    }
+
+    async fn ratified_term_edges(
+        &self,
+        _tenant_id: Uuid,
+        _label: &str,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        Err(StoreError::Backend(
+            "ratified term edges are not read: the Postgres claim-edge read is not built"
+                .to_owned(),
         ))
     }
 }
