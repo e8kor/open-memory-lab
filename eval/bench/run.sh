@@ -10,7 +10,9 @@
 # BENCH_PYTHON names an interpreter with ir_measures and ir_datasets
 # (eval/bench/requirements.txt); BENCH_CACHE the dataset cache (default
 # /srv/build/bench-data). Results: <out-dir>/<dataset>_<pipeline>.json and
-# <out-dir>/tables.md.
+# <out-dir>/tables.md, with the offline bm25s reference beside each served
+# pipeline (reference.py). eval/bench/export.py turns them into the
+# committed oml-bench/1 files.
 set -u -o pipefail
 cd "$(dirname "$0")/../.."
 
@@ -47,4 +49,5 @@ for ds in "$@"; do
     cp "$STATE/load-$ds.json" "$OUT/"
     "$PY" eval/bench/bench.py --cache "$CACHE" run --state "$STATE" --out "$OUT" "$ds" || exit 1
 done
+"$PY" eval/bench/reference.py --cache "$CACHE" "$OUT" "$@" || exit 1
 "$PY" eval/bench/bench.py report "$OUT" | tee "$OUT/tables.md"

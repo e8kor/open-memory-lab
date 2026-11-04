@@ -3,3 +3,6 @@
 ir_measures==0.4.3
 pytrec-eval-terrier==0.5.11
 ir_datasets==0.6.3
+# reference.py only (the offline BM25 reference):
+bm25s==0.3.16
+PyStemmer==3.1.0
