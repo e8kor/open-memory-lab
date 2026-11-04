@@ -20,6 +20,7 @@
 
 pub mod error;
 pub mod mcp;
+pub mod oauth;
 pub mod time;
 
 use std::collections::{HashMap, HashSet};
@@ -44,7 +45,10 @@ use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
-use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
+use oml_app::ports::{
+    ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
+    Signer, StoreError,
+};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, NamedServe, RecallRequest,
@@ -93,6 +97,20 @@ pub const ROUTES: &[(&str, &str)] = &[
 /// The unversioned probes among [`ROUTES`], served even while names are not
 /// assigned (http-api.md "Health").
 const PROBES: [&str; 2] = ["/healthz", "/readyz"];
+
+/// The unversioned OAuth operations outside both rings, as `(METHOD, path)`
+/// in docs/api/openapi.yaml's spelling, which [`ApiState::into_router`]
+/// routes exactly where the deployment sets `oauth.issuer`, and not at all
+/// otherwise (ADR-0031 d1, d3, d4, d5, d9; ADR-0039 d9). The served
+/// contract declares these beside [`ROUTES`].
+pub const OAUTH_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/.well-known/oauth-protected-resource/mcp"),
+    ("GET", "/.well-known/oauth-authorization-server"),
+    ("GET", "/oauth/authorize"),
+    ("POST", "/oauth/authorize"),
+    ("POST", "/oauth/register"),
+    ("POST", "/oauth/token"),
+];
 
 const PAGE_LIMIT_MAX: usize = 200; // api.page_limit_max shipped default
 const PAGE_LIMIT_DEFAULT: usize = 50;
@@ -158,6 +176,11 @@ pub struct ApiState<J, S, C, I, Sc> {
     names_assigned: bool,
     enrollment: Arc<Mutex<Option<String>>>,
     build: Arc<BuildInfo>,
+    /// The authorization request's sealer: one key per process, held in
+    /// memory only (ADR-0031 d9 step 1).
+    sealer: Arc<dyn HandleSealer>,
+    /// The authorize page's client document fetcher (ADR-0031 d5).
+    documents: oauth::Documents,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -170,62 +193,27 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             names_assigned: self.names_assigned,
             enrollment: Arc::clone(&self.enrollment),
             build: Arc::clone(&self.build),
+            sealer: Arc::clone(&self.sealer),
+            documents: self.documents.clone(),
         }
     }
 }
 
+/// The router needs the connection store as well, for the OAuth routes; a
+/// composition's store is both ports.
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
     Sc: Scanner + 'static,
 {
-    /// `fork_check_ok: false` means the startup fork check (ADR-0002 d7) did
-    /// not verify: `/readyz` answers 503 and every write answers
-    /// `system.unavailable` (http-api.md "Health").
-    pub fn new(
-        app: Arc<App<J, S, C, I, Sc>>,
-        store: J,
-        db_ping: DbPing,
-        fork_check_ok: bool,
-        enrollment_token: Option<String>,
-    ) -> Self {
-        Self {
-            app,
-            store,
-            db_ping,
-            fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
-            names_assigned: true,
-            enrollment: Arc::new(Mutex::new(enrollment_token)),
-            build: Arc::new(BuildInfo::unknown()),
-        }
-    }
-
-    /// The build `/readyz` reports; without it every build field is `unknown`.
-    #[must_use]
-    pub fn with_build(mut self, build: BuildInfo) -> Self {
-        self.build = Arc::new(build);
-        self
-    }
-
-    /// The composition's startup names check. `false` means the lead's
-    /// start, which names every row that predates names before it serves
-    /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
-    /// with no name: `/readyz` reports `names_assigned` not ready and every
-    /// route but the two probes answers `system.unavailable` with that
-    /// reason, so no request reaches a row with no name. Without the call
-    /// every row is taken as named.
-    #[must_use]
-    pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
-        self.names_assigned = names_assigned;
-        self
-    }
-
     /// The two rings plus the unversioned probes, as one axum router, built
     /// from [`ROUTES`] so that it routes exactly what that table names, and
-    /// `/mcp` beside them; only the probes while names are not assigned.
+    /// `/mcp` beside them; where `oauth.issuer` is set, the [`OAUTH_ROUTES`]
+    /// outside both rings ([`oauth`]); only the probes while names are not
+    /// assigned.
     pub fn into_router(self) -> Router {
         let mut probes = Router::new();
         let mut rings = Router::new();
@@ -240,10 +228,10 @@ where
         if !self.names_assigned {
             return probes.fallback(names_unassigned).with_state(self);
         }
-        probes
+        let router = probes
             .merge(rings)
-            .route("/mcp", post(Self::mcp).get(mcp::mcp_get))
-            .with_state(self)
+            .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
+        self.with_oauth_routes(router).with_state(self)
     }
 
     /// The handler of one [`ROUTES`] entry. A table entry with no handler
@@ -275,6 +263,68 @@ where
             ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
+    }
+}
+
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    /// `fork_check_ok: false` means the startup fork check (ADR-0002 d7) did
+    /// not verify: `/readyz` answers 503 and every write answers
+    /// `system.unavailable` (http-api.md "Health").
+    pub fn new(
+        app: Arc<App<J, S, C, I, Sc>>,
+        store: J,
+        db_ping: DbPing,
+        fork_check_ok: bool,
+        enrollment_token: Option<String>,
+    ) -> Self {
+        Self {
+            app,
+            store,
+            db_ping,
+            fork_check_ok: Arc::new(AtomicBool::new(fork_check_ok)),
+            names_assigned: true,
+            enrollment: Arc::new(Mutex::new(enrollment_token)),
+            build: Arc::new(BuildInfo::unknown()),
+            sealer: Arc::new(oauth::seal::AeadSealer::generate()),
+            documents: oauth::Documents::default(),
+        }
+    }
+
+    /// The fetcher of client ID metadata documents the authorize page
+    /// reads through (ADR-0031 d5); without one every document fetch
+    /// fails, so a document client is `oauth.client_invalid` and the page
+    /// makes no outbound call.
+    #[must_use]
+    pub fn with_document_fetcher<F: ClientDocumentFetcher + 'static>(mut self, fetcher: F) -> Self {
+        self.documents = oauth::Documents::new(fetcher);
+        self
+    }
+
+    /// The build `/readyz` reports; without it every build field is `unknown`.
+    #[must_use]
+    pub fn with_build(mut self, build: BuildInfo) -> Self {
+        self.build = Arc::new(build);
+        self
+    }
+
+    /// The composition's startup names check. `false` means the lead's
+    /// start, which names every row that predates names before it serves
+    /// (ADR-0026 d11; http-api.md "Rows created before names"), left a row
+    /// with no name: `/readyz` reports `names_assigned` not ready and every
+    /// route but the two probes answers `system.unavailable` with that
+    /// reason, so no request reaches a row with no name. Without the call
+    /// every row is taken as named.
+    #[must_use]
+    pub fn with_names_assigned(mut self, names_assigned: bool) -> Self {
+        self.names_assigned = names_assigned;
+        self
     }
 
     /// Writes are refused while the fork check has not verified the stored
@@ -906,6 +956,8 @@ where
             default_workarea,
             crew,
             grants,
+            // The `connect_code` member waits for ADR-0039's route rewrite.
+            connect_code: false,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await

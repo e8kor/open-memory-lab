@@ -71,6 +71,10 @@ class AuthError(ApiError):
     """`auth`: who is calling."""
 
 
+class OAuthError(ApiError):
+    """`oauth`: connections, connect codes and the OAuth endpoints."""
+
+
 class AccessError(ApiError):
     """`access`: what this key may do."""
 
@@ -134,6 +138,7 @@ class ServerError(ApiError):
 
 FAMILIES: dict[str, type[ApiError]] = {
     "auth": AuthError,
+    "oauth": OAuthError,
     "access": AccessError,
     "request": RequestError,
     "idempotency": IdempotencyError,

@@ -34,6 +34,80 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — Connections merged onto the rewrite: the OAuth routes are served and the connect-code routes designed (ADR-0031, ADR-0039 d9, implementation)
+
+Merging the connections build into this branch. No decision changes, and ADR-0031 stays
+proposed. The build was made on v0.3.1 with nothing wired into `/mcp`, `/v1` or `/v2`, so the
+merge sorts its operations by what the lead now routes
+([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
+
+- **Served** in [openapi.yaml](api/openapi.yaml): the two discovery documents, `GET` and
+  `POST /oauth/authorize`, `POST /oauth/token` and `POST /oauth/register`, six operations routed
+  where `oauth.issuer` is set. They join the 23 routed operations, from a second public table,
+  `OAUTH_ROUTES`, beside `ROUTES`, and the server test that holds the table equal to the document
+  now compares both tables with its 29 operations. Their schemas and the `oauth` codes of the
+  `ErrorCode` enum come with them.
+- **Designed** in [openapi-designed.yaml](api/openapi-designed.yaml): `POST /v2/keys/{key}/connect-codes`
+  and `POST /v2/keys/{key}/connections/{connection_id}/revoke`, which the use cases serve and no
+  route calls, so the annex holds 47 operations; `connect_code` on key issuance, request and
+  response, and `credential` and `connections` on the key read, under `x-oml-designed-fields`;
+  the connector-key refusal of key rotation. `POST /v2/keys` still refuses `connect_code` as an
+  unknown field.
+- **Migrations:** `0012_connections.sql` and `0013_oauth_clients.sql` keep their numbers after
+  this branch's `0009`; `0010` and `0011` stay unused.
+- **SDKs:** both generated clients gain the six served operations, and their tests hold the 29
+  equal to openapi.yaml as before; both wrappers gain `OAuthError`, the class of the `oauth`
+  family [errors](api/errors.md) now declares.
+- **Not wired, as before the merge:** `/mcp` accepting an access token, the `/v2` connect-code and
+  connection routes, and `POST /v2/keys` reading `connect_code`, so
+  `oml keys issue-agent --connect-code` is refused by the server until that step lands.
+- **Pages touched:** the two OpenAPI documents, [HTTP API](api/http-api.md),
+  [the MCP plugin](api/mcp-plugin.md), the [CLI reference](cli/reference.md),
+  [SDKs](engineering/sdks.md), ADR-0031's Release line, the [register](adr/index.md),
+  [releases](product/releases.md), [roadmap](product/roadmap.md), `llms.txt` and this page.
+
+### 2026-11-04 — Connections by connect code: the tables, the use cases and the `/oauth` routes (implementation)
+
+An implementation milestone; no decision changes. The code now builds the internals and the
+unversioned OAuth surface of the proposed
+[ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md). The record stays proposed: no
+Status line moves, `info.version` stays `0.4.0-design`, no `spec-v0.4` tag is cut, and no package
+version moves until the release.
+
+- **The tables** (d5, d7–d10). Migration `0012_connections.sql` adds `api_keys.credential`,
+  `connect_codes`, `oauth_connections` and `oauth_tokens`, and `0013_oauth_clients.sql` adds
+  `oauth_clients` and `oauth_authorizations`, the provider tenant's deployment-level state
+  ([postgres-schema](data/postgres-schema.md#connections-adr-0031)). `0010` and `0011` are left to
+  other work.
+- **The use cases** (d7, d8, d10–d12). A connector key is issued with a connect code in place of a
+  value; an admin mints a fresh code, lists a key's connections and revokes one; the first
+  exchange opens a connection in one `connection.opened`, each refresh rotates by one conditional
+  update and journals nothing, and a reused refresh token or redeemed code ends the connection in
+  a `connection.revoked`. An access token resolves to exactly its key's caller.
+- **The routes** (d1, d3–d6, d9, d13, d14). With `oauth.issuer` set, the lead serves the two
+  discovery documents, `GET` and `POST /oauth/authorize` with the authorization page,
+  `POST /oauth/token` and `POST /oauth/register`, outside both rings; unset, each answers `404`.
+  The page fetches client ID metadata documents through one capped fetcher, 16 slots, one per host
+  and per address, behind the address allow-list
+  ([HTTP API](api/http-api.md#connections-oauth-for-hosted-mcp-clients)).
+- **The CLI** (d7). `oml keys issue-agent --connect-code` sends `connect_code: true`, refuses
+  `--out`, and prints the connector URL and the code; `POST /v2/keys` does not yet read the member.
+- **The check.** `oml-server-lead`'s `oauth_flow` suite runs the whole flow through the real lead:
+  a registration, the page, the code and Connect, the exchange, a refresh and the replay of the
+  rotated refresh token, which ends the connection, with exactly `connection.code_issued`,
+  `connection.opened` and `connection.revoked` journalled. It runs only where a superuser mints
+  the role pair, CI's `cargo test (Postgres)`, and prints `did not run` elsewhere.
+- **Not built:** what waits for the proposed ADR-0039, which rewrites `/mcp` and the `/v2` routes:
+  `/mcp` accepting an access token and its `401` challenge (d2); the `/v2` connect-code,
+  connections and revoke routes and the CLI's wiring to them, `oml keys connect-code` and
+  `oml keys disconnect` included; the doctor checks `oauth_discovery`, `connect_codes` and
+  `connections`; and the issuer recorded in the cluster lease (d14). FR-34 stays open: no live
+  claude.ai connection has run.
+- **No surface change** beyond the routes the 2026-10-31 entry below declared: no error code or
+  event type is added.
+- **Pages touched:** [HTTP API](api/http-api.md), [roles and keys](architecture/roles-and-keys.md),
+  [Postgres schema](data/postgres-schema.md) and this page.
+
 ### 2026-11-04 — The release map covers the v0.4.0 records and pages (merge of main)
 
 A documentation change with no decision or surface change. Merging main brings
@@ -446,6 +520,86 @@ ADR-0039's build.
 - **Pages touched:** the two records, their [register](adr/index.md) rows, `mkdocs.yml`,
   `llms.txt`, the roadmap's FR-65 and FR-67 rows and this page.
 - **Not built.**
+
+### 2026-10-31 — Connections: Claude's hosted apps over OAuth, bound by a one-time connect code (ADR-0031)
+
+The proposed [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md) designs how claude.ai,
+Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/mcp-plugin.md)
+through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth 2.1
+protected resource with its own authorization server, beside unchanged bearer keys; the binding by a
+one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014 (d1, d2,
+d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15) and ADR-0028 (d1); their Status lines gain
+the back-pointer on acceptance, not before. Sources: the MCP authorization specification, revision
+2025-11-25, Anthropic's connector documentation, the client ID metadata document draft (-02), RFC
+9700, RFC 9207, the Fetch Standard, the IANA IPv4 and IPv6 Special-Purpose Address Registries and
+Caddy's `log` directive documentation, all fetched 2026-10-31.
+
+- **Decided, not built:** the `/mcp` `401` keeps its typed body and gains the RFC 9728 challenge
+  (d2); one protected-resource document at `/.well-known/oauth-protected-resource/mcp` and one RFC
+  8414 document (d3); `/oauth/authorize`, `/oauth/token` and `/oauth/register`, unversioned, in the
+  RFCs' shapes, S256 PKCE only, public clients only, one scope `mcp` (d4); client ID metadata
+  documents preferred, dynamic registration as the fallback, no pre-registered client (d5), with the
+  document URL's form, an allow-list of global unicast addresses, TLS, proxy and concurrency bounds,
+  a document cache that evicts and never refuses, and a token endpoint that identifies the client by
+  the connection; a fixed redirect allowlist of exactly `https://claude.ai/api/mcp/auth_callback`,
+  matched byte for byte after one form decoding (d6); the connector key, which has no value and at
+  most one open connection, `oml keys issue-agent --connect-code`, and connect-code responses
+  stored in the idempotency record without the code, amending ADR-0014 d3 (d7); the connect code —
+  twelve Crockford base32 symbols, shown once, stored as a digest,
+  journalled by id, ten minutes by default, with a new code or a revoked connection ending every
+  page in progress for the key (d8); the two-step authorization page with a sealed handle and no row
+  until a code verifies, Connect and Cancel each using up the request, no cookie, fixed headers,
+  `Referrer-Policy: same-origin`, `iss` on every
+  redirect, a warning against forwarded links, and a confirmation naming the tenant and built from
+  the key's role (d9); opaque tokens bound to their connection's resource, rotation on every refresh
+  by one conditional update, reuse ending the connection, and a redeemed code ending it only in the
+  hands of its verifier's holder (d10); a token as exactly its key, only an access token at `/mcp`,
+  the key's state read at code entry, exchange and refresh, when a connection is live, `oml_attach`
+  refused under a connection, and `oml keys disconnect` (d11); `connection.code_issued`,
+  `connection.opened` and `connection.revoked`, and no event for a refresh (d12); the `oauth` error
+  family (d13); the configuration keys, doctor fields, proxy routing and access logs, and cluster
+  mode with the follower serving the lead's issuer (d14); the build order (d16).
+- **On names** ([ADR-0026](adr/ADR-0026-names-are-keys.md), accepted with v0.3.0 after this
+  record was proposed): the record follows them where they apply. `oml keys issue-agent
+  <key-name> … --connect-code` sends the key's name, and `oml keys connect-code` and `oml keys
+  disconnect` take the key by id or name, while a connection, which has no name, is named by its
+  id. The connect-code check is the issuance order's seventh step, ahead of the name check, which
+  ADR-0026 d5 keeps after every other check and which becomes the eighth. The confirmation names
+  the key and every granted workarea by name, and the journal events keep binding to ids.
+- **The vocabulary** gains three rows, *connection*, *connect code*, and *access token, refresh
+  token*, because "grant" belongs to workarea grants and "token" alone could mean a key (d7). The
+  claim↔claim and workarea↔workarea sense is always "connection edge" or "connection proposal",
+  reworded where it stood bare.
+- **`info.version` 0.3.0-design → 0.4.0-design** (d15): the error taxonomy, which the rule on this
+  page names, gains eleven `oauth` codes, and the OpenAPI document gains `/mcp`, the two discovery
+  documents, four OAuth operations and two `/v2` key operations. No `/v1` operation changes; on
+  `/v2` the connect-code operations' idempotency record stores no code. `spec-v0.3` was cut when
+  [ADR-0026](adr/ADR-0026-names-are-keys.md) was accepted, so this record opens the next
+  revision, and `spec-v0.4` is cut at its acceptance.
+- **Roadmap:** RS-2 restated in ADR-0018 d3's fixed form; the record meets its exit criterion on
+  acceptance, when the row leaves the register. FR-34 opened: the flow is designed, not built, and
+  no live connection has run. FR-35 opened: the `/v1` and `/v2` `401` answers carry no
+  `WWW-Authenticate` challenge, which RFC 9110 §15.5.2 requires. FR-36 opened: a bearer key's
+  issuance or rotation keeps its value in the idempotency record's stored response.
+- **Pages touched:** [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), the
+  [decision register](adr/index.md) (row; the D9, D13 and D14 cells; the ADR-0022 row says "key"
+  where it said "token"), `mkdocs.yml`,
+  [llms.txt](llms.txt), [HTTP API](api/http-api.md), [openapi.yaml](api/openapi.yaml),
+  [mcp-tools.json](api/mcp-tools.json) (the revision only), [errors](api/errors.md),
+  [the agent plugin](api/mcp-plugin.md), [roles and keys](architecture/roles-and-keys.md),
+  [security](architecture/security.md), [event catalog](data/event-catalog.md),
+  [Postgres schema](data/postgres-schema.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), [CLI reference](cli/reference.md),
+  [roadmap](product/roadmap.md), [positioning](product/positioning.md) ("key" where it said
+  "token"), [admission](architecture/admission.md) (the token formats in
+  `secret.api_token`), [audit and lineage](architecture/audit-and-lineage.md) and
+  [concepts](concepts.md) ("connection edge" or "connection proposal" where "connection" stood
+  bare for an edge), [the overview](index.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and [upgrades](operations/upgrades.md)
+  (the revision), and this page; outside `docs/`, `README.md` (using OML from claude.ai and a
+  phone).
+- **Not built.** No code changes with this entry; the implementation follows iteration 3, and the
+  pure modules d16 names may land before it.
 
 ## 0.3.0-design
 

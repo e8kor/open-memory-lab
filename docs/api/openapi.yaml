@@ -49,7 +49,12 @@ info:
     bodies repeat it as request_id). An operation with a fixed request media type (application/json
     everywhere except the octet-stream part upload) refuses any other request media type with 415
     request.unsupported_media. 429 limit.rate / limit.quota may be answered by any operation; it is
-    declared explicitly only on the v1 ring and high-traffic v2 surfaces.
+    declared explicitly only on the v1 ring and high-traffic v2 surfaces. Connections (ADR-0031),
+    where the deployment sets oauth.issuer: the RFC 9728 and RFC 8414 discovery documents and the
+    /oauth/* endpoints are served unversioned, unauthenticated and outside both rings, speaking
+    their RFCs' wire shapes and carrying the oauth error family inside RFC error bodies; unset,
+    each answers 404 as an unknown path does. /mcp accepting a connection's access token, and the
+    connect-code and connection routes on /v2, are designed (openapi-designed.yaml).
 servers:
   - url: /
     description: Deployment-relative; OML is deployed per installation, there is no central host.
@@ -62,6 +67,7 @@ tags:
   - name: events
   - name: review
   - name: keys
+  - name: oauth
   - name: health
 
 paths:
@@ -974,6 +980,225 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags: [oauth]
+      operationId: protectedResourceMetadata
+      summary: RFC 9728 protected-resource metadata for the /mcp resource; 404 where oauth.issuer is unset.
+      description: 'Unauthenticated, no tenant data. Built from oauth.issuer alone, never from the request Host. resource is exactly <issuer>/mcp (RFC 9728 §3.3); one authorization server, the issuer itself. The root form /.well-known/oauth-protected-resource is not served (ADR-0031 d3).'
+      security: []
+      responses:
+        '200':
+          description: The document.
+          content:
+            application/json:
+              example:
+                resource: https://oml.example.com/mcp
+                authorization_servers: [https://oml.example.com]
+                scopes_supported: [mcp]
+                bearer_methods_supported: [header]
+                resource_name: Open Memory Lab
+              schema: { $ref: '#/components/schemas/ProtectedResourceMetadata' }
+        '404':
+          description: Connections are not configured on this deployment.
+
+  /.well-known/oauth-authorization-server:
+    get:
+      tags: [oauth]
+      operationId: authorizationServerMetadata
+      summary: RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
+      description: 'Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document is served: OML issues no ID token (ADR-0031 d3).'
+      security: []
+      responses:
+        '200':
+          description: The document.
+          content:
+            application/json:
+              example:
+                issuer: https://oml.example.com
+                authorization_endpoint: https://oml.example.com/oauth/authorize
+                token_endpoint: https://oml.example.com/oauth/token
+                registration_endpoint: https://oml.example.com/oauth/register
+                response_types_supported: [code]
+                grant_types_supported: [authorization_code, refresh_token]
+                code_challenge_methods_supported: [S256]
+                token_endpoint_auth_methods_supported: [none]
+                scopes_supported: [mcp]
+                client_id_metadata_document_supported: true
+                authorization_response_iss_parameter_supported: true
+              schema: { $ref: '#/components/schemas/AuthorizationServerMetadata' }
+        '404':
+          description: Connections are not configured on this deployment.
+
+  /oauth/authorize:
+    get:
+      tags: [oauth]
+      operationId: authorize
+      summary: Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the connect-code page.
+      description: 'Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds, no parameter sent more than once among them, are checked first, before any fetch. A parameter past its bound (a repeated one and a present code_challenge that does not match the pattern included), a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal, oauth.pkce_required for an absent code_challenge or an absent or non-S256 code_challenge_method among them, redirects with the RFC error, state and iss (RFC 9207). The authorization request writes no row: the page carries it as a handle sealed by an AEAD under a key the lead holds only in memory, so opening pages is not capped, and a full document cache evicts rather than refuses (ADR-0031 d5, d9). The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page''s own POST), X-Content-Type-Options nosniff.'
+      security: []
+      parameters:
+        - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
+        - { name: client_id, in: query, required: true, schema: { type: string, maxLength: 2048 }, description: 'An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., non-default port or IP-literal host; its own WHATWG serialization), or a client_id that POST /oauth/register minted.' }
+        - { name: redirect_uri, in: query, required: false, schema: { type: string, maxLength: 2048 }, description: 'Exactly one of the client''s registered URIs, inside the allowlist (exactly https://claude.ai/api/mcp/auth_callback), matched byte for byte on the value after exactly one application/x-www-form-urlencoded decoding, never after URL parsing or any further decoding; optional for a client with exactly one.' }
+        - { name: code_challenge, in: query, required: false, schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }, description: 'Required by the flow: absent, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. Present but not matching the pattern, it is request.validation on the page.' }
+        - { name: code_challenge_method, in: query, required: false, schema: { type: string, enum: [S256] }, description: 'Required by the flow: absent (which RFC 7636 §4.3 reads as plain) or anything but S256, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted.' }
+        - { name: state, in: query, required: false, schema: { type: string, maxLength: 512 }, description: 'At most 512 bytes; echoed verbatim on the redirect, percent-encoded as a query parameter.' }
+        - { name: resource, in: query, required: false, schema: { type: string }, description: 'When sent, exactly <issuer>/mcp.' }
+        - { name: scope, in: query, required: false, schema: { type: string, enum: [mcp] } }
+      responses:
+        '200':
+          description: The connect-code page.
+          content:
+            text/html:
+              schema: { type: string }
+        '302':
+          description: A refusal after the redirect URI was validated (oauth.pkce_required, oauth.resource_mismatch, request.validation), redirected with error, error_description, state and iss.
+        '400':
+          description: A refusal page naming its code (request.validation for a parameter past its bound, oauth.client_invalid, oauth.redirect_refused).
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [oauth]
+      operationId: authorizeSubmit
+      summary: The page's own form — the connect code, then the confirmation.
+      description: 'Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided (docs/architecture/roles-and-keys.md, Connections); any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request''s row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key''s name, principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss. Connect and Cancel each delete the authorization request''s row in their own commit, so a later step-3 POST with that handle names no row and answers oauth.authorization_expired on the page (ADR-0031 d9).'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - type: object
+                  description: 'Step 2: the connect code.'
+                  required: [handle, connect_code]
+                  additionalProperties: false
+                  properties:
+                    handle: { type: string, description: The authorization request's handle the page carries. }
+                    connect_code: { type: string, description: 'The code, normalized by Crockford base32 decoding.' }
+                - type: object
+                  description: 'Step 3: the confirmation, only after a verified code.'
+                  required: [handle, action]
+                  additionalProperties: false
+                  properties:
+                    handle: { type: string, description: The authorization request's handle the page carries. }
+                    action: { type: string, enum: [connect, cancel] }
+      responses:
+        '200':
+          description: The confirmation page.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: The redirect to the client, with code, state and iss, or with error, state and iss.
+        '400':
+          description: The form again, or a refusal page naming its code (oauth.connect_code_invalid, oauth.authorization_expired, request.validation).
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: The refusal page for a submission that fails the origin check, oauth.origin_refused; never redirected, and no attempt is consumed.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /oauth/token:
+    post:
+      tags: [oauth]
+      operationId: token
+      summary: Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
+      description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; which tokens a refresh accepts, and when reuse of a refresh token or an authorization code revokes the connection (connection.revoked), are declared on docs/architecture/roles-and-keys.md (Connections). The client is the one stored on the code''s or refresh token''s connection; the client tables are never read here, a client_id that differs from the connection''s is invalid_grant, and invalid_client answers only a request that sends client authentication: 401 with WWW-Authenticate for an Authorization header, 400 for a client_secret in the body. A revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2), and a parameter sent more than once is request.validation (invalid_request). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '200':
+          description: The token pair. Sent with Cache-Control no-store.
+          content:
+            application/json:
+              example:
+                access_token: oml_at_Q3kV8mT1xR6pL2nW9zA4cY7bD5eG0hJ3kM8sU1wXq2E
+                token_type: Bearer
+                expires_in: 3600
+                refresh_token: oml_rt_H5jN2qP8vS4tY1uB7cD3fK9mR6wZ0xA2eG4hL8nT5sV
+                scope: mcp
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '400':
+          description: 'An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, for a request that sends a client_secret in the body), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope).'
+          content:
+            application/json:
+              example:
+                error: invalid_grant
+                error_description: 'oauth.refresh_invalid: a refresh token is used once; a reused one ends its connection.'
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '401':
+          description: 'oauth.client_invalid as invalid_client, for a request that sends an Authorization header: every client is public (RFC 6749 §5.2).'
+          headers:
+            WWW-Authenticate:
+              description: The scheme the request used, for example Basic realm="oml" (RFC 6749 §5.2).
+              schema: { type: string }
+          content:
+            application/json:
+              example:
+                error: invalid_client
+                error_description: 'oauth.client_invalid: every client is public and sends no client authentication.'
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '415':
+          description: A body other than application/x-www-form-urlencoded, as invalid_request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+
+  /oauth/register:
+    post:
+      tags: [oauth]
+      operationId: registerClient
+      summary: RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only, redirect URIs inside the allowlist.
+      description: 'Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. client_name is required, since the page shows it; an absent token_endpoint_auth_method is registered and echoed as none, and any other value than none is request.validation (invalid_client_metadata). A registered client that has not connected (no Connect on the page named it) within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              client_name: Example MCP client
+              redirect_uris: [https://claude.ai/api/mcp/auth_callback]
+              token_endpoint_auth_method: none
+              grant_types: [authorization_code, refresh_token]
+              response_types: [code]
+            schema: { $ref: '#/components/schemas/ClientRegistrationRequest' }
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              example:
+                client_id: oml_client_8Rk2Tq5Vx1Lm7Pn3Wz9Ac4Yb6Dd0Eg
+                client_id_issued_at: 1793455980
+                client_name: Example MCP client
+                redirect_uris: [https://claude.ai/api/mcp/auth_callback]
+                token_endpoint_auth_method: none
+                grant_types: [authorization_code, refresh_token]
+                response_types: [code]
+              schema: { $ref: '#/components/schemas/ClientRegistration' }
+        '400':
+          description: 'An RFC 7591 error: oauth.redirect_refused (invalid_redirect_uri), request.validation (invalid_client_metadata).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '429':
+          description: limit.rate — the cap on unused registrations; Retry-After says when.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+
   /healthz:
     get:
       tags: [health]
@@ -1248,7 +1473,7 @@ components:
 
     ErrorCode:
       type: string
-      description: The closed error vocabulary; identical to docs/api/errors.md by construction.
+      description: The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused is designed to answer on /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope, once those routes are wired (ADR-0031, ADR-0039 d9).
       enum:
         - auth.missing
         - auth.invalid
@@ -1264,6 +1489,17 @@ components:
         - request.payload_too_large
         - request.workarea_unresolved
         - request.unsupported_media
+        - oauth.client_invalid
+        - oauth.redirect_refused
+        - oauth.pkce_required
+        - oauth.resource_mismatch
+        - oauth.authorization_expired
+        - oauth.connect_code_invalid
+        - oauth.authorization_code_invalid
+        - oauth.refresh_invalid
+        - oauth.origin_refused
+        - oauth.attach_refused
+        - oauth.connect_refused
         - idempotency.in_progress
         - idempotency.digest_mismatch
         - submission.scan_veto
@@ -1833,6 +2069,82 @@ components:
           required: [value]
           properties:
             value: { type: string, description: "The secret — returned exactly once, journalled as issued-without-value." }
+
+    ProtectedResourceMetadata:
+      type: object
+      required: [resource, authorization_servers]
+      properties:
+        resource: { type: string, description: 'Exactly <issuer>/mcp (RFC 9728 §3.3).' }
+        authorization_servers: { type: array, items: { type: string }, minItems: 1, maxItems: 1 }
+        scopes_supported: { type: array, items: { type: string, enum: [mcp] } }
+        bearer_methods_supported: { type: array, items: { type: string, enum: [header] } }
+        resource_name: { type: string }
+
+    AuthorizationServerMetadata:
+      type: object
+      required: [issuer, authorization_endpoint, token_endpoint, response_types_supported, code_challenge_methods_supported]
+      properties:
+        issuer: { type: string }
+        authorization_endpoint: { type: string }
+        token_endpoint: { type: string }
+        registration_endpoint: { type: string }
+        response_types_supported: { type: array, items: { type: string, enum: [code] } }
+        grant_types_supported: { type: array, items: { type: string, enum: [authorization_code, refresh_token] } }
+        code_challenge_methods_supported: { type: array, items: { type: string, enum: [S256] } }
+        token_endpoint_auth_methods_supported: { type: array, items: { type: string, enum: [none] } }
+        scopes_supported: { type: array, items: { type: string, enum: [mcp] } }
+        client_id_metadata_document_supported: { type: boolean, enum: [true] }
+        authorization_response_iss_parameter_supported: { type: boolean, enum: [true], description: 'RFC 9207 §3: every authorization response, success or error, carries iss.' }
+
+    TokenRequest:
+      type: object
+      required: [grant_type, client_id]
+      properties:
+        grant_type: { type: string, enum: [authorization_code, refresh_token] }
+        client_id: { type: string }
+        code: { type: string, description: authorization_code only. }
+        redirect_uri: { type: string, description: "authorization_code only. Required exactly when the authorize request carried it, and then equal to it; when that request omitted it, omitted or equal to the client's one registered URI; otherwise oauth.authorization_code_invalid." }
+        code_verifier: { type: string, description: authorization_code only; S256 against the authorization request's code_challenge. }
+        refresh_token: { type: string, description: refresh_token only. }
+        resource: { type: string, description: 'When sent, exactly <issuer>/mcp.' }
+        scope: { type: string, enum: [mcp] }
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, scope]
+      properties:
+        access_token: { type: string, pattern: '^oml_at_[A-Za-z0-9]{43}$', description: 'Opaque; the server stores only its SHA-256. For /mcp alone, which accepts it once /mcp is wired to connections (designed, ADR-0031 d11).' }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, description: Seconds; the oauth.access_token_ttl setting. }
+        refresh_token: { type: string, pattern: '^oml_rt_[A-Za-z0-9]{43}$', description: 'Opaque, single-use; rotated by every refresh.' }
+        scope: { type: string, enum: [mcp] }
+
+    OAuthError:
+      type: object
+      required: [error]
+      description: 'RFC 6749 §5.2 / RFC 7591 §3.2.2 error body. error is the RFC code a client branches on; error_description begins with the OML code (ErrorCode) and its rule (docs/api/errors.md, the oauth family).'
+      properties:
+        error: { type: string, enum: [invalid_request, invalid_client, invalid_grant, unsupported_grant_type, invalid_scope, invalid_target, invalid_redirect_uri, invalid_client_metadata] }
+        error_description: { type: string }
+
+    ClientRegistrationRequest:
+      type: object
+      required: [redirect_uris, client_name]
+      properties:
+        redirect_uris: { type: array, minItems: 1, items: { type: string }, description: 'Each inside the allowlist: exactly https://claude.ai/api/mcp/auth_callback, matched byte for byte on the JSON string value, never after URL parsing or any further decoding.' }
+        client_name: { type: string, description: 'Required, since the authorization page shows it; absent, it is request.validation (invalid_client_metadata).' }
+        token_endpoint_auth_method: { type: string, enum: [none], description: 'Absent, it is registered as none and echoed as none; any other value is request.validation (invalid_client_metadata).' }
+        grant_types: { type: array, items: { type: string, enum: [authorization_code, refresh_token] } }
+        response_types: { type: array, items: { type: string, enum: [code] } }
+
+    ClientRegistration:
+      allOf:
+        - { $ref: '#/components/schemas/ClientRegistrationRequest' }
+        - type: object
+          required: [client_id, client_id_issued_at]
+          properties:
+            client_id: { type: string }
+            client_id_issued_at: { type: integer }
 
     Health:
       type: object

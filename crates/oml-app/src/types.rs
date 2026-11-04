@@ -3,9 +3,12 @@
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
+use oml_domain::oauth::{
+    ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
+};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,8 +22,40 @@ use crate::ports::StoreError;
 /// grant or denial can name the key (ADR-0025 d13).
 pub const PROVIDER_TENANT: Uuid = Uuid::nil();
 
-/// A stored API key row: everything about a key is looked up by the value's
-/// hash; the value itself is never stored (roles-and-keys.md key format).
+/// How a key authenticates, fixed for its life (postgres-schema.md
+/// `api_keys.credential`; roles-and-keys.md connections; ADR-0031 d7): a
+/// bearer key has a value, and a connector key has none and acts only
+/// through a connection. A key is one or the other, never both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    Bearer,
+    Connection,
+}
+
+impl Credential {
+    /// The spelling of `key.issued.credential` and of the column.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Credential::Bearer => "bearer",
+            Credential::Connection => "connection",
+        }
+    }
+
+    /// The credential a spelling names; `None` for any other string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "bearer" => Some(Credential::Bearer),
+            "connection" => Some(Credential::Connection),
+            _ => None,
+        }
+    }
+}
+
+/// A stored API key row: everything about a bearer key is looked up by the
+/// value's hash; the value itself is never stored (roles-and-keys.md key
+/// format).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub key_id: Uuid,
@@ -34,8 +69,14 @@ pub struct KeyRecord {
     /// first admin key, which no key issues (postgres-schema.md
     /// `api_keys.issued_by`).
     pub issued_by: Option<Uuid>,
-    /// `sha256:<hex>` of the full key string, prefix included.
-    pub key_hash: String,
+    /// `bearer` or `connection` (ADR-0031 d7).
+    pub credential: Credential,
+    /// `sha256:<hex>` of the full key string, prefix included. A connector
+    /// key has none, and the store refuses one that carries a hash, so no
+    /// value ever resolves it through `key_by_hash`; a bearer key has none
+    /// only when it predates its hash, as a PoC key does (postgres-schema.md
+    /// `api_keys_connector_has_no_hash`; ADR-0026 d11).
+    pub key_hash: Option<String>,
     /// The key's name: unique in its tenant, operator keys sharing the
     /// provider's one namespace, and never released, a revoked key's
     /// included (roles-and-keys.md key names; ADR-0026 d1, d9, d10). Every
@@ -50,6 +91,549 @@ pub struct KeyRecord {
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
     /// ADR-0026 d10).
     pub revoked_at: Option<EventTime>,
+}
+
+/// A connect code as `connection.code_issued` mints it, for the commit's
+/// tenant: the code is shown once and never stored, so the row holds only
+/// the SHA-256 of its twelve decoded symbols, which no journal payload
+/// carries (roles-and-keys.md connect codes; ADR-0031 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCode {
+    pub code_id: Uuid,
+    /// The connector key the code opens a connection for.
+    pub key_id: Uuid,
+    pub code_hash: Sha256Hash,
+    pub expires_at: EventTime,
+}
+
+/// A stored connect code (postgres-schema.md `connect_codes`; ADR-0031 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCodeRecord {
+    pub code_id: Uuid,
+    pub key_id: Uuid,
+    pub code_hash: Sha256Hash,
+    pub expires_at: EventTime,
+    /// The seq of its `connection.code_issued`.
+    pub issued_seq: u64,
+    /// Its first correct entry on the authorization page.
+    pub redeemed_at: Option<EventTime>,
+    /// The seq of the `connection.code_issued`, `connection.revoked` or
+    /// `key.revoked` that voided it.
+    pub voided_seq: Option<u64>,
+}
+
+/// How a connection's client was identified (postgres-schema.md
+/// `oauth_connections.client_kind`; ADR-0031 d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientKind {
+    /// A client ID metadata document, fetched and verified.
+    Cimd,
+    /// A dynamic client registration.
+    Dcr,
+}
+
+impl ClientKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClientKind::Cimd => "cimd",
+            ClientKind::Dcr => "dcr",
+        }
+    }
+}
+
+/// A stored connection: one OAuth client's standing authority to act as one
+/// connector key at `/mcp`. Connect creates it `authorized`, the token
+/// exchange's `connection.opened` opens it, and it ends `revoked`, once
+/// (postgres-schema.md `oauth_connections`; roles-and-keys.md connections;
+/// ADR-0031 d7, d10, d12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionRecord {
+    pub connection_id: Uuid,
+    pub key_id: Uuid,
+    /// The connect code it came from; one code yields at most one.
+    pub code_id: Uuid,
+    pub client_id: String,
+    pub client_kind: ClientKind,
+    /// SHA-256 of the client's document or registration.
+    pub client_metadata_digest: Sha256Hash,
+    pub redirect_uri: String,
+    /// Whether the authorize request named `redirect_uri`.
+    pub redirect_uri_sent: bool,
+    /// `<issuer>/mcp` at Connect, which its tokens are bound to.
+    pub resource: String,
+    /// The S256 PKCE challenge.
+    pub code_challenge: String,
+    /// The authorization code's SHA-256, kept after redemption so a second
+    /// redemption is recognized.
+    pub auth_code_hash: Option<Sha256Hash>,
+    pub auth_code_expires_at: Option<EventTime>,
+    pub auth_code_redeemed_at: Option<EventTime>,
+    pub state: ConnectionState,
+    /// The seq of its `connection.opened`.
+    pub opened_seq: Option<u64>,
+    /// The seq of its `connection.revoked`, or of the `connection.opened`
+    /// that replaced it.
+    pub revoked_seq: Option<u64>,
+    pub created_at: EventTime,
+}
+
+/// An OAuth client the authorization server knows, a cached client ID
+/// metadata document or a dynamic registration: a provider-tenant row that
+/// holds no tenant content (postgres-schema.md `oauth_clients`; ADR-0031
+/// d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthClientRecord {
+    /// A metadata document's https URL, or a server-minted id.
+    pub client_id: String,
+    pub kind: ClientKind,
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    /// SHA-256 of the document or registration as received.
+    pub metadata_digest: Sha256Hash,
+    /// A cached document's fetch; it is kept at most 24 hours from it.
+    pub fetched_at: Option<EventTime>,
+    /// A cached document's `Cache-Control` lifetime from `fetched_at`, in
+    /// seconds, at most 24 hours; past it the copy is served only when a
+    /// fresh fetch fails or a fetch cap is full (ADR-0031 d5).
+    pub max_age: Option<u32>,
+    /// A cached document's last use, the cache's eviction order.
+    pub last_used_at: Option<EventTime>,
+    /// Stamped by the first Connect that names the client; eviction and the
+    /// removal of an unused registration read it, and a refetch keeps it
+    /// (ADR-0031 d5, d9).
+    pub connected_at: Option<EventTime>,
+    pub created_at: EventTime,
+}
+
+/// A client's self-description as admitted: a fetched client ID metadata
+/// document or a dynamic registration, before the store keeps it
+/// (postgres-schema.md `oauth_clients`; ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientDescription {
+    /// The document's https URL, or the server-minted id of a registration.
+    pub client_id: String,
+    pub client_name: String,
+    /// Each inside the redirect allowlist (ADR-0031 d6).
+    pub redirect_uris: Vec<String>,
+    /// SHA-256 of the document or registration as received.
+    pub metadata_digest: Sha256Hash,
+}
+
+/// What caching a fetched document did (ADR-0031 d5): a full cache never
+/// refuses a document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentCaching {
+    /// The document is cached, refreshed in place or as a new row; a new
+    /// row in a full cache evicted the named least recently used client
+    /// that had not connected.
+    Cached { evicted: Option<String> },
+    /// The cache is full and every cached client has connected: nothing was
+    /// written, and the fetched document serves its request uncached.
+    NotCached,
+}
+
+/// An authorization request whose connect code verified: a provider-tenant
+/// row found by the SHA-256 of its confirmation handle, never the handle,
+/// and naming the code's tenant, code and key as plain ids
+/// (postgres-schema.md `oauth_authorizations`; ADR-0031 d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationRecord {
+    pub authorization_id: Uuid,
+    /// SHA-256 of the confirmation's 256-bit handle.
+    pub handle_hash: Sha256Hash,
+    pub client_id: String,
+    pub client_kind: ClientKind,
+    pub metadata_digest: Sha256Hash,
+    pub redirect_uri: String,
+    pub redirect_uri_sent: bool,
+    /// The S256 PKCE challenge.
+    pub code_challenge: String,
+    /// Echoed verbatim.
+    pub state: Option<String>,
+    /// The sealed handle's expiry.
+    pub expires_at: EventTime,
+    pub code_id: Uuid,
+    pub code_tenant_id: Uuid,
+    pub key_id: Uuid,
+}
+
+/// The query of `GET /oauth/authorize`, each parameter as received after its
+/// one form decoding, `None` where absent (http-api.md; ADR-0031 d4).
+/// `repeated` is whether any parameter was sent more than once (RFC 6749
+/// §3.1), which the edge sees and the bounds refuse.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuthorizeParams {
+    pub client_id: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub response_type: Option<String>,
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
+    pub state: Option<String>,
+    pub resource: Option<String>,
+    pub scope: Option<String>,
+    pub repeated: bool,
+}
+
+/// The connect-code page of a valid authorize request (ADR-0031 d9 step 1):
+/// the sealed handle its form carries, and what the page shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizePage {
+    /// The authorization request sealed under the lead's in-memory key.
+    pub handle: String,
+    pub client_name: String,
+    /// A document client's whole host, shown as "verified by"; `None` for a
+    /// registered client, whose name is marked "name not verified".
+    pub verified_by: Option<String>,
+    /// The redirect URI's host.
+    pub redirect_host: String,
+    pub attempts_left: u8,
+    pub expires_at: EventTime,
+}
+
+/// What `GET /oauth/authorize` answers (ADR-0031 d4, d9 step 1;
+/// errors.md "`oauth` — connections").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorizeOutcome {
+    /// The page for a live authorization request.
+    Page(AuthorizePage),
+    /// A refusal of a bound, the client or the redirect URI: a `400` page,
+    /// never a redirect, since neither the redirect URI nor the `state` was
+    /// accepted.
+    PageRefusal(Refusal),
+    /// A refusal after the client and the redirect URI were accepted: a
+    /// redirect to `redirect_uri` with the refusal's RFC `error`
+    /// ([`Refusal::authorize_error`]), its description, the `state` echoed
+    /// and `iss` (RFC 9207 §2).
+    RedirectRefusal {
+        error: Refusal,
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
+/// What Connect adds to an authorization request's row to make its
+/// `authorized` connection: the rest of the connection is copied from the
+/// row the confirmation deletes (postgres-schema.md "connections
+/// (ADR-0031)"; ADR-0031 d9, d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectGrant {
+    pub connection_id: Uuid,
+    /// `<issuer>/mcp` at Connect.
+    pub resource: String,
+    /// SHA-256 of the authorization code Connect mints.
+    pub auth_code_hash: Sha256Hash,
+    pub auth_code_expires_at: EventTime,
+    /// Connect's time: the connection's `created_at` and the client's
+    /// `connected_at` stamp.
+    pub at: EventTime,
+}
+
+/// What Connect's one transaction did (postgres-schema.md "connections
+/// (ADR-0031)"; roles-and-keys.md connections; ADR-0031 d8, d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectOutcome {
+    /// The request's row is deleted, its client stamped `connected_at`
+    /// where it was null, and the connection created `authorized` under
+    /// `tenant_id`, the code's tenant.
+    Authorized {
+        tenant_id: Uuid,
+        connection: Box<ConnectionRecord>,
+    },
+    /// No row holds the handle's digest: Connect or Cancel used it, or it
+    /// lapsed and was removed. Answered `oauth.authorization_expired`.
+    NoRequest,
+    /// The request's connect code was voided since its entry, by a newer
+    /// code or a connection revocation of its key. Nothing changed;
+    /// answered `oauth.authorization_expired` (`code_voided`).
+    CodeVoided,
+}
+
+/// A granted workarea as the confirmation names it: by its name, with the
+/// grant's role (ADR-0031 d9 step 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationGrant {
+    pub workarea_id: Uuid,
+    pub workarea: Name,
+    pub role: Role,
+}
+
+/// What the confirmation shows a correct code's holder before the
+/// connection opens (http-api.md "The authorization page"; ADR-0031 d9
+/// step 2): the tenant by the name the operator gave it, the key's name,
+/// principal and role, every granted workarea with its grant's role, and
+/// the workareas each verb-kind sentence names, from the key's effective
+/// access at each granted workarea. The page builds its sentences from
+/// these; "Everything it writes is held…" follows from a non-empty
+/// `writes_in` or `proposes_in`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationView {
+    /// The confirmation form's 256-bit handle, in base62; the store holds
+    /// only its SHA-256.
+    pub handle: String,
+    pub tenant_name: Name,
+    /// `None` only for a key issued before names, which the lead names
+    /// before it serves (ADR-0026 d11).
+    pub key_name: Option<Name>,
+    pub principal: String,
+    pub role: Role,
+    /// In grant order.
+    pub grants: Vec<ConfirmationGrant>,
+    /// Granted workareas where writer is effective: "Claude can remember
+    /// and learn as this agent in …".
+    pub writes_in: Vec<Name>,
+    /// Granted workareas where reader is effective: "Claude can recall and
+    /// read as this agent in …".
+    pub reads_in: Vec<Name>,
+    /// Granted workareas where dreamer is effective, its propose class:
+    /// "Claude can propose edits and edges as this agent in …".
+    pub proposes_in: Vec<Name>,
+    /// Granted workareas whose tenant policy permits `self_signed` rows.
+    /// No journalled tenant policy permits them in this build, so it is
+    /// always empty here.
+    pub self_signed_in: Vec<Name>,
+}
+
+/// What a code entry on the authorization page answers (http-api.md
+/// `POST /oauth/authorize` step 2; ADR-0031 d8, d9 step 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeEntryOutcome {
+    /// A correct code of a live key: spent, its request's row written.
+    Confirmation(Box<ConfirmationView>),
+    /// Any other entry — unknown, malformed, expired, voided, spent, or a
+    /// revoked or expired key's code alike: the form again,
+    /// `400 oauth.connect_code_invalid`, under a new sealed handle carrying
+    /// one attempt fewer.
+    WrongCode { handle: String, attempts_left: u8 },
+    /// The fifth wrong entry, or an entry on a handle that opens to a
+    /// request past its ten minutes: the request ends, redirected to
+    /// `redirect_uri` with `error` ([`Refusal::authorize_error`],
+    /// `access_denied`), the `state` echoed and `iss`. The code is not
+    /// read, so a lapsed handle spends nothing and counts no failure.
+    Denied {
+        error: Refusal,
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
+/// The confirmation's two buttons (`action=connect|cancel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Connect,
+    Cancel,
+}
+
+/// What a confirmation answers: a `303` to the request's redirect URI
+/// (http-api.md `POST /oauth/authorize` step 3; ADR-0031 d9 step 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmOutcome {
+    /// Connect: the connection is `authorized`; the redirect carries the
+    /// single-use authorization code, alive 60 seconds, the `state`
+    /// verbatim and `iss`. The code appears here and nowhere else.
+    Connected {
+        redirect_uri: String,
+        code: String,
+        state: Option<String>,
+        iss: String,
+    },
+    /// Cancel: the redirect carries `error=access_denied`, the `state` and
+    /// `iss`.
+    Cancelled {
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+    /// A handle that names a row whose request outlived its ten minutes or
+    /// whose code is voided: `oauth.authorization_expired`, redirected to
+    /// the row's `redirect_uri` with `error` ([`Refusal::authorize_error`],
+    /// `access_denied`), the `state` echoed and `iss` (errors.md: a page
+    /// only when the handle is unknown). Nothing is connected.
+    Denied {
+        error: Refusal,
+        redirect_uri: String,
+        state: Option<String>,
+        iss: String,
+    },
+}
+
+/// A row a pre-tenant lookup found by a digest, with the tenant whose
+/// `oml.tenant_id` everything after it runs under (postgres-schema.md
+/// "connections (ADR-0031)"; ADR-0031 d8, d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantRow<T> {
+    pub tenant_id: Uuid,
+    pub row: T,
+}
+
+/// A token as its mint hands it to the store: the SHA-256 of the token
+/// string and its expiry, never the token (postgres-schema.md
+/// `oauth_tokens`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MintedToken {
+    pub token_hash: Sha256Hash,
+    /// Set at minting; rotation never changes it.
+    pub expires_at: EventTime,
+}
+
+/// The access and refresh tokens one exchange or one refresh mints
+/// (ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenPair {
+    pub access: MintedToken,
+    pub refresh: MintedToken,
+}
+
+/// A stored token row (postgres-schema.md `oauth_tokens`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenRecord {
+    pub token_hash: Sha256Hash,
+    pub connection_id: Uuid,
+    pub kind: TokenKind,
+    pub expires_at: EventTime,
+    /// A refresh token's rotation: presenting it after this is reuse.
+    pub rotated_at: Option<EventTime>,
+    pub created_at: EventTime,
+}
+
+/// What a refresh reads under its connection's row lock, before its
+/// conditional update: the presented refresh token's rotation and expiry
+/// at the refresh's time, its connection's state, client and resource, and
+/// its key's state (postgres-schema.md, redemption and rotation are
+/// conditional updates; ADR-0031 d10, d11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshFacts {
+    pub connection_id: Uuid,
+    pub connection: ConnectionState,
+    pub client_id: String,
+    pub resource: String,
+    pub key: KeyState,
+    pub rotated: bool,
+    pub expired: bool,
+}
+
+impl RefreshFacts {
+    /// The facts as the domain's refresh rule reads them.
+    #[must_use]
+    pub fn row(&self) -> RefreshRow<'_> {
+        RefreshRow {
+            rotated: self.rotated,
+            expired: self.expired,
+            connection: self.connection,
+            client_id: &self.client_id,
+            resource: &self.resource,
+            key: self.key,
+        }
+    }
+}
+
+/// What a refresh's one transaction did: the decision its caller's rule
+/// took on the facts read under the lock, and those facts, `None` for a
+/// digest no refresh row of the tenant holds. Only
+/// [`RefreshDecision::Rotate`] wrote anything: the presented token's
+/// `rotated_at` and the new pair (ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshOutcome {
+    pub decision: RefreshDecision,
+    pub facts: Option<RefreshFacts>,
+}
+
+/// How many rows one sweep removed or cleared (postgres-schema.md, the
+/// removal paragraph; ADR-0031 d9, d10).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SweepReport {
+    /// `authorized` connections whose authorization code lapsed unexchanged.
+    pub connections_removed: u64,
+    /// Token rows past their own expiry, or of a revoked connection.
+    pub tokens_removed: u64,
+    /// Revoked connections whose `auth_code_hash` was cleared.
+    pub codes_cleared: u64,
+    /// Authorization requests 24 hours past their expiry.
+    pub authorizations_removed: u64,
+}
+
+/// Client authentication a token request sent, which no client here may
+/// send, since every client is public (http-api.md `POST /oauth/token`;
+/// ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientAuthentication {
+    /// An `Authorization` header, by the scheme it used, answered `401`
+    /// with `WWW-Authenticate` naming that scheme.
+    Header { scheme: String },
+    /// A `client_secret` in the body, answered `400`.
+    BodySecret,
+}
+
+/// A `grant_type=authorization_code` form, each parameter after its one
+/// form decoding; an absent `code` or a repeated parameter is the edge's
+/// `request.validation` (http-api.md `POST /oauth/token`; ADR-0031 d10).
+/// Its `Debug` names no secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExchangeForm {
+    pub code: String,
+    pub client_id: String,
+    pub redirect_uri: Option<String>,
+    pub code_verifier: String,
+    pub resource: Option<String>,
+    pub client_authentication: Option<ClientAuthentication>,
+}
+
+impl std::fmt::Debug for ExchangeForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExchangeForm")
+            .field("client_id", &self.client_id)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("resource", &self.resource)
+            .field("client_authentication", &self.client_authentication)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A `grant_type=refresh_token` form (http-api.md `POST /oauth/token`;
+/// ADR-0031 d10, d11). Its `Debug` names no secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RefreshForm {
+    pub refresh_token: String,
+    pub client_id: String,
+    pub resource: Option<String>,
+    pub client_authentication: Option<ClientAuthentication>,
+}
+
+impl std::fmt::Debug for RefreshForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshForm")
+            .field("client_id", &self.client_id)
+            .field("resource", &self.resource)
+            .field("client_authentication", &self.client_authentication)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The pair one exchange or one refresh answers: `token_type` is `Bearer`
+/// and `scope` `mcp`, each fixed, and `expires_in` the access token's
+/// lifetime in seconds. A [`Token`]'s `Debug` names only its kind
+/// (http-api.md `POST /oauth/token`; ADR-0031 d10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedTokens {
+    pub access_token: Token,
+    pub refresh_token: Token,
+    pub expires_in: u64,
+}
+
+/// A dynamic registration as `201` answers it: a server-minted
+/// `client_id`, no secret and no registration access token, its
+/// `token_endpoint_auth_method` always `none` (http-api.md
+/// `POST /oauth/register`; ADR-0031 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredClient {
+    pub client_id: String,
+    /// When the registration was stored: its `client_id_issued_at`.
+    pub issued_at: EventTime,
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    pub token_endpoint_auth_method: &'static str,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
@@ -383,6 +967,9 @@ pub struct BootstrapRequest {
 #[derive(Debug, Clone)]
 pub struct IssuedKey {
     pub key_id: Uuid,
+    /// The bearer key's value; empty for a connector key, which has none
+    /// and whose [`IssuedKey::connect_code`] stands in its place (ADR-0031
+    /// d7).
     pub value: String,
     pub role: Role,
     pub principal: String,
@@ -397,6 +984,26 @@ pub struct IssuedKey {
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
     pub access: KeyAccess,
+    /// A connector key's connect code, returned only after the key's last
+    /// `grant.issued` and its `connection.code_issued` committed; `None` for
+    /// a bearer key (roles-and-keys.md issuance order, step 7; ADR-0031 d7).
+    pub connect_code: Option<ConnectCodeIssued>,
+}
+
+/// A connect code as its minting answers it: `{code_id, code, expires_at,
+/// connector_url}` (http-api.md `POST /v2/keys/{key_id}/connect-codes`;
+/// openapi.yaml `ConnectCode`; ADR-0031 d7, d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectCodeIssued {
+    pub code_id: Uuid,
+    /// The twelve symbols in three groups of four, shown exactly once:
+    /// `Some` in a fresh answer and `None` in the response an idempotency
+    /// record stores, so no record holds a code (ADR-0031 d7, d8).
+    pub code: Option<String>,
+    pub expires_at: EventTime,
+    /// `<issuer>/mcp`, from `oauth.issuer`, the URL to enter as the custom
+    /// connector.
+    pub connector_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -417,7 +1024,7 @@ pub struct IssueKeyRequest {
     pub role: Role,
     /// The key's name, required at issuance and distinct from its principal
     /// and its label; whether it is taken is checked after every other check
-    /// (step 7, `name.taken`; ADR-0026 d5, d9).
+    /// (step 8, `name.taken`; ADR-0026 d5, d9).
     pub name: Name,
     pub principal: String,
     /// The issuing admin's attestation; `None` journals null and stores the
@@ -430,6 +1037,10 @@ pub struct IssueKeyRequest {
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
+    /// Issue a connector key: no value, a connect code in its place, after
+    /// step 7 admits a key that can hold a connection (roles-and-keys.md
+    /// issuance order, step 7; ADR-0031 d7).
+    pub connect_code: bool,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -1011,6 +1622,19 @@ pub enum AppError {
     ChainVerify(#[from] VerifyError),
     #[error(transparent)]
     Jcs(#[from] JcsError),
+    /// A refusal of the connection flow, one `oauth` code or
+    /// `request.validation`; its status and shape are the edge's
+    /// (errors.md "`oauth` — connections"; ADR-0031 d13).
+    #[error(transparent)]
+    OAuth(#[from] Refusal),
+    /// A token request that sent client authentication, by its scheme
+    /// (`None` for a `client_secret` in the body): `oauth.client_invalid`
+    /// as `invalid_client`, which a header answers `401` naming the scheme
+    /// it used (http-api.md `POST /oauth/token`; ADR-0031 d5).
+    #[error(
+        "oauth.client_invalid: clients are public and send no client authentication (ADR-0031 d5)"
+    )]
+    ClientAuthentication { scheme: Option<String> },
     #[error(transparent)]
     Store(StoreError),
 }

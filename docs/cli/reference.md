@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals; oml write, oml read and oml events, the memory verbs every key may run within its access, and the hidden v0.3.0 verbs they replace; and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour; oml hook tool-failure and oml hook session-end, recall after a failed command and its session cache; how to verify and install the CLI's release archive on each OS, and what differs on Windows
+answers: every administrative CLI verb, its flags and refusals; oml write, oml read and oml events, the memory verbs every key may run within its access, and the hidden v0.3.0 verbs they replace; and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the connector key, its connect code and the connection verbs; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour; oml hook tool-failure and oml hook session-end, recall after a failed command and its session cache; how to verify and install the CLI's release archive on each OS, and what differs on Windows
 -->
 
 # CLI reference
@@ -233,7 +233,9 @@ Key lifecycle rules — issuer ceiling, expiry, the bootstrap ceremony — are d
 [roles and keys](../architecture/roles-and-keys.md). The CLI adds the **show-once ceremony**: a key
 value is printed exactly once, at issuance — or, with `oml keys issue-agent --out`, written exactly
 once to a new owner-only file and printed nowhere — and the journal records the issuance
-*without the value*. The server stores only the key hash; a lost value is unrecoverable by design, and the remedy is
+*without the value*. A connector key has no value at all; its connect code is printed exactly once
+instead, and the journal records the code's id, never the code
+([connections](../architecture/roles-and-keys.md#connections)). The server stores only the key hash; a lost value is unrecoverable by design, and the remedy is
 revoke-and-reissue.
 
 **The reader grant beside a writer grant.** This paragraph is the single declaration site of the
@@ -257,11 +259,13 @@ exactly the grant it names.
 | Verb | Does |
 |---|---|
 | `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
-| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, and a third line pipes the file to `claude plugin configure` ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). |
+| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, and a third line pipes the file to `claude plugin configure` ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; the proposed [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). The flag is built and the route is designed: `POST /v2/keys` does not yet read `connect_code` and refuses it as an unknown field (`request.validation`). |
+| `oml keys connect-code <key>` | Mint a fresh connect code for a connector key, by id or name (`POST /v2/keys/{key}/connect-codes`), for a code that lapsed or a connection that was revoked; the key's earlier codes are voided as [connections](../architecture/roles-and-keys.md#connections) declares. Prints the same two lines as `issue-agent --connect-code`. Refused with `oauth.connect_refused` for a bearer key, a revoked or expired key, or a deployment without `oauth.issuer`. |
+| `oml keys disconnect <key> <connection-id> [--reason <text>]` | End a connection of the key, which is named by id or name (`POST /v2/keys/{key}/connections/{connection_id}/revoke`); a connection has no name and is named by its id. Journalled as `connection.revoked`, which ends it as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection, the 60 seconds between Connect and the token exchange, is not listed and cannot be named (`access.not_found`). Works whether or not the deployment sets `oauth.issuer`. |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
-| `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `oml keys rotate <key> <new-key-name> [--grace <duration>]` | Mint a successor key named `<new-key-name>` — new key id and name, since both keys are live through the grace window, linked by `rotated_from`, grants and crew reproduced from the journalled records — and print the new value once. One journalled act (`key.rotated`) carries both key ids and the grace deadline; the old key stays usable through the bounded grace window and is revoked at the deadline (journalled). A connector key is refused with `oauth.connect_refused` (`connector_key`): run `oml keys connect-code` for a fresh connection, or issue a new connector key and revoke the old one for a fresh identity ([connections](../architecture/roles-and-keys.md#connections)). Rotation is per key for now; bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `oml keys list [--role …] [--expiring <duration>]` | Key names, ids, roles, principals, labels, expiries. Never values. |
-| `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants, denials, crew, epoch, issuance and revocation events. The verb as built prints the key's revocation time on a `revoked` line, or `no (live)` for a live key, and no issuance or revocation event, which the key read does not serve. |
+| `oml keys show <key>` | One key, by id or name — a revoked or expired key's name still resolves: grants, denials, crew, epoch, issuance and revocation events; for a connector key, its open and revoked connections — id, client, redirect host, state, whether it is live, opened and revoked times. The verb as built prints the key's revocation time on a `revoked` line, or `no (live)` for a live key, and no issuance or revocation event, which the key read does not serve. |
 
 **`oml keys issue-agent` output.** On success the verb prints two lines on stdout, the pair the
 CLI, another MCP client and the session-start hook run outside the plugin read, and every other
@@ -313,6 +317,36 @@ carries the value. The file is the one place the
 [key format rule](../architecture/roles-and-keys.md#key-format) lets a value rest outside the
 show-once response; the operator deletes it once `claude plugin configure` has succeeded and any
 export line they chose has run.
+
+**`--connect-code`.** On success `issue-agent --connect-code` and `oml keys connect-code` print
+exactly two lines on stdout, the connector URL — `<issuer>/mcp`, from the server's `201`, not the
+address the CLI used — and the connect code:
+
+```console
+https://oml.example.com/mcp
+7KQ2-M9XD-4TPA
+```
+
+The key's name and id, the code's expiry and the next step go to stderr: add a custom connector
+with exactly that URL at Customize > Connectors on claude.ai, and enter the code on the page that
+opens before it expires. The code is single use and shown this once; the server keeps its digest and the
+journal its id. `--out` with `--connect-code` is refused (exit `2`): there is no value to write,
+and a code is for a person to read and type within minutes. `--json` prints the `201` body, which
+carries the code; an idempotent replay of the request returns the stored body, which omits the
+code (below). Give the code only to the person who
+will connect, with the rule that it is entered only on a page they reached by adding the connector
+themselves; the page repeats that rule above the code field, and it is the only defense against a
+link someone else started, since neither the page nor `connection.opened` can tell whose claude.ai
+account started the request ([security](../architecture/security.md#connections-the-oauth-surface)).
+
+**A replayed answer carries no code.** The stored response of a connect-code issuance or minting
+omits the code ([HTTP API — idempotency](../api/http-api.md#idempotency),
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7), so a retry of a request that
+already committed gets a `201` with `Idempotency-Replay: true` and no code. On such an answer
+`oml keys issue-agent --connect-code` and `oml keys connect-code` print nothing on stdout, name the
+key on stderr with one line saying the code went only to the first answer and that
+`oml keys connect-code <key>` mints a new one, and exit `2`. With `--json` the verb prints the
+replayed body as it came, which carries no code, and exits `2` the same way.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 
@@ -541,7 +575,9 @@ ADR-0014 d2).
   runs the printed lines in its own shell, because a value in a command's output or in its own
   environment would enter the session transcript or the model's context, places the show-once
   ceremony ([ADR-0015](../adr/ADR-0015-cli-administration.md) d1) and the
-  [key format rule](../architecture/roles-and-keys.md#key-format) forbid.
+  [key format rule](../architecture/roles-and-keys.md#key-format) forbid. It neither issues
+  connector keys nor runs `oml keys connect-code`: `--connect-code` is refused with `--out`, and a
+  printed connect code would enter the transcript like a value.
 
 ## `oml hook session-start` — session context for the agent plugin
 

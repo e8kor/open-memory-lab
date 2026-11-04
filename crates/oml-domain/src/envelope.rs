@@ -61,6 +61,16 @@ pub mod event_types {
     /// made from their crew objects, journalled once per chain by the lead
     /// (ADR-0026 d11).
     pub const SYSTEM_NAMES_ASSIGNED: &str = "system.names_assigned";
+    /// A connect code minted for a connector key: its id and expiry, never
+    /// the code nor its digest; the commit voids the key's codes from which
+    /// no connection opened (ADR-0031 d8).
+    pub const CONNECTION_CODE_ISSUED: &str = "connection.code_issued";
+    /// A connection opens at the token exchange and replaces the key's
+    /// earlier open connection in the same commit (ADR-0031 d7, d12).
+    pub const CONNECTION_OPENED: &str = "connection.opened";
+    /// A connection ends, by an admin or a reuse; the commit voids the
+    /// key's codes from which no connection opened (ADR-0031 d8, d12).
+    pub const CONNECTION_REVOKED: &str = "connection.revoked";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex
@@ -190,6 +200,38 @@ impl EventTime {
         let days = era * 146_097 + doe - 719_468;
         let secs = days * 86_400 + num(11, 13) * 3_600 + num(14, 16) * 60 + num(17, 19);
         secs * 1_000_000 + num(20, 26)
+    }
+
+    /// The instant `micros` microseconds after the Unix epoch, the inverse
+    /// of [`EventTime::unix_micros`]: the arithmetic an expiry needs, such
+    /// as a connect code's `oauth.connect_code_ttl` (ADR-0031 d8). `None`
+    /// outside the years 0000 to 9999, which the fixed-width form cannot
+    /// write.
+    #[must_use]
+    pub fn from_unix_micros(micros: i64) -> Option<Self> {
+        let (secs, frac) = (micros.div_euclid(1_000_000), micros.rem_euclid(1_000_000));
+        let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+        // Howard Hinnant's civil_from_days, exact over the proleptic
+        // Gregorian calendar.
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = doy - (153 * mp + 2) / 5 + 1;
+        let month = if mp < 10 { mp + 3 } else { mp - 9 };
+        let year = yoe + era * 400 + i64::from(month <= 2);
+        if !(0..=9_999).contains(&year) {
+            return None;
+        }
+        Self::parse(&format!(
+            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{frac:06}Z",
+            rem / 3_600,
+            (rem % 3_600) / 60,
+            rem % 60
+        ))
+        .ok()
     }
 }
 

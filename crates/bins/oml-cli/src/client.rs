@@ -134,6 +134,33 @@ impl Client {
         body: &Value,
         opts: &CallOpts,
     ) -> Result<(u16, Value), CliError> {
+        finish(self.send_post(path, body, opts)?)
+    }
+
+    /// POST a JSON body; returns the parsed success body and whether it is an
+    /// idempotent replay (`Idempotency-Replay: true`, http-api.md
+    /// idempotency), which a connect-code verb reads because a replayed
+    /// answer carries no code (ADR-0031 d7).
+    pub fn post_replayable(
+        &self,
+        path: &str,
+        body: &Value,
+        opts: &CallOpts,
+    ) -> Result<(Value, bool), CliError> {
+        let result = self.send_post(path, body, opts)?;
+        let replayed = matches!(
+            &result,
+            Ok(response) if response.header("Idempotency-Replay") == Some("true")
+        );
+        finish(result).map(|(_, value)| (value, replayed))
+    }
+
+    fn send_post(
+        &self,
+        path: &str,
+        body: &Value,
+        opts: &CallOpts,
+    ) -> Result<Result<ureq::Response, ureq::Error>, CliError> {
         let mut request = self.agent.post(&format!("{}{path}", self.server));
         if opts.auth {
             request = request.set("Authorization", &self.bearer()?);
@@ -141,7 +168,7 @@ impl Client {
         if opts.idempotency {
             request = request.set("Idempotency-Key", &new_idempotency_key());
         }
-        finish(request.send_json(body.clone()))
+        Ok(request.send_json(body.clone()))
     }
 
     /// POST a JSON body under the key, with `idempotency_key` as its

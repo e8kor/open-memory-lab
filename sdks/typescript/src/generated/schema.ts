@@ -392,6 +392,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/.well-known/oauth-protected-resource/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * RFC 9728 protected-resource metadata for the /mcp resource; 404 where oauth.issuer is unset.
+         * @description Unauthenticated, no tenant data. Built from oauth.issuer alone, never from the request Host. resource is exactly <issuer>/mcp (RFC 9728 §3.3); one authorization server, the issuer itself. The root form /.well-known/oauth-protected-resource is not served (ADR-0031 d3).
+         */
+        get: operations["protectedResourceMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/oauth-authorization-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
+         * @description Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document is served: OML issues no ID token (ADR-0031 d3).
+         */
+        get: operations["authorizationServerMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oauth/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the connect-code page.
+         * @description Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds, no parameter sent more than once among them, are checked first, before any fetch. A parameter past its bound (a repeated one and a present code_challenge that does not match the pattern included), a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal, oauth.pkce_required for an absent code_challenge or an absent or non-S256 code_challenge_method among them, redirects with the RFC error, state and iss (RFC 9207). The authorization request writes no row: the page carries it as a handle sealed by an AEAD under a key the lead holds only in memory, so opening pages is not capped, and a full document cache evicts rather than refuses (ADR-0031 d5, d9). The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page's own POST), X-Content-Type-Options nosniff.
+         */
+        get: operations["authorize"];
+        put?: never;
+        /**
+         * The page's own form — the connect code, then the confirmation.
+         * @description Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided (docs/architecture/roles-and-keys.md, Connections); any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request's row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key's name, principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss. Connect and Cancel each delete the authorization request's row in their own commit, so a later step-3 POST with that handle names no row and answers oauth.authorization_expired on the page (ADR-0031 d9).
+         */
+        post: operations["authorizeSubmit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
+         * @description Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client's one registered URI. refresh_token answers a new pair and marks the presented token rotated; which tokens a refresh accepts, and when reuse of a refresh token or an authorization code revokes the connection (connection.revoked), are declared on docs/architecture/roles-and-keys.md (Connections). The client is the one stored on the code's or refresh token's connection; the client tables are never read here, a client_id that differs from the connection's is invalid_grant, and invalid_client answers only a request that sends client authentication: 401 with WWW-Authenticate for an Authorization header, 400 for a client_secret in the body. A revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2), and a parameter sent more than once is request.validation (invalid_request). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
+         */
+        post: operations["token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oauth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only, redirect URIs inside the allowlist.
+         * @description Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. client_name is required, since the page shows it; an absent token_endpoint_auth_method is registered and echoed as none, and any other value than none is request.validation (invalid_client_metadata). A registered client that has not connected (no Connect on the page named it) within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).
+         */
+        post: operations["registerClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -449,10 +553,10 @@ export interface components {
         /** @enum {string} */
         Role: "reader" | "writer" | "dreamer" | "admin" | "operator";
         /**
-         * @description The closed error vocabulary; identical to docs/api/errors.md by construction.
+         * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused is designed to answer on /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope, once those routes are wired (ADR-0031, ADR-0039 d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -919,6 +1023,84 @@ export interface components {
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
             value: string;
+        };
+        ProtectedResourceMetadata: {
+            /** @description Exactly <issuer>/mcp (RFC 9728 §3.3). */
+            resource: string;
+            authorization_servers: string[];
+            scopes_supported?: "mcp"[];
+            bearer_methods_supported?: "header"[];
+            resource_name?: string;
+        };
+        AuthorizationServerMetadata: {
+            issuer: string;
+            authorization_endpoint: string;
+            token_endpoint: string;
+            registration_endpoint?: string;
+            response_types_supported: "code"[];
+            grant_types_supported?: ("authorization_code" | "refresh_token")[];
+            code_challenge_methods_supported: "S256"[];
+            token_endpoint_auth_methods_supported?: "none"[];
+            scopes_supported?: "mcp"[];
+            /** @enum {boolean} */
+            client_id_metadata_document_supported?: true;
+            /**
+             * @description RFC 9207 §3: every authorization response, success or error, carries iss.
+             * @enum {boolean}
+             */
+            authorization_response_iss_parameter_supported?: true;
+        };
+        TokenRequest: {
+            /** @enum {string} */
+            grant_type: "authorization_code" | "refresh_token";
+            client_id: string;
+            /** @description authorization_code only. */
+            code?: string;
+            /** @description authorization_code only. Required exactly when the authorize request carried it, and then equal to it; when that request omitted it, omitted or equal to the client's one registered URI; otherwise oauth.authorization_code_invalid. */
+            redirect_uri?: string;
+            /** @description authorization_code only; S256 against the authorization request's code_challenge. */
+            code_verifier?: string;
+            /** @description refresh_token only. */
+            refresh_token?: string;
+            /** @description When sent, exactly <issuer>/mcp. */
+            resource?: string;
+            /** @enum {string} */
+            scope?: "mcp";
+        };
+        TokenResponse: {
+            /** @description Opaque; the server stores only its SHA-256. For /mcp alone, which accepts it once /mcp is wired to connections (designed, ADR-0031 d11). */
+            access_token: string;
+            /** @enum {string} */
+            token_type: "Bearer";
+            /** @description Seconds; the oauth.access_token_ttl setting. */
+            expires_in: number;
+            /** @description Opaque, single-use; rotated by every refresh. */
+            refresh_token: string;
+            /** @enum {string} */
+            scope: "mcp";
+        };
+        /** @description RFC 6749 §5.2 / RFC 7591 §3.2.2 error body. error is the RFC code a client branches on; error_description begins with the OML code (ErrorCode) and its rule (docs/api/errors.md, the oauth family). */
+        OAuthError: {
+            /** @enum {string} */
+            error: "invalid_request" | "invalid_client" | "invalid_grant" | "unsupported_grant_type" | "invalid_scope" | "invalid_target" | "invalid_redirect_uri" | "invalid_client_metadata";
+            error_description?: string;
+        };
+        ClientRegistrationRequest: {
+            /** @description Each inside the allowlist: exactly https://claude.ai/api/mcp/auth_callback, matched byte for byte on the JSON string value, never after URL parsing or any further decoding. */
+            redirect_uris: string[];
+            /** @description Required, since the authorization page shows it; absent, it is request.validation (invalid_client_metadata). */
+            client_name: string;
+            /**
+             * @description Absent, it is registered as none and echoed as none; any other value is request.validation (invalid_client_metadata).
+             * @enum {string}
+             */
+            token_endpoint_auth_method?: "none";
+            grant_types?: ("authorization_code" | "refresh_token")[];
+            response_types?: "code"[];
+        };
+        ClientRegistration: components["schemas"]["ClientRegistrationRequest"] & {
+            client_id: string;
+            client_id_issued_at: number;
         };
         Health: {
             /** @constant */
@@ -2285,6 +2467,362 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
+        };
+    };
+    protectedResourceMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "resource": "https://oml.example.com/mcp",
+                     *       "authorization_servers": [
+                     *         "https://oml.example.com"
+                     *       ],
+                     *       "scopes_supported": [
+                     *         "mcp"
+                     *       ],
+                     *       "bearer_methods_supported": [
+                     *         "header"
+                     *       ],
+                     *       "resource_name": "Open Memory Lab"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ProtectedResourceMetadata"];
+                };
+            };
+            /** @description Connections are not configured on this deployment. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    authorizationServerMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "issuer": "https://oml.example.com",
+                     *       "authorization_endpoint": "https://oml.example.com/oauth/authorize",
+                     *       "token_endpoint": "https://oml.example.com/oauth/token",
+                     *       "registration_endpoint": "https://oml.example.com/oauth/register",
+                     *       "response_types_supported": [
+                     *         "code"
+                     *       ],
+                     *       "grant_types_supported": [
+                     *         "authorization_code",
+                     *         "refresh_token"
+                     *       ],
+                     *       "code_challenge_methods_supported": [
+                     *         "S256"
+                     *       ],
+                     *       "token_endpoint_auth_methods_supported": [
+                     *         "none"
+                     *       ],
+                     *       "scopes_supported": [
+                     *         "mcp"
+                     *       ],
+                     *       "client_id_metadata_document_supported": true,
+                     *       "authorization_response_iss_parameter_supported": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AuthorizationServerMetadata"];
+                };
+            };
+            /** @description Connections are not configured on this deployment. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    authorize: {
+        parameters: {
+            query: {
+                response_type: "code";
+                /** @description An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., non-default port or IP-literal host; its own WHATWG serialization), or a client_id that POST /oauth/register minted. */
+                client_id: string;
+                /** @description Exactly one of the client's registered URIs, inside the allowlist (exactly https://claude.ai/api/mcp/auth_callback), matched byte for byte on the value after exactly one application/x-www-form-urlencoded decoding, never after URL parsing or any further decoding; optional for a client with exactly one. */
+                redirect_uri?: string;
+                /** @description Required by the flow: absent, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. Present but not matching the pattern, it is request.validation on the page. */
+                code_challenge?: string;
+                /** @description Required by the flow: absent (which RFC 7636 §4.3 reads as plain) or anything but S256, it is oauth.pkce_required, redirected once the client and the redirect URI are accepted. */
+                code_challenge_method?: "S256";
+                /** @description At most 512 bytes; echoed verbatim on the redirect, percent-encoded as a query parameter. */
+                state?: string;
+                /** @description When sent, exactly <issuer>/mcp. */
+                resource?: string;
+                scope?: "mcp";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connect-code page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description A refusal after the redirect URI was validated (oauth.pkce_required, oauth.resource_mismatch, request.validation), redirected with error, error_description, state and iss. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A refusal page naming its code (request.validation for a parameter past its bound, oauth.client_invalid, oauth.redirect_refused). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    authorizeSubmit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @description The authorization request's handle the page carries. */
+                    handle: string;
+                    /** @description The code, normalized by Crockford base32 decoding. */
+                    connect_code: string;
+                } | {
+                    /** @description The authorization request's handle the page carries. */
+                    handle: string;
+                    /** @enum {string} */
+                    action: "connect" | "cancel";
+                };
+            };
+        };
+        responses: {
+            /** @description The confirmation page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The redirect to the client, with code, state and iss, or with error, state and iss. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The form again, or a refusal page naming its code (oauth.connect_code_invalid, oauth.authorization_expired, request.validation). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description The refusal page for a submission that fails the origin check, oauth.origin_refused; never redirected, and no attempt is consumed. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["TokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The token pair. Sent with Cache-Control no-store. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "access_token": "oml_at_Q3kV8mT1xR6pL2nW9zA4cY7bD5eG0hJ3kM8sU1wXq2E",
+                     *       "token_type": "Bearer",
+                     *       "expires_in": 3600,
+                     *       "refresh_token": "oml_rt_H5jN2qP8vS4tY1uB7cD3fK9mR6wZ0xA2eG4hL8nT5sV",
+                     *       "scope": "mcp"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description An RFC 6749 error: oauth.authorization_code_invalid, oauth.refresh_invalid (invalid_grant, a code or token issued to another client included), oauth.client_invalid (invalid_client, for a request that sends a client_secret in the body), oauth.resource_mismatch (invalid_target), request.validation (invalid_request, unsupported_grant_type, invalid_scope). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_grant",
+                     *       "error_description": "oauth.refresh_invalid: a refresh token is used once; a reused one ends its connection."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description oauth.client_invalid as invalid_client, for a request that sends an Authorization header: every client is public (RFC 6749 §5.2). */
+            401: {
+                headers: {
+                    /** @description The scheme the request used, for example Basic realm="oml" (RFC 6749 §5.2). */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "oauth.client_invalid: every client is public and sends no client authentication."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description A body other than application/x-www-form-urlencoded, as invalid_request. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+        };
+    };
+    registerClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "client_name": "Example MCP client",
+                 *       "redirect_uris": [
+                 *         "https://claude.ai/api/mcp/auth_callback"
+                 *       ],
+                 *       "token_endpoint_auth_method": "none",
+                 *       "grant_types": [
+                 *         "authorization_code",
+                 *         "refresh_token"
+                 *       ],
+                 *       "response_types": [
+                 *         "code"
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ClientRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Registered. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "client_id": "oml_client_8Rk2Tq5Vx1Lm7Pn3Wz9Ac4Yb6Dd0Eg",
+                     *       "client_id_issued_at": 1793455980,
+                     *       "client_name": "Example MCP client",
+                     *       "redirect_uris": [
+                     *         "https://claude.ai/api/mcp/auth_callback"
+                     *       ],
+                     *       "token_endpoint_auth_method": "none",
+                     *       "grant_types": [
+                     *         "authorization_code",
+                     *         "refresh_token"
+                     *       ],
+                     *       "response_types": [
+                     *         "code"
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ClientRegistration"];
+                };
+            };
+            /** @description An RFC 7591 error: oauth.redirect_refused (invalid_redirect_uri), request.validation (invalid_client_metadata). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
+            /** @description limit.rate — the cap on unused registrations; Retry-After says when. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthError"];
+                };
+            };
         };
     };
     healthz: {

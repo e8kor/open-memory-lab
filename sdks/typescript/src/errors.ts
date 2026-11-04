@@ -69,6 +69,10 @@ export class ApiError extends OmlError {
 export class AuthError extends ApiError {
   override name = "AuthError";
 }
+/** `oauth`: connections, connect codes and the OAuth endpoints. */
+export class OAuthError extends ApiError {
+  override name = "OAuthError";
+}
 /** `access`: what this key may do. */
 export class AccessError extends ApiError {
   override name = "AccessError";
@@ -132,6 +136,7 @@ export class ServerError extends ApiError {
 
 export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze({
   auth: AuthError,
+  oauth: OAuthError,
   access: AccessError,
   request: RequestError,
   idempotency: IdempotencyError,

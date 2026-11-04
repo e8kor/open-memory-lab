@@ -2,7 +2,7 @@
 id: architecture/security
 tier: engineering
 status: design draft for review · decided, not built
-answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included
+answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves
 -->
 
 # Security and tenancy
@@ -125,6 +125,7 @@ Who loads what. "Never" entries are the point of the table.
 | Postgres role | RLS-scoped service role (write) | RLS-scoped **read** role + read-log append | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
 | Object-store credentials | quarantine + bodies | read (promoted bodies) | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
 | API keys | verifies hashes; never stores values | verifies hashes | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
+| Connect codes and connection tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)) | mints them; stores digests only; rotates refresh tokens | verifies access-token digests; mints none | holds none | holds none | holds none | prints a connect code once; holds no token |
 
 Two statements in this map deserve their own sentences.
 
@@ -277,9 +278,12 @@ credentials, and the distinction is deliberate:
       non-author review under other keys. That is a stated residual
       ([FR-32](../product/roadmap.md)); residual risk 8 below.
     - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
-      the forwarding hop to the lead and authorizes nothing. The client's own bearer key travels
-      with the forwarded request, the lead resolves authorization against the *client's* key, and
-      the journalled act is attributed to the client — the follower never becomes the actor. The
+      the forwarding hop to the lead and authorizes nothing. The client's own credential — its
+      bearer key, or at `/mcp` its connection's access token — travels with the forwarded request,
+      the lead resolves authorization against the *client's* key, and the journalled act is
+      attributed to the client — the follower never becomes the actor; how a follower forwards
+      an `/mcp` request that carries an access token is declared on the
+      [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). The
       lead accepts forwarded write traffic only over hops authenticated by an enrolled
       follower's service key, so a process that merely reaches the lead's port cannot inject
       forwarded writes.
@@ -389,12 +393,47 @@ surface: the stated guidance is to inspect attachments in a sandboxed viewer, an
 is a malware-scanning claim — the deterministic scan catches what its rules name, and for opaque
 binaries the reviewed claim is provenance + digest + scan result ([admission.md](admission.md)).
 
+## Connections: the OAuth surface
+
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) lets Claude's hosted apps reach
+`/mcp` through a connection: an OAuth client bound, by a one-time connect code, to one connector
+key ([roles and keys](roles-and-keys.md#connections); the HTTP side in the
+[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). It adds three things an
+attacker can reach without a key — two discovery documents, three OAuth endpoints and an HTML page
+— and one thing the lead does that it did not do before: fetch a URL a client chose. The threats
+below are the delta; every control is a design commitment, none is built, penetration-tested or
+measured.
+
+| Threat | Controls | Residual |
+|---|---|---|
+| **A connect code read or intercepted** (shoulder-surfed, a forwarded message, a shared screen) and entered first by someone else | Single use; alive `oauth.connect_code_ttl` (shipped 10 minutes); never in a URL, a log line or the journal; one live code per key. `connection.opened` records that a connection opened and when, and `oml keys show` lists the connection, so the admin sees an unexpected one and revokes it. | For its minutes, the code is a bearer secret: whoever enters it first connects as the key, within the key's grants and only at `/mcp`. For claude.ai every connection names the same client and redirect URI, so the admin learns that and when, but not whose claude.ai account connected. |
+| **Consent phishing**: an attacker starts an authorization from their own client, their own claude.ai account included, and sends the person the link | The page names the client — a document client by the whole host that served its document, in lower-case ASCII, a registered one marked "name not verified" — and the redirect URI's host, before the code is asked for, and above the code field tells the person to enter the code only on a page they opened themselves by adding the connector, and to close a link someone sent them; the redirect allowlist delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request, and `connection.opened` cannot tell the admin either; if claude.ai completes a callback by `state` alone, a person who enters a code on a forwarded link connects the sender's account. Whether claude.ai refuses a callback its own sign-in did not start is claude.ai's behavior and is not in the cited sources. The page's warning is the defense, and it holds only if the person reads it. |
+| **Connection injection**: a co-tenant gives a person a code for the co-tenant's own key, under names copied from the person's organization | The confirmation names the tenant the key belongs to by the name the operator gave it at `POST /v2/tenants`, which no tenant admin can set, beside the key's name, principal, role and workareas. | A person who does not read the tenant name connects into the other tenant: their Claude writes into it and recalls what it holds. |
+| **Mix-up**: a malicious connector the same person added steers OML's authorization code to its own token endpoint, since claude.ai uses one callback for every server | Every authorization response, success or error, carries `iss`, and the RFC 8414 document advertises `authorization_response_iss_parameter_supported` (RFC 9207; RFC 9700 §4.4.2). | The defense works only if the client checks `iss`; whether claude.ai does is not in the cited sources ([FR-34](../product/roadmap.md)). |
+| **Cross-site request forgery** on the page | No cookie is set, so a cross-site form has no ambient credential to ride; each `POST` must carry the authorization request's handle and either `Sec-Fetch-Site: same-origin` or, without that header, an `Origin` equal to the issuer's, and `Origin: null` is refused as `oauth.origin_refused`; the page is served with `Referrer-Policy: same-origin`, so the browser sends its real origin on the page's own `POST`; `state` is echoed verbatim for the client's own check. | — |
+| **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; client-supplied names HTML-escaped and shortened; `logo_uri` never loaded. | — |
+| **Open redirect** | A redirect URI is admitted only by exact match against the fixed allowlist, at registration, in a fetched document and in the request; a refused client or redirect URI is a page, never a redirect (RFC 6749 §4.1.2.1). | — |
+| **Authorization code interception** | S256 PKCE only; a 60-second, single-use code, whose second redemption is judged by the reuse rule on [roles and keys](roles-and-keys.md#connections); a reverse proxy's access log records neither the authorize redirect's `Location` nor the OAuth request bodies ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). | The proxy rule is stated, not checkable: doctor cannot read a proxy's configuration. |
+| **Access-token theft** | Opaque, stored as digests, accepted only at `/mcp` and only in the `Authorization` header, alive `oauth.access_token_ttl` (shipped 1 hour); each request re-resolves the key, so a revoked connection or key refuses it at the next request on the lead. | A stolen access token is the key's capability at `/mcp` until it expires or the connection is revoked; on a follower, until replication catches up. |
+| **Refresh-token theft** | Never accepted at `/mcp`, where only an access token authenticates; rotation on every use, and a rotated refresh token presented again revokes the connection ([roles and keys](roles-and-keys.md#connections)), journalled as `connection.revoked` with cause `refresh_reuse`. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. The same check ends a connection whose legitimate refresh answer was lost, and the person reconnects with a new code ([FR-34](../product/roadmap.md)). |
+| **Server-side request forgery** through a client metadata document URL | The document URL's form and the fetch bounds on the [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients): public unicast addresses only, no second resolution, no proxy, no redirect, size, time and concurrency caps; the token path never fetches. | The lead, which holds the signing key, makes outbound HTTPS requests to hosts an unauthenticated client names. The bounds keep them off internal addresses and cap how many run at once; they do not make the lead's egress something a client cannot cause. A network-specific NAT64 prefix (RFC 6052) on the lead's own network carries internal IPv4 addresses inside public-looking IPv6 ones and is not detectable from the address, so the deployment's egress policy must refuse it. |
+| **Registration and request flooding** | Dynamic registrations open nothing by themselves, lapse after 24 hours unused, and are capped at 10 000 unused, past which registration answers `429 limit.rate`; an authorization request writes no row until an admin-minted code verifies; the document cache evicts rather than refuses, never evicts the document of a client that has connected, and serves a copy up to 24 hours old when a fetch fails or is busy; fetches are capped per host name and per resolved address; every authorize parameter is length-bounded before anything is fetched. | A flood of registrations stalls new dynamic registrations. A flood of slow document hosts on distinct addresses can hold every fetch slot and stall new document clients the cache holds no copy of, for as long as it lasts. Open connections, and clients with a cached copy, are unaffected. |
+| **Guessing a connect code** | 60 bits per code; one message for an unknown, expired, voided, spent, or revoked or expired key's code; doctor counts wrong entries, under an operator key. | With L live codes and G wrong entries during their life, the chance any entry hits one is at most L·G / 2⁶⁰ — a bound, not a measurement. Pages are free to open, so G is bounded only by the request rate the deployment serves, and L counts every tenant's live codes, since a code is looked up before its tenant is known. The five attempts per page bound one page's typing errors, not guessing. No limit keys on a source address: behind a proxy it is the proxy's. |
+| **A token used beyond its key** | A token resolves to its key on every request and every rule applies to the key; it is not a credential on `/v1` or `/v2`; the facade never forwards it. | — |
+
+Tenancy is unchanged: a connection's rows carry its key's `tenant_id` and its tenant's RLS; the
+deployment-level rows — clients, and authorization requests whose code verified but which no
+connection yet holds — belong to the
+reserved provider tenant and hold no tenant content
+([Postgres schema](../data/postgres-schema.md#connections-adr-0031)).
+
 ## Trust boundaries
 
 ```mermaid
 flowchart LR
   subgraph clients["Tenant clients — untrusted"]
     A["Agent / crew<br/>(bearer API key)"]
+    H["Claude hosted apps via claude.ai<br/>(connection access token, /mcp only)"]
     CLI["oml CLI<br/>(operator / admin / dreamer key)"]
   end
 
@@ -417,6 +456,7 @@ flowchart LR
   KMS["KMS<br/>KEK never leaves"]
 
   A -- "HTTPS, bearer key" --> S
+  H -- "HTTPS, access token" --> S
   CLI -- "HTTPS, bearer key" --> S
   S --> PG
   S --> OS
@@ -430,7 +470,8 @@ flowchart LR
 ```
 
 Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
-into oml-server, carrying a bearer key — there is no client path to Postgres, the object store, the
+into oml-server, carrying a bearer key or a connection's access token that resolves to one —
+there is no client path to Postgres, the object store, the
 lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
 between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to
 decrypt; their writes either go through RLS-scoped sessions or come back around through oml-server
@@ -494,11 +535,22 @@ rounded up to a guarantee.
    count, a name or an id, never content; together they are [FR-31](../product/roadmap.md).
 8. **A service key's grant is broader than its job.** The reconciler's dreamer-role service key
    needs only the repair re-enqueue, but a grant carries a role, not a verb list, so it confers
-   every dreamer verb. A stolen reconciler key can therefore propose edits and connections inside
-   the nodes it is granted; it can never review or ratify one, so every such proposal still waits
-   for non-author review under other keys
+   every dreamer verb. A stolen reconciler key can therefore propose edits and connection edges
+   inside the nodes it is granted; it can never review or ratify one, so every such proposal still
+   waits for non-author review under other keys
    ([transport and internal authentication](#transport-and-internal-authentication)). Its
    resolution is [FR-32](../product/roadmap.md).
+9. **A connect code is a bearer secret for its minutes, and the lead now fetches client-chosen
+   URLs.** Whoever enters a code first connects as its key, within that key's grants and only at
+   `/mcp`; the admin learns from `connection.opened`, after the fact, that a connection opened and
+   when, and for claude.ai not whose account holds it. A person who enters a code on a link someone
+   else started connects the sender's client, and the page's warning is the only thing in the way.
+   The lead's fetch of a client metadata document is bounded as the
+   [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients) declares, and it is
+   still egress an unauthenticated client can cause from the process that holds the signing key,
+   and a flood of slow document hosts can stall new document clients
+   ([Connections](#connections-the-oauth-surface)). Verifying the flow against a live
+   client is [FR-34](../product/roadmap.md).
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
 load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an

@@ -10,7 +10,11 @@
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11).
+//! that predate names (ADR-0026 d2, d3, d11); `oauth` holds the pure core of
+//! connections — the connect code, PKCE, the redirect allowlist, client
+//! identity, the fetch-address allow-list, discovery, token formats,
+//! rotation with reuse detection and the connection lifecycle (ADR-0031,
+//! proposed).
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +26,7 @@ pub mod jcs;
 pub mod keys;
 pub mod model;
 pub mod name;
+pub mod oauth;
 
 pub use chain::{
     ChainError, ChainHead, EventDraft, KeySet, SignedEnvelope, VerifyError, next_envelope, sign,

@@ -20,7 +20,11 @@ T = TypeVar("T", bound="ErrorEnvelopeError")
 class ErrorEnvelopeError:
     """
     Attributes:
-        code (ErrorCode): The closed error vocabulary; identical to docs/api/errors.md by construction.
+        code (ErrorCode): The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes
+            other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints,
+            at the start of error_description, or on the authorization page; oauth.connect_refused is designed to answer on
+            /v2 and oauth.attach_refused as an /mcp tool result, both in this envelope, once those routes are wired
+            (ADR-0031, ADR-0039 d9).
         message (str): Human-readable; unstable, never parsed.
         rule (str): The design rule the refusal names; stable per code.
         retryable (bool): True only where the identical request can succeed later (Retry-After header present).

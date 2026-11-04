@@ -39,6 +39,7 @@ export {
   LifecycleError,
   LimitError,
   NamingError,
+  OAuthError,
   OmlError,
   RequestError,
   ReviewError,

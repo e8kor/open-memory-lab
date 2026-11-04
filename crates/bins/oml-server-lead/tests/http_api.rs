@@ -810,7 +810,7 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
     }
 
     for start in 1..=2 {
-        let started = start_lead(&store, signing.clone())
+        let started = start_lead(&store, signing.clone(), None)
             .await
             .expect("the start reads the store");
         assert_eq!(started.fork_check, Ok(()), "start {start}");
@@ -868,7 +868,7 @@ async fn a_start_whose_fork_check_fails_names_nothing_and_serves_no_request() {
         return;
     };
     let foreign = SigningKey::from_bytes(&OsIds.new_secret());
-    let started = start_lead(&store, foreign)
+    let started = start_lead(&store, foreign, None)
         .await
         .expect("the start reads the store");
     assert!(started.fork_check.is_err(), "a chain the key did not sign");
@@ -6283,8 +6283,8 @@ async fn provider_operator_key(rig: &Rig) -> String {
         .await
         .expect("lift force");
     sqlx::query(
-        "INSERT INTO api_keys (tenant_id, hash, role, principal, held_by, issued_seq) \
-         VALUES (NULL, decode($1, 'hex'), 'operator', 'provider/operator-1', 'human', 0)",
+        "INSERT INTO api_keys (tenant_id, hash, credential, role, principal, held_by, issued_seq) \
+         VALUES (NULL, decode($1, 'hex'), 'bearer', 'operator', 'provider/operator-1', 'human', 0)",
     )
     .bind(hash.trim_start_matches("sha256:"))
     .execute(&mut conn)
@@ -7088,7 +7088,18 @@ fn declared_operations(document: &str) -> std::collections::BTreeSet<(String, St
 /// A router over in-memory doubles, its bootstrap open under
 /// [`ENROLLMENT`]: what it routes is what the route table names.
 fn doubles_router() -> Router {
+    doubles_router_over(None)
+}
+
+/// [`doubles_router`] on a deployment that sets `oauth.issuer`, so it also
+/// routes what the OAuth route table names.
+fn doubles_router_with_issuer() -> Router {
+    doubles_router_over(Some("https://oml.example.com"))
+}
+
+fn doubles_router_over(issuer: Option<&str>) -> Router {
     use oml_app::App;
+    use oml_app::domain::oauth::Issuer;
     use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
     let store = MemStore::new();
     let app = App::new(
@@ -7098,6 +7109,10 @@ fn doubles_router() -> Router {
         SeqIdGen::new(),
         MarkerScanner::default(),
     );
+    let app = match issuer {
+        Some(issuer) => app.with_oauth_issuer(Issuer::parse(issuer).expect("a public origin")),
+        None => app,
+    };
     let ping: DbPing = Arc::new(|| Box::pin(async { true }));
     oml_transport_http::ApiState::new(
         Arc::new(app),
@@ -7110,22 +7125,34 @@ fn doubles_router() -> Router {
 }
 
 /// openapi.yaml declares exactly what the router routes, `GET /v2/whoami`
-/// among them: the router builds its routes from the transport's public
-/// table, the table equals the document's operations, and the router
-/// answers every one of them from a handler, never with its own empty 404
-/// or 405 (ADR-0039 d9).
+/// among them and, where the deployment sets `oauth.issuer`, the six OAuth
+/// operations: the router builds its routes from the transport's two public
+/// tables, their union equals the document's operations, and a router with
+/// an issuer answers every one of them from a handler, never with its own
+/// empty 404 or 405 (ADR-0039 d9; ADR-0031 d1, d3, d4, d5, d9).
 #[tokio::test]
-async fn the_served_openapi_document_declares_exactly_the_routed_operations() {
+async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_the_oauth_routes() {
     let declared = declared_operations(&served_openapi());
-    let routed: std::collections::BTreeSet<(String, String)> = oml_transport_http::ROUTES
-        .iter()
-        .map(|(method, path)| ((*method).to_owned(), (*path).to_owned()))
-        .collect();
+    let table = |entries: &[(&str, &str)]| -> std::collections::BTreeSet<(String, String)> {
+        entries
+            .iter()
+            .map(|(method, path)| ((*method).to_owned(), (*path).to_owned()))
+            .collect()
+    };
+    let rings = table(oml_transport_http::ROUTES);
+    let oauth = table(oml_transport_http::OAUTH_ROUTES);
     assert_eq!(
-        routed.len(),
+        rings.len(),
         oml_transport_http::ROUTES.len(),
         "the route table lists an operation twice"
     );
+    assert_eq!(
+        oauth.len(),
+        oml_transport_http::OAUTH_ROUTES.len(),
+        "the OAuth route table lists an operation twice"
+    );
+    assert!(rings.is_disjoint(&oauth), "an operation is in both tables");
+    let routed: std::collections::BTreeSet<_> = rings.union(&oauth).cloned().collect();
     let only_declared: Vec<_> = declared.difference(&routed).collect();
     let only_routed: Vec<_> = routed.difference(&declared).collect();
     assert!(
@@ -7136,9 +7163,14 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations() {
         declared.contains(&("GET".to_owned(), "/v2/whoami".to_owned())),
         "whoami is declared"
     );
-    assert_eq!(declared.len(), 23, "the 22 routed operations and whoami");
+    assert_eq!(
+        declared.len(),
+        29,
+        "the 22 routed operations, whoami and the six OAuth operations"
+    );
+    assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
-    let router = doubles_router();
+    let router = doubles_router_with_issuer();
     for (method, path) in &routed {
         let uri = filled(path);
         let request = Request::builder()
@@ -7154,6 +7186,23 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations() {
             status != StatusCode::NOT_FOUND || !bytes.is_empty(),
             "{method} {uri} is not routed"
         );
+    }
+}
+
+/// Without `oauth.issuer` the router routes none of the OAuth table: each
+/// of its operations answers what an unknown path does, while the ring
+/// table is routed unchanged (ADR-0031 d1).
+#[tokio::test]
+async fn without_an_issuer_the_router_routes_no_operation_of_the_oauth_table() {
+    let router = doubles_router();
+    for (method, path) in oml_transport_http::OAUTH_ROUTES {
+        let request = Request::builder()
+            .method(*method)
+            .uri(*path)
+            .body(Body::empty())
+            .expect("request builds");
+        let response = router.clone().oneshot(request).await.expect("infallible");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
     }
 }
 
