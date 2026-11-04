@@ -6,12 +6,12 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::Effect;
-use super::argument::{normalise_path, url_host};
-use super::cache::{CacheRefusal, CacheState, CachedRule};
-use super::glob::Glob;
-use super::rule::{Matcher, ToolClass};
-use super::shell::{ShellRefusal, shell_command};
+use crate::Effect;
+use crate::argument::{normalise_path, url_host};
+use crate::cache::{CacheRefusal, CacheState, CachedRule};
+use crate::glob::Glob;
+use crate::rule::{Matcher, ToolClass};
+use crate::shell::{ShellRefusal, shell_command};
 
 /// The `systemMessage` of a matching call in a session with no cache: it
 /// decides nothing, and since the check keeps no state the line repeats on

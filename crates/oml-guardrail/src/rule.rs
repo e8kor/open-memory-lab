@@ -4,9 +4,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::argument::{ends_in_a_number, ipv4, ipv6};
-use super::glob::Glob;
-use super::{Effect, GRAMMAR};
+use crate::argument::{ends_in_a_number, ipv4, ipv6};
+use crate::glob::Glob;
+use crate::{Effect, GRAMMAR};
 
 /// The five tool classes a rule names, each over the Claude Code tools of
 /// ADR-0037 d8's table.

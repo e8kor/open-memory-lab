@@ -1343,6 +1343,7 @@ version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
+ "oml-guardrail",
  "proptest",
  "serde_json",
  "sha2",
@@ -1359,6 +1360,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "ureq",
+]
+
+[[package]]
+name = "oml-guardrail"
+version = "0.4.1"
+dependencies = [
+ "hex",
+ "proptest",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
