@@ -347,7 +347,7 @@ stateDiagram-v2
 | Transition | Proposed by | Ratified by | Preconditions | Journalled with |
 |---|---|---|---|---|
 | `development` → `committed` | admin or dreamer with effective access on the node | a **second, non-proposing** dreamer or admin (R2 applies to transitions) | — | transition event + policy snapshot |
-| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area | transition event + policy snapshot |
+| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area (the build's reading: the simulation clause holds vacuously while simulations are unbuilt, [below](#readings-the-build-takes)) | transition event + policy snapshot |
 | `committed` → `development` | — | — | **does not exist** | — |
 | `validated` → anything | — | — | **does not exist** | — |
 
@@ -355,6 +355,49 @@ The policy snapshot in the transition event records the review policy in force
 at the moment of transition, so later audit of any promotion can be answered
 against the policy that actually governed it, not the policy in force at read
 time.
+
+#### Readings the build takes
+
+[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave five points open
+that code cannot leave open. Each line below is **the build's reading**, with
+the rule it follows; none is a new decision about the ladder.
+
+- **A pending proposal is a row.** A proposal is a row of `workarea_transitions`
+  (id, tenant, workarea, `from` and `to` status, state `pending` or `ratified`,
+  proposer key and principal, ratifier key, and the journal seqs of the proposal
+  and the ratification), the shape `workarea_edges` already gives a
+  propose-then-ratify object ([schema](../data/postgres-schema.md#workareas-and-edges)).
+  It follows d3: a transition is two journalled acts by two identities, so
+  something must hold the first act until the second.
+- **Several proposals may wait on one node; ratification re-checks.** The
+  status read lists "pending transitions", plural
+  ([HTTP API](../api/http-api.md)), so a proposal never blocks another.
+  Ratification re-checks the proposal against the node's status at that
+  moment: a proposal whose `from` is no longer the node's status, one already
+  ratified included, is refused with `workarea.transition_refused`, reason
+  `stale`. It follows d3's forward-only rule: a ratification acts on the node
+  as it is, never on the node as the proposer saw it.
+- **The policy snapshot is the policy in force plus the precondition.**
+  `policy_snapshot` holds the review policy in force, which the PoC fixes as the
+  one constant `{k: 1, required_roles: ["dreamer"]}`, and the precondition the
+  ratification evaluated, `children_all_validated`
+  ([event catalog](../data/event-catalog.md#workareastatus_transition)). The
+  verdict path and the snapshot read that one constant, so the two cannot
+  disagree. It follows d3: the snapshot answers a later promotion audit against
+  the policy that governed it.
+- **A refusal names its reason.** `workarea.transition_refused` carries
+  `details: {workarea_id, from, to, reason}`, `reason` one of `backward`,
+  `skipped`, `same`, `universe`, `children_not_validated`, `stale`
+  ([errors](../api/errors.md#workarea-structure-and-status-refusals)). It
+  follows the taxonomy's rule that a refusal names the rule it enforces: d3's
+  forward-only ladder gives the first three, the root's permanence the fourth,
+  d4 the fifth, and the re-check above the sixth.
+- **No simulation is fenced, vacuously.** Simulations are not built, so "no
+  simulation is fenced on the subtree" holds of every subtree today; the build
+  says so in a comment where the check would sit, and the check lands with
+  simulations ([simulations](simulations.md)). It follows d4's purpose: taint
+  cannot enter a `validated` area, and while no simulation exists there is no
+  taint.
 
 ### Refusal matrix
 
@@ -389,6 +432,15 @@ are the ones implementers get wrong:
   freeze), and keeps its crew record correctable. The refusals are exactly: new
   writes, promotions into it, reassignment in or out, child creation,
   re-parenting, and any further status change.
+
+**Open, not decided: a reject verdict in a `validated` area.** d5's closed list
+of three mutations names no reject verdict, and a freeze can leave a held row
+behind. The proposed reading refuses approve and reject alike with
+`workarea.frozen`, and `review/next` serves no row whose workarea is
+`validated`, so a held row left by a freeze stays held, visible to its author.
+The alternative admits reject, because a rejection promotes nothing. The
+operator decides before the build refuses verdicts by status
+([ADR-0009](../adr/ADR-0009-status-ladder.md) d5).
 
 ## Medallion words name lake zones only
 

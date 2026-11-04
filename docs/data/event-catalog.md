@@ -452,13 +452,19 @@ status read — until a second, non-proposing principal ratifies it.
   "workarea_id": "…", "from": "committed", "to": "validated",
   "transition_id": "…",
   "proposed_by_key_id": "…", "ratified_by_key_id": "…",
-  "policy_snapshot": {"children_all_validated": true}
+  "policy_snapshot": {"k": 1, "required_roles": ["dreamer"],
+                      "children_all_validated": true}
 }
 ```
 
 Forward-only ladder step — the ratification of a pending `workarea.status_proposed`, which it
 references — by a second, distinct dreamer/admin principal, with the policy that held at the
-moment snapshotted.
+moment snapshotted. `policy_snapshot` is the build's reading of [ADR-0009](../adr/ADR-0009-status-ladder.md)
+d3 ([workareas](../architecture/workareas.md#readings-the-build-takes)): the review policy in
+force — today the one PoC constant `{k: 1, required_roles: ["dreamer"]}` that `review.ratify`'s
+snapshot also reads — plus the precondition the ratification evaluated, `children_all_validated`,
+which is `true` on a step to `validated` (a false one is refused, never journalled) and absent on
+a step to `committed`, which has no precondition.
 
 ### workarea.crew_updated
 
