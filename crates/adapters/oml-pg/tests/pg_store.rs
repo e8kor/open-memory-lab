@@ -2558,8 +2558,11 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // d12).
             (true, "grants") => "to_jsonb(t) - 'covers'",
             // 0016 adds a guardrail's severity and rule, null on every other
-            // kind (proposed ADR-0037 d10).
-            (true, "memories") => "to_jsonb(t) - 'severity' - 'rule'",
+            // kind (proposed ADR-0037 d10); 0020 adds the stored search
+            // lexemes, generated from the claim (ADR-0049 d12).
+            (true, "memories") => {
+                "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len'"
+            }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };
@@ -7012,5 +7015,311 @@ async fn under_tenant_a_explain_estimates_tenant_bs_edge_label_as_it_estimates_a
         );
     }
     drop(owner);
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Stored search lexemes (migrations/0020_search.sql; ADR-0049 d12)
+// ---------------------------------------------------------------------------
+
+/// The bodies the stored-lexeme laws write: an identifier, inflected words,
+/// a word repeated, and English stop words.
+const LEXEME_BODIES: [&str; 5] = [
+    "The hook lives in useInvoiceFilters.ts and deploys nightly",
+    "prices rose and the price of aluminium rose again",
+    "deploy deploy deploy the canary",
+    "rollback the release with one command",
+    "Q1-2027 delivery for quote AM-7741",
+];
+
+/// Holds and promotes `LEXEME_BODIES` on `wa` through `rig`, and holds one
+/// more row there unpromoted; the promoted ids, then the held one.
+async fn lexeme_rows(rig: &mut ChainRig, store: &PgStore, wa: Uuid) -> (Vec<Uuid>, Uuid) {
+    let mut promoted = Vec::new();
+    for (i, body) in LEXEME_BODIES.iter().enumerate() {
+        let id = Uuid::from_u128(0xA20_0000 + i as u128);
+        let m = held_memory(rig.tenant_id, wa, id, "rita", Uuid::from_u128(0xE5), body);
+        oml_port_contracts::hold_and_promote(rig, store, m).await;
+        promoted.push(id);
+    }
+    let held = Uuid::from_u128(0xA20_00FF);
+    oml_port_contracts::hold(
+        rig,
+        store,
+        held_memory(
+            rig.tenant_id,
+            wa,
+            held,
+            "rita",
+            Uuid::from_u128(0xE5),
+            "kubernetes ingress held for review",
+        ),
+    )
+    .await
+    .expect("hold");
+    (promoted, held)
+}
+
+/// Whether every row of `tenant` holds `oml_search_vector(claim)` as its
+/// stored `search_vector` and that vector's length as `search_len`, read by
+/// the serving role under the tenant's row security; and how many rows.
+async fn stored_lexemes_hold(store: &PgStore, tenant: Uuid) -> (bool, i64) {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let row: (Option<bool>, i64) = sqlx::query_as(
+        "SELECT bool_and(search_vector = oml_search_vector(claim) \
+                         AND search_len = length(search_vector)), count(*) \
+           FROM memories WHERE tenant_id = $1",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("stored lexemes");
+    tx.commit().await.expect("commit");
+    (row.0.unwrap_or(false), row.1)
+}
+
+/// Each version's search vector, `simple` and `english` over the claim with
+/// its identifier parts, is stored once when the row is written, as a
+/// generated column, with its length beside it; every tenant partition
+/// carries a GIN index over it, and no read rebuilds it (ADR-0049 d12;
+/// postgres-schema.md, search).
+#[tokio::test]
+async fn every_memory_versions_search_vector_is_stored_once_with_a_gin_index_on_its_partition() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(560);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &store, wa).await;
+    assert_eq!(
+        stored_lexemes_hold(&store, rig.tenant_id).await,
+        (true, 6),
+        "every version, held or promoted, stores its lexemes"
+    );
+    let mut owner = owner_conn(&store).await;
+    let generated: Vec<(String, String)> = sqlx::query_as(
+        "SELECT attname::text, attgenerated::text FROM pg_attribute \
+          WHERE attrelid = 'memories'::regclass AND attname IN ('search_vector', 'search_len') \
+          ORDER BY attname",
+    )
+    .fetch_all(&mut owner)
+    .await
+    .expect("columns");
+    assert_eq!(
+        generated,
+        vec![
+            ("search_len".to_owned(), "s".to_owned()),
+            ("search_vector".to_owned(), "s".to_owned()),
+        ],
+        "both are stored generated columns"
+    );
+    let indexed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+                          JOIN pg_am a ON a.oid = c.relam \
+                         WHERE i.indrelid = $1::regclass AND a.amname = 'gin' \
+                           AND pg_get_indexdef(i.indexrelid) LIKE '%(search_vector)%')",
+    )
+    .bind(format!("memories_t_{}", rig.tenant_id.simple()))
+    .fetch_one(&mut owner)
+    .await
+    .expect("index");
+    assert!(
+        indexed,
+        "the tenant's partition has a GIN index on search_vector"
+    );
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// The `bm25` statement scores from the stored lexemes: its plan reads no
+/// row's claim, so no query rebuilds a vector from text (ADR-0049 d12;
+/// eval/bench/REPORT.md, latency).
+#[tokio::test]
+async fn the_bm25_statement_reads_the_stored_lexemes_and_never_a_rows_claim() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(561);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &store, wa).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN (VERBOSE, COSTS OFF) {}",
+        oml_pg::bm25_sql()
+    ))
+    .bind(rig.tenant_id)
+    .bind(vec![wa])
+    .bind(vec!["memory", "derived_fact"])
+    .bind(Vec::<Uuid>::new())
+    .bind(Vec::<Uuid>::new())
+    .bind("the prices of useInvoiceFilters")
+    .bind(10_i64)
+    .bind(false)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("plan");
+    tx.commit().await.expect("commit");
+    let plan = plan.join("\n");
+    assert!(plan.contains("search_vector"), "{plan}");
+    // VERBOSE qualifies every column it reads (`m.claim`); an index's name
+    // may hold the word.
+    assert!(
+        !plan.contains(".claim") && !plan.contains("(claim"),
+        "no row's claim is read, so no vector is rebuilt: {plan}"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The bm25 list of `query` over `wa`, with own held rows of `own`.
+async fn bm25_list(
+    store: &PgStore,
+    tenant: Uuid,
+    wa: Uuid,
+    query: &str,
+) -> Vec<(Uuid, f32, Vec<String>)> {
+    store
+        .retrieve(
+            tenant,
+            RetrieverKind::Bm25,
+            &CandidateScope {
+                promoted_nodes: vec![wa],
+                kinds: oml_app::types::HIT_KINDS.to_vec(),
+                own_held: None,
+            },
+            RetrievalQuery {
+                query,
+                match_mode: MatchMode::Any,
+                k: 50,
+            },
+        )
+        .await
+        .expect("bm25")
+        .candidates
+        .into_iter()
+        .map(|c| (c.memory_id, c.score, c.matched))
+        .collect()
+}
+
+/// The vocabulary `did_you_mean` reads for `wa`, as the serving role sees
+/// it under the tenant's row security: (word, rows) in word order.
+async fn vocabulary(store: &PgStore, tenant: Uuid, wa: Uuid) -> Vec<(String, i32)> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let words = sqlx::query_as(
+        "SELECT word, rows FROM search_vocabulary \
+          WHERE tenant_id = $1 AND workarea_id = $2 ORDER BY word COLLATE \"C\"",
+    )
+    .bind(tenant)
+    .bind(wa)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("vocabulary");
+    tx.commit().await.expect("commit");
+    words
+}
+
+/// A database shaped like v0.5.4's, migrated through 0019 and holding
+/// promoted and held memories, migrates through 0020: every row's lexemes
+/// are stored, the vocabulary holds the words of the promoted tips alone,
+/// nothing is journalled, and bm25 ranks as it does over the same rows
+/// written after 0020 (ADR-0049 d12; upgrades.md).
+#[tokio::test]
+async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_rows_lexemes_and_ranking_as_a_fresh_one()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 19).await;
+    let upgraded = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(562);
+    rig.seed_chain(&upgraded, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &upgraded, wa).await;
+    let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    upgraded
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0020 applies over a v0.5.4 database");
+    let upgraded = upgraded.with_search_probe().await.expect("probe");
+    assert_eq!(
+        stored_lexemes_hold(&upgraded, rig.tenant_id).await,
+        (true, 6),
+        "0020 stores every existing row's lexemes"
+    );
+    let journal_after: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    assert_eq!(
+        journal_after, journal_before,
+        "the upgrade journals nothing"
+    );
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 20);
+    drop(conn);
+
+    let fresh = fresh_search_store(&created).await;
+    let mut twin = ChainRig::new(562);
+    twin.seed_chain(&fresh, 0).await;
+    lexeme_rows(&mut twin, &fresh, wa).await;
+    let words = vocabulary(&upgraded, rig.tenant_id, wa).await;
+    assert!(
+        !words.is_empty(),
+        "0020 fills the vocabulary of existing rows"
+    );
+    assert!(
+        !words.iter().any(|(w, _)| w == "kubernetes"),
+        "a held row's words are not in the vocabulary: {words:?}"
+    );
+    assert_eq!(
+        words,
+        vocabulary(&fresh, twin.tenant_id, wa).await,
+        "the backfilled vocabulary is the one the writes keep"
+    );
+    for query in [
+        "price",
+        "the prices of aluminium",
+        "invoice filters",
+        "deploy canary",
+        "AM-7741",
+        "zebra",
+    ] {
+        assert_eq!(
+            bm25_list(&upgraded, rig.tenant_id, wa, query).await,
+            bm25_list(&fresh, twin.tenant_id, wa, query).await,
+            "{query}: the upgraded database ranks as a fresh one"
+        );
+    }
     drop_dbs(&created).await;
 }

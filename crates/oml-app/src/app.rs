@@ -90,8 +90,8 @@ use crate::types::{
 };
 
 use crate::search::{
-    CandidateScope, FUSION_DEPTH, Fusion, MatchMode, OwnHeldScope, Pipeline, RetrievalQuery,
-    SearchConfig, fuse, query_terms,
+    CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fusion, MatchMode, OwnHeldScope, Pipeline,
+    RetrievalQuery, SearchConfig, fuse, query_terms,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -4370,23 +4370,13 @@ where
         // without any body read; steering is never cut and spent first
         // (ADR-0025 d7).
         candidates.truncate(req.k);
-        let steering_counts: Vec<u64> = steering
-            .iter()
-            .map(|m| budget_tokens(m.body_bytes))
-            .collect();
-        let hit_counts: Vec<u64> = candidates
-            .iter()
-            .map(|c| budget_tokens(c.body_bytes))
-            .collect();
-        let budget = cut(&steering_counts, &hit_counts, req.max_tokens);
-        if let Some(budget) = &budget {
-            candidates.truncate(budget.hits_served);
-        }
-        // Spellings only when no hit holds every term, only from a pipeline
-        // with a trigram list, and only from rows the scope admits
-        // (ADR-0049 d6).
+        // Spellings only for an empty or thin result, fewer hits than
+        // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
+        // budget cut, for the
+        // words no hit holds, from the vocabulary of the readable nodes
+        // alone, under any pipeline but v0.5.0's (ADR-0049 d6, d12).
         let did_you_mean =
-            if pipeline.suggests() && !candidates.iter().any(|c| c.matched.len() >= terms.len()) {
+            if pipeline.suggests() && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k) {
                 let unmatched: Vec<String> = terms
                     .iter()
                     .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
@@ -4403,6 +4393,18 @@ where
                 Vec::new()
             };
 
+        let steering_counts: Vec<u64> = steering
+            .iter()
+            .map(|m| budget_tokens(m.body_bytes))
+            .collect();
+        let hit_counts: Vec<u64> = candidates
+            .iter()
+            .map(|c| budget_tokens(c.body_bytes))
+            .collect();
+        let budget = cut(&steering_counts, &hit_counts, req.max_tokens);
+        if let Some(budget) = &budget {
+            candidates.truncate(budget.hits_served);
+        }
         let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
         let mut rows: BTreeMap<Uuid, MemoryRecord> = self
             .journal

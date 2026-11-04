@@ -8468,3 +8468,68 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
 
     drop_db(&rig.db_name).await;
 }
+
+/// `did_you_mean` is offered only when a recall is empty or thin, fewer
+/// than three hits, and then from the scope's maintained vocabulary under
+/// any pipeline but `keyword-all`; a recall with enough hits offers none,
+/// even when a word of it matched nothing (ADR-0049 d6).
+#[tokio::test]
+async fn did_you_mean_is_offered_only_when_a_recall_is_empty_or_thin() {
+    let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    for (i, body) in [
+        "We deploy the api service with a canary first",
+        "The canary takes five percent of traffic",
+        "A canary that fails rolls back on its own",
+        "Billing runs nightly",
+    ]
+    .iter()
+    .enumerate()
+    {
+        promoted_over_http(router, &agent, &dreamer, &format!("dym-{i}"), body).await;
+    }
+    for search in ["bm25", "keyword-any", "bm25-trigram"] {
+        let thick = recall_ok(
+            router,
+            &reader,
+            json!({"query": "deplyo canary", "search": search}),
+        )
+        .await;
+        assert!(hit_ids(&thick).len() >= 3, "{search}: {thick}");
+        assert_eq!(
+            thick["search"]["did_you_mean"],
+            json!([]),
+            "{search}: three hits are not thin: {thick}"
+        );
+    }
+    for search in ["bm25", "keyword-any"] {
+        let empty = recall_ok(
+            router,
+            &reader,
+            json!({"query": "deplyo", "search": search}),
+        )
+        .await;
+        assert!(hit_ids(&empty).is_empty(), "{search}: {empty}");
+        assert_eq!(
+            empty["search"]["did_you_mean"],
+            json!(["deploy"]),
+            "{search}: {empty}"
+        );
+        let thin = recall_ok(
+            router,
+            &reader,
+            json!({"query": "nightyl billing", "search": search}),
+        )
+        .await;
+        assert_eq!(hit_ids(&thin).len(), 1, "{search}: {thin}");
+        assert_eq!(
+            thin["search"]["did_you_mean"],
+            json!(["nightly"]),
+            "{search}: {thin}"
+        );
+    }
+
+    drop_db(&rig.db_name).await;
+}

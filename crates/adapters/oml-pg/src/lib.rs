@@ -620,33 +620,64 @@ fn keyword_any_sql() -> String {
     )
 }
 
-/// The `bm25` statement (ADR-0048 S2): each query word of the normalised
-/// query (identifier parts beside the whole) in its exact form and its
-/// English stem; BM25 with k1 1.2 and b 0.75 whose row count, average
-/// length and document frequencies are computed in this statement over the
-/// candidate scope alone, so a row the key cannot read never moves another
-/// row's rank (ADR-0048 d3). A row's length is its count of distinct
-/// lexemes. `$6` the query, `$7` `k`, `$8` whether every word must match.
-fn bm25_sql() -> String {
+/// The query words the `bm25` and `trigram` retrievers read, `$1` the
+/// query: the `simple` words of the normalised query (identifier parts
+/// beside the whole), less its English stop words when it has any other
+/// word, in byte order (ADR-0049 d12). A stop word scores near nothing
+/// under BM25 and nearly every row of English text holds one, so reading
+/// it would make nearly every row a candidate.
+const SEARCH_WORDS: &str = "words AS (SELECT DISTINCT w, ts_lexize('english_stem', w) = '{}'::text[] AS stop \
+                   FROM unnest(tsvector_to_array(to_tsvector('simple', oml_search_text($1)))) w), \
+     kept AS (SELECT w FROM words WHERE NOT stop OR NOT EXISTS (SELECT 1 FROM words WHERE NOT stop))";
+
+/// The statement answering a `bm25` or `trigram` list's `terms`: the
+/// [`SEARCH_WORDS`] of `$1`.
+fn search_terms_sql() -> String {
     format!(
-        "WITH words AS (SELECT DISTINCT w FROM unnest(tsvector_to_array(to_tsvector('simple', oml_search_text($6)))) w), \
-         forms AS (SELECT DISTINCT words.w, f FROM words \
-                   CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', words.w), '{{}}'::text[]), words.w)) f), \
-         docs AS (SELECT m.id, m.body_bytes, oml_search_vector(m.claim) AS v FROM memories m WHERE {SEARCH_SCOPE}), \
-         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg(length(d.v)), 1), 1)::float8 AS avgdl FROM docs d), \
-         tf AS (SELECT d.id, u.lexeme, GREATEST(cardinality(u.positions), 1)::float8 AS tf, length(d.v)::float8 AS dl \
-                FROM docs d CROSS JOIN LATERAL unnest(d.v) u \
-                WHERE u.lexeme IN (SELECT f FROM forms)), \
+        "WITH {SEARCH_WORDS} \
+         SELECT COALESCE(array_agg(w ORDER BY w COLLATE \"C\"), '{{}}'::text[]) FROM kept"
+    )
+}
+
+/// The `bm25` statement (ADR-0048 S2; ADR-0049 d12): each kept query word
+/// (`SEARCH_WORDS`) in its exact form and its English stem, scored with
+/// BM25, k1 1.2 and b 0.75, against each row's stored `search_vector`,
+/// whose length is its stored `search_len`; a word scores its best form,
+/// so a row holding both a word and its stem counts it once. The row count,
+/// the average length and each form's document frequency are computed in
+/// this statement over the candidate scope alone, the frequencies from the
+/// rows that hold a form, which are every scope row holding it, so a row
+/// the key cannot read never moves another row's rank (ADR-0048 d3). No
+/// row's text is read and no vector is built from it. `$6` the query, `$7`
+/// `k`, `$8` whether every kept word must match. Exported so the suite
+/// plans the statement the adapter runs.
+#[must_use]
+pub fn bm25_sql() -> String {
+    let words = SEARCH_WORDS.replace("$1", "$6");
+    format!(
+        "WITH {words}, \
+         forms AS (SELECT DISTINCT kept.w, f FROM kept \
+                   CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f), \
+         q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
+                      array_agg(DISTINCT f) AS fa FROM forms), \
+         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg(m.search_len), 1), 1)::float8 AS avgdl \
+                   FROM memories m WHERE {SEARCH_SCOPE}), \
+         tf AS MATERIALIZED (SELECT m.id, m.body_bytes, m.search_len::float8 AS dl, u.lexeme, \
+                                    GREATEST(cardinality(u.positions), 1)::float8 AS tf \
+                             FROM memories m CROSS JOIN q \
+                             CROSS JOIN LATERAL unnest(ts_filter(setweight(m.search_vector, 'A', q.fa), '{{a}}')) u \
+                             WHERE {SEARCH_SCOPE} AND m.search_vector @@ q.tq), \
          df AS (SELECT lexeme, count(*)::float8 AS df FROM tf GROUP BY lexeme), \
-         matched AS (SELECT tf.id, array_agg(DISTINCT forms.w ORDER BY forms.w) AS words \
-                     FROM tf JOIN forms ON forms.f = tf.lexeme GROUP BY tf.id), \
-         scored AS (SELECT tf.id, sum(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
-                                   * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS score \
-                    FROM tf JOIN df USING (lexeme) CROSS JOIN stats s GROUP BY tf.id) \
-         SELECT d.id, d.body_bytes, sc.score::float4 AS score, mt.words AS matched \
-         FROM scored sc JOIN docs d USING (id) JOIN matched mt USING (id) \
-         WHERE (NOT $8 OR cardinality(mt.words) = (SELECT count(*) FROM words)) \
-         ORDER BY score DESC, d.id ASC \
+         per AS (SELECT tf.id, tf.body_bytes, forms.w, \
+                        max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
+                            * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
+                 FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
+                 GROUP BY tf.id, tf.body_bytes, forms.w), \
+         scored AS (SELECT id, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
+                    FROM per GROUP BY id, body_bytes) \
+         SELECT id, body_bytes, score::float4 AS score, words AS matched FROM scored \
+         WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
+         ORDER BY score DESC, id ASC \
          LIMIT $7"
     )
 }
@@ -665,23 +696,22 @@ fn trigram_sql() -> String {
     )
 }
 
-/// The `did_you_mean` statement (ADR-0049 d6): words of rows in the
-/// candidate scope alone, similar to a query word of four or more letters
-/// that is not an English stop word, above `pg_trgm` similarity 0.4. `$6`
-/// the words, `$7` the limit.
-fn suggest_sql() -> String {
-    format!(
-        "WITH q AS (SELECT w FROM unnest($6::text[]) w \
-                    WHERE char_length(w) >= 4 AND ts_lexize('english_stem', w) <> '{{}}'::text[]), \
-         vocab AS (SELECT DISTINCT v FROM memories m \
-                   CROSS JOIN LATERAL unnest(tsvector_to_array(to_tsvector('simple', oml_search_text(m.claim)))) v \
-                   WHERE {SEARCH_SCOPE}) \
-         SELECT v FROM (SELECT vocab.v, max(similarity(vocab.v, q.w)) AS s FROM vocab CROSS JOIN q \
-                        WHERE vocab.v <> q.w AND similarity(vocab.v, q.w) > 0.4 GROUP BY vocab.v) x \
-         ORDER BY s DESC, v ASC \
-         LIMIT $7"
-    )
-}
+/// The `did_you_mean` statement (ADR-0049 d6, d12): words of the
+/// maintained vocabulary of the readable nodes alone, the words of their
+/// promoted served tips, similar to a query word of four or more letters
+/// that is not an English stop word, above `pg_trgm` similarity 0.4. No row
+/// is read: the vocabulary is kept by the write that promotes, replaces or
+/// retires a row (migration 0020). `$1` the tenant, `$2` the nodes, `$3`
+/// the words, `$4` the limit.
+const SUGGEST: &str = "WITH q AS (SELECT w FROM unnest($3::text[]) w \
+                WHERE char_length(w) >= 4 AND ts_lexize('english_stem', w) <> '{}'::text[]) \
+     SELECT word FROM (SELECT v.word, max(similarity(v.word, q.w)) AS s \
+                         FROM search_vocabulary v CROSS JOIN q \
+                        WHERE v.tenant_id = $1 AND v.workarea_id = ANY($2::uuid[]) \
+                          AND v.word <> q.w AND similarity(v.word, q.w) > 0.4 \
+                        GROUP BY v.word) x \
+     ORDER BY s DESC, word ASC \
+     LIMIT $4";
 
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
@@ -756,6 +786,12 @@ impl PgStore {
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS memories_search_trgm ON memories \
                  USING gin (oml_search_text(claim) gin_trgm_ops)",
+            )
+            .execute(owner)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS search_vocabulary_trgm ON search_vocabulary \
+                 USING gin (word gin_trgm_ops)",
             )
             .execute(owner)
             .await?;
@@ -2917,13 +2953,11 @@ impl Retriever for PgStore {
         // lexemes, of the normalised query for bm25 and trigram.
         let terms_sql = match kind {
             RetrieverKind::KeywordAll | RetrieverKind::KeywordAny => {
-                "SELECT tsvector_to_array(to_tsvector('simple', $1))"
+                "SELECT tsvector_to_array(to_tsvector('simple', $1))".to_owned()
             }
-            RetrieverKind::Bm25 | RetrieverKind::Trigram => {
-                "SELECT tsvector_to_array(to_tsvector('simple', oml_search_text($1)))"
-            }
+            RetrieverKind::Bm25 | RetrieverKind::Trigram => search_terms_sql(),
         };
-        let terms: Vec<String> = sqlx::query_scalar(terms_sql)
+        let terms: Vec<String> = sqlx::query_scalar(&terms_sql)
             .bind(query.query)
             .fetch_one(&mut *tx)
             .await
@@ -2980,21 +3014,11 @@ impl Retriever for PgStore {
         if !self.trigram.load(std::sync::atomic::Ordering::SeqCst) || words.is_empty() {
             return Ok(Vec::new());
         }
-        let kinds = hit_kinds(&scope.kinds);
-        let (authors, held_nodes) = scope
-            .own_held
-            .as_ref()
-            .map_or((Vec::new(), Vec::new()), |own| {
-                (own.author_key_ids.clone(), own.nodes.clone())
-            });
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let found: Vec<String> = sqlx::query_scalar(&suggest_sql())
+        let found: Vec<String> = sqlx::query_scalar(SUGGEST)
             .bind(tenant_id)
             .bind(&scope.promoted_nodes)
-            .bind(&kinds)
-            .bind(&authors)
-            .bind(&held_nodes)
             .bind(words)
             .bind(i64::try_from(limit).unwrap_or(i64::MAX))
             .fetch_all(&mut *tx)

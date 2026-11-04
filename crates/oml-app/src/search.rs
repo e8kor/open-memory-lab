@@ -75,6 +75,11 @@ pub const RRF_K: u32 = 60;
 /// at `k` would drop a candidate the other list ranks first.
 pub const FUSION_DEPTH: usize = 50;
 
+/// A recall serving fewer hits than this, or than its `k` when `k` is
+/// smaller, before the budget cut, is thin: only then does it offer
+/// `did_you_mean` (ADR-0049 d6, d12).
+pub const DID_YOU_MEAN_BELOW: usize = 3;
+
 /// A served pipeline: a closed set, so the request log and the metrics name
 /// a bounded set of values (ADR-0049 d4, ADR-0042 d11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -139,11 +144,13 @@ impl Pipeline {
         }
     }
 
-    /// Whether the pipeline can offer spellings for an empty or partial
-    /// result (`explain.did_you_mean`): only one with a trigram list.
+    /// Whether the pipeline offers spellings for a thin result
+    /// (`did_you_mean`): every pipeline but `keyword-all`, v0.5.0's recall,
+    /// which offered none. The spellings come from the store's vocabulary,
+    /// not from a retriever's list (ADR-0049 d6, d12).
     #[must_use]
     pub fn suggests(self) -> bool {
-        self.retrievers().contains(&RetrieverKind::Trigram)
+        self != Self::KeywordAll
     }
 }
 

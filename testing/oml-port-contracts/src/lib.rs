@@ -9747,6 +9747,227 @@ pub async fn trigram_finds_a_misspelled_words_memory<S: JournalStore>(store: &S)
 }
 
 /// Every retriever law, against a fresh store per law.
+/// BM25 reads a query without its English stop words when it has other
+/// words, and with them when it has none: `the billing` ranks as `billing`
+/// and reports the one term, while `the` alone still finds the rows that
+/// say it (ADR-0049 d12).
+pub async fn bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25) {
+        return;
+    }
+    let mut rig = ChainRig::new(408);
+    rig.seed_chain(store, 0).await;
+    let (promoted, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let scope = scope_of(wa, None);
+    let ids = |r: &Retrieved| -> Vec<(Uuid, f32)> {
+        r.candidates
+            .iter()
+            .map(|c| (c.memory_id, c.score))
+            .collect()
+    };
+    let bare = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope,
+        "billing",
+        MatchMode::Any,
+    )
+    .await;
+    let with_stop = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope,
+        "the billing",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(ids(&with_stop), ids(&bare), "a stop word moves no rank");
+    assert_eq!(with_stop.terms, vec!["billing".to_owned()], "{with_stop:?}");
+    let all = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope,
+        "the billing",
+        MatchMode::All,
+    )
+    .await;
+    assert_eq!(ids(&all), ids(&bare), "every word but the stop words");
+    let only_stop = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope,
+        "the",
+        MatchMode::Any,
+    )
+    .await;
+    let saying_the: Vec<Uuid> = promoted
+        .iter()
+        .filter(|(_, body)| body.split(' ').any(|w| w == "the"))
+        .map(|(id, _)| *id)
+        .collect();
+    let mut found: Vec<Uuid> = only_stop.candidates.iter().map(|c| c.memory_id).collect();
+    found.sort();
+    assert_eq!(found, saying_the, "a query of stop words alone keeps them");
+}
+
+/// BM25 counts what a row says once: a lone row that says a word once, in
+/// a form whose English stem is itself, scores that word at exactly its
+/// BM25 weight with k1 1.2 and b 0.75, `ln(1 + (1 - 1 + 0.5) / (1 + 0.5))`,
+/// however the text was normalised for identifiers and stems (ADR-0049 d12;
+/// eval/bench/REPORT.md).
+pub async fn bm25_scores_a_word_a_lone_row_says_once_at_its_weight<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25) {
+        return;
+    }
+    let mut rig = ChainRig::new(409);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    hold_and_promote(
+        &mut rig,
+        store,
+        held_memory(
+            rig_tenant(409),
+            wa,
+            Uuid::from_u128(0xF51),
+            "rita",
+            Uuid::from_u128(0xE5),
+            "deploy canary",
+        ),
+    )
+    .await;
+    let got = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope_of(wa, None),
+        "deploy",
+        MatchMode::Any,
+    )
+    .await;
+    let weight = (1.0_f64 + 0.5 / 1.5).ln();
+    assert_eq!(got.candidates.len(), 1, "{got:?}");
+    assert!(
+        (f64::from(got.candidates[0].score) - weight).abs() < 1e-4,
+        "score {} against {weight}",
+        got.candidates[0].score
+    );
+}
+
+/// `did_you_mean` draws only on the words of promoted served tips in the
+/// scope: never a held row's, another node's, a replaced version's or a
+/// retired claim's, and a word returns once a served tip says it again
+/// (ADR-0049 d6, d12).
+pub async fn did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Trigram) {
+        return;
+    }
+    let mut rig = ChainRig::new(410);
+    rig.seed_chain(store, 0).await;
+    let (wa, elsewhere) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let row = |id: u128, node: Uuid, body: &str| {
+        held_memory(
+            rig_tenant(410),
+            node,
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            body,
+        )
+    };
+    hold_and_promote(
+        &mut rig,
+        store,
+        row(0xF61, wa, "pgbouncer pools connections"),
+    )
+    .await;
+    hold(&mut rig, store, row(0xF62, wa, "kubernetes ingress"))
+        .await
+        .expect("hold");
+    hold_and_promote(&mut rig, store, row(0xF63, elsewhere, "zookeeper quorum")).await;
+    let cache = row(0xF64, wa, "memcached fronts the database");
+    hold_and_promote(&mut rig, store, cache.clone()).await;
+    let retired = row(0xF65, wa, "terraform plans nightly");
+    hold_and_promote(&mut rig, store, retired.clone()).await;
+    let scope = scope_of(wa, None);
+    let tenant = rig.tenant_id;
+    let suggest = |words: &[&str]| {
+        let words: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
+        let scope = scope.clone();
+        async move {
+            store
+                .suggest(tenant, &scope, &words, 3)
+                .await
+                .expect("suggest")
+        }
+    };
+    assert_eq!(suggest(&["pgbouncr"]).await, vec!["pgbouncer".to_owned()]);
+    assert_eq!(suggest(&["memcachd"]).await, vec!["memcached".to_owned()]);
+    assert_eq!(suggest(&["terraforn"]).await, vec!["terraform".to_owned()]);
+    assert!(
+        suggest(&["kubernets"]).await.is_empty(),
+        "a held row's word"
+    );
+    assert!(
+        suggest(&["zookeper"]).await.is_empty(),
+        "another node's word"
+    );
+
+    hold_and_ratify(
+        &mut rig,
+        store,
+        successor_of(
+            &cache,
+            Uuid::from_u128(0xF66),
+            "valkey fronts the database",
+            false,
+        ),
+    )
+    .await;
+    hold_and_ratify(
+        &mut rig,
+        store,
+        successor_of(
+            &retired,
+            Uuid::from_u128(0xF67),
+            "terraform plans nightly",
+            true,
+        ),
+    )
+    .await;
+    assert!(
+        suggest(&["memcachd"]).await.is_empty(),
+        "a replaced version's word"
+    );
+    assert_eq!(suggest(&["valkee"]).await, vec!["valkey".to_owned()]);
+    assert!(
+        suggest(&["terraforn"]).await.is_empty(),
+        "a retired claim's word"
+    );
+    hold_and_promote(
+        &mut rig,
+        store,
+        row(0xF68, wa, "memcached again, for sessions"),
+    )
+    .await;
+    assert_eq!(
+        suggest(&["memcachd"]).await,
+        vec!["memcached".to_owned()],
+        "a word returns with a served tip that says it"
+    );
+}
+
 pub async fn run_retriever_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -9758,5 +9979,10 @@ where
     a_row_outside_the_scope_never_changes_a_candidates_score(&new_store).await;
     the_keyword_retrievers_match_all_or_any_word_on_every_store(&new_store().await).await;
     bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem(&new_store().await).await;
+    bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other(&new_store().await)
+        .await;
+    bm25_scores_a_word_a_lone_row_says_once_at_its_weight(&new_store().await).await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
+    did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
+        .await;
 }
