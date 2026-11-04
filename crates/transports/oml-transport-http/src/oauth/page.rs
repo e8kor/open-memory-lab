@@ -248,7 +248,7 @@ fn joined(names: &[Name]) -> String {
 /// bidirectional formatting characters replaced, at most
 /// [`CLIENT_STRING_CHARS`] characters with an ellipsis where it was cut,
 /// then HTML-escaped.
-fn client_string(value: &str) -> String {
+pub(crate) fn client_string(value: &str) -> String {
     let cleaned: Vec<char> = value
         .chars()
         .map(|c| {
@@ -280,7 +280,7 @@ fn is_bidi_format(c: char) -> bool {
 }
 
 /// HTML-escapes text and attribute values alike.
-fn escape(value: &str) -> String {
+pub(crate) fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
@@ -382,7 +382,7 @@ const fn padded(data: &[u8], i: usize, total: usize) -> u8 {
 
 /// SHA-256 (FIPS 180-4 §6.2), as a `const fn` so the stylesheet's digest is
 /// a compile-time constant.
-const fn sha256(data: &[u8]) -> [u8; 32] {
+pub(crate) const fn sha256(data: &[u8]) -> [u8; 32] {
     let mut h: [u32; 8] = [
         0x6a09_e667,
         0xbb67_ae85,
@@ -462,7 +462,7 @@ const fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 /// Standard base64 with padding (RFC 4648 §4) of a 32-byte digest.
-const fn base64_32(bytes: &[u8; 32]) -> [u8; 44] {
+pub(crate) const fn base64_32(bytes: &[u8; 32]) -> [u8; 44] {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = [b'='; 44];
     let mut i = 0;

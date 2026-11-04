@@ -7124,6 +7124,21 @@ fn doubles_router_over(issuer: Option<&str>) -> Router {
         true,
         Some(ENROLLMENT.to_owned()),
     )
+    // Both sign-in providers, through the in-memory double: the web routes
+    // exist only where the issuer is also set (ADR-0045 d1, d17).
+    .with_web(oml_transport_http::web::WebPages::new(
+        vec![
+            (
+                oml_app::domain::web::Provider::Google,
+                "google-client".to_owned(),
+            ),
+            (
+                oml_app::domain::web::Provider::GitHub,
+                "github-client".to_owned(),
+            ),
+        ],
+        oml_app::doubles::MemSignIn::new(),
+    ))
     .into_router()
 }
 
@@ -7144,6 +7159,7 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     };
     let rings = table(oml_transport_http::ROUTES);
     let oauth = table(oml_transport_http::OAUTH_ROUTES);
+    let web = table(oml_transport_http::web::WEB_ROUTES);
     assert_eq!(
         rings.len(),
         oml_transport_http::ROUTES.len(),
@@ -7155,7 +7171,15 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
         "the OAuth route table lists an operation twice"
     );
     assert!(rings.is_disjoint(&oauth), "an operation is in both tables");
-    let routed: std::collections::BTreeSet<_> = rings.union(&oauth).cloned().collect();
+    assert!(
+        rings.is_disjoint(&web) && oauth.is_disjoint(&web),
+        "a web route is in another table"
+    );
+    let routed: std::collections::BTreeSet<_> = rings
+        .union(&oauth)
+        .cloned()
+        .chain(web.iter().cloned())
+        .collect();
     let only_declared: Vec<_> = declared.difference(&routed).collect();
     let only_routed: Vec<_> = routed.difference(&declared).collect();
     assert!(
@@ -7168,8 +7192,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        31,
-        "the 24 routed operations, whoami and the six OAuth operations"
+        40,
+        "the 27 routed operations, whoami, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

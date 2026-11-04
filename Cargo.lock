@@ -1356,6 +1356,7 @@ name = "oml-fetch"
 version = "0.4.1"
 dependencies = [
  "oml-app",
+ "serde_json",
  "tokio",
  "ureq",
 ]

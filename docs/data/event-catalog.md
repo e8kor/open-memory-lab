@@ -731,6 +731,30 @@ once, so a holder of past tokens can cause at most one such event. A revoked or 
 its connections with no event of this type
 ([roles and keys](../architecture/roles-and-keys.md#connections)).
 
+## Web family
+
+*Built for v0.5.0 on the `feat/web-console` branch, not released · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+
+### web.email_allowed
+
+```json
+{ "email_digest": "sha256:…", "user": "alice", "admin": true, "by_key_id": "…" }
+```
+
+An admin key adds an email to its tenant's web allowlist. `email_digest` is SHA-256 over a fixed
+purpose string and the ASCII-lower-cased address, the `web_emails.email_hash` the sign-in finds
+the entry by; the journal never holds the address. `user` is the user the address signs in as.
+
+### web.email_changed
+
+The same payload: the entry's user or admin flag changed. The commit ends every session of the
+entry.
+
+### web.email_removed
+
+The same payload, naming the entry as it stood. The commit removes the entry and ends its
+sessions; the user's agent keys are untouched (ADR-0045 d13).
+
 ## Simulation family
 
 The fenced provenance channel. Semantics and taint rules:

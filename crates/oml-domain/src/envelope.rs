@@ -71,6 +71,15 @@ pub mod event_types {
     /// A connection ends, by an admin or a reuse; the commit voids the
     /// key's codes from which no connection opened (ADR-0031 d8, d12).
     pub const CONNECTION_REVOKED: &str = "connection.revoked";
+    /// An email joins the tenant's web allowlist: its digest, never the
+    /// address, the user it signs in as and its admin flag (ADR-0045 d2).
+    pub const WEB_EMAIL_ALLOWED: &str = "web.email_allowed";
+    /// An allowlist entry's user or admin flag changes; the commit ends the
+    /// entry's sessions (ADR-0045 d2, d5).
+    pub const WEB_EMAIL_CHANGED: &str = "web.email_changed";
+    /// An email leaves the allowlist; the commit ends its sessions, and the
+    /// user's agent keys keep working (ADR-0045 d2, d13).
+    pub const WEB_EMAIL_REMOVED: &str = "web.email_removed";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

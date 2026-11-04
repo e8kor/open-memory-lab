@@ -734,6 +734,49 @@ window is always recognized; and `auth_code_hash`, cleared with the connection's
 the connection is revoked, so a second redemption is recognized for as long as the connection
 stands.
 
+## web (ADR-0045)
+
+*Built for v0.5.0 on the `feat/web-console` branch, not released (migration `0015_web`) ·
+[ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, d4, d5, proposed*
+
+```sql
+CREATE TABLE web_emails (
+    tenant_id      uuid        NOT NULL REFERENCES tenants (id),
+    email_hash     bytea       NOT NULL,       -- SHA-256 over a purpose string and the email
+    email          text        NOT NULL,       -- ASCII-lower-cased, at most 254 bytes
+    user_name      oml_name    NOT NULL,       -- at most 56 characters
+    admin          boolean     NOT NULL,
+    google_subject text,                       -- pinned at the first Google sign-in
+    github_subject text,                       -- pinned at the first GitHub sign-in
+    created_at     timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, email_hash),
+    CONSTRAINT web_emails_email_hash UNIQUE (email_hash)   -- one entry per email, deployment-wide
+);
+
+CREATE TABLE web_sessions (
+    token_hash bytea       PRIMARY KEY,        -- SHA-256 of the session token, never the token
+    tenant_id  uuid        NOT NULL,
+    email_hash bytea       NOT NULL,
+    user_name  oml_name    NOT NULL,
+    admin      boolean     NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    FOREIGN KEY (tenant_id, email_hash) REFERENCES web_emails (tenant_id, email_hash)
+);
+```
+
+`web_emails` is folded from `web.email_allowed`, `web.email_changed` and `web.email_removed`; the
+journal carries `email_digest`, which is `email_hash`, never the address, so a re-fold restores
+every entry's digest, user and admin flag but not its address, which the admin adds again. A
+change or a removal ends the entry's sessions in the same commit. The provider subjects are an
+operational write at each provider's first sign-in, journalled nothing. A sign-in finds its entry
+by `email_hash`, and a request finds its session by `token_hash`, before any tenant is known,
+under `key_resolution` policies of 0001's form; every other statement runs under the tenant's
+`tenant_isolation`. `web_sessions` is operational state: a row is written at an admitted callback,
+deleted at sign-out, at the read that finds it expired, by the hourly sweep once expired, and with
+its entry. The serving role holds `SELECT, INSERT, UPDATE, DELETE` on `web_emails` and
+`SELECT, INSERT, DELETE` on `web_sessions`.
+
 ## vocabularies (ADR-0021)
 
 Vocabulary state is claims plus two folds of the journal and one per-release materialization:
@@ -1193,6 +1236,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `simulations` | simulation open / end events |
 | `connect_codes`, `oauth_connections` (state columns, `resource` among them) | `connection.code_issued`, `connection.opened`, `connection.revoked`, and `key.revoked` for a voided code |
 | `api_keys` (state columns, `credential` among them) | key issue / rotate / revoke events, `system.names_assigned` |
+| `web_emails` (all but the address and the pinned subjects) | `web.email_allowed`, `web.email_changed`, `web.email_removed` |
 
 A chain's `system.names_assigned` sits later in the chain than the creation events of the rows it
 names, and those rows' `name` and `path` are `NOT NULL`. So a fold of a chain from genesis is two
@@ -1223,8 +1267,8 @@ re-opens a replay window bounded by key behaviour), `read_events` (retention-bou
 matters), `memories_fts` and `memory_embeddings` (rebuildable from promoted bodies while DEKs
 exist), `upload_sessions` (in-flight uploads restart), `oauth_tokens` (loss ends every open
 connection at its next request or refresh, and each needs a new connect code),
-`oauth_authorizations` (pages in progress start again) and `oauth_clients` (documents are fetched
-again; registered clients register again).
+`oauth_authorizations` (pages in progress start again), `oauth_clients` (documents are fetched
+again; registered clients register again) and `web_sessions` (every person signs in again).
 
 ## Migrations
 

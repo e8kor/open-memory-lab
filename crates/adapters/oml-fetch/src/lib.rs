@@ -21,6 +21,8 @@
 //! and the 16 KiB cut applies to the decoded bytes; the 5-second cut bounds
 //! such a host as any other.
 
+pub mod signin;
+
 use std::io::Read as _;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 use std::time::Duration;

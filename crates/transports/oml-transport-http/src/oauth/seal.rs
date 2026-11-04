@@ -19,21 +19,34 @@ use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundK
 /// Binds every handle to what it carries.
 const PURPOSE: &[u8] = b"oml oauth authorization request";
 
+/// The web sign-in cookie's purpose, so a connect page's handle never opens
+/// as a sign-in and the reverse (ADR-0045 d3).
+pub const WEB_SIGN_IN_PURPOSE: &[u8] = b"oml web sign-in";
+
 /// The lead's sealer: one key per process, never stored.
 pub struct AeadSealer {
     key: LessSafeKey,
+    purpose: &'static [u8],
 }
 
 impl AeadSealer {
-    /// A sealer under a fresh 256-bit key from the OS random source.
+    /// A sealer under a fresh 256-bit key from the OS random source, for
+    /// the authorization request's handle.
     #[must_use]
     pub fn generate() -> Self {
+        Self::generate_for(PURPOSE)
+    }
+
+    /// A sealer under a fresh key whose seals open only as `purpose`.
+    #[must_use]
+    pub fn generate_for(purpose: &'static [u8]) -> Self {
         let mut key = [0_u8; 32];
         getrandom::getrandom(&mut key).expect("the OS random source is available");
         let key = UnboundKey::new(&CHACHA20_POLY1305, &key)
             .expect("a 256-bit key is ChaCha20-Poly1305's key length");
         Self {
             key: LessSafeKey::new(key),
+            purpose,
         }
     }
 }
@@ -52,7 +65,7 @@ impl HandleSealer for AeadSealer {
         self.key
             .seal_in_place_append_tag(
                 Nonce::assume_unique_for_key(nonce),
-                Aad::from(PURPOSE),
+                Aad::from(self.purpose),
                 &mut sealed,
             )
             .expect("a handle's plaintext is far below the AEAD's length limit");
@@ -78,7 +91,7 @@ impl HandleSealer for AeadSealer {
         let mut sealed = sealed.to_vec();
         let plaintext = self
             .key
-            .open_in_place(nonce, Aad::from(PURPOSE), &mut sealed)
+            .open_in_place(nonce, Aad::from(self.purpose), &mut sealed)
             .ok()?;
         Some(plaintext.to_vec())
     }

@@ -22,8 +22,10 @@ use crate::types::{
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WorkareaRecord,
+    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
+use crate::types::{PinOutcome, ProviderAnswer, ProviderFailure};
+use oml_domain::web::Provider;
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -88,6 +90,11 @@ pub enum StoreError {
     /// `POST /oauth/register`; errors.md; ADR-0031 d5).
     #[error("the unused client registrations are at their cap")]
     CapReached,
+    /// An allowlist entry's email that another tenant's entry holds: the
+    /// deployment-wide unique index refused it and the commit wrote
+    /// nothing, its event included (ADR-0045 d2).
+    #[error("the email is held by another tenant's allowlist")]
+    EmailTaken,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -262,6 +269,20 @@ pub enum MetadataFold {
     TipSuperseded {
         successor: Uuid,
         replaced: Uuid,
+    },
+    /// `web.email_allowed`: the entry's row, with no pinned subject. The
+    /// store refuses an email another tenant's entry holds with
+    /// [`StoreError::EmailTaken`] (ADR-0045 d2).
+    WebEmailAllowed(WebEntry),
+    /// `web.email_changed`: the entry's user and admin flag, its pinned
+    /// subjects kept, and every session of the entry ended in the same
+    /// commit (ADR-0045 d2, d5).
+    WebEmailChanged(WebEntry),
+    /// `web.email_removed`: the entry's row and every session of it, gone
+    /// in the same commit; the store refuses an entry it does not hold
+    /// (ADR-0045 d2, d13).
+    WebEmailRemoved {
+        email_hash: Sha256Hash,
     },
 }
 
@@ -698,6 +719,88 @@ pub trait JournalStore: Send + Sync {
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+}
+
+/// The web pages' rows (ADR-0045 d2, d4, d5; postgres-schema.md "web"):
+/// the reads of the allowlist, the pre-tenant lookups of an entry by its
+/// email's digest and of a session by its token's digest, the pin of a
+/// provider subject, and the session rows, which are operational state and
+/// journal nothing. The allowlist acts are folds of [`MetadataFold`].
+pub trait WebStore: JournalStore {
+    /// The entry an email's digest names, in whichever tenant holds it,
+    /// before any tenant is known; `None` for a digest no entry holds.
+    fn web_entry_by_email(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<WebEntry>, StoreError>> + Send;
+
+    /// The tenant's entries in the order of their email's digest, after
+    /// the digest `after`, at most `limit`; a cursor that is a digest keeps
+    /// every address out of the listing's query string (ADR-0045 d2).
+    fn web_entries(
+        &self,
+        tenant_id: Uuid,
+        after: Option<&Sha256Hash>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send;
+
+    /// Pins `subject` for `provider` on the entry when none is pinned,
+    /// and otherwise compares it, in one conditional update (ADR-0045 d4).
+    /// An entry the tenant does not hold is [`StoreError::Backend`].
+    fn web_pin(
+        &self,
+        tenant_id: Uuid,
+        email_hash: &Sha256Hash,
+        provider: Provider,
+        subject: &str,
+    ) -> impl Future<Output = Result<PinOutcome, StoreError>> + Send;
+
+    /// Writes a session row, and ends the row `replaces` names in the same
+    /// transaction, so a browser that arrives with an old session leaves
+    /// with only the new one (ADR-0045 d5).
+    fn web_session_open(
+        &self,
+        session: WebSessionRecord,
+        replaces: Option<Sha256Hash>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The session a token's digest names, before any tenant is known;
+    /// `None` for a digest no row holds.
+    fn web_session(
+        &self,
+        token_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<WebSessionRecord>, StoreError>> + Send;
+
+    /// Ends one session: its row is gone.
+    fn web_session_end(
+        &self,
+        tenant_id: Uuid,
+        token_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Removes the tenant's session rows that expired before `at`; the
+    /// count removed.
+    fn web_sessions_sweep(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+}
+
+/// What a sign-in provider's endpoints answer for one code (ADR-0045 d3,
+/// d4): the adapter calls the provider's token endpoint with the code, the
+/// PKCE verifier and the client secret it holds, and for GitHub its two
+/// API calls, then discards the provider's access token. It judges
+/// nothing; the application admits or refuses what it answers. Tests use a
+/// double and never reach a provider.
+pub trait SignInExchange: Send + Sync {
+    fn redeem(
+        &self,
+        provider: Provider,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> impl Future<Output = Result<ProviderAnswer, ProviderFailure>> + Send;
 }
 
 /// The connection rows of a store that serves connector keys

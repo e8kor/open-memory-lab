@@ -5,6 +5,9 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod web;
+pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

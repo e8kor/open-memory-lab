@@ -23,6 +23,7 @@ pub mod mcp;
 pub mod oauth;
 pub mod time;
 pub mod traffic;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -50,7 +51,7 @@ use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
-    Signer, StoreError,
+    Signer, StoreError, WebStore,
 };
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
@@ -98,6 +99,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workareas/{workarea}/crew"),
     ("GET", "/v2/events"),
     ("POST", "/v2/bootstrap/claim"),
+    ("GET", "/v2/web/emails"),
+    ("POST", "/v2/web/emails"),
+    ("POST", "/v2/web/emails/remove"),
 ];
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
@@ -189,6 +193,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     documents: oauth::Documents,
     /// The traffic layer's configuration (ADR-0042).
     traffic: traffic::Traffic,
+    /// The web pages, where the composition set providers (ADR-0045 d17).
+    web: Option<Arc<web::WebPages>>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -204,6 +210,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             sealer: Arc::clone(&self.sealer),
             documents: self.documents.clone(),
             traffic: self.traffic.clone(),
+            web: self.web.clone(),
         }
     }
 }
@@ -212,7 +219,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
 /// composition's store is both ports.
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -239,7 +246,8 @@ where
             let router = probes
                 .merge(rings)
                 .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
-            self.with_oauth_routes(router).with_state(self)
+            let router = self.with_oauth_routes(router);
+            self.with_web_routes(router).with_state(self)
         } else {
             probes.fallback(names_unassigned).with_state(self)
         };
@@ -282,6 +290,9 @@ where
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
             ("GET", "/v2/events") => get(Self::events_tail),
             ("POST", "/v2/bootstrap/claim") => post(Self::bootstrap_claim),
+            ("GET", "/v2/web/emails") => get(Self::list_web_emails),
+            ("POST", "/v2/web/emails") => post(Self::allow_web_email),
+            ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
     }
@@ -289,7 +300,7 @@ where
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,
@@ -316,6 +327,7 @@ where
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
             documents: oauth::Documents::default(),
             traffic: traffic::Traffic::default(),
+            web: None,
         }
     }
 
@@ -335,6 +347,14 @@ where
     #[must_use]
     pub fn with_traffic(mut self, traffic: traffic::Traffic) -> Self {
         self.traffic = traffic;
+        self
+    }
+
+    /// The web pages over their providers (ADR-0045 d1, d17): routed where
+    /// `oauth.issuer` is also set. Without it no web route exists.
+    #[must_use]
+    pub fn with_web(mut self, pages: web::WebPages) -> Self {
+        self.web = Some(Arc::new(pages));
         self
     }
 
@@ -386,6 +406,10 @@ where
             // The lead's oauth.issuer, or null: doctor reads whether
             // connections are on here, off the route it checks (ADR-0031 d14).
             "oauth_issuer": st.app.oauth_issuer().map(|issuer| issuer.as_str()),
+            // The web pages' providers and their failed exchanges since
+            // start, or null where the pages are off: doctor's web line
+            // reads it (ADR-0045 d18).
+            "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
         });
         let status = if ready {
             StatusCode::OK

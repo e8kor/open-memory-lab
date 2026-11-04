@@ -129,6 +129,12 @@ enum Command {
         #[command(subcommand)]
         command: CrewsCommand,
     },
+    /// The web pages' email allowlist: who may sign in, as which user, and
+    /// whether as an admin (admin key role; ADR-0045 d2).
+    Web {
+        #[command(subcommand)]
+        command: WebCommand,
+    },
     /// Write a claim, held until reviewed: a submission, or with --replaces
     /// a new version of a claim or its retirement (ADR-0039 d3, d10).
     Write(WriteArgs),
@@ -431,6 +437,30 @@ enum WorkareaCrewCommand {
         #[arg(long)]
         crew: String,
     },
+}
+
+#[derive(Subcommand)]
+enum WebCommand {
+    /// Add an email to the list, or change its user or admin flag
+    /// (web.email_allowed, web.email_changed); a change ends its sessions.
+    Allow {
+        /// The email address, compared whole and ASCII case-insensitively.
+        email: String,
+        /// The user the address signs in as, at most 56 characters.
+        #[arg(long)]
+        user: String,
+        /// The address opens the admin page.
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Remove an email from the list (web.email_removed), ending its
+    /// sessions; the user's agent keys keep working.
+    Remove {
+        /// The email address.
+        email: String,
+    },
+    /// The tenant's list.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -1253,6 +1283,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Crews { command } => run_crews(cli, &stored, command),
+        Command::Web { command } => run_web(cli, &stored, command),
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
         Command::Read(args) => run_read(cli, &stored, args),
@@ -2077,6 +2108,65 @@ fn run_crews(
     Ok(ExitCode::SUCCESS)
 }
 
+/// The allowlist verbs, admin key role throughout (cli/reference.md `oml
+/// web`; http-api.md web pages; ADR-0045 d2). The email travels in a body,
+/// never a path; `oml web list` reads every page.
+fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let entry_line = |entry: &Value| {
+        format!(
+            "{}  user: {}{}",
+            field(entry, "email"),
+            field(entry, "user"),
+            if entry["admin"].as_bool() == Some(true) {
+                "  admin"
+            } else {
+                ""
+            }
+        )
+    };
+    match command {
+        WebCommand::Allow { email, user, admin } => {
+            let body = json!({ "email": email, "user": user, "admin": admin });
+            let (_, entry) = client.post("/v2/web/emails", &body, &write_opts())?;
+            if cli.json {
+                print_json(&entry);
+            } else {
+                println!("allowed {}", entry_line(&entry));
+            }
+        }
+        WebCommand::Remove { email } => {
+            let body = json!({ "email": email });
+            let (_, result) = client.post("/v2/web/emails/remove", &body, &write_opts())?;
+            if cli.json {
+                print_json(&result);
+            } else {
+                println!("removed {email}; the user's agent keys keep working");
+            }
+        }
+        WebCommand::List => {
+            let mut items: Vec<Value> = Vec::new();
+            let mut path = "/v2/web/emails".to_owned();
+            loop {
+                let (_, page) = client.get(&path)?;
+                items.extend(page["items"].as_array().into_iter().flatten().cloned());
+                match page["next_cursor"].as_str() {
+                    Some(cursor) => path = format!("/v2/web/emails?cursor={}", encode(cursor)),
+                    None => break,
+                }
+            }
+            if cli.json {
+                print_json(&json!({ "items": items, "next_cursor": Value::Null }));
+            } else {
+                for entry in &items {
+                    println!("{}", entry_line(entry));
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 // ---------------------------------------------------------------------------
 // oml audit verify-chain
 // ---------------------------------------------------------------------------
@@ -2852,6 +2942,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut ready = None;
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
+    let mut admin_emails: Option<usize> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -2863,8 +2954,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 .get("/v2/events?after_seq=0&limit=1")
                 .ok()
                 .and_then(|(_, v)| v["head_seq"].as_u64());
+            // The allowlist's admin entries, read by an admin key where the
+            // pages are on (ADR-0045 d18).
+            let pages_on = ready
+                .as_ref()
+                .is_some_and(|(_, body)| body["web"].is_object());
+            let is_admin = matches!(&me, Some(Ok(v)) if v["role"] == "admin");
+            if pages_on && is_admin {
+                admin_emails = count_admin_emails(&client);
+            }
         }
     }
+    let web = web_doctor(ready.as_ref(), admin_emails);
+    let web_warn = web.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -2876,7 +2978,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let whoami_ok = !matches!(me, Some(Err(_)));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() {
+    } else if me.is_none() || web_warn {
         "warn"
     } else {
         "ok"
@@ -2906,6 +3008,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "whoami": whoami,
             "chain_head_seq": head_seq,
             "oauth_discovery": oauth,
+            "web": web,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -2962,6 +3065,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             ),
             None => println!("oauth       : not probed (no URL)"),
         }
+        for line in &web {
+            println!("web         : {line}");
+        }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
             (_, Some(version)) => println!("server      : oml-server-lead {version}"),
@@ -2978,6 +3084,59 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// How many of the tenant's allowlist entries open the admin page, read
+/// through every page of `GET /v2/web/emails`; `None` when the listing is
+/// refused or unreadable.
+fn count_admin_emails(client: &Client) -> Option<usize> {
+    let mut admins = 0;
+    let mut path = "/v2/web/emails?limit=200".to_owned();
+    loop {
+        let (_, page) = client.get(&path).ok()?;
+        admins += page["items"]
+            .as_array()?
+            .iter()
+            .filter(|e| e["admin"].as_bool() == Some(true))
+            .count();
+        match page["next_cursor"].as_str() {
+            Some(cursor) => path = format!("/v2/web/emails?limit=200&cursor={}", encode(cursor)),
+            None => return Some(admins),
+        }
+    }
+}
+
+/// The web pages' doctor lines (ADR-0045 d18): off when `/readyz` names no
+/// provider; a warning per provider whose exchanges failed since the lead
+/// started; and, read by an admin key, a warning when no entry of the
+/// tenant's list opens the admin page.
+fn web_doctor(ready: Option<&(u16, Value)>, admin_emails: Option<usize>) -> Vec<String> {
+    let Some((_, body)) = ready else {
+        return Vec::new();
+    };
+    let Some(providers) = body["web"]["providers"].as_object() else {
+        return vec!["off (no sign-in provider, or no oauth.issuer)".to_owned()];
+    };
+    let mut lines = vec![format!(
+        "on ({})",
+        providers.keys().cloned().collect::<Vec<_>>().join(", ")
+    )];
+    for (provider, state) in providers {
+        let failed = state["failed_exchanges"].as_u64().unwrap_or(0);
+        if failed > 0 {
+            lines.push(format!(
+                "warn web_provider_{provider}: {failed} failed exchanges since start, last {}",
+                state["last_failure"].as_str().unwrap_or("unknown")
+            ));
+        }
+    }
+    if admin_emails == Some(0) {
+        lines.push(
+            "warn web: no admin email; add one with oml web allow <email> --user <user> --admin"
+                .to_owned(),
+        );
+    }
+    lines
 }
 
 /// The server's version, as `/readyz` names its build, ready or not

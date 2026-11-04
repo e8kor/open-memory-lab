@@ -30,7 +30,7 @@ use serde_json::{Map, Value, json};
 use oml_app::app::Caller;
 use oml_app::domain::oauth::{ChallengeCause, Issuer, TokenKind, mcp_challenge, token_kind};
 use oml_app::domain::sha256_digest_string;
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer};
+use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -208,7 +208,7 @@ struct WorkareaInfoArgs {
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
-    J: JournalStore + ConnectionStore + Clone + 'static,
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
     S: Signer + 'static,
     C: Clock + 'static,
     I: IdGen + 'static,

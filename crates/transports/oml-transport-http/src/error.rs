@@ -466,6 +466,29 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ),
         )
         .with_details(json!({ "kind": kind.as_str(), "name": name.as_str() })),
+        // The email is unique in the deployment; the refusal names the
+        // kind and nothing more (errors.md `name.taken`; ADR-0045 d2).
+        AppError::WebEmailTaken | AppError::Store(StoreError::EmailTaken) => ApiError::new(
+            StatusCode::CONFLICT,
+            "name.taken",
+            "An allowlist entry's email is unique in the deployment, so a sign-in finds at most one entry (ADR-0045 d2).",
+            "the email is on another organisation's list",
+        )
+        .with_details(json!({ "kind": "email" })),
+        AppError::WebUserTooLong(e) => {
+            ApiError::validation(e.to_string()).with_details(json!({ "field": "user" }))
+        }
+        AppError::WebSignIn(refusal) => ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "A person signs in only with a verified email on an organisation's list, through the account that first signed in with it (ADR-0045 d4).",
+            refusal.to_string(),
+        )
+        .with_details(json!({ "reason": refusal.reason() })),
+        AppError::WebNotBuilt { what } => ApiError::validation(format!(
+            "{what} rest on user roots (ADR-0044), which this build does not have yet"
+        ))
+        .with_details(json!({ "field": "action", "reason": "not_built" })),
         // Denials attenuate grants, and an admin key carries none
         // (http-api.md keys, grants, denials; ADR-0026 d15).
         AppError::DenialOnAdminKey => ApiError::validation(
