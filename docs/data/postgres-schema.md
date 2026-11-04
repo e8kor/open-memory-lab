@@ -315,11 +315,16 @@ the rule under the version's DEK waits for the encrypted body store.
 
 ## workareas and edges
 
-**Status:** `workareas.status` is one stored column, written at create (`development`, and
-`committed` on the universe root) and served back by every workarea read; `workarea_transitions`
-is built in `migrations/0016_workarea_transitions.sql`, which also adds
-`workareas_universe_committed`, so a root on any other rung is refused; no transition writes it yet
-([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3).
+**Status:** built for the status ladder: `workareas.status` is one stored column, written at
+create (`development`, and `committed` on the universe root), moved by a ratified transition and
+served back by every workarea read; `workarea_transitions` is built in
+`migrations/0016_workarea_transitions.sql`, which also adds `workareas_universe_committed`, so a
+root on any other rung is refused; a proposal inserts its pending row and a ratification turns it
+`ratified` and writes the node's status in the commit that journals the event, after the chain
+lock's re-checks ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4) · its checks run only
+where a superuser mints the suites' role pairs, CI's `cargo test (Postgres)`
+([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d8) · re-parent, the
+`path` rewrite and `workarea_edges` are decided, not built.
 
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
 node-id grants, deny semantics, status ladder — is declared in
