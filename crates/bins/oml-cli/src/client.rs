@@ -50,6 +50,10 @@ pub struct CallOpts {
     pub idempotency: bool,
 }
 
+/// What the CLI sends as `User-Agent` in place of ureq's default: the
+/// server's request line names the client by it (ADR-0042 d9).
+pub const USER_AGENT: &str = concat!("oml-cli/", env!("CARGO_PKG_VERSION"));
+
 pub struct Client {
     agent: ureq::Agent,
     server: String,
@@ -68,10 +72,22 @@ impl Client {
     /// hook session-start` does (ADR-0029 d5).
     #[must_use]
     pub fn with_timeout(server: String, key: Option<String>, timeout: Duration) -> Self {
+        Self::named(server, key, timeout, USER_AGENT.to_owned())
+    }
+
+    /// [`Client::with_timeout`] for one of the plugin's hooks, which names
+    /// itself `oml-cli/<version> hook/<hook>` (ADR-0042 d9).
+    #[must_use]
+    pub fn for_hook(server: String, key: Option<String>, timeout: Duration, hook: &str) -> Self {
+        Self::named(server, key, timeout, format!("{USER_AGENT} hook/{hook}"))
+    }
+
+    fn named(server: String, key: Option<String>, timeout: Duration, user_agent: String) -> Self {
         // `timeout` alone leaves ureq's own 30-second connect timeout in force.
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(timeout)
             .timeout(timeout)
+            .user_agent(&user_agent)
             .build();
         Self {
             agent,
@@ -322,4 +338,57 @@ fn nothing_was_sent(kind: ureq::ErrorKind) -> bool {
             | K::ProxyConnect
             | K::ProxyUnauthorized
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+
+    /// The `User-Agent` of the one request `send` makes to a listener that
+    /// answers `200 {}`.
+    fn user_agent_of(send: impl FnOnce(String)) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+        let url = format!("http://{}", listener.local_addr().expect("an address"));
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("one connection");
+            let mut reader = BufReader::new(stream.try_clone().expect("a second handle"));
+            let mut agent = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("a request line");
+                if line.trim().is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("user-agent")
+                {
+                    agent = value.trim().to_owned();
+                }
+            }
+            let mut stream = stream;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .expect("the answer");
+            agent
+        });
+        send(url);
+        server.join().expect("the listener thread")
+    }
+
+    #[test]
+    fn the_cli_sends_oml_cli_and_its_version_and_a_hook_adds_its_name() {
+        let version = env!("CARGO_PKG_VERSION");
+        let agent = user_agent_of(|url| {
+            Client::new(url, None).probe("/readyz").expect("an answer");
+        });
+        assert_eq!(agent, format!("oml-cli/{version}"));
+        let agent = user_agent_of(|url| {
+            Client::for_hook(url, None, Duration::from_secs(5), "session-start")
+                .probe("/readyz")
+                .expect("an answer");
+        });
+        assert_eq!(agent, format!("oml-cli/{version} hook/session-start"));
+    }
 }

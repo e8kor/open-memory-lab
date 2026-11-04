@@ -13,12 +13,16 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
+use oml_fetch::PinnedFetcher;
 use oml_pg::{PgStore, RoleSplitReason};
+use oml_server_lead::otlp::Export;
 use oml_server_lead::{
-    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead,
+    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead_with,
 };
+use oml_transport_http::traffic::Traffic;
 
 /// The stable `event` of the line `main` logs when the role split refuses
 /// the boot, beside `code` `postgres.role_split` and the d5 `reason`
@@ -90,9 +94,8 @@ fn config_path_arg() -> Result<Option<PathBuf>, String> {
     Ok(path)
 }
 
-async fn run() -> Result<(), BootError> {
-    let config_path = config_path_arg()?;
-    let config = Config::load(config_path.as_deref(), &|name| std::env::var(name).ok())?;
+async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Result<(), BootError> {
+    let config = config?;
     tracing::info!(listen = %config.listen, "oml-server-lead starting (standalone profile: always the lead of a cluster of one, ADR-0023 d16)");
     let build = oml_server_lead::build_info();
     tracing::info!(version = %build.version, commit = %build.commit, commit_time = %build.commit_time, build_time = %build.build_time, rustc = %build.rustc, target = %build.target, profile = %build.profile, "build");
@@ -128,7 +131,37 @@ async fn run() -> Result<(), BootError> {
         "deployment signing key loaded (kms-file)"
     );
 
-    let start = start_lead(&store, signing_key, config.oauth_issuer.clone()).await?;
+    let traffic = Traffic::new(config.trusted_proxies.clone());
+    let traffic = match export {
+        Some(export) => traffic.with_tracer(export.request_tracer()),
+        None => traffic,
+    };
+    // /metrics on its own listener, off unless server.metrics_listen names
+    // an address; the API listener never routes it (ADR-0042 d11).
+    let _metrics = match config.metrics_listen {
+        None => None,
+        Some(addr) => {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| format!("bind {addr} (server.metrics_listen): {e}"))?;
+            tracing::info!(event = "metrics_listening", addr = %addr, "serving /metrics");
+            let router =
+                oml_transport_http::traffic::metrics::router(Arc::clone(traffic.metrics()));
+            Some(tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, router).await {
+                    tracing::error!(event = "metrics_listener_failed", reason = %e, "the metrics listener stopped");
+                }
+            }))
+        }
+    };
+    let start = start_lead_with(
+        &store,
+        signing_key,
+        config.oauth_issuer.clone(),
+        PinnedFetcher,
+        traffic,
+    )
+    .await?;
     match &start.fork_check {
         Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
         // ADR-0002 d7: never sign on top of a fork. Writes are refused
@@ -166,10 +199,17 @@ async fn run() -> Result<(), BootError> {
         .await
         .map_err(|e| format!("bind {}: {e}", config.listen))?;
     tracing::info!(addr = %config.listen, "serving both rings");
-    axum::serve(listener, start.router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| format!("serve: {e}"))?;
+    // The socket peer is the request line's client address, or the proxy
+    // it reads `X-Forwarded-For` through (ADR-0042 d7).
+    axum::serve(
+        listener,
+        start
+            .router
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| format!("serve: {e}"))?;
     tracing::info!("graceful shutdown complete");
     Ok(())
 }
@@ -197,16 +237,39 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Tracing to stderr: stdout is reserved for the show-once ceremony.
-    // ANSI only on a terminal: docker, kubectl and journald read stderr
-    // through a pipe, where the stable fields must come out as plain
-    // `key="value"` tokens (observability.md, structured logging;
-    // ADR-0034 d5).
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .init();
-    match run().await {
+    // JSON lines on stderr, the whole process: stdout is reserved for the
+    // show-once ceremony (observability.md, structured logging; ADR-0042
+    // d1).
+    // The configuration first, since it says whether spans are exported; a
+    // configuration that does not load is logged once the subscriber is up.
+    let config = config_path_arg().map_err(BootError::from).and_then(|path| {
+        Config::load(path.as_deref(), &|name| std::env::var(name).ok()).map_err(BootError::from)
+    });
+    let export = match config.as_ref().ok().and_then(|c| c.otlp_endpoint.as_ref()) {
+        None => Ok(None),
+        Some(endpoint) => Export::start(endpoint).map(Some),
+    };
+    let tracer = export
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(Export::tracer);
+    let _ = tracing::subscriber::set_global_default(oml_server_lead::exporting_subscriber(
+        std::io::stderr,
+        tracer,
+    ));
+    let outcome = match export {
+        Ok(export) => {
+            let outcome = run(config, export.as_ref()).await;
+            if let Some(export) = export {
+                // Flushes what is queued; it blocks, so off the runtime.
+                let _ = tokio::task::spawn_blocking(move || export.shutdown()).await;
+            }
+            outcome
+        }
+        Err(e) => Err(BootError::Fatal(e)),
+    };
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(BootError::RoleSplit(Refusal::Reason(reason))) => {
             tracing::error!(

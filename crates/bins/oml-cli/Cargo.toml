@@ -39,6 +39,7 @@ axum.workspace = true
 oml-app.workspace = true
 oml-pg.workspace = true
 oml-server-lead.workspace = true
+oml-transport-http.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["net"] }
 

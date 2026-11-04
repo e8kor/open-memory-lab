@@ -113,7 +113,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
 - **d1 — OML is an OAuth 2.1 protected resource at `/mcp`, with its own authorization server on
   the same origin, beside bearer keys, and only where `oauth.issuer` names the public origin.**
   `oml-server` serves both roles. The issuer is the configured public origin, for example
-  `https://oml.doublegate.io`, and the one protected resource is `<issuer>/mcp`. A key value in the
+  `https://memory.doublegate.io`, and the one protected resource is `<issuer>/mcp`. A key value in the
   `Authorization` header at `/mcp` works exactly as today for every existing client — the Claude
   Code plugin, scripts, reviewer crews over HTTP — and every other route stays key-only (d10). With
   `oauth.issuer` unset, the discovery documents and the `/oauth/*` endpoints answer `404`, `/mcp`

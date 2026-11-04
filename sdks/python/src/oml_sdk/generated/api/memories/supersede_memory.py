@@ -8,16 +8,28 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.submit_accepted import SubmitAccepted
 from ...models.supersede_request import SupersedeRequest
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     artifact_id: str,
     *,
     body: SupersedeRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -74,6 +86,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
@@ -97,6 +112,9 @@ def sync_detailed(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
@@ -115,6 +133,9 @@ def sync_detailed(
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -130,6 +151,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
@@ -153,6 +177,9 @@ def sync(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
@@ -172,6 +199,9 @@ def sync(
         artifact_id=artifact_id,
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -181,6 +211,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
@@ -204,6 +237,9 @@ async def asyncio_detailed(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
@@ -222,6 +258,9 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -235,6 +274,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: SupersedeRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Propose a replacement version, or with retirement true propose retiring the claim; a new attributed
@@ -258,6 +300,9 @@ async def asyncio(
 
     Args:
         artifact_id (str):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (SupersedeRequest): Unknown fields are refused (request.validation; ADR-0025 d16).
             The designed successor fields — attachments, simulation_id, simulated_time, mapping and
@@ -278,6 +323,9 @@ async def asyncio(
             artifact_id=artifact_id,
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

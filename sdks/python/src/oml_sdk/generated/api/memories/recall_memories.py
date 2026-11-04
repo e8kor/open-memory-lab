@@ -7,14 +7,25 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.recall_request import RecallRequest
 from ...models.recall_response import RecallResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: RecallRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -67,6 +78,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
@@ -79,6 +93,9 @@ def sync_detailed(
     truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
@@ -95,6 +112,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -108,6 +128,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
@@ -120,6 +143,9 @@ def sync(
     truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
@@ -137,6 +163,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -144,6 +173,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
@@ -156,6 +188,9 @@ async def asyncio_detailed(
     truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
@@ -172,6 +207,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -183,6 +221,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RecallRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
     """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
 
@@ -195,6 +236,9 @@ async def asyncio(
     truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (RecallRequest): The scope is workarea's subtree, else the key's default_workarea's
             (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed
             vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039
@@ -213,5 +257,8 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

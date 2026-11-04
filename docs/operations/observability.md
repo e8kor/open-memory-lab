@@ -7,10 +7,11 @@ answers: which metrics and structured-log fields each workload commits to emit, 
 
 # Observability
 
-**Status:** design draft for review · decided, not built — every metric name
-below is a design commitment; no binary emits anything yet.
+**Status:** design draft for review · the request log, the MCP call line, four request-metric
+families and trace export built; every other metric name below is a design commitment no binary
+emits yet.
 
-**Release:** `oml doctor` since v0.1.0; the metrics and SLOs not scheduled ([releases](../product/releases.md)).
+**Release:** `oml doctor` since v0.1.0; the request log, the four request-metric families, `/metrics` and trace export since v0.4.1; the other metrics and the SLOs not scheduled ([releases](../product/releases.md)).
 
 This page declares what each workload measures, what `oml doctor` reads and
 returns, the structured-logging rules (including the one that is a correctness
@@ -45,9 +46,23 @@ implementation; thresholds are deliberately absent — nothing is measured yet
 
 ### `oml-server`
 
+*Available since v0.4.1, the rows marked so · [releases](../product/releases.md)*
+
+The lead serves these on a listener of its own, `GET /metrics` at `server.metrics_listen`, off
+unless that setting names an address; the API listener never routes `/metrics`, so a proxy that
+forwards the whole origin exposes none of it ([configuration](configuration.md),
+[ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d11). v0.4.1 builds the four families marked below, labelled from closed sets
+and without `tenant_id`; every other row stays designed (ADR-0042 d12). The histograms' bucket bounds
+start at 1 ms and double sixteen times, to 32.768 s: the instrument's resolution, not a target.
+No label value is ever a name, a principal or an address. The exposition is the OpenMetrics text
+format, `application/openmetrics-text; version=1.0.0`, which Prometheus scrapes; a labelled family
+shows its first series once a request has produced one, and `mode` is empty for a call whose tool
+has no modes.
+
 | Metric | Type | What it watches |
 |---|---|---|
-| `oml_http_request_duration_seconds` (route, status) | histogram | API latency and typed-error rates per route |
+| `oml_http_request_duration_seconds` (route, status) | histogram | API latency and typed-error rates per route. `route` is the matched route template, or `unmatched`; probes answered `200` are not counted. **Since v0.4.1.** |
+| `oml_mcp_call_duration_seconds` (tool, mode, outcome) | histogram | Per-tool latency and outcome on `/mcp`, which the route label alone shows as one route: `tool` a served, alias or designed name or `unknown`, `mode` the tool's mode, `outcome` `result`, `tool_error` or `rpc_error` ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d10). **Since v0.4.1.** |
 | `oml_chain_append_duration_seconds` (tenant) | histogram | Time to assign and commit one journal event: advisory-lock wait + transaction commit, including synchronous replication in the scaled profile. Per-tenant writes serialize on the chain lock, so this histogram **is** the per-tenant write-throughput ceiling made visible. |
 | `oml_review_queue_depth` (tenant, workarea) | gauge | Held items waiting in the review queue |
 | `oml_review_queue_oldest_age_seconds` (tenant, workarea) | gauge | Age of the oldest held item — the signal that races `held_item_expiry` ([admission](../architecture/admission.md)) |
@@ -56,10 +71,10 @@ implementation; thresholds are deliberately absent — nothing is measured yet
 | `oml_outbox_depth` | gauge | Outbox rows not yet drained — the producer-side view of the lag the lake-writer reports from the consumer side |
 | `oml_rls_denied_total` (service_role) | counter | Postgres RLS denials observed by the server's own roles. The expected value is zero: a nonzero count means a service bug or a tenant-isolation probe, and either deserves attention ([security](../architecture/security.md)) |
 | `oml_quota_rejections_total` (tenant) | counter | 429s issued by the per-replica token buckets — the enforcement approximation [FR-8](../product/roadmap.md) tracks |
-| `oml_idempotency_replays_total` / `oml_idempotency_conflicts_total` | counter | Stored-response replays vs. same-key-different-digest errors ([HTTP API](../api/http-api.md)) |
+| `oml_idempotency_replays_total` / `oml_idempotency_conflicts_total` | counter | Stored-response replays vs. same-key-different-digest errors ([HTTP API](../api/http-api.md)). **Since v0.4.1.** |
 | `oml_upload_sessions_active` (tenant) | gauge | Resumable upload sessions open |
 | `oml_lead_lease_age_seconds` | gauge | Age of the current lead lease since acquisition ([deployment — the lead lease](deployment.md)). Paging-adjacent on the frontier-lag precedent: during a takeover, writes are refused until a new lead holds the lease and passes the fork check, so lease state — not pod status — is what says the write path is up. |
-| `oml_oauth_token_requests_total` (grant_type, outcome) | counter | Token exchanges and refreshes on the connection surface by RFC outcome; a rise in `invalid_grant` on `refresh_token` is lost refresh answers or stolen tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) |
+| `oml_oauth_token_requests_total` (grant_type, outcome) | counter | Token exchanges and refreshes on the connection surface by RFC outcome; a rise in `invalid_grant` on `refresh_token` is lost refresh answers or stolen tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10). **Since v0.4.1.** |
 | `oml_oauth_connect_code_failures_total` | counter | Wrong connect-code entries on the authorization page; a sustained rate is someone guessing ([security](../architecture/security.md#connections-the-oauth-surface)) |
 | `oml_oauth_client_metadata_fetch_total` (outcome) | counter | Client metadata document fetches by outcome — fetched, cached, a stale copy served, refused address, timeout, oversize, invalid, busy; a deployment with no outbound HTTPS shows only failures |
 | `oml_lead_takeovers_total` | counter | `system.lead_acquired` events observed — lead takeovers. Nonzero during failover or rolling updates is the lease working; a climbing rate in steady state means lead churn, and every takeover is a write-refusal window ([FR-24](../product/roadmap.md) measures that window). |
@@ -157,15 +172,74 @@ check list on top of the common fields above:
 | kubernetes (`local`) | The MinIO pin (same fact as docker); the single-node durability reduction is reported, not silent. |
 | kubernetes (`scaled`) | Quorum-synchronous settings on the journal domain (`synchronous_commit`, quorum standbys), as [deployment](deployment.md) requires. |
 | all profiles, cluster mode | Exactly one lead lease held; no follower holds the signing key (pod-spec-checkable in Kubernetes; stated, not checkable, in docker and standalone — see `lead_lease` above). |
+| all profiles | Logs are kept at most 30 days where they land — journald, the container log driver or the cluster's log pipeline, and the reverse proxy's access log ([log retention](#log-retention)): stated, not checkable — the lead holds no log file, and doctor's output says so rather than reporting `ok` ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8). |
 | any profile with `oauth.issuer` set | A reverse proxy that writes access logs records neither the `Location` header of `POST /oauth/authorize` nor the request bodies of `POST /oauth/authorize` and `POST /oauth/token` ([HTTP API — behind a proxy](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)): stated, not checkable — doctor cannot read a proxy's configuration, and its output says so rather than reporting `ok`. |
 
 ## Structured logging
 
-All binaries log JSON lines to stdout: `ts`, `level`, `service`, `tenant_id`,
-`request_id`, `event` (a stable snake_case name, not prose), plus
-event-specific fields. Correlation: a request's log lines carry its
-`request_id`; lines about a journalled act carry the journal `event_id`, so a
-log line can always be joined to the chain.
+*Available since v0.4.1 · [releases](../product/releases.md)*
+
+Every binary logs JSON lines to **stderr**; stdout is reserved for the show-once enrollment
+token. Each line is `tracing-subscriber`'s JSON format with the event's fields at the top level:
+`timestamp` (RFC 3339, UTC), `level`, `target`, `event` (a stable snake_case name, not prose),
+then the event's fields ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d1). Before v0.4.1 the lead wrote the same events
+as text `key=value` lines. A field whose value is `null` is left out of the line, which `jq`
+reads as `null`; `idempotency_replay` is the one field that is `true` or absent. Correlation: a
+request's log lines carry its `request_id` and `correlation_id`; lines about a journalled act
+carry the journal `event_id`, so a log line can always be joined to the chain.
+
+### The request line
+
+One `http_request` line per HTTP request, written by one layer outside every route, at `info`,
+or `error` for a 5xx. A probe answered `200` writes none ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d1–d3):
+
+| Field | Value |
+|---|---|
+| `request_id`, `request_id_source` | the inbound `X-Request-Id` when it passes the rule on the [HTTP API](../api/http-api.md#request-ids-correlation-and-trace-context), else one the lead mints; `caller`, `minted`, or `replaced` when one was sent and failed the rule, whose value is never logged. An honoured id is the caller's label: forgeable and not unique, so a reader joins on it with `key_id` and `timestamp` (ADR-0042 d4, d5) |
+| `correlation_id`, `correlation_id_source` | the inbound `X-Correlation-Id` under the same rule, else the request id; `caller`, `request_id` or `replaced` (ADR-0042 d6) |
+| `trace_id` | only while trace export is on (ADR-0042 d13) |
+| `method`, `route`, `status` | the method, the matched route template (`/v2/keys/{key}`, never the raw path; `unmatched` where none matched), the status |
+| `error_code` | the envelope's `error.code`, the RFC `error` on an OAuth endpoint, or `null` |
+| `duration_ms` | request seen to response head, milliseconds to three decimals |
+| `auth_ms`, `store_ms`, `store_calls` | time until the credential resolved or was refused; wall time and count of the request's store-port calls, pool acquisition and lock waits included (ADR-0042 d14). The other stages are not timed ([FR-70](../product/roadmap.md)) |
+| `bytes_in`, `bytes_out` | body bytes read; response body length when exact-sized |
+| `tenant_id`, `key_id`, `key_name`, `principal`, `role` | the resolved key's, `null` when none resolved |
+| `credential`, `connection_id` | `bearer` or `connection`, and the connection's id |
+| `workarea_id` | the resolved target workarea, by id |
+| `idempotency_replay` | `true` on a replay, absent otherwise |
+| `client_ip`, `client_ip_source` | the socket peer (`peer`), or, when the peer is in `server.trusted_proxies`, the first address from the right of `X-Forwarded-For` outside that list (`forwarded`) ([configuration](configuration.md), ADR-0042 d7) |
+| `user_agent` | the `User-Agent` header, cut to 200 bytes, non-printable bytes replaced by `?`: `oml-cli/<version>`, `oml-cli/<version> hook/<name>`, `oml-sdk-python/<version>`, `oml-sdk-typescript/<version>`, or what another client sends (ADR-0042 d9) |
+
+What the request line costs per request, and how many bytes it writes, is unmeasured
+([FR-71](../product/roadmap.md)).
+
+### The MCP call line
+
+One `mcp_call` line per `/mcp` POST that carries a JSON-RPC message, written before that
+request's `http_request` line and under its `request_id`, `correlation_id` and `trace_id`, with
+`tenant_id`, `key_id`, `rpc_method`, `tool` (an unrecognized name logs `unknown`), `alias_of`,
+`mode`, `outcome`, `error_code`, `duration_ms` and, on `initialize` only, `client_name` and
+`client_version` from `clientInfo`, cut and replaced as `user_agent` is. `rpc_method` is
+`initialize`, `ping`, `tools/list`, `tools/call`, one of the four MCP notifications, or `unknown`.
+A POST refused before its message is read, for its credential or its `MCP-Protocol-Version`,
+writes its `http_request` line alone. Neither the JSON-RPC `id` nor any argument is logged
+([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d10).
+
+### Log retention
+
+The request and MCP lines hold personal data: `client_ip`, `principal`, `key_name`,
+`user_agent` and a caller's `request_id`. **Logs are kept at most 30 days.** The lead only
+emits: it holds no log file and deletes nothing, so the bound is enforced where the lines land,
+and the reverse proxy's access log falls under the same 30 days ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8):
+
+- **systemd:** journald's `MaxRetentionSec=30day`, with `MaxFileSec=1day` so that journal files
+  rotate daily and the bound is reached within a day. Both are host-wide journald settings.
+- **Docker:** the default `json-file` driver rotates by size, never by age. Use the `journald`
+  log driver, or a shipper with a 30-day policy.
+- **Kubernetes:** the cluster's log pipeline; the kubelet's own rotation is by size.
+
+Doctor cannot read any of these and states the rule as not checkable
+([per-profile checks](#per-profile-checks)).
 
 Built: the lead's hourly removal of the connections' lapsed rows (its start, then every hour;
 [Postgres schema](../data/postgres-schema.md#connections-adr-0031)) writes `event`
@@ -197,12 +271,13 @@ What logs may carry instead:
 - **Digests and ids** — `artifact_id`, `claim_key`, plaintext/ciphertext
   digests, journal seq, workarea node ids. The journal itself is digest-only
   ([storage](../architecture/storage.md)); logs get no more than the journal.
-- **Attribution** — `tenant_id`, `key_id`, workarea node ids — never
-  principal values: an actor is identified by key id, and the principal
-  folds out of the journal. These survive
-  erasure by the stated boundary ([FR-1](../product/roadmap.md)); when FR-1
-  closes with a pseudonymization act, log retention joins that act's
-  inventory.
+- **Attribution** — `tenant_id`, `key_id`, workarea node ids, and, on the
+  request line, the key's name and principal and the client's address
+  ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8 amends this bullet, which said never principal values,
+  so a request line reads without a second lookup). These survive erasure by
+  the stated boundary ([FR-1](../product/roadmap.md)), and the log keeps them
+  at most 30 days ([log retention](#log-retention)); when FR-1 closes with a
+  pseudonymization act, the log joins that act's inventory with that bound.
 - **Never**: API key values (key ids only — the stored form is already a
   hash), DEK/KEK material or wrapped keys, serve payloads, scan excerpts that
   quote the body. A scanner finding is logged as rule id + offset range +
@@ -218,8 +293,10 @@ What logs may carry instead:
   ([roles and keys](../architecture/roles-and-keys.md#connections),
   [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8, d10).
 
-Log retention is a deployment-site choice precisely because, under this rule,
-logs contain no erasable content — that is the property the rule buys, and the
+Under this rule logs contain no erasable content — that is the property the
+rule buys. They do contain attribution, which is personal data, and so they
+are kept at most 30 days ([log retention](#log-retention)); the content rule
+is what lets that bound be a retention rule rather than an erasure act. The
 cost is paid in debuggability: an engineer reproducing a scan or review issue
 works from digests and the journalled record, never from a quoted body.
 

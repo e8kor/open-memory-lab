@@ -8,14 +8,25 @@ from ...client import AuthenticatedClient, Client
 from ...models.o_auth_error import OAuthError
 from ...models.token_request import TokenRequest
 from ...models.token_response import TokenResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: TokenRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -73,6 +84,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: TokenRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[OAuthError | TokenResponse]:
     """Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh
     token.
@@ -94,6 +108,9 @@ def sync_detailed(
     code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (TokenRequest):
 
     Raises:
@@ -106,6 +123,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -119,6 +139,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: TokenRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> OAuthError | TokenResponse | None:
     """Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh
     token.
@@ -140,6 +163,9 @@ def sync(
     code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (TokenRequest):
 
     Raises:
@@ -153,6 +179,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -160,6 +189,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: TokenRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[OAuthError | TokenResponse]:
     """Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh
     token.
@@ -181,6 +213,9 @@ async def asyncio_detailed(
     code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (TokenRequest):
 
     Raises:
@@ -193,6 +228,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -204,6 +242,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: TokenRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> OAuthError | TokenResponse | None:
     """Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh
     token.
@@ -225,6 +266,9 @@ async def asyncio(
     code (ADR-0031 d4, d10, d13). The token path makes no outbound call.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (TokenRequest):
 
     Raises:
@@ -239,5 +283,8 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

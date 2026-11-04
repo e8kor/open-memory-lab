@@ -7,14 +7,25 @@ from ...client import AuthenticatedClient, Client
 from ...models.bootstrap_claim_body import BootstrapClaimBody
 from ...models.error_envelope import ErrorEnvelope
 from ...models.key_issued import KeyIssued
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: BootstrapClaimBody,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -67,6 +78,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: BootstrapClaimBody,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap
     ceremony's one API call.
@@ -79,6 +93,9 @@ def sync_detailed(
     without-value in the provider chain.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (BootstrapClaimBody):
 
     Raises:
@@ -91,6 +108,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -104,6 +124,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: BootstrapClaimBody,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap
     ceremony's one API call.
@@ -116,6 +139,9 @@ def sync(
     without-value in the provider chain.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (BootstrapClaimBody):
 
     Raises:
@@ -129,6 +155,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -136,6 +165,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: BootstrapClaimBody,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap
     ceremony's one API call.
@@ -148,6 +180,9 @@ async def asyncio_detailed(
     without-value in the provider chain.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (BootstrapClaimBody):
 
     Raises:
@@ -160,6 +195,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -171,6 +209,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: BootstrapClaimBody,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap
     ceremony's one API call.
@@ -183,6 +224,9 @@ async def asyncio(
     without-value in the provider chain.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         body (BootstrapClaimBody):
 
     Raises:
@@ -197,5 +241,8 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

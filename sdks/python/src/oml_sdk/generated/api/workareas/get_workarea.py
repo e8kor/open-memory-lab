@@ -7,12 +7,25 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.workarea_view import WorkareaView
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     workarea: str,
+    *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -21,6 +34,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -57,6 +71,9 @@ def sync_detailed(
     workarea: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | WorkareaView]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
@@ -74,6 +91,9 @@ def sync_detailed(
         workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -85,6 +105,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         workarea=workarea,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -98,6 +121,9 @@ def sync(
     workarea: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | WorkareaView | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
@@ -115,6 +141,9 @@ def sync(
         workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,6 +156,9 @@ def sync(
     return sync_detailed(
         workarea=workarea,
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -134,6 +166,9 @@ async def asyncio_detailed(
     workarea: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | WorkareaView]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
@@ -151,6 +186,9 @@ async def asyncio_detailed(
         workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,6 +200,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         workarea=workarea,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -173,6 +214,9 @@ async def asyncio(
     workarea: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | WorkareaView | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
@@ -190,6 +234,9 @@ async def asyncio(
         workarea (str): A workarea, by its node id or its name. Resolved server-side before any
             check that reads state; an unknown name answers exactly what an unknown id answers. A
             derived path is neither, and is refused (request.validation).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,5 +250,8 @@ async def asyncio(
         await asyncio_detailed(
             workarea=workarea,
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

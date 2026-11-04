@@ -7,15 +7,27 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.key_issue_request import KeyIssueRequest
 from ...models.key_issued import KeyIssued
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: KeyIssueRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -69,6 +81,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: KeyIssueRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
@@ -93,6 +108,9 @@ def sync_detailed(
     retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (KeyIssueRequest):
 
@@ -106,6 +124,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -120,6 +141,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: KeyIssueRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
@@ -144,6 +168,9 @@ def sync(
     retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (KeyIssueRequest):
 
@@ -158,6 +185,9 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -166,6 +196,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: KeyIssueRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
@@ -190,6 +223,9 @@ async def asyncio_detailed(
     retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (KeyIssueRequest):
 
@@ -203,6 +239,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -215,6 +254,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: KeyIssueRequest,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
@@ -239,6 +281,9 @@ async def asyncio(
     retried issuance answers name.taken and its code is minted again with oml keys connect-code.
 
     Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (KeyIssueRequest):
 
@@ -254,6 +299,9 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

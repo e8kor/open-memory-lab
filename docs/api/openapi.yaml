@@ -45,8 +45,10 @@ info:
     state-creating POST requires an Idempotency-Key header; replays return the stored response with
     header Idempotency-Replay: true. Field spellings are design identifiers — normative in shape,
     adjustable at implementation without a design change. Every response, success and error alike,
-    carries the X-Request-Id header (declared in components.headers and attached to every 2xx; error
-    bodies repeat it as request_id). An operation with a fixed request media type (application/json
+    carries the X-Request-Id and X-Correlation-Id headers (declared in components.headers and
+    attached to every 2xx; error bodies repeat the request id as request_id), and every operation
+    reads the optional X-Request-Id, X-Correlation-Id and traceparent request headers (declared in
+    components.parameters; ADR-0042 d4-d6, d13). An operation with a fixed request media type (application/json
     everywhere except the octet-stream part upload) refuses any other request media type with 415
     request.unsupported_media. 429 limit.rate / limit.quota may be answered by any operation; it is
     declared explicitly only on the v1 ring and high-traffic v2 surfaces. Connections (ADR-0031),
@@ -80,6 +82,9 @@ paths:
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
       description: 'Requires: writer effective access on the resolved workarea; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workarea is the body''s workarea, by id or name, honoured only within the key''s grants, else the key''s default_workarea; request.workarea_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
         required: true
@@ -98,6 +103,7 @@ paths:
           description: Held, visible to no one else until ratified (R3).
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -125,6 +131,9 @@ paths:
       summary: Structured, paginated listing of memory summaries.
       description: 'Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workareas minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workarea it lists every workarea the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workarea''s subtree, defaulting to the key''s default_workarea (ADR-0039 d4) — a self_signed version only when the scope node is its own workarea; a retired claim''s tip, its retirement version, among them, flagged retirement true; others'' held rows are never returned (R3). workarea is the subtree read (see the parameter); v0.3.0''s workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { name: workarea, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' }, description: "The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workarea the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workarea (request.workarea_unresolved for a key with neither)." }
         - { name: claim_key, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
@@ -139,6 +148,7 @@ paths:
           description: One page of memory summaries.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -177,6 +187,7 @@ paths:
     post:
       tags: [memories]
       operationId: recallMemories
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
       description: 'Requires: reader effective access on the subtree. The scope is the subtree of the body''s workarea, by id or name, else of the key''s default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
       requestBody:
@@ -192,6 +203,7 @@ paths:
           description: Steering first and never ranked, then scored hits.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -252,12 +264,13 @@ paths:
       operationId: getMemory
       summary: One memory with its text (decrypted on the serving path) and attachment descriptors.
       description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
-      parameters: [{ $ref: '#/components/parameters/ArtifactId' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/ArtifactId' }]
       responses:
         '200':
           description: The memory.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -300,6 +313,9 @@ paths:
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
       description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workarea, if sent, must equal the target''s workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/ArtifactId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
@@ -321,6 +337,7 @@ paths:
           description: The proposed replacement, held.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -346,7 +363,7 @@ paths:
       operationId: createWorkarea
       summary: Create a child workarea in development.
       description: 'Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
@@ -361,6 +378,7 @@ paths:
           description: The new node.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -386,12 +404,13 @@ paths:
       operationId: getWorkarea
       summary: One node — id, parent, derived path, status, crew record — with the calling key's view of it.
       description: 'Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). One call carries all of it.'
-      parameters: [{ $ref: '#/components/parameters/WorkareaId' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/WorkareaId' }]
       responses:
         '200':
           description: The node.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -429,6 +448,9 @@ paths:
       summary: The subtree, paginated; nodes outside read scope are omitted.
       description: 'Requires: reader effective access, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
@@ -437,6 +459,7 @@ paths:
           description: One page of nodes.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -474,6 +497,9 @@ paths:
       summary: Journalled crew-metadata update — points the workarea at a crew record, by id or name; allowed on validated areas (freeze covers claims, not metadata).
       description: 'Requires: admin key role. Journals workarea.crew_updated with the crew''s id (ADR-0026 d8); a crew that names no crew record of the tenant answers access.not_found, checked after the workarea. The crew record itself is updated at POST /v2/crews/{crew}/update.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
@@ -488,6 +514,7 @@ paths:
           description: Updated node.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -513,6 +540,9 @@ paths:
       summary: The tenant's crew records, paginated.
       description: 'Requires: admin key role. A crew is recorded, not operated (docs/architecture/workareas.md, Crews); an agent key reads a workarea''s crew only in the workarea read.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
       responses:
@@ -520,6 +550,7 @@ paths:
           description: One page of crew records.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -537,7 +568,7 @@ paths:
       operationId: createCrew
       summary: Create a named crew record; journalled crew.created.
       description: 'Requires: admin key role. name must be unique in the tenant (409 name.taken, checked after every other check) and never changes (ADR-0026 d1, d8).'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
@@ -552,6 +583,7 @@ paths:
           description: The crew record.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -571,12 +603,13 @@ paths:
       operationId: getCrew
       summary: One crew record, by id or name.
       description: 'Requires: admin key role.'
-      parameters: [{ $ref: '#/components/parameters/CrewId' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/CrewId' }]
       responses:
         '200':
           description: The crew record.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -596,6 +629,9 @@ paths:
       summary: Journalled crew-record update (crew.updated) — charter URI and external manager; the name never changes.
       description: 'Requires: admin key role. A crew record has no status, so the update is admitted whatever the status of the workareas that name it (ADR-0026 d8).'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/CrewId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
@@ -610,6 +646,7 @@ paths:
           description: The updated crew record.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -630,6 +667,9 @@ paths:
       summary: The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a verification surface).
       description: 'Requires: reader effective access on workarea (access.not_found otherwise); omitted, the key''s default workarea, and request.workarea_unresolved for a key with none. v0.3.0''s workarea_id parameter and X-OML-Workarea header are request.validation naming workarea in details.renamed_to (ADR-0039 d7). Which events a key sees, what a served event names, and how next_after_seq is computed, are declared in docs/api/http-api.md, Events tail (ADR-0025 d15): an event served to a key outside its actor''s own key set carries principal, api_key_id and every key-naming payload field as null, as the example shows for a reader seeing another key''s ratification. One call scans at most limit raw events from after_seq + 1; after_seq greater than head_seq answers 400 request.validation. Full-chain verification is served by the chain export.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { name: after_seq, in: query, schema: { type: integer, minimum: 0, default: 0 },
             description: "Resume point: events return in seq ascending order — the journal's order, not created_at descending. Pass back next_after_seq verbatim." }
         - { name: workarea, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' },
@@ -640,6 +680,7 @@ paths:
           description: Events after the given seq, plus the current head seq.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -671,7 +712,7 @@ paths:
       operationId: reviewNext
       summary: Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
       description: 'Requires: dreamer(review). Serves only rows within the key''s dreamer effective access on the row''s workarea; 204 when nothing in scope waits. A held_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage).'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: false
         content:
@@ -685,6 +726,7 @@ paths:
           description: The serve.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -723,6 +765,7 @@ paths:
           description: Nothing in scope waits.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -734,7 +777,7 @@ paths:
       operationId: postVerdict
       summary: Verdict against a valid serve; the journalled verdict records the served digests.
       description: 'Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row''s workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor''s own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
@@ -748,6 +791,7 @@ paths:
           description: Verdict recorded; resulting state stated.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -769,7 +813,7 @@ paths:
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
       description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.'
-      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
@@ -793,6 +837,7 @@ paths:
           description: The key, value shown once.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -828,6 +873,7 @@ paths:
     get:
       tags: [keys]
       operationId: whoami
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
       description: >-
         Requires: any live key; it reads only its own record. Each reference is {id, name} and the
@@ -840,6 +886,7 @@ paths:
           description: The calling key's own record.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -869,12 +916,13 @@ paths:
       operationId: getKey
       summary: One key — grants, denials, epoch, issuance and revocation events. Never the value.
       description: 'Requires: admin key role.'
-      parameters: [{ $ref: '#/components/parameters/KeyId' }]
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/KeyId' }]
       responses:
         '200':
           description: The key.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -907,6 +955,9 @@ paths:
       summary: Create or extend the key's global deny object — deny-wins across all its grants.
       description: 'Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial''s epoch is that event''s journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
@@ -922,6 +973,7 @@ paths:
           description: The denial.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -940,6 +992,9 @@ paths:
       summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
       description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       responses:
@@ -947,6 +1002,7 @@ paths:
           description: The connect code, shown once.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -966,6 +1022,9 @@ paths:
       summary: Journalled revocation of one connection.
       description: 'Requires: admin key role. Journals connection.revoked with cause admin, which ends the connection at its next request and voids the key''s codes as docs/architecture/roles-and-keys.md (Connections) declares (ADR-0031 d8, d11). An authorized connection is not journalled or listed, and naming one answers 404 access.not_found, as an unknown id does. Served whether or not oauth.issuer is set.'
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { $ref: '#/components/parameters/KeyId' }
         - { $ref: '#/components/parameters/ConnectionId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -985,6 +1044,7 @@ paths:
           description: The connection, revoked.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -1004,6 +1064,7 @@ paths:
     post:
       tags: [keys]
       operationId: bootstrapClaim
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: Exchange the deployment's single-use enrollment token for the root operator key — the bootstrap ceremony's one API call.
       description: 'Authenticated by the enrollment token itself (no API key exists yet). The token is minted by the Helm bootstrap job, consumed on first use; a consumed, expired or unknown token answers auth.invalid with details.reason naming which. The token is checked first; only then is name checked against the creation grammar (request.validation) and the provider''s namespace (409 name.taken), and a refusal after the token check consumes no token and journals nothing (ADR-0026 d5). Journalled as issued-without-value in the provider chain.'
       security: []
@@ -1026,6 +1087,7 @@ paths:
           description: The root operator key, value shown once.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -1053,6 +1115,7 @@ paths:
     get:
       tags: [oauth]
       operationId: protectedResourceMetadata
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: RFC 9728 protected-resource metadata for the /mcp resource; 404 where oauth.issuer is unset.
       description: 'Unauthenticated, no tenant data. Built from oauth.issuer alone, never from the request Host. resource is exactly <issuer>/mcp (RFC 9728 §3.3); one authorization server, the issuer itself. The root form /.well-known/oauth-protected-resource is not served (ADR-0031 d3).'
       security: []
@@ -1075,6 +1138,7 @@ paths:
     get:
       tags: [oauth]
       operationId: authorizationServerMetadata
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
       description: 'Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document is served: OML issues no ID token (ADR-0031 d3).'
       security: []
@@ -1107,6 +1171,9 @@ paths:
       description: 'Unauthenticated; the person proves authority by the connect code (ADR-0031 d9). The parameter bounds, no parameter sent more than once among them, are checked first, before any fetch. A parameter past its bound (a repeated one and a present code_challenge that does not match the pattern included), a refused client or a refused redirect URI is a page, never a redirect (request.validation, oauth.client_invalid, oauth.redirect_refused); any later refusal, oauth.pkce_required for an absent code_challenge or an absent or non-S256 code_challenge_method among them, redirects with the RFC error, state and iss (RFC 9207). The authorization request writes no row: the page carries it as a handle sealed by an AEAD under a key the lead holds only in memory, so opening pages is not capped, and a full document cache evicts rather than refuses (ADR-0031 d5, d9). The page sets no cookie and carries the headers ADR-0031 d9 fixes: a Content-Security-Policy with default-src none, form-action self plus the redirect origin and frame-ancestors none, Cache-Control no-store, Referrer-Policy same-origin (no-referrer would make the browser send Origin: null on the page''s own POST), X-Content-Type-Options nosniff.'
       security: []
       parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
         - { name: response_type, in: query, required: true, schema: { type: string, enum: [code] } }
         - { name: client_id, in: query, required: true, schema: { type: string, maxLength: 2048 }, description: 'An https metadata-document URL in the admitted form (no userinfo, fragment, query, dot segment, percent-encoded / or ., non-default port or IP-literal host; its own WHATWG serialization), or a client_id that POST /oauth/register minted.' }
         - { name: redirect_uri, in: query, required: false, schema: { type: string, maxLength: 2048 }, description: 'Exactly one of the client''s registered URIs, inside the allowlist (exactly https://claude.ai/api/mcp/auth_callback), matched byte for byte on the value after exactly one application/x-www-form-urlencoded decoding, never after URL parsing or any further decoding; optional for a client with exactly one.' }
@@ -1131,6 +1198,7 @@ paths:
     post:
       tags: [oauth]
       operationId: authorizeSubmit
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: The page's own form — the connect code, then the confirmation.
       description: 'Two submissions and no others. Every submission first needs either Sec-Fetch-Site: same-origin or, when that header is absent, an Origin equal to the issuer origin; Origin: null and anything else answer 403 oauth.origin_refused on the page, never redirected, consuming no attempt. Step 2 carries exactly handle (the sealed handle of the first page) and connect_code; step 3 carries exactly handle and action, where the handle names the request row a verified code wrote and whose code is not voided (docs/architecture/roles-and-keys.md, Connections); any other combination is request.validation on the page. With a correct connect_code of a key that is neither revoked nor expired, the code is spent, the authorization request''s row is written under a fresh handle, and the page shows the tenant by its operator-set name, the key''s name, principal, role and grants and what the connection may do, with Connect and Cancel; a wrong code answers the form again (400 oauth.connect_code_invalid) with the attempts left and a new sealed handle, and the fifth wrong entry redirects with access_denied. action=connect creates the connection (authorized) and redirects with a 60-second, single-use authorization code, state and iss; action=cancel redirects with access_denied, state and iss. Connect and Cancel each delete the authorization request''s row in their own commit, so a later step-3 POST with that handle names no row and answers oauth.authorization_expired on the page (ADR-0031 d9).'
       security: []
@@ -1177,6 +1245,7 @@ paths:
     post:
       tags: [oauth]
       operationId: token
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: Exchange an authorization code, or rotate a refresh token, for an access token and a new refresh token.
       description: 'Public clients only (token_endpoint_auth_method none). authorization_code requires the PKCE code_verifier and the same client_id, and opens the connection (connection.opened); redirect_uri is required exactly when the authorize request carried it and must then equal it, and when that request omitted it, redirect_uri may be omitted or must equal the client''s one registered URI. refresh_token answers a new pair and marks the presented token rotated; which tokens a refresh accepts, and when reuse of a refresh token or an authorization code revokes the connection (connection.revoked), are declared on docs/architecture/roles-and-keys.md (Connections). The client is the one stored on the code''s or refresh token''s connection; the client tables are never read here, a client_id that differs from the connection''s is invalid_grant, and invalid_client answers only a request that sends client authentication: 401 with WWW-Authenticate for an Authorization header, 400 for a client_secret in the body. A revoked or expired key, a voided code, or a resource that is not the current <issuer>/mcp answers invalid_grant. A code or refresh token issued to another client is invalid_grant too (RFC 6749 §5.2), and a parameter sent more than once is request.validation (invalid_request). Refusals are RFC 6749 §5.2 bodies whose error_description begins with the OML code (ADR-0031 d4, d10, d13). The token path makes no outbound call.'
       security: []
@@ -1227,6 +1296,7 @@ paths:
     post:
       tags: [oauth]
       operationId: registerClient
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: RFC 7591 dynamic client registration, the fallback to metadata documents; public clients only, redirect URIs inside the allowlist.
       description: 'Unauthenticated and not journalled. Answers a server-minted client_id, no secret and no registration access token. client_name is required, since the page shows it; an absent token_endpoint_auth_method is registered and echoed as none, and any other value than none is request.validation (invalid_client_metadata). A registered client that has not connected (no Connect on the page named it) within 24 hours is removed; past 10 000 unused registrations the endpoint answers 429 limit.rate (ADR-0031 d5).'
       security: []
@@ -1272,6 +1342,7 @@ paths:
     get:
       tags: [health]
       operationId: healthz
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: Liveness; unauthenticated, no tenant data.
       security: []
       responses:
@@ -1279,6 +1350,7 @@ paths:
           description: The process runs.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -1289,6 +1361,7 @@ paths:
     get:
       tags: [health]
       operationId: readyz
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: Readiness — Postgres reachable and the startup fork check passed; unauthenticated.
       security: []
       responses:
@@ -1296,6 +1369,7 @@ paths:
           description: The replica can serve.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
               example:
@@ -1335,6 +1409,33 @@ components:
         high-entropy random, and it enables the UNIQUE-index lookup at authentication.
 
   parameters:
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: >-
+        A request id the caller chose: honoured when it is one instance of 1 to 128 characters
+        from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the
+        request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5).
+      schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+    XCorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: >-
+        A task id grouping several requests, under the X-Request-Id rule; absent or not
+        admitted, the correlation id is the request id (ADR-0042 d6).
+      schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+    Traceparent:
+      name: traceparent
+      in: header
+      required: false
+      description: >-
+        W3C Trace Context, version 00, read only while the deployment exports traces
+        (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one
+        starts a new trace. tracestate is not read, and no response carries traceparent
+        (ADR-0042 d13).
+      schema: { type: string }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -1398,9 +1499,16 @@ components:
   headers:
     XRequestId:
       description: >-
-        The request's correlation id. Every response carries it; error bodies repeat it as
-        request_id, and it is the handle for the read log and support.
-      schema: { type: string }
+        The request's id. Every response carries it: the inbound X-Request-Id when the rule
+        admits it, else one the server mints as req_ and 32 hex digits. Error bodies and a /mcp
+        tool refusal repeat it as request_id. A caller's id is a label, not unique and never an
+        authority (http-api.md request ids; ADR-0042 d4, d5).
+      schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+    XCorrelationId:
+      description: >-
+        The request's correlation id: the inbound X-Correlation-Id when the rule admits it, else
+        the request id. Every response carries it (ADR-0042 d6).
+      schema: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
     RetryAfter:
       description: Seconds to wait before retrying; present on every retryable refusal.
       schema: { type: integer, minimum: 0 }
@@ -1410,6 +1518,7 @@ components:
       description: Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1417,6 +1526,7 @@ components:
       description: auth.missing or auth.invalid.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1424,6 +1534,7 @@ components:
       description: A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1431,6 +1542,7 @@ components:
       description: access.not_found — absent or outside read scope, indistinguishable by design.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1438,6 +1550,7 @@ components:
       description: A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1445,6 +1558,7 @@ components:
       description: lifecycle.erased — a journalled crypto-shred, never a silent deletion.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1452,6 +1566,7 @@ components:
       description: A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -1459,6 +1574,7 @@ components:
       description: 429 limit.rate or limit.quota — retryable; Retry-After says when.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
         Retry-After: { $ref: '#/components/headers/RetryAfter' }
       content:
         application/json:
@@ -1469,6 +1585,7 @@ components:
         application/json the operation declares; not retryable as sent.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }

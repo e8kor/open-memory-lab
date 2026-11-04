@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"
@@ -33,6 +33,36 @@ oml-fetch = { path = "crates/adapters/oml-fetch" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"
+# /metrics on its own listener (ADR-0042 d11, d12): the Prometheus
+# project's Rust client, pure Rust.
+prometheus-client = "0.25"
+# OTLP trace export behind server.otlp_endpoint (ADR-0042 d13): the
+# OpenTelemetry API, SDK and protocol crates release together and
+# tracing-opentelemetry trails them, so an upgrade moves all four at once.
+# Server-only: the CLI depends on none of them.
+opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
+# The OTLP/HTTP protobuf messages and the SDK-to-message transform. The
+# lead posts them itself rather than through opentelemetry-otlp, whose
+# builder reads OTEL_EXPORTER_OTLP_HEADERS and _COMPRESSION whatever the
+# code sets, and d13 reads no OTEL_* variable.
+opentelemetry-proto = { version = "0.33", default-features = false, features = [
+    "gen-tonic-messages",
+    "trace",
+] }
+prost = { version = "0.14", default-features = false, features = ["std"] }
+tracing-opentelemetry = { version = "0.34", default-features = false }
+# The exporter's HTTP client, built here so an https collector is reached
+# over rustls with ring, the provider sqlx already uses: the exporter's own
+# rustls feature would add aws-lc, a C library (ADR-0006 pure Rust).
+reqwest = { version = "0.13", default-features = false, features = [
+    "blocking",
+    "rustls-no-provider",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# The request body counter of the traffic layer (ADR-0042 d2): the trait
+# axum's body implements, already in the graph through axum and hyper.
+http-body = "1"
 # The authorization request's sealed handle (ADR-0031 d9): ChaCha20-Poly1305
 # under a key held in memory. Already in the graph through sqlx's
 # tls-rustls-ring.

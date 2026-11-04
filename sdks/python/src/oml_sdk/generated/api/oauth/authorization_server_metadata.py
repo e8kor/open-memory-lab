@@ -6,16 +6,31 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.authorization_server_metadata import AuthorizationServerMetadata
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/.well-known/oauth-authorization-server",
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -51,11 +66,19 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Any | AuthorizationServerMetadata]:
     """RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
 
      Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document
     is served: OML issues no ID token (ADR-0031 d3).
+
+    Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -65,7 +88,11 @@ def sync_detailed(
         Response[Any | AuthorizationServerMetadata]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -77,11 +104,19 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Any | AuthorizationServerMetadata | None:
     """RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
 
      Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document
     is served: OML issues no ID token (ADR-0031 d3).
+
+    Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -93,17 +128,28 @@ def sync(
 
     return sync_detailed(
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Any | AuthorizationServerMetadata]:
     """RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
 
      Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document
     is served: OML issues no ID token (ADR-0031 d3).
+
+    Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,7 +159,11 @@ async def asyncio_detailed(
         Response[Any | AuthorizationServerMetadata]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -123,11 +173,19 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Any | AuthorizationServerMetadata | None:
     """RFC 8414 authorization server metadata; 404 where oauth.issuer is unset.
 
      Unauthenticated, no tenant data, built from oauth.issuer alone. No OpenID Connect discovery document
     is served: OML issues no ID token (ADR-0031 d3).
+
+    Args:
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,5 +198,8 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

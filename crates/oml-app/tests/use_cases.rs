@@ -8542,3 +8542,52 @@ async fn an_absent_auth_method_registers_as_none() {
     assert_eq!(row.kind, ClientKind::Dcr);
     assert_eq!(row.metadata_digest, Sha256Hash::digest(body.as_bytes()));
 }
+
+/// What a [`oml_app::ports::RequestObserver`] was told, in order.
+#[derive(Default)]
+struct Told(std::sync::Mutex<Vec<String>>);
+
+impl oml_app::ports::RequestObserver for Told {
+    fn credential(&self, key: Option<&KeyRecord>, connection: Option<Uuid>) {
+        let told = match (key, connection) {
+            (Some(key), None) => format!("key {}", key.key_id),
+            (Some(key), Some(c)) => format!("key {} via {c}", key.key_id),
+            (None, _) => "no key".to_owned(),
+        };
+        self.0.lock().expect("unpoisoned").push(told);
+    }
+
+    fn workarea(&self, workarea_id: Uuid) {
+        self.0
+            .lock()
+            .expect("unpoisoned")
+            .push(format!("workarea {workarea_id}"));
+    }
+}
+
+/// The request line's identity fields come from the app: it tells its
+/// observer the key a credential resolved to, or that it resolved to none,
+/// and the workarea the verb targets, by id (ADR-0042 d2).
+#[tokio::test]
+async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_a_submit_targets() {
+    let told = std::sync::Arc::new(Told::default());
+    let app = app().with_observer(told.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "agent-a", crew).await;
+    told.0.lock().expect("unpoisoned").clear();
+    app.submit_memory(&writer.value, &submit_into("idem-told", "a fact", crew))
+        .await
+        .expect("submit");
+    let refused = app
+        .submit_memory("oml_sk_no-such-key", &submit_into("idem-x", "a fact", crew))
+        .await;
+    assert!(matches!(refused, Err(AppError::Unauthorized)));
+    assert_eq!(
+        *told.0.lock().expect("unpoisoned"),
+        vec![
+            format!("key {}", writer.key_id),
+            format!("workarea {crew}"),
+            "no key".to_owned(),
+        ]
+    );
+}

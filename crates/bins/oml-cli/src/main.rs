@@ -2907,8 +2907,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "chain_head_seq": head_seq,
             "oauth_discovery": oauth,
             "client_version": env!("CARGO_PKG_VERSION"),
-            // The PoC API exposes no server version endpoint.
-            "server_version": Value::Null,
+            "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
             "next": next,
         }));
@@ -2964,7 +2963,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             None => println!("oauth       : not probed (no URL)"),
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
-        println!("server      : version not exposed by the PoC API");
+        match (&ready, server_version(ready.as_ref())) {
+            (_, Some(version)) => println!("server      : oml-server-lead {version}"),
+            (Some(_), None) => println!("server      : version not reported by /readyz"),
+            (None, None) => println!("server      : not probed (no URL)"),
+        }
         println!("verdict     : {outcome}");
         if let Some(next) = &next {
             println!("next        : {next}");
@@ -2975,6 +2978,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// The server's version, as `/readyz` names its build, ready or not
+/// (http-api.md "Health"); `None` when the probe did not run or names none.
+fn server_version(ready: Option<&(u16, Value)>) -> Option<String> {
+    ready
+        .and_then(|(_, body)| body["build"]["version"].as_str())
+        .map(ToOwned::to_owned)
 }
 
 /// A failed call as doctor reports it: the status and code of a refusal, or

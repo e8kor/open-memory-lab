@@ -184,7 +184,7 @@ from the file ([security](../architecture/security.md)).
 | Verb | Does |
 |---|---|
 | `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. |
-| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; and `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)). |
+| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)); and the server's version, from `/readyz`'s `build.version`, since v0.4.1. |
 
 ## `oml setup claude-code` and `oml quickstart` — the quick start
 

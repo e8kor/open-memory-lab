@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import importlib.metadata
 import os
 import time
 import uuid
@@ -58,6 +59,10 @@ from .generated.models import (
 from .generated.types import UNSET, Response
 
 T = TypeVar("T")
+
+# What every request sends as User-Agent: the server's request log names the
+# client by it (ADR-0042 d9).
+USER_AGENT = f"oml-sdk-python/{importlib.metadata.version('oml-sdk')}"
 
 RETRY_AFTER_CAP = 30.0  # seconds; the most a Retry-After is waited for
 FIRST_BACKOFF = 0.2  # seconds, doubling per attempt, when no Retry-After is sent
@@ -190,6 +195,7 @@ class OmlClient:
         http = httpx.Client(
             base_url=self._url,
             auth=_Bearer(api_key),
+            headers={"User-Agent": USER_AGENT},
             timeout=timeout,
             transport=transport,
             event_hooks={"response": [_raise_for_refusal]},

@@ -44,7 +44,9 @@ use oml_app::types::{
 };
 
 use crate::error::{ApiError, ErrorContext, OAuthError, map_app_error, map_oauth_error};
-use crate::{ApiState, OAUTH_ROUTES, finish, json_response, new_request_id, retry_chain};
+use crate::traffic::metrics::grant_type_label;
+use crate::traffic::{Resolved, Rid};
+use crate::{ApiState, OAUTH_ROUTES, finish, finish_coded, json_response, retry_chain};
 use page::{CodeForm, page_response, secure};
 
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -86,34 +88,34 @@ where
     }
 
     /// `GET /.well-known/oauth-protected-resource/mcp` (RFC 9728).
-    async fn protected_resource(State(st): State<Self>) -> Response {
-        Self::document(&st, protected_resource_document)
+    async fn protected_resource(State(st): State<Self>, rid: Rid) -> Response {
+        Self::document(&st, &rid, protected_resource_document)
     }
 
     /// `GET /.well-known/oauth-authorization-server` (RFC 8414).
-    async fn authorization_server(State(st): State<Self>) -> Response {
-        Self::document(&st, authorization_server_document)
+    async fn authorization_server(State(st): State<Self>, rid: Rid) -> Response {
+        Self::document(&st, &rid, authorization_server_document)
     }
 
-    fn document(st: &Self, build: fn(&Issuer) -> Value) -> Response {
-        let rid = new_request_id();
+    fn document(st: &Self, rid: &str, build: fn(&Issuer) -> Value) -> Response {
         let result = st
             .app
             .oauth_issuer()
             .map(|issuer| json_response(StatusCode::OK, &build(issuer)))
             .ok_or_else(ApiError::not_found);
-        finish(&rid, result)
+        finish(rid, result)
     }
 
     /// `POST /oauth/register` (RFC 7591): `201` with a minted `client_id`,
     /// no secret and no registration access token (ADR-0031 d5).
-    async fn register(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn register(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         let result = Self::register_inner(&st, &headers, &body).await;
-        finish(
-            &rid,
-            Ok(no_store(result.unwrap_or_else(OAuthError::into_response))),
-        )
+        oauth_finish(&rid, result)
     }
 
     async fn register_inner(
@@ -138,13 +140,19 @@ where
 
     /// `POST /oauth/token` (RFC 6749 §3.2, §4.1.3, §6): every answer, the
     /// pair and each refusal, carries `Cache-Control: no-store`.
-    async fn token(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn token(State(st): State<Self>, rid: Rid, headers: HeaderMap, body: Bytes) -> Response {
         let result = Self::token_inner(&st, &headers, &body).await;
-        finish(
-            &rid,
-            Ok(no_store(result.unwrap_or_else(OAuthError::into_response))),
-        )
+        let mut response = oauth_finish(&rid, result);
+        // The token metric's grant_type, from the closed set (ADR-0042 d12).
+        let sent = form_pairs(&body).ok().and_then(|pairs| {
+            pairs
+                .into_iter()
+                .find_map(|(name, value)| (name == "grant_type").then_some(value))
+        });
+        if let Some(resolved) = response.extensions_mut().get_mut::<Resolved>() {
+            resolved.grant_type = Some(grant_type_label(sent.as_deref()));
+        }
+        response
     }
 
     /// The form is parsed here, once, so that a repeated parameter is seen;
@@ -207,8 +215,7 @@ where
     /// query is decoded once, a repeated parameter noted for the bounds,
     /// and the request answered as the connect-code page, a refusal page,
     /// or a redirect once the client and the redirect URI are accepted.
-    async fn authorize_page(State(st): State<Self>, uri: Uri) -> Response {
-        let rid = new_request_id();
+    async fn authorize_page(State(st): State<Self>, rid: Rid, uri: Uri) -> Response {
         let response = Self::authorize_page_inner(&st, uri.query().unwrap_or("")).await;
         logged(&rid, "GET", response)
     }
@@ -270,8 +277,12 @@ where
     /// The origin check reads the headers alone, so a refused submission
     /// consumes no attempt and spends no code; then the form is decoded
     /// once and must be exactly a code entry or exactly a confirmation.
-    async fn authorize_submit(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {
-        let rid = new_request_id();
+    async fn authorize_submit(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         let response = Self::authorize_submit_inner(&st, &headers, &body).await;
         logged(&rid, "POST", response)
     }
@@ -621,6 +632,19 @@ fn same_origin(headers: &HeaderMap, issuer: &Issuer) -> bool {
     } else {
         single(header::ORIGIN.as_str()) == Some(issuer.as_str().as_bytes())
     }
+}
+
+/// An OAuth endpoint's answer, `Cache-Control: no-store` on every one, its
+/// refusal logged under the RFC `error` (ADR-0042 d2).
+fn oauth_finish(rid: &str, result: Result<Response, OAuthError>) -> Response {
+    let (response, code) = match result {
+        Ok(response) => (response, None),
+        Err(e) => {
+            let code = e.error;
+            (e.into_response(), Some(code))
+        }
+    };
+    finish_coded(rid, no_store(response), code)
 }
 
 /// One log line per authorization-page request: its id, method, status

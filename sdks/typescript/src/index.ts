@@ -26,6 +26,7 @@ export {
   type WriteInput,
   type WriteOptions,
   type Written,
+  USER_AGENT,
 } from "./client.ts";
 export {
   AccessError,

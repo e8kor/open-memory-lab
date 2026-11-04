@@ -365,6 +365,14 @@ lead names no issuer ([observability](observability.md#the-doctor-contract)). Wi
 prints the connector URL and the code to give the person connecting
 ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
 
+Since v0.4.1 the lead logs each request's client address ([observability](observability.md#the-request-line)).
+Behind a proxy on the same host every socket peer is the proxy, so set
+`server.trusted_proxies = ["127.0.0.1/32", "::1/128"]`, or `OML_SERVER__TRUSTED_PROXIES=127.0.0.1/32,::1/128`,
+and the lead reads the client from the `X-Forwarded-For` the proxy sets; unset, every line logs
+`127.0.0.1` ([configuration](configuration.md), [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d7). The proxy's own
+access log holds the same addresses and falls under the same 30 days
+([log retention](observability.md#log-retention)).
+
 ## The standalone profile
 
 *Available since v0.1.0 · [releases](../product/releases.md)*

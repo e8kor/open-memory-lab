@@ -185,11 +185,9 @@ impl std::io::Write for CapturedLog {
 async fn an_alias_call_logs_mcp_alias_called_naming_its_successor_key_tenant_and_request() {
     let log = CapturedLog::default();
     let writer = log.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(move || writer.clone())
-        .finish();
+    // The lead's own subscriber: JSON lines, the event name a field like
+    // any other, so a grep for the name still finds them (ADR-0042 d1).
+    let subscriber = oml_server_lead::log_subscriber(move || writer.clone());
     tracing::subscriber::set_global_default(subscriber).expect("the only subscriber");
 
     let router = doubles_router();
@@ -208,18 +206,21 @@ async fn an_alias_call_logs_mcp_alias_called_naming_its_successor_key_tenant_and
             .filter(|line| line.contains("mcp_alias_called"))
             .collect();
         assert_eq!(logged.len(), 1, "{alias}: {lines}");
-        let line = logged[0];
-        for field in [
-            "event=\"mcp_alias_called\"".to_owned(),
-            format!("tool={alias}"),
-            format!("successor={successor}"),
-            format!("key_id={key_id}"),
-            format!("tenant_id={tenant_id}"),
-            format!("request_id={request_id}"),
+        let line: Value = serde_json::from_str(logged[0]).expect("a JSON line");
+        for (field, value) in [
+            ("event", "mcp_alias_called"),
+            ("tool", alias),
+            ("successor", successor),
+            ("key_id", key_id.as_str()),
+            ("tenant_id", tenant_id.as_str()),
+            ("request_id", request_id.as_str()),
         ] {
-            assert!(line.contains(&field), "{alias}: no {field} in {line}");
+            assert_eq!(line[field], value, "{alias}: {field} in {line}");
         }
-        assert!(!line.contains(&token), "{alias}: the key's value is logged");
+        assert!(
+            !logged[0].contains(&token),
+            "{alias}: the key's value is logged"
+        );
     }
 
     // A served tool is not an alias, and logs none; the capture is live,

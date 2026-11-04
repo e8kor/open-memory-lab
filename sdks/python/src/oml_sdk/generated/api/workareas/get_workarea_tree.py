@@ -15,7 +15,19 @@ def _get_kwargs(
     *,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     params: dict[str, Any] = {}
 
@@ -33,6 +45,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -66,6 +79,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
@@ -79,6 +95,9 @@ def sync_detailed(
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,6 +111,9 @@ def sync_detailed(
         workarea=workarea,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -107,6 +129,9 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
@@ -120,6 +145,9 @@ def sync(
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,6 +162,9 @@ def sync(
         client=client,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -143,6 +174,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
@@ -156,6 +190,9 @@ async def asyncio_detailed(
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +206,9 @@ async def asyncio_detailed(
         workarea=workarea,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -182,6 +222,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
@@ -195,6 +238,9 @@ async def asyncio(
             derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,5 +256,8 @@ async def asyncio(
             client=client,
             limit=limit,
             cursor=cursor,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

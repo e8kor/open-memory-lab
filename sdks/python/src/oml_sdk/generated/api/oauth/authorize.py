@@ -21,7 +21,19 @@ def _get_kwargs(
     state: str | Unset = UNSET,
     resource: str | Unset = UNSET,
     scope: AuthorizeScope | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     params: dict[str, Any] = {}
 
@@ -58,6 +70,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -104,6 +117,9 @@ def sync_detailed(
     state: str | Unset = UNSET,
     resource: str | Unset = UNSET,
     scope: AuthorizeScope | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Any | str]:
     """Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the
     connect-code page.
@@ -131,6 +147,9 @@ def sync_detailed(
         state (str | Unset):
         resource (str | Unset):
         scope (AuthorizeScope | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,6 +168,9 @@ def sync_detailed(
         state=state,
         resource=resource,
         scope=scope,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -169,6 +191,9 @@ def sync(
     state: str | Unset = UNSET,
     resource: str | Unset = UNSET,
     scope: AuthorizeScope | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Any | str | None:
     """Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the
     connect-code page.
@@ -196,6 +221,9 @@ def sync(
         state (str | Unset):
         resource (str | Unset):
         scope (AuthorizeScope | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,6 +243,9 @@ def sync(
         state=state,
         resource=resource,
         scope=scope,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -229,6 +260,9 @@ async def asyncio_detailed(
     state: str | Unset = UNSET,
     resource: str | Unset = UNSET,
     scope: AuthorizeScope | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Any | str]:
     """Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the
     connect-code page.
@@ -256,6 +290,9 @@ async def asyncio_detailed(
         state (str | Unset):
         resource (str | Unset):
         scope (AuthorizeScope | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -274,6 +311,9 @@ async def asyncio_detailed(
         state=state,
         resource=resource,
         scope=scope,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -292,6 +332,9 @@ async def asyncio(
     state: str | Unset = UNSET,
     resource: str | Unset = UNSET,
     scope: AuthorizeScope | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Any | str | None:
     """Start an authorization request — validates the client, redirect URI and S256 PKCE, then renders the
     connect-code page.
@@ -319,6 +362,9 @@ async def asyncio(
         state (str | Unset):
         resource (str | Unset):
         scope (AuthorizeScope | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -339,5 +385,8 @@ async def asyncio(
             state=state,
             resource=resource,
             scope=scope,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

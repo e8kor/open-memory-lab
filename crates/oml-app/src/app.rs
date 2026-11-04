@@ -7,6 +7,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::de::DeserializeOwned;
@@ -44,8 +45,8 @@ use crate::cursor::{ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, OutboxRow, ScanOutcome, Scanner, Signer, StoreError, SubjectRow,
-    TailEvent,
+    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, ScanOutcome, Scanner,
+    Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
@@ -112,6 +113,9 @@ pub struct App<J, S, C, I, Sc> {
     /// Wrong connect-code entries since the process started, deployment
     /// wide and never per tenant, for doctor (ADR-0031 d8, d14).
     connect_code_failures: AtomicU64,
+    /// Told what each request resolved, for its log line; it decides
+    /// nothing (ADR-0042 d2, d14).
+    observer: Arc<dyn RequestObserver>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -694,7 +698,17 @@ where
             scanner,
             oauth_issuer: None,
             connect_code_failures: AtomicU64::new(0),
+            observer: Arc::new(NoObserver),
         }
+    }
+
+    /// The app that tells `observer` what each request resolved: the key
+    /// its credential named and the workarea its verb targets, which the
+    /// transport's request line logs by id (ADR-0042 d2). Without it the
+    /// app tells no one.
+    #[must_use]
+    pub fn with_observer(self, observer: Arc<dyn RequestObserver>) -> Self {
+        Self { observer, ..self }
     }
 
     /// The app for a deployment that sets `oauth.issuer`: connect codes are
@@ -782,10 +796,11 @@ where
     /// `Unauthorized`.
     async fn key_of_value(&self, api_key: &str) -> Result<KeyRecord, AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
-        self.journal
-            .key_by_hash(&hash)
-            .await?
-            .ok_or(AppError::Unauthorized)
+        let key = self.journal.key_by_hash(&hash).await;
+        if let Ok(found) = &key {
+            self.observer.credential(found.as_ref(), None);
+        }
+        key?.ok_or(AppError::Unauthorized)
     }
 
     /// `key`'s access as stored, `None` for a provider-level key.
@@ -857,10 +872,13 @@ where
         key: &KeyRecord,
         named: Option<&Reference>,
     ) -> Result<Uuid, AppError> {
-        self.resolve_opt(key, NamedKind::Workarea, named)
+        let target = self
+            .resolve_opt(key, NamedKind::Workarea, named)
             .await?
             .or(key.default_workarea)
-            .ok_or(AppError::WorkareaUnresolved)
+            .ok_or(AppError::WorkareaUnresolved)?;
+        self.observer.workarea(target);
+        Ok(target)
     }
 
     /// Every event of the tenant's chain, in seq order.
@@ -1890,6 +1908,7 @@ where
         let node = self
             .resolve(&caller.key, NamedKind::Workarea, &node)
             .await?;
+        self.observer.workarea(node);
         let readable: Option<BTreeSet<Uuid>> = if structure {
             None
         } else {
@@ -2210,6 +2229,7 @@ where
         let key = self.authenticate(api_key).await?.key;
         require_role(&key, Role::Admin, "set_workarea_crew")?;
         let workarea_id = self.resolve(&key, NamedKind::Workarea, &workarea).await?;
+        self.observer.workarea(workarea_id);
         let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
         let workarea = self
             .journal
@@ -4263,9 +4283,10 @@ where
             .journal
             .key(found.tenant_id, connection.key_id)
             .await?
-            .filter(|k| k.revoked_at.is_none())
-            .ok_or(AppError::Unauthorized)?;
-        self.caller_of(key).await
+            .filter(|k| k.revoked_at.is_none());
+        self.observer
+            .credential(key.as_ref(), Some(connection.connection_id));
+        self.caller_of(key.ok_or(AppError::Unauthorized)?).await
     }
 
     /// `POST /oauth/register` (http-api.md; RFC 7591; ADR-0031 d5): the body

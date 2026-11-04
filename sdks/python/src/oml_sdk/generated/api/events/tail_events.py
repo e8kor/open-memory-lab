@@ -14,7 +14,19 @@ def _get_kwargs(
     after_seq: int | Unset = 0,
     workarea: str | Unset = UNSET,
     limit: int | Unset = 50,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     params: dict[str, Any] = {}
 
@@ -37,6 +49,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -75,6 +88,9 @@ def sync_detailed(
     after_seq: int | Unset = 0,
     workarea: str | Unset = UNSET,
     limit: int | Unset = 50,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | EventsPage]:
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
@@ -95,6 +111,9 @@ def sync_detailed(
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -108,6 +127,9 @@ def sync_detailed(
         after_seq=after_seq,
         workarea=workarea,
         limit=limit,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -123,6 +145,9 @@ def sync(
     after_seq: int | Unset = 0,
     workarea: str | Unset = UNSET,
     limit: int | Unset = 50,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | EventsPage | None:
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
@@ -143,6 +168,9 @@ def sync(
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,6 +185,9 @@ def sync(
         after_seq=after_seq,
         workarea=workarea,
         limit=limit,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -166,6 +197,9 @@ async def asyncio_detailed(
     after_seq: int | Unset = 0,
     workarea: str | Unset = UNSET,
     limit: int | Unset = 50,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | EventsPage]:
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
@@ -186,6 +220,9 @@ async def asyncio_detailed(
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,6 +236,9 @@ async def asyncio_detailed(
         after_seq=after_seq,
         workarea=workarea,
         limit=limit,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -212,6 +252,9 @@ async def asyncio(
     after_seq: int | Unset = 0,
     workarea: str | Unset = UNSET,
     limit: int | Unset = 50,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | EventsPage | None:
     """The per-tenant journal as digest-only envelopes; out-of-scope events omitted (a feed, not a
     verification surface).
@@ -232,6 +275,9 @@ async def asyncio(
             before any check that reads state; an unknown name answers exactly what an unknown id
             answers. A derived path is neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -247,5 +293,8 @@ async def asyncio(
             after_seq=after_seq,
             workarea=workarea,
             limit=limit,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed
