@@ -336,6 +336,12 @@ struct KeysIssueArgs {
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
+    /// The guardrail scope an admin sets on the key: workarea loads the
+    /// default workarea's guardrails alone, ancestors those of every
+    /// ancestor the key reads too; omitted, the server's default, ancestors
+    /// (proposed ADR-0037 d4).
+    #[arg(long, value_parser = ["workarea", "ancestors"])]
+    guardrail_scope: Option<String>,
 }
 
 #[derive(Args)]
@@ -369,6 +375,12 @@ struct IssueAgentArgs {
     /// a single-use connect code printed in its place (ADR-0031 d7).
     #[arg(long)]
     connect_code: bool,
+    /// The guardrail scope an admin sets on the key: workarea loads the
+    /// default workarea's guardrails alone, ancestors those of every
+    /// ancestor the key reads too; omitted, the server's default, ancestors
+    /// (proposed ADR-0037 d4).
+    #[arg(long, value_parser = ["workarea", "ancestors"])]
+    guardrail_scope: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -481,9 +493,18 @@ struct WriteArgs {
     #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
     /// memory | derived_fact | steering | term | term_mapping |
-    /// vocab_release; omitted, memory, or with --replaces the target's.
+    /// vocab_release | guardrail; omitted, memory, or with --replaces the
+    /// target's.
     #[arg(long)]
     kind: Option<String>,
+    /// A guardrail's severity: never | must | should; required with --kind
+    /// guardrail unless it retires (proposed ADR-0037 d2, d10).
+    #[arg(long, value_parser = ["never", "must", "should"])]
+    severity: Option<String>,
+    /// A guardrail's oml-gr/1 rule, as one JSON object; deny or ask, never
+    /// allow (proposed ADR-0037 d8).
+    #[arg(long, value_parser = parse_rule)]
+    rule: Option<serde_json::Value>,
     /// Lineage artifact ids; repeatable. Set, a submission is journalled
     /// learn (ADR-0039 d3).
     #[arg(long = "derives-from")]
@@ -993,6 +1014,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(l) = &args.label {
                 body["label"] = json!(l);
             }
+            if let Some(scope) = &args.guardrail_scope {
+                body["guardrail_scope"] = json!(scope);
+            }
             let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
@@ -1425,6 +1449,8 @@ struct Write<'a> {
     retirement: bool,
     reason: Option<&'a str>,
     idempotency_key: Option<&'a str>,
+    severity: Option<&'a str>,
+    rule: Option<&'a serde_json::Value>,
 }
 
 impl<'a> Write<'a> {
@@ -1440,6 +1466,8 @@ impl<'a> Write<'a> {
             retirement: args.retirement,
             reason: args.reason.as_deref(),
             idempotency_key: args.idempotency_key.as_deref(),
+            severity: args.severity.as_deref(),
+            rule: args.rule.as_ref(),
         }
     }
 
@@ -1456,7 +1484,20 @@ impl<'a> Write<'a> {
             retirement: false,
             reason: None,
             idempotency_key: None,
+            severity: None,
+            rule: None,
         }
+    }
+}
+
+/// `--rule`: one JSON object, refused before anything is sent otherwise;
+/// whether it is an `oml-gr/1` rule is the server's scan to decide
+/// (proposed ADR-0037 d8, d10).
+fn parse_rule(text: &str) -> Result<serde_json::Value, String> {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(value @ serde_json::Value::Object(_)) => Ok(value),
+        Ok(_) => Err("a rule is one JSON object, such as {\"rule\":\"oml-gr/1\",…}".to_owned()),
+        Err(e) => Err(format!("a rule is one JSON object: {e}")),
     }
 }
 
@@ -1475,10 +1516,14 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
         ("verb", write.verb),
         ("workarea", write.workarea),
         ("reason", write.reason),
+        ("severity", write.severity),
     ] {
         if let Some(value) = value {
             body[name] = json!(value);
         }
+    }
+    if let Some(rule) = write.rule {
+        body["rule"] = rule.clone();
     }
     if !write.derives_from.is_empty() {
         body["derives_from"] = json!(write.derives_from);
@@ -1844,6 +1889,9 @@ fn run_issue_agent(
     }
     if args.connect_code {
         body["connect_code"] = json!(true);
+    }
+    if let Some(scope) = &args.guardrail_scope {
+        body["guardrail_scope"] = json!(scope);
     }
     let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
         Ok(answer) => answer,
