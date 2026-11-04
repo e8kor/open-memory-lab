@@ -7,7 +7,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** proposed · 2026-11-04
+**Status:** proposed · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed)
 
 **Release:** planned for v0.5.0 ([releases](../product/releases.md#decisions))
 
