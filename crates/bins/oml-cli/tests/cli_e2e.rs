@@ -3899,7 +3899,7 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
     let seen = calls(&seen);
     assert_eq!(
         seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-        ["/healthz", "/readyz", "/v2/whoami", "/v2/events",],
+        ["/healthz", "/readyz", "/v2/whoami", "/v2/workareas/w1", "/v2/events"],
     );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
@@ -6117,4 +6117,52 @@ fn session_start_routes(crew: &Crew) -> Vec<String> {
         "GET /v2/whoami".to_owned(),
         format!("GET /v2/workareas/{}", crew.wa),
     ]
+}
+
+/// Doctor names the default workarea's brief, empty or how many members it
+/// serves, and how many transitions wait there for a second identity
+/// (ADR-0046 Consequences, the doctor lines).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_workarea() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    let dora = crew.curator("dora");
+    let (code, _, log) = crew.lab.json(
+        Some(&dora),
+        &[
+            "workareas",
+            "status",
+            "propose",
+            "metals",
+            "--to",
+            "committed",
+        ],
+    );
+    assert_eq!(code, 0, "{log}");
+
+    let (code, report, log) = crew.lab.json(Some(&crew.agent), &["doctor"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(report["default_workarea"]["brief_items"], 0, "{report}");
+    assert_eq!(
+        report["default_workarea"]["pending_transitions"], 1,
+        "{report}"
+    );
+
+    let (code, stdout, stderr) = oml_text(
+        &crew.lab.server,
+        &crew.lab.creds,
+        Some(&crew.agent),
+        &["doctor"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("brief       : empty"),
+        "an empty brief is named: {stdout}"
+    );
+    assert!(
+        stdout.contains("transitions : 1 waiting for a second identity"),
+        "{stdout}"
+    );
+    crew.lab.stop().await;
 }
