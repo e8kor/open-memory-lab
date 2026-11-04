@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 from adapters import PUBLISHED_BM25  # noqa: E402
 
 SUITES = {"scifact": "beir-scifact", "nfcorpus": "beir-nfcorpus", "arguana": "beir-arguana",
-          "locomo": "locomo"}
+          "locomo": "locomo", "scifact-x10": "beir-scifact-x10"}
 METHOD_NAMES = {"ref_bm25_anserini": "reference-bm25s-k1-0.9-b-0.4",
                 "ref_bm25_oml_params": "reference-bm25s-k1-1.2-b-0.75"}
 BEIR_URL = "https://arxiv.org/abs/2104.08663"
@@ -65,7 +65,7 @@ def suite_version(dataset, cache):
         digest = hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.exists() else "unknown"
         return f"locomo10.json sha256:{digest}"
     ir = {"scifact": "beir/scifact/test", "nfcorpus": "beir/nfcorpus/test",
-          "arguana": "beir/arguana"}[dataset]
+          "arguana": "beir/arguana", "scifact-x10": "beir/scifact/test x10"}[dataset]
     try:
         import importlib.metadata as m
         v = m.version("ir_datasets")
@@ -76,6 +76,8 @@ def suite_version(dataset, cache):
 
 def from_bench(r, a):
     ds, method = r["dataset"], r["pipeline"]
+    if r.get("k", 100) != 100:
+        method = f"{method}-k{r['k']}"
     offline = method in METHOD_NAMES
     s = r["summary"]
     head_key = "headline" if "headline" in s else "all"
@@ -92,12 +94,29 @@ def from_bench(r, a):
     reference = ({"source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",
                   "metric": "ndcg@10", "value": pub["nDCG@10"], "url": BEIR_URL}
                  if pub else None)
-    if ds == "locomo":
+    if ds == "scifact-x10":
+        note = ("SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories "
+                "written to one workarea, for latency at scale; qrels name the original copy only, "
+                "so quality is not comparable to beir-scifact. k 100, no token budget.")
+    elif ds == "locomo":
         note = ("One dialogue turn per memory, each conversation its own workarea; metrics over "
                 "categories 1-4, adversarial in per_category; English only.")
     else:
         note = ("One abstract per memory as '<title>. <text>' (BEIR indexes two fields); "
                 "k 100, no token budget; English only.")
+    if ds == "nfcorpus" and not offline:
+        note += (" Known gap: served bm25 measures below BEIR's published 0.325 and Pyserini's "
+                 "single-field 0.322; the offline textbook BM25 over the same memories measures "
+                 "0.318, so most of the gap is the one-body mapping and the analyser (Snowball "
+                 "against Lucene's Porter, hyphenated words kept whole), not the ranking "
+                 "(ADR-0049 d12).")
+    if r.get("rows_in_scope"):
+        note += (f" {r['rows_in_scope']:,} of the {r['docs']:,} rows written were promoted when "
+                 "it ran, so the scope held those: approval through review next slowed with the "
+                 "queue (FR-87).")
+    if r.get("k", 100) != 100:
+        note += (f" Asked with k {r['k']}, the size an agent asks, to measure latency at that k; "
+                 "recall@100 reads the shorter list.")
     if not offline and r.get("workers", 1) > 1:
         note += (f" Queries ran {r['workers']} at a time to fit the time box, so latency is "
                  "under that many concurrent clients.")
@@ -105,7 +124,7 @@ def from_bench(r, a):
         note = ("Offline bm25s over the same memories (Lucene BM25, English stop words, "
                 "Snowball stems), not a served path; " + note)
     limit = r.get("limit")
-    total = r["queries"] if not limit else None
+    total = a.full_queries.get(ds) if limit else None
     return SUITES[ds], METHOD_NAMES.get(method, method), {
         "schema": "oml-bench/1",
         "suite": SUITES[ds],
@@ -116,7 +135,7 @@ def from_bench(r, a):
         "commit": a.commit,
         "environment": {"host": a.host, "postgres": a.postgres, "build": "release"},
         "n_queries": head["n"],
-        "n_docs": r["docs"],
+        "n_docs": r.get("rows_in_scope") or r["docs"],
         "sampled": ({"seed": r["seed"], "fraction": r4(r["queries"] / total)}
                     if limit and total else None),
         "metrics": {METRICS[k]: r4(head[k]) for k in METRICS},
@@ -146,7 +165,7 @@ def from_recall(r, a, version, commit, date):
         "method": r["pipeline"],
         "date": date,
         "commit": commit,
-        "environment": {"host": a.host, "postgres": "18.6", "build": "release"},
+        "environment": {"host": a.host, "postgres": a.postgres, "build": "release"},
         "n_queries": o["n"],
         "n_docs": 200,
         "sampled": None,
@@ -172,6 +191,13 @@ def main():
     a = ap.parse_args()
     out = Path(a.out)
     written = []
+    # A run asked with --limit is a seeded subset; its fraction is of the
+    # queries the unlimited runs of the same dataset asked.
+    a.full_queries = {}
+    for p in sorted(Path(a.raw).glob("*.json")):
+        r = json.loads(p.read_text())
+        if "summary" in r and not r.get("limit"):
+            a.full_queries[r["dataset"]] = max(a.full_queries.get(r["dataset"], 0), r["queries"])
     for p in sorted(Path(a.raw).glob("*.json")):
         r = json.loads(p.read_text())
         if "summary" not in r or r.get("dataset") not in SUITES:

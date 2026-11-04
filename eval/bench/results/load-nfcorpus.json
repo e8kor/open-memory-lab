@@ -1,13 +1,13 @@
 {
  "dataset": "nfcorpus",
  "docs": 3633,
- "written": 3133,
+ "written": 3633,
  "refused": 0,
  "refusals": {},
- "approved": 3133,
- "write_seconds": 46.4,
- "review_seconds": 27.5,
+ "approved": 3633,
+ "write_seconds": 59.9,
+ "review_seconds": 45.4,
  "writers": 8,
  "reviewers": 6,
- "retried_503": 337
+ "retried_503": 534
 }

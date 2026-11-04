@@ -9,7 +9,7 @@ answers: where reads are served from and in what order; how recall ranks, throug
 
 **Status:** design draft for review · decided, not built
 
-**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines planned for v0.5.3 ([releases](../product/releases.md)).
+**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines planned for v0.5.5 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the read path (D12): where reads
 are served from, how the serving indexes are laid out, what order results come
@@ -108,7 +108,7 @@ that does not yet serve `terms` or `expand_terms` refuses them by name with
 
 ### Text handling
 
-*Since v0.5.3 the `bm25` pipelines index `simple` and `english` lexemes together over identifier
+*Since v0.5.5 the `bm25` pipelines index `simple` and `english` lexemes together over identifier
 parts ([search pipelines](#search-pipelines)); this section describes the `simple` index the
 keyword pipelines read.*
 
@@ -192,7 +192,7 @@ inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## Search pipelines
 
-*Planned for v0.5.3 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](https://github.com/e8kor/open-memory-lab/blob/feat/code-map/docs/adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
+*Planned for v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](https://github.com/e8kor/open-memory-lab/blob/feat/code-map/docs/adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
 
 **How recall ranks.** A recall's hits come from a **pipeline**: one or more retrievers, each
 producing a ranked list, merged by a fusion the core runs. The core computes what may be ranked
@@ -216,7 +216,7 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
 |---|---|---|
 | `keyword-all` | every query word, exactly, under `simple`, by `ts_rank`: the recall served up to v0.5.0 | one list |
 | `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
-| `bm25` | the query and the text through one normaliser that adds identifier parts (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`), each word in its exact `simple` form and its `english` stem, BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
+| `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
 | `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
 
 **Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
@@ -227,8 +227,11 @@ refused naming `/search`, never replaced. `match: "all"` keeps only rows holding
 when none does, serves the any-word hits with `search.fallback: "any_term"`.
 
 **What the answer says.** `search.pipeline`, `search.terms` (the query's words as read),
-`search.fallback`, and `search.did_you_mean`: spellings taken from rows the key may read, from a
-pipeline with a trigram list, when no hit holds every word. Each hit carries `matched`: the
+`search.fallback`, and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
+than its `k`), spellings for the words no hit holds, under every pipeline but `keyword-all`. They
+come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
+same transaction that promotes, replaces or retires a version; a recall reads the readable
+nodes' vocabulary and never a row, so no spelling names a word only an unreadable row says. Each hit carries `matched`: the
 words it holds, `of` how many the query had, and `via` the retrievers that found it. Scores
 compare within one answer only.
 
@@ -239,13 +242,14 @@ enters a retriever. The laws every adapter passes, the in-memory test store and 
 alike, are in `oml-port-contracts` (ADR-0049 d7).
 
 **Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
-default (ADR-0049 d9). On version 1 of its data, success@5 was 0.17 for `keyword-all`, 0.81
-for `keyword-any`, 0.91 for `bm25` and 0.94 for `bm25-trigram`, which is the default because it
-is the highest that passes its gate; `bm25` ranks the first hit best (success@1 0.82). On 200
-rows the median recall took 15.9 ms under `keyword-all`, 33.9 ms under `bm25` and 73.9 ms under
-`bm25-trigram`; latency at 10,000 and 100,000 rows is unmeasured
-([FR-84](../product/roadmap.md)): the `bm25` statement reads every readable row per query, and
-the trigram list scans the tenant's partition.
+default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
+NFCorpus, LoCoMo, and SciFact grown ten times (8,825 of its rows promoted when it ran). Their generated pages hold every number,
+with the date, commit and host of each run: [benchmarks](../api/benchmarks/index.md). `bm25` is
+the default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
+misspellings at many times the latency and is enabled for a tenant or a request that names it
+(ADR-0049 d12). Under row security the GIN and trigram indexes do not serve the serving role's
+reads (ADR-0034 d13), so a recall's cost grows with the rows in its scope; the scale page shows
+by how much.
 
 ## The recall-ordering contract: steering rows first, unranked
 

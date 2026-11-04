@@ -5,29 +5,29 @@
  "kind": "recall",
  "method": "bm25",
  "date": "2026-11-04",
- "commit": "0ff5c9e",
+ "commit": "4a8f5ba",
  "environment": {
   "host": "8 vCPU / 15 GB",
-  "postgres": "18.6",
+  "postgres": "17.9",
   "build": "release"
  },
  "n_queries": 323,
  "n_docs": 3633,
  "sampled": null,
  "metrics": {
-  "ndcg@10": 0.308,
-  "recall@10": 0.1449,
-  "recall@100": 0.2393,
-  "mrr@10": 0.5113,
-  "success@1": 0.4303,
-  "success@5": 0.6099,
+  "ndcg@10": 0.3149,
+  "recall@10": 0.1493,
+  "recall@100": 0.2463,
+  "mrr@10": 0.5161,
+  "success@1": 0.4272,
+  "success@5": 0.6316,
   "zero_result_rate": 0.0464
  },
  "per_category": {},
  "latency_ms": {
-  "p50": 2742.34,
-  "p95": 2886.19,
-  "p99": 2998.75
+  "p50": 132.3,
+  "p95": 175.49,
+  "p99": 183.35
  },
  "reference": {
   "source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",
@@ -35,5 +35,5 @@
   "value": 0.325,
   "url": "https://arxiv.org/abs/2104.08663"
  },
- "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only. Queries ran 3 at a time to fit the time box, so latency is under that many concurrent clients."
+ "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only."
 }

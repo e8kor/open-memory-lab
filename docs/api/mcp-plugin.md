@@ -403,16 +403,18 @@ naming it in `details.field`:
   that fits, and `budget` reports the cut. `include_unreviewed: true`
   (default `false`) adds the key's own held rows that match, flagged
   `state: "held"`; it is the one flag for unreviewed rows (d4).
-- **recall's search** *(planned for v0.5.3, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
+- **recall's search** *(planned for v0.5.5, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
   `search` names the pipeline (`keyword-all`, `keyword-any`, `bm25`,
   `bm25-trigram`) among those the server serves; omitted, the
-  organisation's default runs, `bm25-trigram` as shipped. Any word may
-  match: an identifier matches by its parts, a word by its stem and a
+  organisation's default runs, `bm25` as shipped. Any word may match: an
+  identifier matches by its parts and a word by its stem; English stop words
+  are not read when the query has other words; `bm25-trigram` also matches a
   misspelling by its letters. `match: "all"` keeps only memories holding
   every word, and when none does serves the any-word hits with
   `search.fallback: "any_term"`. The answer's `search` names the pipeline,
-  the query's words as read and, when no hit holds every word,
-  `did_you_mean` spellings from memories the key may read; each hit carries
+  the query's words as read and, when fewer than three hits are found,
+  `did_you_mean` spellings for the words no hit holds, from the words of
+  promoted memories the key may read; each hit carries
   `matched` (`terms`, `of`, `via`). A pipeline the server does not serve is
   `request.validation` naming `/search`. The three tools stay three.
 - **listing** with `own: true`, the default, is everything the key wrote,

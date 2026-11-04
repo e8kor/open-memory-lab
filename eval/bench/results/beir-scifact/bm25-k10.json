@@ -1,0 +1,39 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "beir-scifact",
+ "suite_version": "beir/scifact/test (ir_datasets 0.6.3)",
+ "kind": "recall",
+ "method": "bm25-k10",
+ "date": "2026-11-04",
+ "commit": "9a6a0d0",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "17.9",
+  "build": "release"
+ },
+ "n_queries": 300,
+ "n_docs": 5183,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.6839,
+  "recall@10": 0.8184,
+  "recall@100": 0.8184,
+  "mrr@10": 0.6475,
+  "success@1": 0.54,
+  "success@5": 0.78,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {},
+ "latency_ms": {
+  "p50": 76.51,
+  "p95": 107.77,
+  "p99": 123.36
+ },
+ "reference": {
+  "source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",
+  "metric": "ndcg@10",
+  "value": 0.665,
+  "url": "https://arxiv.org/abs/2104.08663"
+ },
+ "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only. Asked with k 10, the size an agent asks, to measure latency at that k; recall@100 reads the shorter list."
+}

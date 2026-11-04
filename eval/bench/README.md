@@ -93,7 +93,9 @@ produced it:
 ```
 
 - Suites: `recall-synthetic` (eval/recall's served results, converted), `beir-scifact`,
-  `beir-nfcorpus`, `locomo`. Methods: the four served pipelines, and the two offline
+  `beir-nfcorpus`, `locomo`, `beir-scifact-x10`. Earlier runs move to
+  `results/archive/<commit>/`; `scripts/gen_bench_pages.py` renders every file into the API
+  docs' benchmark pages, current and earlier side by side. Methods: the four served pipelines, and the two offline
   references (`reference-bm25s-k1-0.9-b-0.4`, `reference-bm25s-k1-1.2-b-0.75`), whose
   `latency_ms` values are null because they are not a served path.
 - `sampled` is null when every query was asked, else `{seed, fraction}`.
@@ -123,6 +125,7 @@ unit, so each mapping is stated with what it costs.
 | `scifact` (BEIR test) | CC BY-NC 2.0 | 5,183 | 300 | one abstract is one memory: `<title>. <abstract>` |
 | `nfcorpus` (BEIR test) | "free to use for academic purposes" | 3,633 | 323 | as SciFact |
 | `arguana` (BEIR) | CC BY 4.0 | 8,674 | 1,406 | as SciFact; adapter only, not run (the queries are whole arguments) |
+| `scifact-x10` | as SciFact | 51,830 | 300 | SciFact and nine copies with 10% of words replaced (seeds 20261105 to 20261113), one workarea, for latency at scale; qrels name the original copy |
 | `locomo` (`locomo10.json`) | CC BY-NC 4.0 | 5,882 | 1,981 | one dialogue turn is one memory, `[<session date>] <speaker>: <text>`, with a shared photo's caption; one workarea per conversation |
 
 - **BEIR.** A memory is an abstract, a median of about 1,400 characters, several claims long.
@@ -153,10 +156,12 @@ results files hold ids and scores, never dataset text.
   reviewers a 5,000-row dataset loads in about two minutes (the load logs in `results/` hold
   the times). Concurrent writes meet retryable `503` "chain head contention", which the loader
   retries and counts.
-- The bm25 statement rebuilds every in-scope row's text vector per query, so latency grows
-  with the scope: seconds per query at 5,000 abstracts (REPORT.md). A dataset of that size
-  takes over an hour for all four pipelines at one client; `run --workers N` asks N at a
-  time and the export says so.
+- Recall reads every readable row's stored lexemes per query: under row security no text index
+  serves a read (ADR-0034 d13), so latency grows with the scope. `bm25-trigram`'s trigram list
+  costs seconds per query at 5,000 abstracts; `run --limit N` asks a seeded subset, and the
+  export marks it `sampled`.
+- `run --k N` asks N hits instead of 100, to measure latency at the size an agent asks; its
+  results export as `<method>-k<N>`.
 - English only, and all lexical; there is no unanswerable query with a "nothing" label yet.
   REPORT.md lists what the harness needs for S4-S7.
 - CI: `.github/workflows/bench.yml` runs synthetic and SciFact weekly and on demand, and

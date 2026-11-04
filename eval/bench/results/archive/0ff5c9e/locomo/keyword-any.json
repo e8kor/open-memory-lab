@@ -1,0 +1,95 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "recall",
+ "method": "keyword-any",
+ "date": "2026-11-04",
+ "commit": "0ff5c9e",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "18.6",
+  "build": "release"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.3424,
+  "recall@10": 0.451,
+  "recall@100": 0.7465,
+  "mrr@10": 0.328,
+  "success@1": 0.2489,
+  "success@5": 0.4352,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.3447,
+   "recall@10": 0.4709,
+   "recall@100": 0.7623,
+   "mrr@10": 0.3072,
+   "success@1": 0.2444,
+   "success@5": 0.3969,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.153,
+   "recall@10": 0.1875,
+   "recall@100": 0.5512,
+   "mrr@10": 0.2151,
+   "success@1": 0.1383,
+   "success@5": 0.3298,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.139,
+   "recall@10": 0.1918,
+   "recall@100": 0.5096,
+   "mrr@10": 0.149,
+   "success@1": 0.0761,
+   "success@5": 0.2283,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.4031,
+   "recall@10": 0.5272,
+   "recall@100": 0.7939,
+   "mrr@10": 0.3684,
+   "success@1": 0.2913,
+   "success@5": 0.4732,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.4083,
+   "recall@10": 0.5576,
+   "recall@100": 0.862,
+   "mrr@10": 0.3727,
+   "success@1": 0.2844,
+   "success@5": 0.4875,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.3429,
+   "recall@10": 0.4555,
+   "recall@100": 0.75,
+   "mrr@10": 0.3233,
+   "success@1": 0.2479,
+   "success@5": 0.4266,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": 113.27,
+  "p95": 156.0,
+  "p99": 186.26
+ },
+ "reference": null,
+ "notes": "One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only."
+}

@@ -1,0 +1,37 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "beir-scifact-x10",
+ "suite_version": "beir/scifact/test x10 (ir_datasets 0.6.3)",
+ "kind": "recall",
+ "method": "keyword-any",
+ "date": "2026-11-04",
+ "commit": "9a6a0d0",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "17.9",
+  "build": "release"
+ },
+ "n_queries": 100,
+ "n_docs": 8825,
+ "sampled": {
+  "seed": 20261104,
+  "fraction": 0.3333
+ },
+ "metrics": {
+  "ndcg@10": 0.5043,
+  "recall@10": 0.6183,
+  "recall@100": 0.7517,
+  "mrr@10": 0.4797,
+  "success@1": 0.42,
+  "success@5": 0.55,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {},
+ "latency_ms": {
+  "p50": 2199.48,
+  "p95": 2434.3,
+  "p99": 2532.03
+ },
+ "reference": null,
+ "notes": "SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories written to one workarea, for latency at scale; qrels name the original copy only, so quality is not comparable to beir-scifact. k 100, no token budget. 8,825 of the 51,830 rows written were promoted when it ran, so the scope held those: approval through review next slowed with the queue (FR-87)."
+}

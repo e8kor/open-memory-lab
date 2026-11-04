@@ -126,6 +126,39 @@ class Beir:
         return Bench(self.name, docs, subsample_queries(qs, qrels, seed, limit), qrels)
 
 
+class Scaled:
+    """A BEIR set grown to `copies` times its corpus in one workarea, for latency at scale.
+
+    Copy 0 is the set as published; copy i (1..copies-1) replaces each word of
+    every document with probability 0.1 by a word drawn from the corpus's own
+    vocabulary with the seed 20261104 + i, so the copies are near duplicates
+    with statistics of their own rather than exact ones. The queries and qrels
+    are the set's own and name copy-0 documents only, so the quality numbers
+    measure ranking among nine distractors per relevant document; the run is
+    for latency, and its quality is reported beside the 1x run, not instead of
+    it.
+    """
+
+    groups = [""]
+
+    def __init__(self, name, base, copies):
+        self.name, self.base, self.copies = name, base, copies
+
+    def load(self, cache, seed, limit):
+        b = self.base.load(cache, seed, limit)
+        vocab = sorted({w for d in b.docs for w in d.text.split()})
+        docs = list(b.docs)
+        for i in range(1, self.copies):
+            rnd = random.Random(20261104 + i)
+            for d in b.docs:
+                text = " ".join(w if rnd.random() > 0.1 else rnd.choice(vocab)
+                                for w in d.text.split())
+                docs.append(Doc(f"{d.id}~c{i}", text))
+        return Bench(self.name, docs, b.queries, b.qrels,
+                     notes=[f"{self.copies} copies of {b.name}, copies 1-{self.copies - 1} "
+                            "with 10% of words replaced; qrels name copy 0 only"])
+
+
 LOCOMO_URL = "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
 # The LoCoMo repository's category numbers, as its evaluation code and the
 # papers that report per-category results read them.
@@ -203,6 +236,7 @@ ADAPTERS = {
     "nfcorpus": lambda: Beir("nfcorpus", "beir/nfcorpus/test"),
     "arguana": lambda: Beir("arguana", "beir/arguana"),
     "locomo": Locomo,
+    "scifact-x10": lambda: Scaled("scifact-x10", Beir("scifact", "beir/scifact/test"), 10),
 }
 
 # Published BM25 numbers for a sanity check: BEIR (Thakur et al., 2021,

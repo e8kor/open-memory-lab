@@ -1286,33 +1286,75 @@ ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant i
 
 ### search (ADR-0049)
 
-**Status:** planned for v0.5.3, built in `migrations/0020_search.sql`
-([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md)).
+**Status:** planned for v0.5.5, built in `migrations/0020_search.sql`
+([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d12).
 
 ```sql
--- one normaliser for the indexed text and the query: the text, then its identifier parts
-CREATE FUNCTION oml_search_text(t text) RETURNS text
-    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE RETURN t || ' ' || <CamelCase and . _ / : # @ - split>;
--- simple and english lexemes together, so the exact form and the stem both match
+-- one normaliser for the query, the trigram index and the vocabulary: the text, then its identifier parts
+CREATE FUNCTION oml_search_split(t text) RETURNS text ...;   -- CamelCase and . _ / : # @ - split
+CREATE FUNCTION oml_search_text(t text) RETURNS text RETURN t || ' ' || oml_search_split(t);
+-- the bm25 lexemes, each occurrence once: simple, then the parts the text lacks, then the english
+-- stems neither holds
+CREATE FUNCTION oml_search_exact(t text) RETURNS tsvector
+    RETURN to_tsvector('simple', t)
+        || ts_delete(to_tsvector('simple', oml_search_split(t)), tsvector_to_array(to_tsvector('simple', t)));
 CREATE FUNCTION oml_search_vector(t text) RETURNS tsvector
-    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-    RETURN to_tsvector('simple', oml_search_text(t)) || to_tsvector('english', oml_search_text(t));
-CREATE INDEX memories_search_vector ON memories USING gin (oml_search_vector(claim));
+    RETURN oml_search_exact(t)
+        || ts_delete(to_tsvector('english', oml_search_text(t)), tsvector_to_array(oml_search_exact(t)));
+ALTER TABLE memories
+    ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (oml_search_vector(claim)) STORED,
+    ADD COLUMN search_len integer GENERATED ALWAYS AS (length(oml_search_vector(claim))) STORED;
+CREATE INDEX memories_search_vector ON memories USING gin (search_vector);
+-- did_you_mean's words: per workarea, the simple words of its promoted served tips
+CREATE TABLE search_vocabulary (
+    tenant_id   uuid    NOT NULL REFERENCES tenants (id),
+    workarea_id uuid    NOT NULL,
+    word        text    NOT NULL,
+    rows        integer NOT NULL CHECK (rows > 0),   -- served tips that say it
+    PRIMARY KEY (tenant_id, workarea_id, word)
+);   -- ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the serving role
+CREATE TRIGGER memories_search_vocabulary AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim,
+    workarea_id OR DELETE ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_vocabulary_fold();
 -- where pg_trgm exists (created by the owner role, which holds CREATE where it owns the database):
 CREATE INDEX memories_search_trgm ON memories USING gin (oml_search_text(claim) gin_trgm_ops);
+CREATE INDEX search_vocabulary_trgm ON search_vocabulary USING gin (word gin_trgm_ops);
 ALTER TABLE tenants ADD COLUMN search_default text;   -- folded from search.default_set
 ```
 
-Both indexes are on the partitioned parent, so each tenant's partition holds its own and a new
-partition inherits them through `LIKE … INCLUDING ALL`. Both functions are `SECURITY INVOKER`,
-so the role split's definer check holds. `memories_claim_fts` stays: the `keyword-all` and
-`keyword-any` pipelines read it. The `bm25` statement computes its row count, average length and
-document frequencies per query over the rows the candidate scope admits, never from a stored
-statistic, so no table holds tenant-wide term counts. `pg_trgm` is a trusted extension; where the
-owner role cannot create it, 0020 goes on without it and the trigram index, the lead serves no
-trigram pipeline, and a configuration enabling one stops the start naming the extension; the
-lead's start creates the index once the extension exists. `tenants.search_default` is the
-tenant's default pipeline by name, `NULL` for the deployment's.
+`search_vector` and `search_len` are stored generated columns: computed once when a version is
+written, never by a read. Adding them on the partitioned parent rewrites every tenant's
+partition, which fills them for every existing row; a partition created later takes them, the
+indexes and the trigger through `LIKE … INCLUDING ALL` and `ATTACH PARTITION`. Every function is
+`SECURITY INVOKER`, so the role split's definer check holds. `memories_claim_fts` stays: the
+`keyword-all` and `keyword-any` pipelines read it. The `bm25` statement reads `search_vector`
+and `search_len` and no row's claim; it computes the row count, the average length and each
+form's document frequency per query over the rows the candidate scope admits, never from a stored
+statistic, so no table holds term counts across workareas a key may not read.
+
+The GIN and trigram indexes serve the owner role, and the serving role once a `LEAKPROOF` step is
+taken: `@@`, `%` and `<%` are not leakproof, so under row security the planner does not use them
+for the serving role's reads, which scan the scope (ADR-0034 d13). The measured cost of that scan
+is in ADR-0049 d12.
+
+`search_vocabulary` is kept by `oml_search_vocabulary_fold` inside the write's own transaction:
+a version adds one to each of its words when it becomes a promoted served tip that is no
+retirement version, and takes one away when it stops being one (replaced, retired, demoted); a
+word leaves at zero. Words are taken in byte order, so two writes of a tenant lock its rows in the
+same order. It is derived and never journalled; 0020 fills it for the rows already promoted, each
+tenant under its own row security. A held row's words, another workarea's and a replaced
+version's are never in a workarea's vocabulary, so `did_you_mean`, which reads only the readable
+nodes' vocabulary, never names a word only an unreadable row says.
+
+`pg_trgm` is a trusted extension; where the owner role cannot create it, 0020 goes on without it
+and the trigram indexes, the lead serves no trigram pipeline and no `did_you_mean`, and a
+configuration enabling a trigram pipeline stops the start naming the extension; the lead's start
+creates both indexes once the extension exists. `tenants.search_default` is the tenant's default
+pipeline by name, `NULL` for the deployment's.
+
+A learned sparse retriever (ADR-0049 d10's later increments) would sit beside these columns as a
+table of its own, `(tenant_id, memory_id, token, weight)` under the same partitioning and row
+security, written by the same write: nothing here holds the lexical leg's statistics in a shape
+another leg would have to share.
 
 ## upload_sessions
 

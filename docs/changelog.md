@@ -37,7 +37,7 @@ recall may name one with `search`. Pages: retrieval, HTTP API, MCP plugin and `m
 `openapi.yaml`, configuration, CLI reference, observability, postgres-schema (migration 0020),
 event catalog, releases. **Breaks**, each with its migration:
 
-- The default recall matches any word (`bm25-trigram`), where v0.5.0 required every word. To keep
+- The default recall matches any word (`bm25`), where v0.5.0 required every word. To keep
   the old behaviour per request send `match: "all"`, or `search: "keyword-all"` where the
   deployment enables it.
 - The recall answer gains `search` and each hit `matched`; a client refusing unknown members must
@@ -51,6 +51,21 @@ event catalog, releases. **Breaks**, each with its migration:
 - The store port's `recall_fts` and `recall_own_held` are replaced by `Retriever::retrieve`.
 - The server instructions, the `oml_read` description, the `oml-memory` skill, the librarian and
   the session-start line no longer ask for "2-4 exact keywords".
+
+*2026-11-04 · ADR-0049 d12.* Migration 0020 stores each version's search lexemes
+(`memories.search_vector`, `search_len`) and a per-workarea vocabulary (`search_vocabulary`, kept
+by a trigger); `bm25` scores from the stored lexemes, counts each occurrence once, scores a word
+by its best form and drops a query's English stop words when it has other words; `did_you_mean`
+is offered only when a recall finds fewer than three hits, from the vocabulary, under every
+pipeline but `keyword-all`; `bm25` is the shipped `search.default`. Generated benchmark pages
+join the API section (`docs/api/benchmarks/`, `scripts/gen_bench_pages.py`, checked in
+docs-checks.yml). FR-86 and FR-87 are opened. **Breaks**, each with its migration:
+
+- `search.default` is `bm25`, not `bm25-trigram`: a misspelt word no longer finds its memory by
+  default. Send `search: "bm25-trigram"`, or set it as the tenant's or the deployment's default.
+- `search.terms` under `bm25` and `bm25-trigram` leaves out English stop words when the query has
+  other words, and `match: "all"` requires every word but those.
+- `did_you_mean` is `[]` for a recall with three or more hits, even when a word matched nothing.
 
 ## 0.5.2-design
 

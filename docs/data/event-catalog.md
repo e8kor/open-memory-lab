@@ -817,7 +817,7 @@ envelope names the admin key; nothing but the journal changes.
 { "pipeline": "bm25", "by_key_id": "…" }
 ```
 
-*Planned for v0.5.3 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4.* An admin
+*Planned for v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4.* An admin
 key set the tenant's default search pipeline, or, with `pipeline` null, cleared it so the
 deployment's default applies. The fold writes `tenants.search_default`; recalls use it from the
 next request. Setting the default the tenant already has journals nothing.

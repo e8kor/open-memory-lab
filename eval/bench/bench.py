@@ -238,11 +238,11 @@ def cmd_run(a):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     for pipeline in a.search or PIPELINES:
-        writer.recall("warm up", K, None, workarea(a.dataset, bench.queries[0].group), pipeline)
+        writer.recall("warm up", a.k, None, workarea(a.dataset, bench.queries[0].group), pipeline)
         runs, served_by = {}, set()
 
         def ask(q, pipeline=pipeline):
-            res, ms = writer.recall(q.text, K, None, workarea(a.dataset, q.group), pipeline)
+            res, ms = writer.recall(q.text, a.k, None, workarea(a.dataset, q.group), pipeline)
             hits = res.get("hits", [])
             ranked = [doc_of.get(back.get((h.get("memory", h))["artifact_id"])) for h in hits]
             return q.id, res.get("search", {}).get("pipeline"), {
@@ -262,14 +262,15 @@ def cmd_run(a):
         per = score(bench, runs)
         summary = summarize(bench, runs, per)
         result = {
-            "dataset": a.dataset, "pipeline": pipeline, "k": K, "max_tokens": None,
+            "dataset": a.dataset, "pipeline": pipeline, "k": a.k, "max_tokens": None,
             "queries": len(bench.queries), "docs": len(bench.docs), "seed": a.seed,
             "limit": a.limit, "workers": a.workers, "wall_seconds": round(wall, 1),
+            "rows_in_scope": a.rows,
             "foreign_hits": foreign, "success_rel": bench.success_rel, "notes": bench.notes,
             "summary": summary,
             "per_query": {q: {**runs[q], "scores": per[q]} for q in runs},
         }
-        name = f"{a.dataset}_{pipeline.replace('-', '_')}"
+        name = f"{a.dataset}_{pipeline.replace('-', '_')}" + (f"_k{a.k}" if a.k != K else "")
         (out / f"{name}.json").write_text(json.dumps(result, indent=1))
         head = summary.get("headline", summary["all"])
         print(f"{a.dataset} {pipeline}: " + " ".join(f"{m} {head[m]}" for m in
@@ -337,8 +338,13 @@ def main():
     r.add_argument("--out", required=True, help="raw results; export.py writes the committed ones")
     r.add_argument("--search", action="append", choices=PIPELINES)
     r.add_argument("--limit", type=int, default=None, help="at most this many queries, seeded")
+    r.add_argument("--k", type=int, default=K,
+                   help="hits asked per recall; below 100 the run is for latency at that k "
+                        "and R@100 reads the shorter list")
     r.add_argument("--workers", type=int, default=1,
                    help="concurrent queries; latency is measured at 1")
+    r.add_argument("--rows", type=int, default=None,
+                   help="the promoted rows in the scope, when not every loaded row was approved")
     r.add_argument("dataset")
     rp = sub.add_parser("report")
     rp.add_argument("results")
