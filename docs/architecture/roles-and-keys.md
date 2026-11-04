@@ -153,7 +153,7 @@ matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` planned for v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site for which grant roles a key may carry and for the
 order in which a workarea-scoped verb is refused
@@ -289,7 +289,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 
 ## Own
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the names `include_unreviewed` and `workarea` planned for v0.4.0 · [releases](../product/releases.md)*
 
 A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
 key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`

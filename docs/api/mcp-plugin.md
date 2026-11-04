@@ -45,7 +45,7 @@ common or mcp-tools.json differs from the served `tools/list`.
 
 ## Transport: streamable HTTP, stateless
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, planned for v0.4.0 · [releases](../product/releases.md)*
 
 The plugin runs the MCP streamable HTTP transport in stateless mode, declared
 up front:

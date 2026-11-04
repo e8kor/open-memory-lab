@@ -169,7 +169,7 @@ the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-
 
 ## Every session starts from memory
 
-*Available since v0.2.2 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It

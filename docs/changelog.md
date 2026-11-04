@@ -45,11 +45,16 @@ v0.4.0, and a Release cell in the [register](adr/index.md), and the releases pag
 
 - **Pages touched:** the three records, the register, releases, `README.md`,
   `plugins/oml/README.md`, [http-api](api/http-api.md), [the MCP plugin](api/mcp-plugin.md),
-  [retrieval](architecture/retrieval.md), the [CLI reference](cli/reference.md),
-  [upgrades](operations/upgrades.md) and this page. Each section this branch added or rewrote
-  carries the release line main gave its neighbours: the three tools, `GET /v2/whoami`, the start
-  settings, `oml login`, `oml write`, `oml read`, `oml events`, `oml hook tool-failure`, the
-  librarian and the upgrade to v0.4.0 are planned for v0.4.0.
+  [retrieval](architecture/retrieval.md), [roles and keys](architecture/roles-and-keys.md), the
+  [CLI reference](cli/reference.md), [upgrades](operations/upgrades.md) and this page. Each
+  section this branch added carries the release line main gave its neighbours: the three tools,
+  `GET /v2/whoami`, the start settings, `oml login`, `oml write`, `oml read`, `oml events`,
+  `oml hook tool-failure`, the librarian and the upgrade to v0.4.0 are planned for v0.4.0. Each
+  section it rewrote keeps main's release line and adds the parts that are new, each planned for
+  v0.4.0: on http-api, for instance, submit's `workarea` in the body and derived `claim_key`, get's
+  `text` and the events tail's `workarea` parameter, and on the CLI reference and the plugin
+  README the session-start hook's plugin settings and compaction prompt naming `oml_write`. The
+  releases page records the librarian as ADR-0038's d10.
 - **No surface change:** `info.version` stays `0.4.0-design`; no record's decision moves.
 
 ### 2026-11-04 — The plugin's librarian subagent answers what OML holds about a subject, reading with `oml_read` alone (ADR-0038 d10)

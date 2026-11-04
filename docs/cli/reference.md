@@ -196,7 +196,7 @@ from the file ([security](../architecture/security.md)).
 
 ## `oml bootstrap` — claiming the root operator key
 
-*Available since v0.1.0, as the first admin key; the operator key not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0, as the first admin key; `--token-stdin` required, and the claim stored as `oml login` stores a pair, planned for v0.4.0; the operator key not scheduled · [releases](../product/releases.md)*
 
 The first-start Helm job never prints key material: it mints a single-use, expiring **enrollment
 secret**, stored as a Kubernetes Secret, and its logs carry progress only
@@ -227,7 +227,7 @@ shows the whole ceremony.
 
 ## `oml keys` — issuance, revocation, rotation
 
-*Available since v0.1.0 (`issue`), v0.2.1 (`issue-agent`) and v0.3.0 (`show`); revocation and rotation not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (`issue`), v0.2.1 (`issue-agent`) and v0.3.0 (`show`); the `claude plugin configure` line planned for v0.4.0; revocation and rotation not scheduled · [releases](../product/releases.md)*
 
 Key lifecycle rules — issuer ceiling, expiry, the bootstrap ceremony — are declared in
 [roles and keys](../architecture/roles-and-keys.md). The CLI adds the **show-once ceremony**: a key
@@ -410,7 +410,7 @@ serve of that memory.
 
 ## `oml review` — the review ceremony
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; a verdict without `<serve_id>` planned for v0.4.0 · [releases](../product/releases.md)*
 
 The CLI is the *exception* path for review — the designed reviewers are external crews holding
 dreamer keys over the HTTP API ([admission](../architecture/admission.md)) — but the ceremony is
@@ -509,7 +509,7 @@ what to do next. Both emit the same four named signals — the contract that
 
 ## The `oml-admin` plugin
 
-*Available since v0.2.1 · [releases](../product/releases.md)*
+*Available since v0.2.1; handing over the `claude plugin configure` line planned for v0.4.0 · [releases](../product/releases.md)*
 
 A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
 is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3; the shipped
@@ -545,7 +545,7 @@ ADR-0014 d2).
 
 ## `oml hook session-start` — session context for the agent plugin
 
-*Available since v0.2.2 · [releases](../product/releases.md)*
+*Available since v0.2.2; the plugin settings first, `include_text` and `include_unreviewed`, the `oml_write` and `oml_read` lines, the compaction prompt naming `oml_write` and the failure-recall seed planned for v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site of the verb
 ([ADR-0029](../adr/ADR-0029-session-start-hook.md)). The `oml` [agent plugin](../api/mcp-plugin.md)
