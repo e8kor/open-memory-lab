@@ -252,6 +252,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workareas/{workarea}/transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Propose a forward status transition; pending until a second party ratifies.
+         * @description Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused).
+         */
+        post: operations["proposeTransition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/workareas/{workarea}/transitions/{transition_id}/ratify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ratify a pending transition; journalled with the policy snapshot.
+         * @description Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
+         */
+        post: operations["ratifyTransition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/edges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Paginated edge read of one kind, pending and ratified, scoped to read access.
+         * @description kind claim reads the claim graph and requires reader effective access; workarea_id is a subtree filter and artifact_id narrows to the edges touching one claim. kind brief reads the brief edges into the workarea workarea_id names, required then, at reader effective access on it, each served only when the key reads its claim (ADR-0046 d7). kind workarea, designed and not served, reads the labelled related edges touching the node workarea_id names, required then, and requires reader effective access on it, or the admin key role, which reads the structure of every workarea in its tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero access. One family for both kinds, each keeping its authority, refusal codes and journal events (ADR-0039 d9).
+         */
+        get: operations["listEdges"];
+        put?: never;
+        /**
+         * Propose a claim-to-claim edge or a claim's place in a workarea's brief; pending until ratified.
+         * @description kind claim requires dreamer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires dreamer effective access on the workarea and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workarea, designed and not served, requires dreamer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate dreamer key, since a key never combines admin with dreamer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+         */
+        post: operations["proposeEdge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/edges/{edge_id}/ratify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ratify a proposed edge of either kind.
+         * @description The edge's kind follows from edge_id. kind brief requires dreamer effective access on the workarea and refuses the proposer (review.ratifier_is_proposer); a decided edge is review.serve_invalid consumed (ADR-0046 d8). kind claim requires dreamer(review), and refuses the proposer (review.ratifier_is_proposer) and a lineage collision (review.author_in_lineage) — R2. kind workarea requires dreamer(review) effective access on BOTH endpoints and refuses the proposer (review.ratifier_is_proposer — R2 extends to edges). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). Each kind journals its own ratification event (ADR-0039 d9).
+         */
+        post: operations["ratifyEdge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/events": {
         parameters: {
             query?: never;
@@ -1099,6 +1183,101 @@ export interface components {
             my_effective_verbs: ("recall" | "read" | "graph_read" | "events_tail" | "remember" | "learn" | "attach" | "supersede" | "propose" | "review")[];
             /** @description The calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). */
             permission_epoch: number;
+            policy: components["schemas"]["ReviewPolicy"];
+            /** @description The node's live proposals in proposal order, the pending rows whose from is the node's status (ADR-0039 d9; ADR-0046 d3). */
+            pending_transitions: components["schemas"]["Transition"][];
+            brief: components["schemas"]["Brief"];
+        };
+        TransitionProposal: {
+            /**
+             * @description Forward only; backward transitions do not exist, and a user root climbs to committed at most (ADR-0046 d1).
+             * @enum {string}
+             */
+            to: "committed" | "validated";
+        };
+        Transition: {
+            transition_id: string;
+            workarea_id: string;
+            /** @enum {string} */
+            from: "development" | "committed";
+            /** @enum {string} */
+            to: "committed" | "validated";
+            /** @enum {string} */
+            state: "pending" | "ratified";
+            /** @description The proposing key, served only to that key; null to every other reader, an admin key included (ADR-0025 d15). */
+            proposed_by_key_id: string | null;
+            /** @description Null on this build's answers; the journal's workarea.status_transition names the ratifier. */
+            ratified_by_key_id: string | null;
+        };
+        /** @description The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3). */
+        ReviewPolicy: {
+            k?: number;
+            required_roles?: string[];
+        };
+        /** @description The workarea's ratified brief as this key reads it, in ratification order, cut by brief.max_tokens; empty for an admin key (ADR-0046 d8, d9). */
+        Brief: {
+            items: components["schemas"]["Memory"][];
+            budget: components["schemas"]["RecallBudget"];
+        };
+        ClaimEdgeProposal: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "claim";
+            from_artifact_id: string;
+            to_artifact_id: string;
+            /** @description Open; supports, contradicts, relates_to and continues are recommended, and oml: labels join terms only (ADR-0046 d6). */
+            label: string;
+        };
+        BriefEdgeProposal: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "brief";
+            from_artifact_id: string;
+            to_workarea_id: components["schemas"]["WorkareaRef"];
+        };
+        /** @description One proposal body for the served edge kinds, chosen by kind (ADR-0039 d9; ADR-0046 d7). */
+        EdgeProposal: components["schemas"]["ClaimEdgeProposal"] | components["schemas"]["BriefEdgeProposal"];
+        ClaimEdge: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "claim";
+            edge_id: string;
+            from_artifact_id: string;
+            to_artifact_id: string;
+            label: string;
+            /** @enum {string} */
+            state: "pending" | "ratified";
+            proposer_key_id: string;
+            ratifier_key_id: string | null;
+        };
+        BriefEdge: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "brief";
+            edge_id: string;
+            from_artifact_id: string;
+            to_workarea_id: string;
+            /** @constant */
+            label: "brief";
+            /** @enum {string} */
+            state: "pending" | "ratified";
+            proposer_key_id: string;
+            ratifier_key_id: string | null;
+        };
+        /** @description An edge of a served kind, carrying its kind (ADR-0039 d9; ADR-0046 d7). */
+        Edge: components["schemas"]["ClaimEdge"] | components["schemas"]["BriefEdge"];
+        EdgePage: {
+            /** @description Edges of the one kind the read named. */
+            items: components["schemas"]["Edge"][];
+            next_cursor: string | null;
         };
         WorkareaCreate: {
             /** @description The parent. Omitted, a user key's own root; every other key sends it (request.workarea_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6). */
@@ -2553,6 +2732,227 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    proposeTransition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "to": "committed"
+                 *     }
+                 */
+                "application/json": components["schemas"]["TransitionProposal"];
+            };
+        };
+        responses: {
+            /** @description Pending transition. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
+                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "from": "development",
+                     *       "to": "committed",
+                     *       "state": "pending",
+                     *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratified_by_key_id": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Transition"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    ratifyTransition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+                transition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ratified transition. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "transition_id": "tr_01JB2YF7H9K2M4P6R8TA1CV3EY",
+                     *       "workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "from": "development",
+                     *       "to": "committed",
+                     *       "state": "ratified",
+                     *       "proposed_by_key_id": null,
+                     *       "ratified_by_key_id": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Transition"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listEdges: {
+        parameters: {
+            query: {
+                /** @description workarea is designed and refused with request.validation naming kind (ADR-0046 d4). */
+                kind: "claim" | "brief";
+                /** @description kind claim: a subtree filter. kind brief: the workarea whose brief edges are read, required. */
+                workarea_id?: components["schemas"]["WorkareaRef"];
+                /** @description kind claim only. */
+                artifact_id?: string;
+                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of edges of the one kind. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "kind": "claim",
+                     *           "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW",
+                     *           "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+                     *           "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
+                     *           "label": "supports",
+                     *           "state": "pending",
+                     *           "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *           "ratifier_key_id": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EdgePage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    proposeEdge: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeProposal"];
+            };
+        };
+        responses: {
+            /** @description Pending edge. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "kind": "brief",
+                     *       "edge_id": "0f9a2c4e-7d1b-4e3a-9c5f-2b8d6e1a4c70",
+                     *       "from_artifact_id": "3b6e8f1a-2c4d-4e5f-8a9b-1c2d3e4f5a6b",
+                     *       "to_workarea_id": "a4497daf-cfc8-4ddc-a0e5-4817efdb56c8",
+                     *       "label": "brief",
+                     *       "state": "pending",
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratifier_key_id": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Edge"];
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    ratifyEdge: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                edge_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ratified edge. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "kind": "claim",
+                     *       "edge_id": "ce_01JB2YA1C3E5G7J9L2N4Q6S8UW",
+                     *       "from_artifact_id": "art_01JB2XF2R7M9W4K6T8Y1QZ3VH5",
+                     *       "to_artifact_id": "art_01JB2M4N6P8R1T3V5X7Z9BD2FH",
+                     *       "label": "supports",
+                     *       "state": "ratified",
+                     *       "proposer_key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "ratifier_key_id": "54b2d035-b438-47f7-9055-67199237d5d7"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Edge"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };
