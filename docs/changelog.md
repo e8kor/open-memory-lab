@@ -34,6 +34,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — Both SDKs move to 0.2.0 with the seven wrapper verbs and the URL-and-key start (ADR-0039 d10, d11, d15, implementation)
+
+The Python and TypeScript wrappers take `write`, `read`, `workarea`, `events`, `review_next`
+(`reviewNext`), `approve` and `reject`. `write` takes `oml_write`'s fields and chooses submit or,
+with `replaces`, supersede; `read` takes `oml_read`'s and chooses fetch, recall or the listing,
+`own` defaulting to true; a field outside the mode, `query` beside `artifact_id` among them, is
+`request.validation` naming it, raised before anything is sent. A `write` without `claim_key`,
+and an `approve` or `reject` without `serve_id`, send none. The constructor takes `url` and
+`api_key`, else `OML_URL` and `OML_API_KEY`, under the CLI's one-source rule, and every refusal
+is `ApiError` carrying the envelope. The generated layers were already current with
+openapi.yaml.
+
+- **Breaks:** `remember`, `learn`, `supersede`, `recall`, `get`, `list_memories`
+  (`listMemories`) and `verdict` are gone, with no alias (d12); `base_url` (`baseUrl`) is `url`;
+  a URL argument with the key left to `OML_API_KEY`, or the reverse, is refused; the raising
+  `upload_attachment` stub and `NotBuiltError` are removed.
+- **Pages touched:** [SDKs](engineering/sdks.md), the root README and both SDK READMEs.
+
 ### 2026-11-04 — `oml login <url>` stores the pair once whoami accepts the key (ADR-0039 d15, implementation)
 
 `oml login <url>` reads the key without echo from the terminal, or the first line of stdin when

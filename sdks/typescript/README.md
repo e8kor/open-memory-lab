@@ -15,27 +15,31 @@ cd /your/project && npm install /path/to/open-memory-lab/sdks/typescript
 ```ts
 import { OmlClient } from "oml-sdk";
 
-// The key comes from apiKey, else OML_API_KEY; the server from baseUrl, else OML_URL.
+// One pair: url and apiKey, else OML_URL and OML_API_KEY; one set alone is refused.
 const oml = new OmlClient();
-const written = await oml.remember({
-  claim_key: "deploy-runbook",
-  body: "The canary stage must drain before the next one starts.",
-});
+const written = await oml.write({ text: "The canary stage must drain before the next one starts." });
 console.log(written.value.state); // held: invisible to other keys until a reviewer's verdict
+console.log(written.value.claim_key); // derived by the server when none is sent
 console.log(written.idempotencyKey); // the key every retry of this call sent
 
-const { hits } = await oml.recall({ query: "canary stage", include_unreviewed: true });
+const { hits } = await oml.read({ query: "canary stage", include_unreviewed: true });
 for (const hit of hits) console.log(hit.memory.state, hit.memory.text);
 
-for await (const row of oml.memories({ own: true, limit: 50 })) {
-  console.log(row.artifact_id, row.state); // follows next_cursor to the end
+const memory = await oml.read({ artifact_id: written.value.artifact_id });
+await oml.write({ text: "Drain, then wait five minutes.", replaces: memory.artifact_id });
+
+for await (const row of oml.memories({ limit: 50 })) {
+  console.log(row.artifact_id, row.state); // the key's own rows; follows next_cursor to the end
 }
 ```
 
-Refusals reject with one class per family of [errors.md](../../docs/api/errors.md), all
-subclasses of `ApiError`, each carrying `code`, `rule`, `message`, `retryable`, `details`,
-`requestId` and `status`. File uploads reject with `NotBuiltError`: the server serves no upload
-sessions yet.
+Seven verbs: `write`, `read`, `workarea`, `events`, `reviewNext`, `approve` and `reject`.
+`write`'s fields choose a submission or, with `replaces`, a supersession; `read`'s fields choose
+a fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_write` and
+`oml_read` do. Every refusal rejects with `ApiError` carrying the envelope of
+[errors.md](../../docs/api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`,
+`requestId` — and `status`, as the subclass of the code's family; a field outside its mode is
+refused the same way before anything is sent.
 
 `src/generated/schema.ts` is generated and never edited by hand; `python3 scripts/generate_sdks.py`
 regenerates it. The tests run against a real `oml-server-lead` on a throwaway database

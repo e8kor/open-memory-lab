@@ -1,4 +1,5 @@
-"""One exception class per error family of docs/api/errors.md.
+"""One error type, `ApiError`, for every refusal, carrying the envelope of
+docs/api/errors.md, in one subclass per error family (ADR-0039 d11).
 
 docs/engineering/sdks.md, "What the wrapper covers": the class is chosen by the
 code's family prefix, so a code this client has never seen lands in its
@@ -22,17 +23,15 @@ class ConfigError(OmlError):
     """The client has no key or no server URL; nothing was sent."""
 
 
-class NotBuiltError(OmlError):
-    """The server does not serve this capability yet; nothing was sent."""
-
-
 class TransportError(OmlError):
     """The request failed in transit after the last retry; the cause is chained."""
 
 
 class ApiError(OmlError):
     """A refusal in the errors.md envelope. `code` is None only when the
-    response carried no envelope (a proxy's error page, say)."""
+    response carried no envelope (a proxy's error page, say); `request_id` is
+    None also on a refusal the wrapper raised before sending, as the server
+    answers the same arguments."""
 
     def __init__(
         self,
@@ -192,4 +191,21 @@ def error_from_response(status: int, content: bytes, headers: Mapping[str, str])
         details=details if isinstance(details, Mapping) else None,
         request_id=request_id if isinstance(request_id, str) else None,
         retry_after=_retry_after(headers),
+    )
+
+
+def refused_locally(
+    status: int, code: str, message: str, rule: str, details: Mapping[str, Any] | None
+) -> ApiError:
+    """The refusal the server answers the same arguments with, raised before
+    anything is sent: its family's class, without a request_id."""
+    return FAMILIES.get(code.split(".", 1)[0], ApiError)(
+        status=status,
+        code=code,
+        message=message,
+        rule=rule,
+        retryable=False,
+        details=details,
+        request_id=None,
+        retry_after=None,
     )

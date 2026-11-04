@@ -238,7 +238,7 @@ def _no_inherited_key(monkeypatch: pytest.MonkeyPatch) -> None:
 def agent(oml_server: OmlServer):
     from oml_sdk import OmlClient
 
-    with OmlClient(base_url=oml_server.url, api_key=oml_server.agent_key) as client:
+    with OmlClient(url=oml_server.url, api_key=oml_server.agent_key) as client:
         yield client
 
 
@@ -246,7 +246,7 @@ def agent(oml_server: OmlServer):
 def reviewer(oml_server: OmlServer):
     from oml_sdk import OmlClient
 
-    with OmlClient(base_url=oml_server.url, api_key=oml_server.dreamer_key) as client:
+    with OmlClient(url=oml_server.url, api_key=oml_server.dreamer_key) as client:
         yield client
 
 

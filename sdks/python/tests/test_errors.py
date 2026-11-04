@@ -1,4 +1,5 @@
-"""A typed exception per errors.md code family (docs/engineering/sdks.md)."""
+"""Every refusal is one error type, ApiError, carrying the errors.md envelope, in a
+subclass per code family (ADR-0039 d11; docs/engineering/sdks.md)."""
 
 import json
 import re
@@ -54,10 +55,10 @@ def test_every_family_errors_md_declares_has_its_own_exception_class():
 
 def test_a_bad_key_is_an_auth_error_with_its_code_rule_message_and_retryable(oml_server):
     with (
-        OmlClient(base_url=oml_server.url, api_key="oml_not_a_key") as client,
+        OmlClient(url=oml_server.url, api_key="oml_not_a_key") as client,
         pytest.raises(AuthError) as caught,
     ):
-        client.recall("anything")
+        client.read(query="anything")
     error = caught.value
     assert (error.code, error.status, error.retryable) == ("auth.invalid", 401, False)
     assert error.rule and error.message
@@ -72,22 +73,24 @@ def test_a_writer_key_asking_for_review_is_an_access_error(agent):
     assert caught.value.rule
 
 
-def test_learn_without_lineage_is_a_submission_error(agent):
+def test_a_second_claim_under_a_live_claim_key_is_a_submission_error(agent):
+    claim_key = f"taken-{uuid.uuid4().hex[:8]}"
+    agent.write("The first claim under this key.", claim_key=claim_key)
     with pytest.raises(SubmissionError) as caught:
-        agent.learn("no-lineage", "A derived claim that names no ancestor.", derives_from=[])
-    assert (caught.value.code, caught.value.status) == ("submission.lineage_required", 422)
+        agent.write("A second claim under the same key.", claim_key=claim_key)
+    assert (caught.value.code, caught.value.status) == ("submission.claim_key_conflict", 409)
     assert caught.value.retryable is False
 
 
 def test_a_memory_the_key_cannot_see_is_access_not_found(agent):
     with pytest.raises(AccessError) as caught:
-        agent.get(str(uuid.uuid4()))
+        agent.read(str(uuid.uuid4()))
     assert (caught.value.code, caught.value.status) == ("access.not_found", 404)
 
 
 def test_a_budget_without_text_is_a_request_error(agent):
     with pytest.raises(RequestError) as caught:
-        agent.recall("anything", max_tokens=100, include_text=False)
+        agent.read(query="anything", max_tokens=100, include_text=False)
     assert caught.value.code == "request.validation"
 
 

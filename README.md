@@ -154,9 +154,9 @@ from oml_sdk import OmlClient
 
 # Reads OML_URL and OML_API_KEY from the environment.
 with OmlClient() as oml:
-    oml.remember("deploy-runbook", "The canary stage must drain before the next one starts.")
+    oml.write("The canary stage must drain before the next one starts.")
 
-    for hit in oml.recall("canary stage").hits:
+    for hit in oml.read(query="canary stage").hits:
         print(hit.memory.text)
 ```
 </details>
@@ -174,12 +174,9 @@ import { OmlClient } from "oml-sdk";
 
 // Reads OML_URL and OML_API_KEY from the environment.
 const oml = new OmlClient();
-await oml.remember({
-  claim_key: "deploy-runbook",
-  body: "The canary stage must drain before the next one starts.",
-});
+await oml.write({ text: "The canary stage must drain before the next one starts." });
 
-const { hits } = await oml.recall({ query: "canary stage" });
+const { hits } = await oml.read({ query: "canary stage" });
 for (const hit of hits) console.log(hit.memory.text);
 ```
 </details>
