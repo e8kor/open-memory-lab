@@ -319,7 +319,9 @@ the rule under the version's DEK waits for the encrypted body store.
 create (`development`, and `committed` on the universe root), moved by a ratified transition and
 served back by every workarea read; `workarea_transitions` is built in
 `migrations/0017_workarea_transitions.sql`, which also adds `workareas_universe_committed`, so a
-root on any other rung is refused; a proposal inserts its pending row and a ratification turns it
+root on any other rung is refused; its header says every earlier root was stored `committed`, which is false
+for a root v0.1.0 created, so the lead stores each node's served status before 0017 runs
+([upgrades](../operations/upgrades.md#upgrading-from-v051-or-earlier-the-upgrade-to-v054)); a proposal inserts its pending row and a ratification turns it
 `ratified` and writes the node's status in the commit that journals the event, after the chain
 lock's re-checks ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4) · its checks run only
 where a superuser mints the suites' role pairs, CI's `cargo test (Postgres)`

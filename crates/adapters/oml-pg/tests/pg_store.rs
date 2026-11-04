@@ -2378,6 +2378,14 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path') \
                  || jsonb_build_object('name', t.prior_name)"
             }
+            // Before 0017 a workarea's status is the one every build served,
+            // derived from parent_id; v0.1.0 stored every node `development`,
+            // and the boot stores the served one before 0017 (upgrades.md
+            // "Upgrading from v0.5.1 or earlier").
+            (false, "workareas") => {
+                "to_jsonb(t) || jsonb_build_object('status', \
+                 CASE WHEN t.parent_id IS NULL THEN 'committed' ELSE 'development' END)"
+            }
             // 0014 adds user_root and namespace_root_id, folded as false and
             // null for every workarea it finds (ADR-0044 d12).
             (true, "workareas") => {
@@ -2534,9 +2542,10 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
         .execute(&mut *tx)
         .await
         .expect("twin tenant");
+    // v0.1.0 stored every node `development`, its root included.
     sqlx::query(
         "INSERT INTO workareas (id, tenant_id, parent_id, name, status) \
-         VALUES ($1, $2, NULL, 'root', 'committed')",
+         VALUES ($1, $2, NULL, 'root', 'development')",
     )
     .bind(id(9))
     .bind(twin)
@@ -2614,11 +2623,7 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
         .bind(tenant)
         .bind(parent)
         .bind(wa_name)
-        .bind(if parent.is_none() {
-            "committed"
-        } else {
-            "development"
-        })
+        .bind("development")
         .bind(crew)
         .execute(&mut *tx)
         .await
@@ -2707,6 +2712,21 @@ async fn a_migrated_poc_database_keeps_every_row_and_every_journal_event() {
         poc_rows(&mut conn, tenant, false).await,
         poc_rows(&mut conn, twin, false).await,
     ];
+    for t in [tenant, twin] {
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query(set_tenant)
+            .bind(t.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        let stored: String =
+            sqlx::query_scalar("SELECT status FROM workareas WHERE parent_id IS NULL")
+                .fetch_one(&mut *tx)
+                .await
+                .expect("the PoC root");
+        tx.rollback().await.expect("rollback");
+        assert_eq!(stored, "development", "the PoC stored its root development");
+    }
     let store = PgStore::connect(&serving_url(&db))
         .await
         .expect("connect")
@@ -5474,13 +5494,13 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
         .execute(&mut *tx)
         .await
         .expect("tenant");
-    // Every build stored the root `committed` and every other node
-    // `development`, as 0017's workareas_universe_committed then holds.
+    // A deployment created before v0.5.2 may hold its root stored
+    // `development`: the build derived the served status from parent_id and
+    // never read the column, as the live deployment's root shows.
     for (w, parent, w_name) in [(universe, None, "universe"), (crew, Some(universe), "crew")] {
         sqlx::query(
             "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status) \
-             VALUES ($1, $2, $3, $4, text2ltree($5), \
-                     CASE WHEN $3::uuid IS NULL THEN 'committed' ELSE 'development' END)",
+             VALUES ($1, $2, $3, $4, text2ltree($5), 'development')",
         )
         .bind(w)
         .bind(tenant)
@@ -5564,6 +5584,121 @@ async fn a_key_issued_before_users_folds_as_a_tenant_key() {
         .await
         .expect("count");
     assert_eq!(journal, 0, "the upgrade journals nothing");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The status v0.5.1 served for a node: derived from `parent_id`, the
+/// universe root `committed` and every other node `development`, whatever
+/// the column stored.
+fn v0_5_1_served_status(parent: Option<Uuid>) -> &'static str {
+    if parent.is_none() {
+        "committed"
+    } else {
+        "development"
+    }
+}
+
+/// A v0.5.1 database, migrated through 0016, whose roots and nodes hold the
+/// stored status the column was given before 0017 read it — one root
+/// `development`, as the live deployment's, one `committed` — upgrades
+/// through 0017 to 0019: every migration applies, every root ends
+/// `committed`, every other node keeps its status, the status each read
+/// serves is the one v0.5.1 served, nothing is journalled, and a second
+/// boot changes nothing (ADR-0009 d1; ADR-0046).
+#[tokio::test]
+async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_0017_serving_the_same_statuses()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 16).await;
+    let mut nodes: Vec<(Uuid, Uuid, Option<Uuid>)> = Vec::new();
+    for (n, root_status) in [(0_u128, "development"), (1, "committed")] {
+        let tenant = Uuid::from_u128(0xA170 + n);
+        let root = Uuid::from_u128(0xB170 + n * 16);
+        let (crew, deeper) = (
+            Uuid::from_u128(0xB171 + n * 16),
+            Uuid::from_u128(0xB172 + n * 16),
+        );
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant)
+            .bind(format!("t{n}"))
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        for (w, parent, w_name, path, status) in [
+            (root, None, "universe", "universe", root_status),
+            (crew, Some(root), "crew", "universe.crew", "development"),
+            (
+                deeper,
+                Some(crew),
+                "deeper",
+                "universe.crew.deeper",
+                "development",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status) \
+                 VALUES ($1, $2, $3, $4, text2ltree($5), $6)",
+            )
+            .bind(w)
+            .bind(tenant)
+            .bind(parent)
+            .bind(w_name)
+            .bind(path)
+            .bind(status)
+            .execute(&mut *tx)
+            .await
+            .expect("a workarea as v0.5.1 stored it");
+            nodes.push((tenant, w, parent));
+        }
+        tx.commit().await.expect("commit");
+    }
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let aligned = store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0017 to 0019 apply over a v0.5.1 database");
+    assert_eq!(aligned, 1, "only the root stored `development` is aligned");
+    for (tenant, w, parent) in &nodes {
+        let row = store
+            .workarea(*tenant, *w)
+            .await
+            .expect("read")
+            .expect("the workarea");
+        assert_eq!(
+            row.status.as_str(),
+            v0_5_1_served_status(*parent),
+            "{w} serves what v0.5.1 served"
+        );
+    }
+    let journal: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    assert_eq!(journal, 0, "the upgrade journals nothing");
+    let again = store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("a second boot migrates nothing");
+    assert_eq!(again, 0, "a second boot aligns nothing");
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 19);
     drop(conn);
     drop_dbs(&created).await;
 }
