@@ -211,7 +211,12 @@ non-author reopen revives it.
 
 The act that finds the review policy satisfied — for a claim or a proposed claim edge
 (`subject_kind: "claim_edge"` with `edge_id` set) — after checking R2 against the author and the
-full lineage closure at this moment, with the policy snapshot journalled.
+full lineage closure at this moment, with the policy snapshot journalled. A claim edge's and a
+brief edge's ratification (`subject_kind: "brief_edge"`, with `edge_id`, the member's
+`artifact_id` and the `workarea_id`) also carry `same_user`, `true` when the ratifying key and
+the proposing key name one user ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8); no key names a user until
+ADR-0044 is built, so it is `false` today. A brief edge's ratification carries no lineage digest:
+membership in a brief widens no closure.
 
 ### review.reopen
 
@@ -244,6 +249,23 @@ Claim↔claim connection proposals enter the admission pipeline; ratification is
 A dreamer(propose) key proposes a labelled claim↔claim edge; the proposal is pending, confers
 nothing, and enters the lineage closure computed at promotion time. The label vocabulary is not
 fixed by the design — an open detail in the [roadmap](../product/roadmap.md).
+
+## Brief-edge family
+
+A claim proposed into a workarea's brief ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7, d8); ratification is
+journalled as `review.ratify` with `subject_kind: "brief_edge"`. Neither reaches the events tail.
+
+### brief_edge.proposed
+
+```json
+{
+  "edge_id": "…", "artifact_id": "…", "workarea_id": "…",
+  "proposer_key_id": "…"
+}
+```
+
+A key with dreamer effective access on the workarea proposes one promoted served tip it reads
+into the workarea's brief; the edge is pending and confers nothing.
 
 ## Lifecycle family
 
@@ -459,7 +481,8 @@ status read — until a second, non-proposing principal ratifies it.
   "transition_id": "…",
   "proposed_by_key_id": "…", "ratified_by_key_id": "…",
   "policy_snapshot": {"k": 1, "required_roles": ["dreamer"],
-                      "children_all_validated": true}
+                      "children_all_validated": true},
+  "same_user": false
 }
 ```
 

@@ -251,7 +251,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
 |---|---|---|---|
 | [`oml_write`](#oml_write) | Store a claim, a derived claim, a new version or a retire-proposal — held on arrival | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` | writer; with `replaces`, writer (own claims) or dreamer (propose) |
 | [`oml_read`](#oml_read) | Fetch one version, recall in a subtree, or list own work or a workarea's tips | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader, or the calling key for its own rows |
-| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
+| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs, pending transitions and the brief | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
 
 The annotations are [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 d5's: Claude Code runs read-only calls in parallel and may repeat a pending
@@ -432,7 +432,15 @@ key's default workarea (`request.workarea_unresolved` for a key with none).
 
 **Who may call:** keys with reader effective access on the workarea, or an
 admin key for its structure read. The output is
-[`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name.
+[`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name, and three
+fields more (*built for v0.5.2, not released*;
+[ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3, d9): `policy`, the review policy in force;
+`pending_transitions`, the status proposals waiting for a second identity;
+and `brief`, `{items, budget}`, the claims the workarea's reviewers agreed an
+agent entering it reads first, each the claim item every tool returns, with
+its text, cut by the server's `brief.max_tokens`. The hidden v0.3.0 name
+keeps its v0.3.0 output without them. No tool proposes or ratifies a
+transition or an edge: those run on the HTTP API and the CLI.
 
 ## The prompt `guardrails`
 
