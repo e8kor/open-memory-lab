@@ -434,6 +434,18 @@ key's default workarea (`request.workarea_unresolved` for a key with none).
 admin key for its structure read. The output is
 [`oml_workarea_info`](#oml_workarea_info)'s, under the v0.4.0 name.
 
+## The prompt `guardrails`
+
+*Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d11; built on its branch, not released · [releases](../product/releases.md)*
+
+Beside its three tools the server declares the `prompts` capability and serves one prompt,
+`guardrails`, with no arguments. `prompts/get` answers one user message holding the text
+`oml hook guardrails` prints for the key's default workarea, from the same read and the same
+renderer, with no line marked checked, since no rule cache stands behind it. Prompts are run by
+a person, so this reaches Claude's apps only when someone invokes it; a client with the plugin's
+hooks loads the set at every session start instead. A guardrail is never written through MCP:
+`oml_write` refuses `kind: guardrail` and a `replaces` naming one.
+
 ## What left the catalog
 
 - **The events tail is not on MCP.** An agent's one use for it, learning

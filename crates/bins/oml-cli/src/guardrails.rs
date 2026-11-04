@@ -284,3 +284,103 @@ fn sweep(dir: &Path) {
         }
     }
 }
+
+/// `oml guardrails show`: the hook's frame with every line, even over the
+/// cap, and whether the set was over it (d7).
+///
+/// # Errors
+///
+/// The answer is not `GET /v1/guardrails`'s shape.
+pub fn show_text(set: &Value, origin: &str) -> Result<(String, bool), String> {
+    let frame = render_frame(
+        set,
+        &FrameOptions {
+            origin,
+            checked: false,
+            whole_over_cap: true,
+        },
+    )
+    .map_err(ToOwned::to_owned)?;
+    Ok((frame.text, frame.over_cap.is_some()))
+}
+
+/// The marker that bounds the exported text in an `agents-md` file (d11).
+pub const MARKER: &str = "<!-- oml:guardrails -->";
+
+/// `oml guardrails export`: writes the promoted set as text, or with
+/// `check` writes nothing and answers whether the file's `set_digest` is
+/// the live one. `Ok(true)` is written or current, `Ok(false)` changed.
+///
+/// # Errors
+///
+/// The answer is not its shape, an `agents-md` file does not hold exactly
+/// one marker pair, or the file cannot be read or written; nothing is
+/// written then.
+pub fn export(
+    set: &Value,
+    origin: &str,
+    format: &str,
+    out: &Path,
+    check: bool,
+) -> Result<bool, String> {
+    let digest = set["set_digest"]
+        .as_str()
+        .ok_or("the answer has no set_digest")?;
+    if check {
+        let text = std::fs::read_to_string(out)
+            .map_err(|e| format!("{} cannot be read: {e}", out.display()))?;
+        let written = text
+            .split("set_digest ")
+            .nth(1)
+            .and_then(|rest| rest.split([' ', ',']).next())
+            .map(|d| d.trim_end_matches(':'));
+        return Ok(written == Some(digest));
+    }
+    let frame = render_frame(
+        set,
+        &FrameOptions {
+            origin,
+            checked: false,
+            whole_over_cap: true,
+        },
+    )
+    .map_err(ToOwned::to_owned)?;
+    let lines: Vec<&str> = frame
+        .text
+        .lines()
+        .filter(|l| l.starts_with("- ["))
+        .collect();
+    let header = format!(
+        "<!-- OML guardrails exported from {origin}, workarea {} ({}), guardrail scope {}, {} guardrails, set_digest {digest}: text, not enforcement; do not edit, re-run oml guardrails export -->",
+        set["scope_path"].as_str().unwrap_or("?"),
+        set["scope_node"].as_str().unwrap_or("?"),
+        set["guardrail_scope"].as_str().unwrap_or("?"),
+        frame.count,
+    );
+    let body = if lines.is_empty() {
+        "No guardrail applies here.".to_owned()
+    } else {
+        lines.join("\n")
+    };
+    let block = format!("{header}\n\n{body}\n");
+    let contents = match format {
+        "claude-md" => block,
+        "agents-md" => {
+            let text = std::fs::read_to_string(out)
+                .map_err(|e| format!("{} cannot be read: {e}", out.display()))?;
+            let parts: Vec<&str> = text.split(MARKER).collect();
+            if parts.len() != 3 {
+                return Err(format!(
+                    "refused: {} holds {} {MARKER} markers, not exactly one pair; nothing was written (ADR-0037 d11)",
+                    out.display(),
+                    parts.len() - 1
+                ));
+            }
+            format!("{}{MARKER}\n{block}{MARKER}{}", parts[0], parts[2])
+        }
+        other => return Err(format!("unknown format {other:?}")),
+    };
+    std::fs::write(out, contents)
+        .map_err(|e| format!("{} cannot be written: {e}", out.display()))?;
+    Ok(true)
+}

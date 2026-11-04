@@ -718,7 +718,7 @@ where
         headers: HeaderMap,
     ) -> Response {
         let result = match query {
-            Ok(Query(params)) => Self::guardrails_inner(&st, &params, &headers).await,
+            Ok(Query(params)) => Self::guardrails_inner(&st, &params, &headers, None).await,
             Err(e) => Err(ApiError::validation(format!(
                 "the query string is not this operation's shape: {e}"
             ))),
@@ -726,12 +726,13 @@ where
         finish(&rid, result)
     }
 
-    async fn guardrails_inner(
+    pub(crate) async fn guardrails_inner(
         st: &Self,
         params: &[(String, String)],
         headers: &HeaderMap,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let acting = acting(headers, None)?;
+        let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workarea")?;
         let mut workarea = None;
         for (name, value) in params {
