@@ -2883,10 +2883,11 @@ where
             });
         }
 
-        // The head first, then the node's status and the claim_key read: a
-        // ratification or a capture that commits in between moves the
-        // head, so this commit conflicts and its retry reads both again
-        // (ADR-0009 d5; ADR-0025 d10, ordinals; d18).
+        // The head first, then the node's status, the ancestors' closures,
+        // which a claim edge's proposal widens, and the claim_key read: a
+        // ratification, an edge proposal or a capture that commits in between
+        // moves the head, so this commit conflicts and its retry reads them
+        // all again (ADR-0001 d2; ADR-0009 d5; ADR-0025 d10, ordinals; d18).
         let prev = self.head_event(key.tenant_id).await?;
         self.refuse_frozen(key.tenant_id, workarea_id, FrozenOp::Write)
             .await?;
@@ -3157,6 +3158,12 @@ where
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        // The head first, then every read R2 and the compare-and-set judge:
+        // the row's closure, which a claim edge's proposal widens while the
+        // row is held, its rivals and its target. A commit landing after the
+        // head moves it, so the verdict conflicts and its retry reads them
+        // again (ADR-0001 d2; ADR-0025 d10).
+        let prev = self.head_event(key.tenant_id).await?;
         let memory = self
             .journal
             .memory(key.tenant_id, memory_id)
@@ -3188,10 +3195,6 @@ where
         // row refuses here (admission.md lifecycle).
         let new_status = transition(memory.status, target_status)?;
 
-        // The head first, then the compare-and-set read: a commit landing
-        // in between moves the head, so the verdict conflicts and its retry
-        // reads the target again.
-        let prev = self.head_event(key.tenant_id).await?;
         // Nothing new promotes into a `validated` area: an approval is
         // refused before its verdict is sealed, so nothing is journalled and
         // the row stays held (ADR-0009 d5). Whether a reject is refused too,
@@ -3613,6 +3616,12 @@ where
             });
         }
 
+        // The head first, then the target, whose closure a claim edge's
+        // proposal widens, the ancestors and the ordinal: a commit landing in
+        // between moves the head, and the retry reads them all again
+        // (ADR-0001 d2; ADR-0025 d10, ordinals).
+        let prev = self.head_event(key.tenant_id).await?;
+
         // Step 2: an unreadable target is indistinguishable from none.
         let target = self
             .journal
@@ -3666,10 +3675,9 @@ where
         {
             return Err(AppError::VocabularyTarget(target.kind));
         }
-        // Step 5's last check, the head read before it: a ratification that
-        // validates the area in between moves the head and the commit
+        // Step 5's last check, after the head read above: a ratification
+        // that validates the area in between moves the head and the commit
         // conflicts (roles-and-keys.md supersede; ADR-0009 d5).
-        let prev = self.head_event(key.tenant_id).await?;
         self.refuse_frozen(key.tenant_id, target.workarea_id, FrozenOp::Write)
             .await?;
 
