@@ -505,3 +505,48 @@ async fn a_guardrail_scope_other_than_workarea_or_ancestors_is_refused() {
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn recall_refuses_kinds_guardrail_naming_kinds_and_the_listing_serves_the_kind() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let id = submit_guardrail(
+        &router,
+        &t,
+        "g-1",
+        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workarea": t.crew}),
+    )
+    .await;
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/v1/memories/recall",
+        Some(&t.writer),
+        None,
+        Some(&json!({"query": "tests", "kinds": ["guardrail"], "workarea": t.crew})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/kinds", "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("GET /v1/guardrails")),
+        "{body}"
+    );
+
+    let (status, page) = send(
+        &router,
+        "GET",
+        "/v1/memories?own=true&kind=guardrail",
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{page}");
+    assert_eq!(items[0]["artifact_id"], id.as_str());
+    assert_eq!(items[0]["severity"], "must");
+}
