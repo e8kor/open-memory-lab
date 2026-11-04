@@ -314,8 +314,13 @@ and `idempotency_key` are required:
   and to the calling key alone with it, as the two endpoints scope it; the
   same key reused across the two modes is a separate write (D13).
 - Designed, in [mcp-tools.designed.json](mcp-tools.designed.json):
-  `attachments`, the upload sessions a file was put through outside MCP. It
-  is refused as outside the input schema until uploads are built.
+  `attachments`, the upload sessions a file was put through outside MCP, and
+  `simulation_id` with `simulated_time`, an audience key's write inside a
+  simulation, in submit and supersede mode alike, as the v0.3.0 writes
+  declared them. Each is refused as outside the input schema until it is
+  built; `x-oml-designed-fields` in
+  [openapi-designed.yaml](openapi-designed.yaml) keeps the same
+  fields for HTTP.
 
 **Output**
 

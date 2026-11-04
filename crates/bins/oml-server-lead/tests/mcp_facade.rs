@@ -244,6 +244,15 @@ async fn crew_with_writer_grants(
     router: &Router,
     writer_grants: &[&str],
 ) -> (String, String, String, Uuid) {
+    crew_and_admin(router, writer_grants).await.0
+}
+
+/// The crew of [`crew_with_writer_grants`] and the tenant's admin key from
+/// the bootstrap claim.
+async fn crew_and_admin(
+    router: &Router,
+    writer_grants: &[&str],
+) -> ((String, String, String, Uuid), String) {
     let (status, boot) = send(
         router,
         "POST",
@@ -292,7 +301,7 @@ async fn crew_with_writer_grants(
     let reader = keys.pop().expect("reader");
     let dreamer = keys.pop().expect("dreamer");
     let writer = keys.pop().expect("writer");
-    (writer, dreamer, reader, crew)
+    ((writer, dreamer, reader, crew), admin)
 }
 
 #[tokio::test]
@@ -1788,6 +1797,141 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
     .await;
     refused_naming(&refused, "/kind");
     assert_eq!(own_versions(&router, &writer).await, 1);
+
+    drop_db(&db).await;
+}
+
+/// The error code of a tool result that must be a refusal.
+fn refusal_code(result: &Value) -> &str {
+    assert_eq!(result["isError"], true, "{result}");
+    result["structuredContent"]["error"]["code"]
+        .as_str()
+        .expect("error code")
+}
+
+#[tokio::test]
+async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+
+    // A reader key's role admits no writer grant, so each of oml_write's
+    // modes stops at step 1 of the refusal order, before the target or the
+    // workarea is read (R1; roles-and-keys.md, refusal order; ADR-0039 d2).
+    for (id, (mode, args)) in (1..).zip([
+        (
+            "submit",
+            json!({"text": QUOTE, "idempotency_key": "reader/submit"}),
+        ),
+        (
+            "learn",
+            json!({"text": ALLOY, "derives_from": [v1], "idempotency_key": "reader/learn"}),
+        ),
+        (
+            "supersede",
+            json!({"replaces": v1, "text": REVISED, "reason": "revised", "idempotency_key": "reader/supersede"}),
+        ),
+        (
+            "retire",
+            json!({"replaces": v1, "text": "Retired: quote AM-7741 lapsed.", "retirement": true, "idempotency_key": "reader/retire"}),
+        ),
+    ]) {
+        let refused = call_tool(&router, &reader, id, "oml_write", args).await;
+        assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{mode}");
+    }
+    assert_eq!(own_versions(&router, &reader).await, 0);
+
+    drop_db(&db).await;
+}
+
+#[tokio::test]
+async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_and_to_an_admin_key()
+{
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    // The writer here holds a writer grant alone.
+    let ((writer, dreamer, _, _), admin) = crew_and_admin(&router, &["writer"]).await;
+    ratified(&router, &writer, &dreamer).await;
+
+    let recall = json!({"query": "aluminium price"});
+    let scoped = json!({"own": false});
+    for (id, (mode, args)) in (1..).zip([("recall", &recall), ("listing", &scoped)]) {
+        // Reader is not effective on the writer's default workarea, so the
+        // read answers step 4 of the refusal order: the node is not found,
+        // never named as refused (roles-and-keys.md, refusal order).
+        let refused = call_tool(&router, &writer, id, "oml_read", args.clone()).await;
+        assert_eq!(refusal_code(&refused), "access.not_found", "{mode}");
+        // An admin key reads no claim content, whatever its grants: step 1
+        // (errors.md, access.verb_ceiling; ADR-0026 d15).
+        let refused = call_tool(&router, &admin, 10 + id, "oml_read", args.clone()).await;
+        assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{mode}");
+    }
+    // The writer's own listing is not a scoped read and still answers.
+    let own = call_tool(&router, &writer, 20, "oml_read", json!({})).await;
+    assert_eq!(own["isError"], false, "{own}");
+
+    drop_db(&db).await;
+}
+
+/// The v0.3.0 writes' simulation fields stay designed arguments of their
+/// successor on MCP, as `x-oml-designed-fields` keeps them on HTTP
+/// (ADR-0039 d9, d10).
+#[test]
+fn the_v0_3_0_simulation_fields_are_designed_arguments_of_oml_write() {
+    let designed: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.designed.json"))
+            .expect("json");
+    let served: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.json")).expect("json");
+    let write = served["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|t| t["name"] == "oml_write")
+        .expect("oml_write is served");
+    let arguments = &designed["designed_arguments"]["oml_write"];
+    for (field, says) in [
+        ("simulation_id", "submission.simulation_id_required"),
+        ("simulated_time", "never backdating"),
+    ] {
+        let description = arguments[field]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} is a designed argument of oml_write"));
+        assert!(description.contains(says), "{field}: {description}");
+        assert_eq!(arguments[field]["type"], "string", "{field}");
+        assert!(
+            write["inputSchema"]["properties"].get(field).is_none(),
+            "{field} is served"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_designed_argument_sent_to_oml_write_is_refused_as_outside_its_input_schema() {
+    let designed: Value =
+        serde_json::from_str(include_str!("../../../../docs/api/mcp-tools.designed.json"))
+            .expect("json");
+    let arguments = designed["designed_arguments"]["oml_write"]
+        .as_object()
+        .expect("oml_write's designed arguments")
+        .clone();
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (agent, _, _, _) = agent_crew(&router).await;
+
+    // Each is refused before the ring is reached, and nothing is stored
+    // (ADR-0039 d2, d9; mcp-tools.designed.json, _meta).
+    for (id, (field, schema)) in (1..).zip(&arguments) {
+        let mut args = json!({"text": QUOTE, "idempotency_key": format!("designed/{field}")});
+        args[field.as_str()] = type_valid(schema, field);
+        let refused = call_tool(&router, &agent, id, "oml_write", args).await;
+        assert!(outside_the_input_schema(&refused), "{field}: {refused}");
+    }
+    assert_eq!(own_versions(&router, &agent).await, 0);
 
     drop_db(&db).await;
 }
