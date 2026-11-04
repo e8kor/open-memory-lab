@@ -10,13 +10,15 @@
 //! d2, d14, d15); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
-//! that predate names (ADR-0026 d2, d3, d11); `oauth` holds the pure core of
-//! connections — the connect code, PKCE, the redirect allowlist, client
-//! identity, the fetch-address allow-list, discovery, token formats,
-//! rotation with reuse detection and the connection lifecycle (ADR-0031,
-//! proposed); `web` holds the web pages' sign-in core — the allowlist
-//! entry's email and user, the sealed sign-in state, the provider answers
-//! the server admits and the CSRF token (ADR-0045, proposed).
+//! that predate names (ADR-0026 d2, d3, d11); `ladder` holds the workarea
+//! status ladder, its refusal reasons, the ratifier's independence and the
+//! frozen area's closed list of mutations (ADR-0009 d1, d3, d4, d5); `oauth`
+//! holds the pure core of connections — the connect code, PKCE, the redirect
+//! allowlist, client identity, the fetch-address allow-list, discovery, token
+//! formats, rotation with reuse detection and the connection lifecycle
+//! (ADR-0031, proposed); `web` holds the web pages' sign-in core — the
+//! allowlist entry's email and user, the sealed sign-in state, the provider
+//! answers the server admits and the CSRF token (ADR-0045, proposed).
 
 #![forbid(unsafe_code)]
 
@@ -26,6 +28,7 @@ pub mod chain;
 pub mod envelope;
 pub mod jcs;
 pub mod keys;
+pub mod ladder;
 pub mod model;
 pub mod name;
 pub mod oauth;
@@ -43,6 +46,10 @@ pub use jcs::{JcsError, canonical_bytes};
 pub use keys::{
     RotationVerifyError, cross_sign_rotation, key_fingerprint, rotation_message,
     verify_rotation_cross_sig,
+};
+pub use ladder::{
+    FrozenOp, LadderRefusal, WorkareaStatus, frozen_refuses, propose_check, ratifier_is_proposer,
+    ratify_check, transition_preconditions,
 };
 pub use model::{
     DERIVED_CLAIM_KEY_PREFIX, HeldBy, KeyCrew, LineageClosure, MemoryKind, MemoryStatus, Role,
