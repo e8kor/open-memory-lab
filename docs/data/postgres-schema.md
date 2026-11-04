@@ -317,7 +317,8 @@ the rule under the version's DEK waits for the encrypted body store.
 
 **Status:** `workareas.status` is one stored column, written at create (`development`, and
 `committed` on the universe root) and served back by every workarea read; `workarea_transitions`
-is built in `migrations/0016_workarea_transitions.sql`, and no transition writes it yet
+is built in `migrations/0016_workarea_transitions.sql`, which also adds
+`workareas_universe_committed`, so a root on any other rung is refused; no transition writes it yet
 ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3).
 
 The governed tree (one per tenant, rooted at `universe`) plus the two edge tables. The algebra —
@@ -361,7 +362,9 @@ CREATE TABLE workareas (
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
     FOREIGN KEY (tenant_id, namespace_root_id) REFERENCES workareas (tenant_id, id),
     CHECK ((parent_id IS NULL) = (name = 'universe')),  -- the root, and only the root, is universe
-    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL))
+    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL)),
+    CONSTRAINT workareas_universe_committed             -- the root is permanently committed
+        CHECK (parent_id IS NOT NULL OR status = 'committed')   -- (ADR-0009 d1; added by 0017)
 );
 
 -- unique within the shared namespace: universe, every user root and every

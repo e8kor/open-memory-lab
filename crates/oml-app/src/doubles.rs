@@ -548,6 +548,8 @@ fn require_free_name<'a>(
 /// `workareas_universe_is_root` refuses otherwise: a non-root `universe` is
 /// refused with `NameTaken`, as errors.md answers it, and a root of another
 /// name as the backend's (postgres-schema.md `workareas`; ADR-0026 d6).
+/// The root is stored `committed` or refused as the backend's, as
+/// `workareas_universe_committed` refuses it (ADR-0009 d1).
 fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
     match (workarea.parent_id, workarea.name.as_str() == UNIVERSE) {
         (Some(_), true) => Err(StoreError::NameTaken {
@@ -559,6 +561,15 @@ fn require_universe_root(workarea: &WorkareaRecord) -> Result<(), StoreError> {
             workarea.workarea_id,
             workarea.name.as_str()
         ))),
+        // The root is permanently committed, as the schema's
+        // workareas_universe_committed CHECK holds (ADR-0009 d1).
+        (None, true) if workarea.status != WorkareaStatus::Committed => {
+            Err(StoreError::Backend(format!(
+                "the universe root {} is permanently committed, not {}",
+                workarea.workarea_id,
+                workarea.status.as_str()
+            )))
+        }
         _ => Ok(()),
     }
 }
