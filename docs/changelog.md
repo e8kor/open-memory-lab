@@ -34,16 +34,29 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
-### 2026-11-03 — Claim edges are built as internals, with no route or tool (implementation)
+### 2026-11-04 — The status ladder and claim edges replayed for v0.5.2, and ADR-0046 proposed (implementation)
 
-An implementation milestone; no decision changes. The code now builds the claim edges of
-[ADR-0008](adr/ADR-0008-workarea-algebra.md) d5 and
-[ADR-0021](adr/ADR-0021-ai-human-ontologies.md) d5 behind `oml-app` use cases, as the substrate
-the v0.5.0 brief's ratified edges read. No HTTP route or MCP tool reaches them: the proposed
-ADR-0039 rewrites both surfaces in v0.3.2, so `GET` and `POST /v2/claim-edges` and
-`POST /v2/claim-edges/{edge_id}/ratify` stay [http-api](api/http-api.md)'s contract, implemented
-behind the use cases and not served. `info.version` stays `0.3.0-design`.
+An implementation milestone and one proposed record. The status ladder of
+[ADR-0009](adr/ADR-0009-status-ladder.md) and the claim edges of
+[ADR-0008](adr/ADR-0008-workarea-algebra.md) d5 and [ADR-0021](adr/ADR-0021-ai-human-ontologies.md)
+d5, built on two branches before the v0.4.0 rewrite, are replayed onto v0.4.1 on `feat/v0.5.2`
+in the domain, the use cases and the Postgres store. No route, tool or CLI verb serves them, so
+`info.version` stays `0.4.0-design`.
+[ADR-0046](adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md),
+proposed, reconciles both with the proposed user roots (ADR-0044) and ADR-0039's three tools, and
+leaves the brief and eight other points to the maintainer.
 
+- **The ladder** (ADR-0009 d1, d3, d4). A workarea's status is one stored column; an admin, or a dreamer
+  with dreamer access on the node, proposes one rung forward as a pending `workarea_transitions`
+  row and one `workarea.status_proposed`; a second identity ratifies it as one
+  `workarea.status_transition` carrying the policy snapshot, and the node takes its `to` in that
+  commit. The ratifying transaction re-checks the proposal and the children under the chain lock,
+  so a child created concurrently with a ratification to `validated` leaves either the child or
+  the validated node, never both. Refusals are `workarea.transition_refused` with a reason and
+  `review.ratifier_is_proposer` ([errors](api/errors.md)); the readings are on
+  [workareas](architecture/workareas.md#readings-the-build-takes).
+- **The freeze** (ADR-0009 d5). A `validated` workarea refuses a submit, a supersede, an approval and a
+  child create as `workarea.frozen`, while its crew record stays correctable.
 - **The table** (ADR-0034 d1, d11, d12). Migration `0017_claim_edges.sql` builds `claim_edges` as
   [postgres-schema](data/postgres-schema.md#claim_edges) states it: pending or ratified, its keys
   carrying `tenant_id`, R2's key inequality and a ratified row's ratifier as `CHECK`s, row security
@@ -65,34 +78,20 @@ behind the use cases and not served. `info.version` stays `0.3.0-design`.
   filter, served only when both endpoints are in its read scope; an admin key is refused
   `access.verb_ceiling`. Neither `claim_edge.*` nor an edge's `review.ratify` reaches the events
   tail.
-- **Not built:** the routes and tools (ADR-0039), a `rejected` state, `oml:about` and the brief's
-  read of ratified edges, which another branch designs.
-- **No surface change:** no HTTP operation, error code or event type.
-- **Pages touched:** [postgres-schema](data/postgres-schema.md) and this page.
-
-### 2026-11-03 — The status ladder (implementation)
-
-An implementation milestone; no decision changes. The code now builds the accepted
-[ADR-0009](adr/ADR-0009-status-ladder.md)'s ladder in the domain, the use cases and the Postgres
-store. `info.version` stays `0.3.0-design`.
-
-- **The ladder** (d1, d3, d4). A workarea's status is one stored column; an admin, or a dreamer
-  with dreamer access on the node, proposes one rung forward as a pending `workarea_transitions`
-  row and one `workarea.status_proposed`; a second identity ratifies it as one
-  `workarea.status_transition` carrying the policy snapshot, and the node takes its `to` in that
-  commit. The ratifying transaction re-checks the proposal and the children under the chain lock,
-  so a child created concurrently with a ratification to `validated` leaves either the child or
-  the validated node, never both. Refusals are `workarea.transition_refused` with a reason and
-  `review.ratifier_is_proposer` ([errors](api/errors.md)); the readings are on
-  [workareas](architecture/workareas.md#readings-the-build-takes).
-- **The freeze** (d5). A `validated` workarea refuses a submit, a supersede, an approval and a
-  child create as `workarea.frozen`, while its crew record stays correctable.
-- **Not built:** reassignment, re-parent, demote, erasure and the simulation fence; no HTTP route
-  or MCP tool serves the transitions, since the proposed ADR-0039 rewrites both. The Postgres
+- **Reconciled with v0.4.x** (ADR-0039 d9, ADR-0046 d4). The claim-edge use cases digest their
+  requests as `POST /v2/edges` with `kind: claim` and `POST /v2/edges/{edge_id}/ratify`, the
+  designed family, in place of the branch's `/v2/claim-edges`. One `RatifierIsProposer` refusal
+  covers a transition and an edge. The migrations are renumbered `0016_workarea_transitions.sql`
+  and `0017_claim_edges.sql`, leaving 0014 and 0015 to the v0.5.0 lanes.
+- **Not built:** the transition and edge routes, the workarea read's `policy` and
+  `pending_transitions` fields, the CLI verbs, a `rejected` edge state, `oml:about`,
+  reassignment, re-parent, demote, erasure, the simulation fence and the brief. The Postgres
   end-to-end laws run only where a superuser mints the suites' role pairs, CI's
   `cargo test (Postgres)`.
-- **Pages touched:** [workareas](architecture/workareas.md),
-  [postgres-schema](data/postgres-schema.md) and this page.
+- **Pages touched:** the new record, the [register](adr/index.md), `mkdocs.yml`,
+  [llms.txt](llms.txt), [releases](product/releases.md), [workareas](architecture/workareas.md),
+  [postgres-schema](data/postgres-schema.md), [event catalog](data/event-catalog.md),
+  [errors](api/errors.md), and the pages whose release lines move from v0.5.0 to v0.5.1 or v0.5.2.
 
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 

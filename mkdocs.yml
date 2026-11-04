@@ -168,3 +168,4 @@ nav:
       - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md
       - ADR-0042: adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md
       - ADR-0043: adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md
+      - ADR-0046: adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md

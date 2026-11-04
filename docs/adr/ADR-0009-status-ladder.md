@@ -9,7 +9,7 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** planned for v0.5.0 ([releases](../product/releases.md#decisions))
+**Release:** planned for v0.5.2 ([releases](../product/releases.md#decisions))
 
 ## Context
 

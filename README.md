@@ -120,9 +120,9 @@ assigned to it yet ([releases](docs/product/releases.md)).
 
 | Capability | What it will add | Release |
 | --- | --- | --- |
-| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.0 |
-| **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.0 |
-| **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.0 |
+| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.1 |
+| **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.2 |
+| **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.2 |
 | **In-progress workareas** | Teammates see each other's unreviewed work at once inside a development workarea that opts in, and nothing leaves it until it is committed. | Planned for v0.6.0 |
 | **Files with memories** | Documents, images and PDFs stored with the memory they belong to, each encrypted under its own key. | Not scheduled |
 | **Semantic search** | Search by meaning beside keyword search. | Not scheduled |

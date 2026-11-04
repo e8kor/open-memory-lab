@@ -876,7 +876,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.2 · [releases](../product/releases.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -917,7 +917,8 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md) · `kind=claim` built for v0.5.2 behind its use
+cases, not routed ([ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md) d4, proposed)*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
