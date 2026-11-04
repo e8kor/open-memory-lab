@@ -2555,6 +2555,8 @@ fn write_owner_only(path: &std::path::Path, text: &str) -> Result<(), CliError> 
 
 /// Creates the directory `path`, owner-only (0700 on Unix).
 fn owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
+    // Only Unix narrows the mode, so the binding is mutated on Unix alone.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
