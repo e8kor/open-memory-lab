@@ -15,6 +15,8 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `baselines.py` | the offline and direct-PostgreSQL comparison methods; needs a scratch venv |
 | `tables.py` | prints `results/tables.md` from `results/*.json` |
 | `check_data.py` | CI check: the data parses and every label resolves (job `recall-eval-data`) |
+| `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
+| `gate.py` | each pipeline's gate (ADR-0049 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`
@@ -110,6 +112,19 @@ overall.
    superuser, so they rank exactly the 200 promoted rows the server holds.
    `pg_simple_and` is the served statement and must reproduce `oml`'s scores;
    if it does not, the harness is wrong.
+
+5. Every served search pipeline, gated (ADR-0049), the way CI's `recall-eval` job runs it:
+
+   ```sh
+   cargo build --release --bin oml-server-lead --bin oml
+   PGHOST=127.0.0.1 PGPORT=5432 PGUSER=oml PGPASSWORD=... eval/recall/served.sh .tmp/recall-eval
+   ```
+
+   It writes `served_<pipeline>.json` per pipeline (`run.py --search <pipeline>`) and
+   `hook_<pipeline>.json`, the failure hook's own shape (the query minus stop words, `k` 3,
+   200 tokens), for the default and for `keyword-all`. `EVAL_PIPELINES` and `EVAL_DEFAULT`
+   narrow the run. Copy the JSON into `results/` when a change is meant to move the numbers;
+   the gate compares each category with the committed file.
 
 ## Changing the set
 
