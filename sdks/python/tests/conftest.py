@@ -178,8 +178,11 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
         cli_env = _clean_env(OML_CLI_CREDENTIALS=str(scratch / "credentials"))
 
         def oml(*args: str) -> dict:
+            # The claim takes the URL alone; every verb after it, the URL and
+            # key the claim stored (ADR-0039 d15).
+            at = ["--url", url] if args[0] == "bootstrap" else []
             done = subprocess.run(
-                [CLI_BIN, "--server", url, "--json", *args],
+                [CLI_BIN, *at, "--json", *args],
                 env=cli_env,
                 capture_output=True,
                 text=True,

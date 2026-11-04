@@ -88,7 +88,7 @@ impl Client {
     fn bearer(&self) -> Result<String, CliError> {
         self.key.as_deref().map(|k| format!("Bearer {k}")).ok_or_else(|| {
             CliError::local(
-                "no API key: pass --key, set OML_CLI_KEY, or claim one with `oml bootstrap claim`",
+                "no API key: pass --api-key, set OML_API_KEY, or claim one with `oml bootstrap claim`",
             )
         })
     }

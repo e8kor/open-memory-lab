@@ -139,24 +139,35 @@ async fn drop_db(name: &str) {
     }
 }
 
-/// The `oml` binary pointed at `server` and the fixture's credentials file.
-fn oml_command(server: &str, creds: &Path, key: Option<&str>) -> Command {
+/// The `oml` binary pointed at the fixture's credentials file and, with
+/// `key`, at the pair `--url server --api-key key`; without one, the stored
+/// pair applies, and `oml bootstrap claim`, which sends no key, takes
+/// `--url server` alone (ADR-0039 d15).
+fn oml_command(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
-    cmd.arg("--server").arg(server);
     if let Some(k) = key {
-        cmd.arg("--key").arg(k);
+        cmd.arg("--url").arg(server).arg("--api-key").arg(k);
+    } else if args.first() == Some(&"bootstrap") {
+        cmd.arg("--url").arg(server);
     }
     cmd.env("OML_CLI_CREDENTIALS", creds);
-    // The ambient environment never leaks into the fixture.
-    cmd.env_remove("OML_CLI_KEY");
-    cmd.env_remove("OML_CLI_SERVER");
-    cmd.env_remove("OML_CLI_SIGNING_KEY");
+    // The ambient environment, a live OML_API_KEY among it, never leaks
+    // into the fixture.
+    for name in [
+        "OML_URL",
+        "OML_API_KEY",
+        "OML_CLI_KEY",
+        "OML_CLI_SERVER",
+        "OML_CLI_SIGNING_KEY",
+    ] {
+        cmd.env_remove(name);
+    }
     cmd
 }
 
 /// Runs the `oml` binary; returns (exit code, parsed stdout JSON, stderr).
 fn oml(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> (i32, Value, String) {
-    let mut cmd = oml_command(server, creds, key);
+    let mut cmd = oml_command(server, creds, key, args);
     cmd.arg("--json").args(args);
     let out = cmd.output().expect("the oml binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -233,7 +244,14 @@ async fn full_ceremony_through_the_cli() {
     let root = claim["root_workarea_id"].as_str().expect("root workarea");
     assert!(claim["value"].as_str().expect("value").starts_with("oml_"));
     let stored = std::fs::read_to_string(&creds).expect("credentials written");
-    assert!(stored.contains(&tenant_id), "tenant recorded: {stored}");
+    let fields: toml::Table = toml::from_str(&stored).expect("the credentials parse");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["api_key", "url"],
+        "the URL and the key alone are stored (ADR-0039 d15)"
+    );
+    assert_eq!(fields["url"].as_str(), Some(server.as_str()));
+    assert_eq!(fields["api_key"].as_str(), claim["value"].as_str());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -636,7 +654,7 @@ impl Lab {
 /// `oml <args>` without `--json`; returns (exit code, stdout, stderr) as the
 /// operator's shell gets them.
 fn oml_text(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> (i32, String, String) {
-    let out = oml_command(server, creds, key)
+    let out = oml_command(server, creds, key, args)
         .args(args)
         .output()
         .expect("the oml binary runs");
@@ -2622,7 +2640,7 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
     let stored: oml_cli::creds::Credentials =
         toml::from_str(&std::fs::read_to_string(&crew.lab.creds).expect("credentials"))
             .expect("the stored credentials parse");
-    let admin = stored.key.expect("the stored admin key");
+    let admin = stored.api_key.expect("the stored admin key");
     let creds = crew.lab.creds.to_str().expect("a UTF-8 path");
     let server = crew.lab.server.as_str();
     let stdin = session("startup", "/home/op/src/metals");
@@ -2636,7 +2654,7 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
         ("OML_CLI_SERVER", server),
     ];
     let (code, stdout, stderr) = hook_run(
-        &["--server", server, "--key", &admin],
+        &["--url", server, "--api-key", &admin],
         &admin_sources,
         &stdin,
     );
@@ -2655,7 +2673,7 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
     // With the agent's key beside them, every request carries the agent's.
     let mut both = admin_sources.to_vec();
     both.extend([("OML_URL", server), ("OML_API_KEY", crew.agent.as_str())]);
-    let (code, stdout, stderr) = hook_run(&["--key", &admin], &both, &stdin);
+    let (code, stdout, stderr) = hook_run(&["--api-key", &admin], &both, &stdin);
     assert_eq!(code, 0, "{stderr}");
     assert!(context_of(&stdout).contains(FRAMING), "{stdout}");
     let seen = crew.lab.take_requests();
@@ -3233,4 +3251,251 @@ async fn submit_without_claim_key_sends_none_and_prints_the_servers_key() {
         "{stdout}"
     );
     lab.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// The start settings: one URL-and-key pair (ADR-0039 d15)
+// ---------------------------------------------------------------------------
+
+/// The bearer of every request a stub received, in order.
+type Bearers = Arc<Mutex<Vec<Option<String>>>>;
+
+/// A stub that answers every request `200 {}` and records its bearer;
+/// returns its URL, what it saw and the task serving it.
+async fn bearer_stub() -> (String, Bearers, tokio::task::JoinHandle<()>) {
+    let seen: Bearers = Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new()
+        .fallback(|State(seen): State<Bearers>, request: Request| async move {
+            seen.lock().expect("bearer lock").push(
+                request
+                    .headers()
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .map(ToOwned::to_owned),
+            );
+            axum::Json(json!({}))
+        })
+        .with_state(seen.clone());
+    let (url, task) = serve_stub(router).await;
+    (url, seen, task)
+}
+
+/// Every bearer `seen` recorded since the last call.
+fn bearers(seen: &Bearers) -> Vec<Option<String>> {
+    std::mem::take(&mut *seen.lock().expect("bearer lock"))
+}
+
+/// `Some("Bearer <key>")`, as a stub records it.
+fn bearer(key: &str) -> Option<String> {
+    Some(format!("Bearer {key}"))
+}
+
+/// `oml <global…> --json keys show agent-7` with exactly the variables
+/// `vars` names and a `HOME` that holds nothing; returns (exit code,
+/// stderr).
+fn start_run(global: &[&str], vars: &[(&str, &str)]) -> (i32, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(global).args(["--json", "keys", "show", "agent-7"]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-start-e2e-no-home"));
+    for (name, value) in vars {
+        cmd.env(name, value);
+    }
+    let out = cmd.output().expect("the oml binary runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// A credentials file holding `body` under a fresh directory; returns (the
+/// directory, the file).
+fn start_file(tag: &str, body: &str) -> (PathBuf, PathBuf) {
+    let (dir, _) = stub_paths(tag);
+    let path = dir.join("credentials");
+    std::fs::write(&path, body).expect("a credentials file");
+    (dir, path)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_flag_beats_the_environment_and_the_environment_beats_the_file() {
+    let (flag_url, flag_seen, flag_task) = bearer_stub().await;
+    let (env_url, env_seen, env_task) = bearer_stub().await;
+    let (file_url, file_seen, file_task) = bearer_stub().await;
+    let (dir, file) = start_file(
+        "start-order",
+        &format!("url = \"{file_url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let file = ("OML_CLI_CREDENTIALS", file.to_str().expect("a UTF-8 path"));
+    let all = [
+        file,
+        ("OML_URL", env_url.as_str()),
+        ("OML_API_KEY", "oml_env_key"),
+    ];
+
+    let (code, stderr) = start_run(&["--url", &flag_url, "--api-key", "oml_flag_key"], &all);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(bearers(&flag_seen), vec![bearer("oml_flag_key")]);
+    assert!(bearers(&env_seen).is_empty(), "the flags win");
+    assert!(bearers(&file_seen).is_empty(), "the flags win");
+
+    let (code, stderr) = start_run(&[], &all);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(bearers(&env_seen), vec![bearer("oml_env_key")]);
+    assert!(bearers(&file_seen).is_empty(), "the environment wins");
+
+    let (code, stderr) = start_run(&[], &[file]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(bearers(&file_seen), vec![bearer("oml_file_key")]);
+    assert!(bearers(&flag_seen).is_empty() && bearers(&env_seen).is_empty());
+
+    for task in [flag_task, env_task, file_task] {
+        task.abort();
+    }
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_setting_only_the_url_is_refused_naming_the_api_key() {
+    let (url, seen, task) = bearer_stub().await;
+    let (pair_dir, pair) = start_file(
+        "start-url-only-pair",
+        &format!("url = \"{url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let pair = ("OML_CLI_CREDENTIALS", pair.to_str().expect("a UTF-8 path"));
+    let (alone_dir, alone) = start_file("start-url-only", &format!("url = \"{url}\"\n"));
+    let alone_path = alone.to_str().expect("a UTF-8 path");
+
+    // Each source sets the URL alone while a later one holds a whole pair:
+    // (flags, variables, the name the refusal gives the missing key).
+    type Case<'a> = (&'a [&'a str], Vec<(&'a str, &'a str)>, &'a str);
+    let cases: [Case; 3] = [
+        (
+            &["--url", &url],
+            vec![pair, ("OML_URL", &url), ("OML_API_KEY", "oml_env_key")],
+            "--api-key",
+        ),
+        (&[], vec![pair, ("OML_URL", &url)], "OML_API_KEY"),
+        (&[], vec![("OML_CLI_CREDENTIALS", alone_path)], "api_key"),
+    ];
+    for (global, vars, named) in cases {
+        let (code, stderr) = start_run(global, &vars);
+        assert_eq!(code, 2, "{named}: {stderr}");
+        assert!(stderr.contains(named), "{named}: {stderr}");
+        assert!(
+            !stderr.contains("oml_env_key") && !stderr.contains("oml_file_key"),
+            "{named}: no key on stderr: {stderr}"
+        );
+        assert!(bearers(&seen).is_empty(), "{named}: nothing was sent");
+    }
+    let (_, stderr) = start_run(&[], &[("OML_CLI_CREDENTIALS", alone_path)]);
+    assert!(stderr.contains(alone_path), "the file is named: {stderr}");
+
+    task.abort();
+    for dir in [pair_dir, alone_dir] {
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_url_from_a_flag_is_never_paired_with_a_key_from_the_environment() {
+    let (flag_url, flag_seen, flag_task) = bearer_stub().await;
+    let (file_url, file_seen, file_task) = bearer_stub().await;
+    let (dir, file) = start_file(
+        "start-split",
+        &format!("url = \"{file_url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let file = ("OML_CLI_CREDENTIALS", file.to_str().expect("a UTF-8 path"));
+
+    let (code, stderr) = start_run(
+        &["--url", &flag_url],
+        &[file, ("OML_API_KEY", "oml_env_key")],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--api-key"), "{stderr}");
+    assert!(
+        !stderr.contains("oml_env_key"),
+        "no key on stderr: {stderr}"
+    );
+
+    // Nor a key from a flag with a URL from the environment.
+    let (code, stderr) = start_run(
+        &["--api-key", "oml_flag_key"],
+        &[file, ("OML_URL", &flag_url)],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--url"), "{stderr}");
+    assert!(
+        !stderr.contains("oml_flag_key"),
+        "no key on stderr: {stderr}"
+    );
+
+    assert!(bearers(&flag_seen).is_empty(), "nothing was sent");
+    assert!(bearers(&file_seen).is_empty(), "nothing was sent");
+    flag_task.abort();
+    file_task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_cli_server_is_not_read_and_a_missing_url_names_it_for_renaming() {
+    let (url, seen, task) = bearer_stub().await;
+
+    let (code, stderr) = start_run(
+        &[],
+        &[("OML_CLI_SERVER", &url), ("OML_CLI_KEY", "oml_old_key")],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    for named in ["OML_CLI_SERVER", "OML_URL", "OML_CLI_KEY", "OML_API_KEY"] {
+        assert!(stderr.contains(named), "{named}: {stderr}");
+    }
+    assert!(
+        !stderr.contains("oml_old_key"),
+        "no key on stderr: {stderr}"
+    );
+    assert!(bearers(&seen).is_empty(), "nothing was sent");
+
+    // The key renamed, the URL still under its old name.
+    let (code, stderr) = start_run(
+        &[],
+        &[("OML_CLI_SERVER", &url), ("OML_API_KEY", "oml_new_key")],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("OML_URL") && stderr.contains("OML_CLI_SERVER"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("oml_new_key"),
+        "no key on stderr: {stderr}"
+    );
+    assert!(bearers(&seen).is_empty(), "nothing was sent");
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hidden_server_and_key_flags_answer_and_each_prints_one_line_naming_its_successor() {
+    let (url, seen, task) = bearer_stub().await;
+    let (code, stderr) = start_run(&["--server", &url, "--key", "oml_old_flag"], &[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(bearers(&seen), vec![bearer("oml_old_flag")]);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("--server") && l.contains("--url"))
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("--key") && l.contains("--api-key"))
+    );
+    assert!(
+        !stderr.contains("oml_old_flag"),
+        "no key on stderr: {stderr}"
+    );
+    task.abort();
 }

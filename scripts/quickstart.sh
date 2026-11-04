@@ -52,7 +52,11 @@ fail() {
 for tool in curl jq; do
     command -v "$tool" >/dev/null || fail "$tool is required"
 done
-oml() { "${CLI[@]}" --server "$CLI_SERVER" --json "$@"; }
+# The CLI takes one URL-and-key pair from its flags, then OML_URL and
+# OML_API_KEY, then its credentials file (ADR-0039 d15). This shell's OML_URL
+# is no pair, so the CLI runs without it: the claim takes --url, and every
+# admin verb after it the pair the claim stored.
+oml() { env -u OML_URL -u OML_API_KEY "${CLI[@]}" --json "$@"; }
 
 ready=""
 for _ in $(seq 1 60); do
@@ -70,7 +74,7 @@ if [ -z "$TOKEN" ] && [ -n "$IN_COMPOSE" ]; then
 fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
-boot="$(oml bootstrap claim quickstart-admin --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
+boot="$(oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
 workarea="$(oml workareas create universe "$WORKAREA_NAME" | jq -r .id)"
 
@@ -111,8 +115,8 @@ work="$(call 3 oml_read "$claim")"
 own="$(call 4 oml_read '{"query":"quickstart wrote","include_unreviewed":true}')"
 [ "$(state_of hits "$artifact" "$own")" = "held" ] || fail "oml_read with include_unreviewed did not recall the held write to its author: $own"
 
-oml --key "$dreamer" review next >/dev/null
-oml --key "$dreamer" review verdict --memory "$artifact" --approve >/dev/null
+oml --url "$CLI_SERVER" --api-key "$dreamer" review next >/dev/null
+oml --url "$CLI_SERVER" --api-key "$dreamer" review verdict --memory "$artifact" --approve >/dev/null
 approved="$(call 5 oml_read '{"state":"promoted"}')"
 [ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
 recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
@@ -136,6 +140,6 @@ Give the agent its one key and install the plugin:
   claude plugin install oml@open-memory-lab
 
 Nothing the agent writes reaches another key until the dreamer key approves it:
-  ${CLI[*]} --server $CLI_SERVER --key <dreamer> review next
-  ${CLI[*]} --server $CLI_SERVER --key <dreamer> review verdict --memory <artifact_id> --approve
+  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review next
+  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review verdict --memory <artifact_id> --approve
 EOF

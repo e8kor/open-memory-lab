@@ -203,7 +203,10 @@ export async function startServer(): Promise<OmlServer> {
     const cliEnv = cleanEnv({ OML_CLI_CREDENTIALS: join(scratch, "credentials") });
     const oml = (...args: string[]): Record<string, unknown> => {
       try {
-        const stdout = execFileSync(CLI_BIN, ["--server", url, "--json", ...args], {
+        // The claim takes the URL alone; every verb after it, the URL and
+        // key the claim stored (ADR-0039 d15).
+        const at = args[0] === "bootstrap" ? ["--url", url] : [];
+        const stdout = execFileSync(CLI_BIN, [...at, "--json", ...args], {
           env: cliEnv,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],

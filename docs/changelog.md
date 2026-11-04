@@ -34,6 +34,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The CLI starts from one URL-and-key pair: flag, then environment, then file (ADR-0039 d15, implementation)
+
+The CLI's start settings are `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`, and the
+credentials file's `url` and `api_key`, taken as one pair from the first of those sources that
+sets either value. A source that sets one alone is refused (exit `2`) naming the other, and
+nothing is sent, so `--url` is never paired with a key from the environment or the file.
+`oml bootstrap claim` takes the URL alone and stores the pair and nothing else; a v0.3.0 file's
+`server` and `key` are read through v0.4.x and its other fields ignored, and `oml audit
+verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`. The hidden
+`--server` and `--key` print one stderr line naming their successors; `OML_CLI_SERVER` and
+`OML_CLI_KEY` are not read, and a missing start setting names whichever is set for renaming.
+
+- **Breaks:** `--key` with the URL left to the credentials file is refused, and an `OML_URL`
+  and `OML_API_KEY` exported for the plugin win over the stored admin pair; scripts pass both
+  flags or unset both variables, as the quickstart, the PoC demo and the SDK harnesses now do.
+- **Pages touched:** [cli/reference.md](cli/reference.md#start-settings),
+  [deployment.md](operations/deployment.md), the root README and the `issue-agent-key` skill.
+
 ### 2026-11-04 — A verdict without `serve_id` applies to the reviewer key's one claimed item (ADR-0039 d10, implementation)
 
 `POST /v2/review/verdicts` takes `serve_id` as optional. Omitted, the verdict applies to the one

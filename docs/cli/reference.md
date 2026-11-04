@@ -135,6 +135,36 @@ Every verb below is designed, not built; no transcript or flag on this page has 
   `oml erase`, a journalled crypto-shredding act whose honest boundary is declared in
   [audit and lineage](../architecture/audit-and-lineage.md).
 
+## Start settings
+
+The CLI starts from one URL and one API key, and the server derives everything else
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d15). Three sources can set them:
+
+| Source | URL | Key |
+|---|---|---|
+| Flags | `--url` | `--api-key` |
+| Environment | `OML_URL` | `OML_API_KEY` |
+| Credentials file | `url` | `api_key` |
+
+The pair comes from the first source in that order that sets either value; an empty value sets
+nothing. A source that sets one alone is refused (exit `2`) naming the other, and nothing is
+sent, so a key is never sent to a URL from another source: `--url` with `OML_API_KEY` set is
+refused, not paired. An environment holding an agent's pair, as the shell that starts the `oml`
+plugin's agent may, wins over the stored admin pair; run an admin verb there with both variables
+unset. The key is never printed, in a refusal or anywhere else.
+
+`oml bootstrap claim` sends no key, so it takes the URL of the first source that sets one, and
+writes `url` and `api_key`, nothing else, to the credentials file
+([owner-only](#installing-oml-and-what-differs-on-windows)). `OML_CLI_CREDENTIALS` selects the
+file, so a second server is a second file. A v0.3.0 file's `server` and `key` are read as `url`
+and `api_key` through v0.4.x, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
+`oml audit verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`.
+
+The v0.3.0 names follow [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12. `--server`
+and `--key` still answer, hidden, each printing one stderr line naming `--url` or `--api-key`,
+until v0.5.0 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
+is missing and either is set, the failure names the variable to rename.
+
 ## `oml context` — auth and endpoint
 
 The CLI keeps named contexts (endpoint URL + a reference to a key) in a local file with
@@ -222,7 +252,7 @@ export OML_URL='https://oml.example.com'
 export OML_API_KEY='oml_…'
 ```
 
-`OML_URL` is the server the CLI resolved (`--server`, `OML_CLI_SERVER` or the stored credentials),
+`OML_URL` is the server of the pair the CLI resolved ([start settings](#start-settings)),
 without `/mcp`; `OML_API_KEY` is the key value, printed this once and never again (the show-once
 ceremony). Both are single-quoted for a POSIX shell, so `eval "$(oml keys issue-agent
 claude-laptop --principal crew/agent-7 --workarea metals-crew)"` puts both into the shell that
@@ -459,9 +489,9 @@ shows it ([FR-33](../product/roadmap.md)).
 | `OML_SESSION_CONTEXT` | Unset, empty or `on` runs the verb; `off` prints nothing; any other value prints nothing and names the variable on stderr. |
 | `OML_SESSION_CONTEXT_MAX_TOKENS` | The recall's `max_tokens`: default `800`, an integer from 1 to 2000; any other value prints nothing and names the variable on stderr. Steering is never cut, so the budget bounds the hits ([token budgets](../architecture/retrieval.md#token-budgets)). At the ceiling the hit bodies are at most 8,000 bytes; with the frame, the capped claim keys and uncut steering on top, a context can still pass Claude Code's 10,000-character cap on hook context, and the header, the record lines and the framing line come first, so the 2,000-character preview Claude Code then shows still holds them ([ADR-0029](../adr/ADR-0029-session-start-hook.md) d2, d6). |
 
-The verb never uses `--server`, `--key`, `OML_CLI_SERVER` or `OML_CLI_KEY`, and never reads the
-stored credentials, so an admin key never feeds an agent's context. It prints no key value: every
-occurrence of the `OML_API_KEY` value in what it prints, stored text included, is replaced by
+The verb never uses `--url` or `--api-key`, nor the hidden `--server` and `--key`, and never
+reads the stored credentials, so an admin key never feeds an agent's context. It prints no key
+value: every occurrence of the `OML_API_KEY` value in what it prints, stored text included, is replaced by
 `[OML_API_KEY]`, in each stored field before that field is flattened or cut.
 
 **The query** is the last component of the stdin `cwd`, split at every character that is not a

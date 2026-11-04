@@ -1,27 +1,25 @@
-//! The local credentials file: endpoint + key, owner-only permissions
-//! (cli/reference.md "oml context"). The PoC keeps one context, written by
-//! `oml bootstrap claim`; storing the key value locally is the documented
-//! convenience, and the file is owner-only like the server's keyring: 0600 on
-//! Unix, one-entry protected DACL on Windows ([`crate::owner_only`]).
+//! The local credentials file: the one URL-and-key pair the CLI starts from
+//! when no flag and no environment variable sets either (ADR-0039 d15;
+//! cli/reference.md "Start settings"). `oml bootstrap claim` writes `url` and
+//! `api_key` and nothing else; storing the key value locally is the
+//! documented convenience, and the file is owner-only like the server's
+//! keyring: 0600 on Unix, one-entry protected DACL on Windows
+//! ([`crate::owner_only`]).
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// What `oml bootstrap claim` records. Every field is optional so a partial
-/// or hand-edited file still resolves what it can.
+/// The stored pair. Either field may be absent in a hand-edited file; the
+/// caller refuses a file that sets one alone. A v0.3.0 file's `server` and
+/// `key` are read as `url` and `api_key` through v0.4.x, and its `key_id`,
+/// `tenant_id` and `root_workarea_id` are ignored (ADR-0039 d15).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Credentials {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tenant_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub root_workarea_id: Option<String>,
+    #[serde(alias = "server", skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(alias = "key", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 /// `$OML_CLI_CREDENTIALS` (tests and multi-context setups) or
@@ -133,15 +131,14 @@ mod tests {
                 .expect("a looser mode");
         }
         let creds = Credentials {
-            server: Some("https://oml.example.com".to_owned()),
-            key: Some("oml_new".to_owned()),
-            ..Credentials::default()
+            url: Some("https://oml.example.com".to_owned()),
+            api_key: Some("oml_new".to_owned()),
         };
         store_at(&path, &creds).expect("stored");
         let text = std::fs::read_to_string(&path).expect("read back");
         let read: Credentials = toml::from_str(&text).expect("parses");
-        assert_eq!(read.server.as_deref(), Some("https://oml.example.com"));
-        assert_eq!(read.key.as_deref(), Some("oml_new"));
+        assert_eq!(read.url.as_deref(), Some("https://oml.example.com"));
+        assert_eq!(read.api_key.as_deref(), Some("oml_new"));
         assert!(
             !text.contains("old"),
             "nothing of the older file is left: {text}"
@@ -161,6 +158,24 @@ mod tests {
             crate::owner_only::Dacl::owner_only()
         );
         std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
+    #[test]
+    fn a_v0_3_0_credentials_file_is_read_for_its_server_and_key_only() {
+        let v0_3_0 = "server = \"https://oml.example.com\"\nkey = \"oml_admin\"\n\
+                      key_id = \"0b7e9d5c-0000-4000-8000-000000000001\"\n\
+                      tenant_id = \"0b7e9d5c-0000-4000-8000-000000000002\"\n\
+                      root_workarea_id = \"0b7e9d5c-0000-4000-8000-000000000003\"\n";
+        let read: Credentials = toml::from_str(v0_3_0).expect("a v0.3.0 file parses");
+        assert_eq!(read.url.as_deref(), Some("https://oml.example.com"));
+        assert_eq!(read.api_key.as_deref(), Some("oml_admin"));
+        let written = toml::to_string(&read).expect("serializes");
+        let fields: toml::Table = toml::from_str(&written).expect("parses back");
+        assert_eq!(
+            fields.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["api_key", "url"],
+            "only the pair is written: {written}"
+        );
     }
 
     #[test]

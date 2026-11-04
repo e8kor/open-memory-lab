@@ -20,8 +20,11 @@ follows from that.
 - Never read, print or copy the key file, and never run the two printed lines yourself.
 - Never run another command whose output carries a key value: `oml keys issue` and
   `oml bootstrap claim` print one.
-- Never pass `--key` on a command line. The CLI reads the admin key from `OML_CLI_KEY` or from the
-  credentials `oml bootstrap claim` stored; if it finds none, tell the operator and stop.
+- Never pass `--api-key` on a command line. The CLI takes its server and admin key as one pair,
+  from `OML_URL` and `OML_API_KEY` when either is set, else from the credentials
+  `oml bootstrap claim` stored. Where those two variables hold an agent's key, prefix step 4's
+  command with `env -u OML_URL -u OML_API_KEY` so the stored admin pair applies; if the CLI finds
+  no pair, tell the operator and stop.
 - Keep the key file outside every repository.
 
 ## Steps

@@ -10,6 +10,7 @@
 // as <role> must print as written rather than as markdown code.
 #![allow(rustdoc::invalid_html_tags)]
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -30,17 +31,66 @@ use oml_cli::verify::parse_verifying_key;
     about = "Open Memory Lab administration — a lab client of the same HTTP API every agent speaks (ADR-0015)."
 )]
 struct Cli {
-    /// Server URL (falls back to the stored credentials).
-    #[arg(long, global = true, env = "OML_CLI_SERVER")]
+    /// The server's URL, without /mcp. One pair with --api-key: the pair
+    /// comes from the flags, else the environment, else the credentials
+    /// file, and a source setting one alone is refused (ADR-0039 d15).
+    #[arg(long, global = true, env = "OML_URL")]
+    url: Option<String>,
+    /// The API key value, paired with --url. argv is visible to other
+    /// processes, so prefer OML_API_KEY or the credentials file.
+    #[arg(
+        long = "api-key",
+        global = true,
+        env = "OML_API_KEY",
+        hide_env_values = true
+    )]
+    api_key: Option<String>,
+    /// The v0.3.0 spelling of --url, read through v0.4.x (ADR-0039 d12).
+    #[arg(long, global = true, hide = true)]
     server: Option<String>,
-    /// API key value (falls back to OML_CLI_KEY, then the stored credentials).
-    #[arg(long, global = true, env = "OML_CLI_KEY", hide_env_values = true)]
+    /// The v0.3.0 spelling of --api-key, read through v0.4.x (ADR-0039 d12).
+    #[arg(long, global = true, hide = true)]
     key: Option<String>,
     /// Emit the server's typed response as one JSON document on stdout.
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
     command: Command,
+    /// Each start setting by the source that set it, filled from the parsed
+    /// matches, which alone tell a flag from the environment.
+    #[arg(skip)]
+    start: Start,
+}
+
+/// The start settings each source set, an empty value setting nothing
+/// (ADR-0039 d15).
+#[derive(Debug, Default)]
+struct Start {
+    flag_url: Option<String>,
+    flag_key: Option<String>,
+    env_url: Option<String>,
+    env_key: Option<String>,
+}
+
+impl Start {
+    /// Splits `cli`'s `--url` and `--api-key` by where clap took each from;
+    /// the hidden `--server` and `--key` count as the flags they were
+    /// renamed to.
+    fn of(cli: &Cli, matches: &clap::ArgMatches) -> Self {
+        use clap::parser::ValueSource;
+        let set = |v: &Option<String>| v.clone().filter(|s| !s.is_empty());
+        let from = |id: &str, source: ValueSource| matches.value_source(id) == Some(source);
+        let pick = |id: &str, v: &Option<String>, source: ValueSource| {
+            if from(id, source) { set(v) } else { None }
+        };
+        Self {
+            flag_url: pick("url", &cli.url, ValueSource::CommandLine).or_else(|| set(&cli.server)),
+            flag_key: pick("api_key", &cli.api_key, ValueSource::CommandLine)
+                .or_else(|| set(&cli.key)),
+            env_url: pick("url", &cli.url, ValueSource::EnvVariable),
+            env_key: pick("api_key", &cli.api_key, ValueSource::EnvVariable),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -400,7 +450,8 @@ struct VerifyChainArgs {
     /// input, confirmed out of band (chain-format.md).
     #[arg(long = "signing-key", env = "OML_CLI_SIGNING_KEY")]
     signing_keys: Vec<String>,
-    /// Tenant, by id or name (defaults to the stored credentials' tenant).
+    /// Tenant, by id or name (defaults to the key's own, read through
+    /// GET /v2/whoami).
     #[arg(long)]
     tenant: Option<String>,
 }
@@ -420,24 +471,104 @@ fn parse_grant(s: &str) -> Result<(String, String), String> {
 // Context resolution
 // ---------------------------------------------------------------------------
 
-/// defaults < credentials file < flags/environment (clap already applied the
-/// env vars), mirroring the server's own precedence law.
+/// The client of one URL-and-key pair, taken from the first source that sets
+/// either value: the flags, then the environment, then the credentials file.
+/// A source setting one alone is refused naming the other, so a key is never
+/// sent to a URL from another source (ADR-0039 d15).
 fn resolve(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
-    let server = cli
-        .server
+    let file = || {
+        creds::path().map_or_else(
+            |_| "the credentials file".to_owned(),
+            |p| format!("the credentials file {}", p.display()),
+        )
+    };
+    let sources = [
+        (
+            "--url",
+            "--api-key",
+            &cli.start.flag_url,
+            &cli.start.flag_key,
+        ),
+        (
+            "OML_URL",
+            "OML_API_KEY",
+            &cli.start.env_url,
+            &cli.start.env_key,
+        ),
+    ];
+    for (url_name, key_name, url, key) in sources {
+        match (url, key) {
+            (Some(url), Some(key)) => return Ok(Client::new(url.clone(), Some(key.clone()))),
+            (Some(_), None) => {
+                return Err(missing(&format!("{url_name} is set without {key_name}")));
+            }
+            (None, Some(_)) => {
+                return Err(missing(&format!("{key_name} is set without {url_name}")));
+            }
+            (None, None) => {}
+        }
+    }
+    match (&stored.url, &stored.api_key) {
+        (Some(url), Some(key)) => Ok(Client::new(url.clone(), Some(key.clone()))),
+        (Some(_), None) => Err(missing(&format!("{} sets url without api_key", file()))),
+        (None, Some(_)) => Err(missing(&format!("{} sets api_key without url", file()))),
+        (None, None) => Err(missing(
+            "no URL and API key: pass --url and --api-key, set OML_URL and OML_API_KEY, or run \
+             `oml bootstrap claim`",
+        )),
+    }
+}
+
+/// The client of `oml bootstrap claim`, which sends no key: the URL of the
+/// first source that sets one (ADR-0039 d15).
+fn resolve_url(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
+    let url = cli
+        .start
+        .flag_url
         .clone()
-        .or_else(|| stored.server.clone())
-        .ok_or_else(|| {
-            CliError::local(
-                "no server: pass --server, set OML_CLI_SERVER, or run `oml bootstrap claim`",
-            )
-        })?;
-    let key = cli.key.clone().or_else(|| stored.key.clone());
-    Ok(Client::new(server, key))
+        .or_else(|| cli.start.env_url.clone())
+        .or_else(|| stored.url.clone())
+        .ok_or_else(|| missing("no URL: pass --url or set OML_URL"))?;
+    Ok(Client::new(url, None))
+}
+
+/// A start setting is missing: `why`, the one-source rule, and each v0.3.0
+/// variable that is set, named for renaming and never read (ADR-0039 d12,
+/// d15).
+fn missing(why: &str) -> CliError {
+    let mut message = format!(
+        "{why}; a URL and its key come from one source, the flags, the environment or the \
+         credentials file (cli/reference.md \"Start settings\")"
+    );
+    for (old, new) in [
+        ("OML_CLI_SERVER", "OML_URL"),
+        ("OML_CLI_KEY", "OML_API_KEY"),
+    ] {
+        if std::env::var_os(old).is_some() {
+            let _ = write!(message, "; {old} is not read since v0.4.0: rename it {new}");
+        }
+    }
+    CliError::local(message)
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let mut cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
+    cli.start = Start::of(&cli, &matches);
+    // The hook reads neither flag, so it names neither (ADR-0029 d4).
+    if !matches!(cli.command, Command::Hook { .. }) {
+        for (old, new, used) in [
+            ("--server", "--url", cli.server.is_some()),
+            ("--key", "--api-key", cli.key.is_some()),
+        ] {
+            if used {
+                eprintln!("warning: {old} is renamed {new}; v0.5.0 removes {old} (ADR-0039 d12)");
+            }
+        }
+    }
     match run(&cli) {
         Ok(code) => code,
         Err(CliError::Refused {
@@ -471,8 +602,8 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
-    // The hook reads OML_URL and OML_API_KEY alone, so it runs before the
-    // stored admin credentials are loaded, and ignores --server and --key
+    // The hook reads OML_URL and OML_API_KEY itself, so it runs before the
+    // stored admin credentials are loaded, and ignores --url and --api-key
     // (ADR-0029 d4).
     if let Command::Hook {
         command: HookCommand::SessionStart,
@@ -491,7 +622,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     principal,
                 },
         } => {
-            let client = resolve(cli, &stored)?;
+            let client = resolve_url(cli, &stored)?;
             let mut body = json!({ "enrollment_token": token, "name": key_name });
             if let Some(name) = tenant_name {
                 body["tenant_name"] = json!(name);
@@ -508,11 +639,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 },
             )?;
             let path = creds::store(&Credentials {
-                server: Some(client.server().to_owned()),
-                key: response["value"].as_str().map(ToOwned::to_owned),
-                key_id: response["key_id"].as_str().map(ToOwned::to_owned),
-                tenant_id: response["tenant_id"].as_str().map(ToOwned::to_owned),
-                root_workarea_id: response["root_workarea_id"].as_str().map(ToOwned::to_owned),
+                url: Some(client.server().to_owned()),
+                api_key: response["value"].as_str().map(ToOwned::to_owned),
             })
             .map_err(CliError::Local)?;
             if cli.json {
@@ -1283,17 +1411,7 @@ fn run_verify_chain(
     stored: &Credentials,
     args: &VerifyChainArgs,
 ) -> Result<ExitCode, CliError> {
-    resolve(cli, stored)?;
-    let tenant = args
-        .tenant
-        .clone()
-        .or_else(|| stored.tenant_id.clone())
-        .ok_or_else(|| {
-            CliError::local(
-                "verification reconstructs the signed bytes, which include the tenant id: pass \
-                 --tenant or run `oml bootstrap claim` first (chain-format.md signed fields)",
-            )
-        })?;
+    let client = resolve(cli, stored)?;
     if args.signing_keys.is_empty() {
         return Err(CliError::local(
             "the verifier holds an authenticated key set, confirmed out of band — the chain \
@@ -1304,6 +1422,19 @@ fn run_verify_chain(
     for key in &args.signing_keys {
         parse_verifying_key(key).map_err(CliError::Local)?;
     }
+    // The signed bytes include the tenant id; the key's own is derived
+    // through whoami, as the credentials file holds only the pair
+    // (chain-format.md signed fields; ADR-0039 d15).
+    let tenant = match &args.tenant {
+        Some(tenant) => tenant.clone(),
+        None => {
+            let (_, me) = client.get("/v2/whoami")?;
+            me["tenant"]["id"]
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| CliError::local("whoami names no tenant: pass --tenant"))?
+        }
+    };
     let mode = if args.genesis { " from genesis" } else { "" };
     Err(CliError::local(format!(
         "live verification of tenant {tenant}{mode} reads the chain export (kind: chain), which \

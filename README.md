@@ -113,8 +113,8 @@ is shown once, so store them when they're printed.
 To review what agents have written:
 
 ```sh
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> review next
-docker compose exec oml-server oml --server http://127.0.0.1:8080 --key <reviewer key> \
+docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> review next
+docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> \
     review verdict --memory <artifact_id> --approve
 ```
 
