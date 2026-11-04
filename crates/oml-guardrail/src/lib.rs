@@ -15,6 +15,7 @@ mod argument;
 mod cache;
 mod canonical;
 mod check;
+mod frame;
 mod glob;
 mod rule;
 mod shell;
@@ -25,6 +26,7 @@ pub use cache::{
     encode_cache,
 };
 pub use check::{Cause, Decision, NO_CACHE_WARNING, ToolCall, Uncheckable, Verdict, check, decide};
+pub use frame::{Frame, FrameOptions, over_cap_sentence, render_frame};
 pub use glob::Glob;
 pub use rule::{HostPattern, Matcher, Rule, RuleDefect, ToolClass};
 pub use shell::{ShellRefusal, ShellSegment, shell_command, shell_segments};

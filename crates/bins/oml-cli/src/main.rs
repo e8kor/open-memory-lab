@@ -236,6 +236,15 @@ enum HookCommand {
     /// Delete this session's failure-recall cache; prints nothing and
     /// always exits 0 (ADR-0038).
     SessionEnd,
+    /// Print the guardrails in force for this agent's key in their own
+    /// frame, and at SessionStart write the session's rule cache; a failure
+    /// is a message the user sees, exit 0 (proposed ADR-0037 d6, d7, d9).
+    Guardrails,
+    /// Check one tool call against the session's rule cache: deny, ask or
+    /// nothing, never allow, with no network call; no cache decides nothing
+    /// and warns, and a failure exits 2, which blocks the call (proposed
+    /// ADR-0037 d8, d9).
+    PreToolUse,
 }
 
 #[derive(Subcommand)]
@@ -891,6 +900,31 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
     // and ignore --url and --api-key (ADR-0029 d4, ADR-0040 d3).
     if let Command::Hook { command } = &cli.command {
         return Ok(match command {
+            HookCommand::Guardrails => run_hook(
+                "guardrails",
+                hook::DEADLINE,
+                "no guardrails were loaded",
+                |var, stdin| oml_cli::guardrails::guardrails(var, stdin),
+            ),
+            HookCommand::PreToolUse => {
+                use std::io::Write as _;
+                let var = |name: &str| std::env::var(name).ok();
+                match oml_cli::guardrails::pre_tool_use(&var, &mut std::io::stdin().lock()) {
+                    Ok(document) => {
+                        if !document.is_empty() {
+                            let _ = writeln!(std::io::stdout(), "{document}");
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(why) => {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "oml hook pre-tool-use: {why}, so the call is blocked"
+                        );
+                        ExitCode::from(2)
+                    }
+                }
+            }
             HookCommand::SessionStart => run_hook(
                 "session-start",
                 hook::DEADLINE,
