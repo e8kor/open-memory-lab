@@ -150,6 +150,9 @@ and `oml_server` (d2).
    ```sql
    SELECT datname FROM pg_database WHERE datdba = '<role>'::regrole;
    REASSIGN OWNED BY <role> TO <owner>;
+   -- the kept role connected as the database's owner; once ownership moves it
+   -- holds CONNECT only if granted, and d2 grants the serving role CONNECT:
+   GRANT CONNECT ON DATABASE <database> TO <role>;
    -- when the kept role was granted CREATE on the database, which d2 refuses it:
    REVOKE CREATE ON DATABASE <database> FROM <role>;
    ```
