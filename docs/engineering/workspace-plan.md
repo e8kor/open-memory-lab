@@ -25,6 +25,7 @@ open-memory-lab/
 ├── deny.toml                     # cargo-deny policy (ci-and-toolchain.md)
 ├── migrations/                   # sqlx migrations, NNNN_name (postgres-schema.md, Migrations)
 ├── crates/
+│   ├── oml-guardrail/            # leaf: the oml-gr/1 rule grammar, matcher, check and rule cache (ADR-0037 d18 Q10)
 │   ├── oml-domain/               # the pure core — every constitution invariant, no I/O
 │   ├── oml-app/                  # port traits + use-cases driving the domain through them
 │   ├── adapters/
@@ -46,7 +47,7 @@ open-memory-lab/
 │       ├── oml-lakewriter/       # outbox read side + lake port — keyless
 │       ├── oml-reconciler/       # read-only ports
 │       ├── oml-indexer/          # embedder port + serving-side read
-│       └── oml-cli/              # thin HTTP client — composes no port trait, no domain crate
+│       └── oml-cli/              # thin HTTP client — composes no port trait, no domain crate; links oml-guardrail alone
 ├── testing/
 │   ├── oml-port-contracts/       # the port-law contract suites (test-strategy.md)
 │   ├── oml-conformance/          # the FR-22 profile-parameterized binary (test-strategy.md)
@@ -75,6 +76,7 @@ graph LR
     subgraph core["application and domain"]
         APP[oml-app]
         DOM[oml-domain]
+        GR[oml-guardrail]
     end
     subgraph driven["driven adapters and plugins"]
         PG[oml-pg]
@@ -97,6 +99,8 @@ graph LR
     HTTP --> APP
     MCP --> APP
     APP --> DOM
+    DOM --> GR
+    CLI --> GR
     PG --> APP
     LAKE --> APP
     OBJ --> APP
@@ -134,10 +138,14 @@ Three facts the graph encodes, restated as sentences because they are load-beari
   the signer composition and `oml-lakewriter` does not depend on `oml-kms` — "a follower cannot
   sign" and "the lake-writer is keyless" are dependency-graph facts plus secrets never mounted
   ([ADR-0006](../adr/ADR-0006-pure-rust.md) d5, d6).
-- **`oml-cli` has no inward edge.** It is a `/v1`-and-`/v2` HTTP client compiled from the same
-  workspace for toolchain convenience, and it composes no port trait and no domain crate
-  ([ADR-0006](../adr/ADR-0006-pure-rust.md) d6) — the dotted line is network traffic, not a
-  dependency.
+- **`oml-cli` has no inward edge but one leaf.** It is a `/v1`-and-`/v2` HTTP client compiled
+  from the same workspace for toolchain convenience, and it composes no port trait and no domain
+  crate ([ADR-0006](../adr/ADR-0006-pure-rust.md) d6) — the dotted line is network traffic, not a
+  dependency. The one crate it links is `oml-guardrail`, a leaf that links no workspace crate and
+  holds the guardrail rule grammar, the matcher, the check and the rule cache's codec, so the
+  agent plugin's hooks and the server's admission read a rule the same way; `oml-domain`
+  re-exports it (proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+  d18 Q10, amending ADR-0006 d6 by that leaf).
 
 ## Workspace manifest policy
 
