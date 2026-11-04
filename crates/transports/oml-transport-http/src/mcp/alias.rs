@@ -180,6 +180,7 @@ where
         args: Value,
     ) -> Result<Value, Value> {
         let args: RememberArgs = parse_args(args)?;
+        super::refuse_guardrail_kind(args.kind.as_deref())?;
         let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = json!({

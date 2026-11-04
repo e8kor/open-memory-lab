@@ -44,6 +44,7 @@ use uuid::Uuid;
 use oml_app::App;
 use oml_app::app::Caller;
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
+use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
@@ -54,9 +55,10 @@ use oml_app::ports::{
 };
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
-    CrewRecord, CrewUpdate, GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail,
-    ListRequest, NamedServe, RecallRequest, ServedMemory, SubmitRequest, SubmitVerb,
-    SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
+    CrewRecord, CrewUpdate, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet,
+    IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, NamedServe, RecallRequest, ServedMemory,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -80,6 +82,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories/recall"),
     ("GET", "/v1/memories/{artifact_id}"),
     ("POST", "/v1/memories/{artifact_id}/supersede"),
+    ("GET", "/v1/guardrails"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
     ("POST", "/v2/keys"),
@@ -262,6 +265,7 @@ where
             ("POST", "/v1/memories/recall") => post(Self::recall),
             ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
             ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
+            ("GET", "/v1/guardrails") => get(Self::guardrails),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
             ("POST", "/v2/keys") => post(Self::issue_key),
@@ -451,8 +455,8 @@ where
             body: text,
             workarea,
             derives_from: req.derives_from,
-            severity: None,
-            rule: None,
+            severity: parse_severity(req.severity.as_deref())?,
+            rule: req.rule,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
@@ -672,6 +676,59 @@ where
         Ok(json_response(StatusCode::OK, &response))
     }
 
+    /// `GET /v1/guardrails`: the applicable guardrail set at the scope node,
+    /// the query's `workarea` or the key's default, under the key's reader
+    /// access and the `guardrail_scope` its issuance set (proposed ADR-0037
+    /// d4, d5, d7). The query takes `workarea` alone: a scope, or any other
+    /// parameter, is refused naming it, so nothing the client sends changes
+    /// the scope (d4, "never on the client").
+    async fn guardrails(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::guardrails_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    async fn guardrails_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let acting = acting(headers, None)?;
+        refuse_workarea_header(headers, "workarea")?;
+        let mut workarea = None;
+        for (name, value) in params {
+            match name.as_str() {
+                "workarea" if workarea.is_none() => workarea = Some(reference("workarea", value)?),
+                "workarea" => {
+                    return Err(ApiError::validation(
+                        "the query parameter workarea is given more than once",
+                    ));
+                }
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "{other} is not a parameter of this read: it takes workarea alone, and the guardrail scope is the key's, set at issuance"
+                    ))
+                    .with_details(json!({ "field": other })));
+                }
+            }
+        }
+        let set = st
+            .app
+            .guardrails(acting.bearer(), &GuardrailRequest { workarea })
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
+    }
+
     async fn supersede(
         State(st): State<Self>,
         rid: Rid,
@@ -737,8 +794,8 @@ where
             reason: req.reason,
             workarea: optional_reference("/workarea", req.workarea.as_deref())?,
             refuse_vocabulary_target,
-            severity: None,
-            rule: None,
+            severity: parse_severity(req.severity.as_deref())?,
+            rule: req.rule,
         };
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
@@ -1011,9 +1068,7 @@ where
             crew,
             grants,
             connect_code: req.connect_code,
-            // Not yet on the wire (proposed ADR-0037 d14): every key this
-            // route issues takes the issuance default, ancestors.
-            guardrail_scope: None,
+            guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
@@ -1685,6 +1740,12 @@ struct SubmitBody {
         reason = "declared data, accepted; the PoC journals real time only"
     )]
     simulated_time: Option<String>,
+    /// A guardrail's severity (proposed ADR-0037 d2, d10).
+    #[serde(default)]
+    severity: Option<String>,
+    /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
+    #[serde(default)]
+    rule: Option<Value>,
 }
 
 /// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
@@ -1739,6 +1800,12 @@ struct SupersedeBody {
     term_status: Option<Value>,
     #[serde(default)]
     successors: Option<Value>,
+    /// A guardrail successor's severity (proposed ADR-0037 d10).
+    #[serde(default)]
+    severity: Option<String>,
+    /// A guardrail successor's optional rule (proposed ADR-0037 d10).
+    #[serde(default)]
+    rule: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -1800,6 +1867,10 @@ struct KeyIssueBody {
     /// (ADR-0031 d7).
     #[serde(default)]
     connect_code: bool,
+    /// The key's guardrail scope; omitted, the issuance default (proposed
+    /// ADR-0037 d4).
+    #[serde(default)]
+    guardrail_scope: Option<String>,
 }
 
 /// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,
@@ -2234,6 +2305,7 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "crew_id": issued.crew_id,
         "default_workarea_id": issued.default_workarea,
         "held_by": issued.held_by.map(HeldBy::as_str),
+        "guardrail_scope": issued.guardrail_scope.as_str(),
         "label": label,
         "expiry": Value::Null,
         "revoked_at": Value::Null,
@@ -2319,6 +2391,7 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
         "crew_id": key.crew_id,
         "default_workarea_id": key.default_workarea,
         "held_by": detail.held_by.map(HeldBy::as_str),
+        "guardrail_scope": detail.guardrail_scope.as_str(),
         "expiry": Value::Null,
         "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
@@ -2359,6 +2432,9 @@ fn whoami_json(whoami: &Whoami) -> Value {
         })),
         "crew": whoami.crew.as_ref().map(named),
         "grants": whoami.grants.iter().map(whoami_grant_json).collect::<Vec<_>>(),
+        // The scope the key's issuance set (proposed ADR-0037 d5, as
+        // ADR-0039 d15 reserved).
+        "guardrail_scope": key.guardrail_scope.as_str(),
     })
 }
 
@@ -2456,17 +2532,41 @@ fn parse_state(state: &str) -> Result<MemoryStatus, ApiError> {
 
 /// The submit body's kind, stored as sent (http-api.md submit; ADR-0025
 /// d8); an unknown one is refused, never coerced to `memory`. Kind
-/// `guardrail` is outside this route's contract until its fields are on the
-/// wire (proposed ADR-0037 d14), so it is refused by name, never stored
-/// without its severity.
+/// `guardrail` carries its `severity` and `rule` beside it (proposed
+/// ADR-0037 d10).
 fn parse_kind(kind: &str) -> Result<MemoryKind, ApiError> {
-    match MemoryKind::parse(kind) {
-        Some(MemoryKind::Guardrail) => Err(ApiError::validation(
-            "kind guardrail is not on this route yet: its severity and rule are not in the request body, so it is refused, never stored without them",
-        )),
-        Some(kind) => Ok(kind),
-        None => Err(ApiError::validation(format!("unknown kind {kind:?}"))),
-    }
+    MemoryKind::parse(kind).ok_or_else(|| ApiError::validation(format!("unknown kind {kind:?}")))
+}
+
+/// A guardrail's `severity`, `never`, `must` or `should`; any other word is
+/// refused naming the field, never coerced (proposed ADR-0037 d2). Whether
+/// the kind admits one is the use case's to decide (d10).
+fn parse_severity(severity: Option<&str>) -> Result<Option<Severity>, ApiError> {
+    severity
+        .map(|word| {
+            Severity::parse(word).ok_or_else(|| {
+                ApiError::validation(format!(
+                    "severity must be never, must or should, not {word:?}"
+                ))
+                .with_details(json!({ "field": "/severity" }))
+            })
+        })
+        .transpose()
+}
+
+/// A key's `guardrail_scope`, `workarea` or `ancestors`; any other word,
+/// `off` included, is refused naming the field (proposed ADR-0037 d4).
+fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, ApiError> {
+    scope
+        .map(|word| {
+            GuardrailScope::parse(word).ok_or_else(|| {
+                ApiError::validation(format!(
+                    "guardrail_scope must be workarea or ancestors, not {word:?}: no off value exists, and an admin who wants none issues the key where none applies"
+                ))
+                .with_details(json!({ "field": "/guardrail_scope" }))
+            })
+        })
+        .transpose()
 }
 
 /// The recall `kinds` filter: absent is no filter, and a sent one names at
@@ -2578,7 +2678,55 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     if include_text && let Some(obj) = value.as_object_mut() {
         obj.insert("text".to_owned(), Value::String(m.body.clone()));
     }
+    // A guardrail version's own fields, and on a held one the sentence
+    // every reader of it is told (proposed ADR-0037 d10, d14).
+    if let (Some(fields), Some(obj)) = (m.guardrail.as_deref(), value.as_object_mut()) {
+        obj.insert("severity".to_owned(), json!(fields.severity.as_str()));
+        obj.insert(
+            "rule".to_owned(),
+            fields.rule.clone().unwrap_or(Value::Null),
+        );
+    }
+    if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
+        obj.insert("load_warning".to_owned(), json!(warning));
+    }
     value
+}
+
+/// openapi.yaml `GuardrailSet`: the applicable set at the scope node, its
+/// digest and cap flag, each served guardrail with its text, rule, depth,
+/// verdicts (attestation and time, never a reviewer key) and conflicts, and
+/// the caller's own held guardrails by key and version (proposed ADR-0037
+/// d3, d5, d7).
+fn guardrail_set_json(set: &GuardrailSet) -> Value {
+    json!({
+        "scope_node": set.scope_node,
+        "guardrail_scope": set.guardrail_scope.as_str(),
+        "set_digest": set.set_digest,
+        "over_cap": set.over_cap,
+        "guardrails": set.guardrails.iter().map(|g| json!({
+            "artifact_id": g.artifact_id,
+            "claim_key": g.claim_key,
+            "version": g.version,
+            "workarea_id": g.workarea_id,
+            "workarea_path": g.workarea_path,
+            "depth": g.depth,
+            "severity": g.severity.as_str(),
+            "text": g.body,
+            "rule": g.rule,
+            "tokens": g.tokens,
+            "promoted_at": g.promoted_at.as_str(),
+            "verdicts": g.verdicts.iter().map(|v| json!({
+                "held_by": v.held_by.as_str(),
+                "at": v.at.as_str(),
+            })).collect::<Vec<_>>(),
+            "conflict": g.conflict,
+        })).collect::<Vec<_>>(),
+        "own_held": set.own_held.iter().map(|h| json!({
+            "claim_key": h.claim_key,
+            "version": h.version,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// openapi.yaml `RecallBudget`: how the `max_tokens` cut was applied

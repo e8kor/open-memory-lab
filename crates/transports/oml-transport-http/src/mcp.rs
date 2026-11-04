@@ -452,6 +452,7 @@ where
     /// `request.validation` naming its field (ADR-0039 d3, ADR-0025 d16).
     async fn tool_write(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
         let args: WriteArgs = parse_args(args)?;
+        refuse_guardrail_kind(args.kind.as_deref())?;
         let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
@@ -944,6 +945,20 @@ fn refusal(error: ApiError) -> Value {
 /// ADR-0025 d16).
 fn field_refusal(field: &str, message: &str) -> Value {
     refusal(ApiError::validation(message).with_details(json!({ "field": field })))
+}
+
+/// A plugin write of kind `guardrail`, refused naming `kind`: a guardrail is
+/// written and superseded on the HTTP API only, so no tool carries its
+/// `severity` or `rule` (proposed ADR-0037 d10, amending ADR-0039 d3). The
+/// hidden aliases refuse it the same way.
+pub(crate) fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
+    if kind == Some("guardrail") {
+        return Err(field_refusal(
+            "/kind",
+            "kind guardrail is refused here: a guardrail is written with its severity and rule on the HTTP API (POST /v1/memories) or the CLI, and reviewed before it binds",
+        ));
+    }
+    Ok(())
 }
 
 /// The ring handler's response, as the success body or the refusal body.

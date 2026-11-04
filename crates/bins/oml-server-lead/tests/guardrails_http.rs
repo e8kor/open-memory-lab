@@ -268,7 +268,7 @@ async fn a_guardrail_without_a_severity_is_refused_naming_severity() {
         Some(&json!({"kind": "guardrail", "body": "Never push to main.", "workarea": t.crew})),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "request.validation", "{body}");
     assert_eq!(body["error"]["details"]["field"], "/severity", "{body}");
 }
@@ -292,7 +292,7 @@ async fn severity_and_rule_are_refused_on_any_other_kind_naming_the_field() {
             Some(&body),
         )
         .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refusal}");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refusal}");
         assert_eq!(
             refusal["error"]["details"]["field"],
             format!("/{field}"),
@@ -314,7 +314,7 @@ async fn an_unknown_severity_is_refused_naming_severity() {
         Some(&json!({"kind": "guardrail", "severity": "may", "body": "Push freely.", "workarea": t.crew})),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["details"]["field"], "/severity", "{body}");
 }
 
@@ -367,7 +367,7 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     )
     .await;
     let served = approve_next(&router, &t, 1).await;
-    let warning = served["memory"]["load_warning"]
+    let warning = served["item"]["load_warning"]
         .as_str()
         .unwrap_or_else(|| panic!("no load_warning in {served}"));
     assert!(warning.contains("will load this rule"), "{warning}");
@@ -439,7 +439,7 @@ async fn no_parameter_or_field_changes_the_guardrail_scope() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "request.validation", "{body}");
     assert_eq!(
         body["error"]["details"]["field"], "guardrail_scope",
@@ -499,7 +499,7 @@ async fn a_guardrail_scope_other_than_workarea_or_ancestors_is_refused() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(
         body["error"]["details"]["field"], "/guardrail_scope",
         "{body}"

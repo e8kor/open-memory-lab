@@ -507,6 +507,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only | served |
 | `GET /v1/memories/{artifact_id}` | reader; the calling key fetches its own rows in any state | served |
 | `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement | served |
+| `GET /v1/guardrails` | reader on the scope node; the set under the key's reader access and `guardrail_scope` ([Guardrails](#guardrails-get-v1guardrails)) | served |
 | `POST /v1/attachments/uploads` | writer | designed |
 | `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) | designed |
 | `POST /v1/attachments/uploads/{session_id}/complete` | writer (session owner) | designed |
@@ -831,12 +832,67 @@ are designed fields of this operation, each answering its v0.3.0 code until it i
 over: an omitted `kind` makes the successor take the target's, and an omitted `attachments` or
 `terms` leaves the successor with none — nothing else is inherited from the target.
 
+**A guardrail successor** re-sends its `severity`, and its `rule` if it keeps one; a retirement
+sends neither ([Guardrails](#guardrails-get-v1guardrails)).
+
 **Retirement.** The same call with `retirement: true` proposes retiring the claim, open to the
 same keys as any supersession ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
 d11). `body` is required and states why; it is scanned, normalized, bounded and digested like
 any body, and it is what the reviewer judges. Its refusals are [errors](errors.md)'
 `request.validation` and `workarea.frozen` rows; what a retired claim serves is declared on
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+
+### Guardrails — `GET /v1/guardrails`
+
+*Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md); built on its branch, not released · [releases](../product/releases.md)*
+
+A guardrail is a claim of kind `guardrail`: a rule for every agent at its workarea or below,
+with a `severity` (`never`, `must` or `should`) and an optional `rule` in the `oml-gr/1` grammar,
+whose effect is `deny` or `ask`. It is written on `POST /v1/memories` with `kind: "guardrail"`,
+`severity` and, optionally, `rule`, and superseded the same way; both fields are refused on any
+other kind and on a retirement, and `severity` is required on every other guardrail version, each
+`request.validation` naming the field. A rule outside `oml-gr/1`, an `allow`, a `should` that
+denies, a text over 300 bytes or a rule over 160 is vetoed, `submission.scan_veto` with the
+finding `guardrail.rule_unparsable` or `guardrail.too_long`. A guardrail ratifies under its
+workarea's review policy like any claim and never self-signs; the serve of a held one carries a
+`load_warning`, and a claim item of kind `guardrail` carries its `severity` and `rule`. The agent
+plugin's `oml_write` refuses `kind: guardrail` and a `replaces` naming one
+([ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d10).
+
+This read serves the guardrails in force at the scope node: the query's `workarea`, by id or
+name, within the key's grants, else the key's default workarea. Reader on that node is required,
+as for recall. The set is the promoted guardrail tips on the node and, when the key's
+`guardrail_scope` is `ancestors`, on each of its ancestors, each only where the key's reader
+access covers that node; `workarea` serves the node's own alone. The scope is the key's, set at
+issuance ([Keys](#keys-grants-denials)): the read takes `workarea` and nothing else, and any
+other parameter, `guardrail_scope` included, is `request.validation` naming it (d4). Recall never
+serves kind `guardrail`.
+
+```json
+{
+  "scope_node": "fbbb41c5-…",
+  "guardrail_scope": "ancestors",
+  "set_digest": "sha256:4b1f…",
+  "over_cap": false,
+  "guardrails": [{
+    "artifact_id": "…", "claim_key": "no-push-main", "version": 2,
+    "workarea_id": "…", "workarea_path": "universe.eng", "depth": 1,
+    "severity": "never", "text": "Never push to main.",
+    "rule": {"rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*", "main"], "effect": "deny"},
+    "tokens": 5, "promoted_at": "2026-11-04T10:00:00Z",
+    "verdicts": [{"held_by": "human", "at": "2026-11-04T10:00:00Z"}],
+    "conflict": []
+  }],
+  "own_held": [{"claim_key": "tests-first", "version": 1}]
+}
+```
+
+The order is severity, then depth from the root, `promoted_at` and `artifact_id`, never a query;
+rows of one `claim_key` with different severities each name the others in `conflict`. Each
+verdict names its reviewer's attestation and time, never its key. Over twelve, the set is served
+whole with `over_cap: true`. `own_held` lists the caller's own held guardrails in the chain by
+key and version, at most five, never their text. `set_digest` is opaque; a client only compares
+it.
 
 ## Attachments
 
@@ -1081,8 +1137,8 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 | Endpoint | Does |
 |---|---|
-| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). |
-| `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, grants, denials, epoch, issuance/revocation events; `credential` (`bearer` or `connection`) and the key's open and revoked `connections`, each `{connection_id, client_id, client_kind, redirect_uri, resource, state, revoked_cause}`, an `authorized` one not listed (whether a connection is live, its client's name and its opening and revocation times are designed). Never values, never a token. As built, `GET /v2/keys/{key}` serves the detail. A revoked or expired key's name still resolves here. |
+| `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?, guardrail_scope?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). `guardrail_scope`, `workarea` or `ancestors` (the default), bounds which guardrails the key loads ([Guardrails](#guardrails-get-v1guardrails)), is journalled in `key.issued` and echoed in the `201`; any other value, `off` included, is `request.validation` naming it (planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d4). |
+| `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, `guardrail_scope`, grants, denials, epoch, issuance/revocation events; `credential` (`bearer` or `connection`) and the key's open and revoked `connections`, each `{connection_id, client_id, client_kind, redirect_uri, resource, state, revoked_cause}`, an `authorized` one not listed (whether a connection is live, its client's name and its opening and revocation times are designed). Never values, never a token. As built, `GET /v2/keys/{key}` serves the detail. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
 | `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: `422 oauth.connect_refused` (`details.reason: connector_key`); a fresh connection is a new code, a fresh identity a new connector key ([connections](../architecture/roles-and-keys.md#connections)). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
 | `POST /v2/keys/{key}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
@@ -1101,7 +1157,8 @@ Any live key reads its own record, whatever its role, so a client started from i
 alone derives everything else from this one read ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 d15): `getKey` is admin-only and needs the key's own reference, and the workarea read names no
 tenant, role or key. The answer is `{key_id, name, role, principal, held_by, tenant,
-default_workarea, crew, grants}`: each reference is `{id, name}`, the default workarea also carries
+default_workarea, crew, grants, guardrail_scope}`, the last planned for v0.5.1 (proposed
+ADR-0037 d5): each reference is `{id, name}`, the default workarea also carries
 its derived `path`, `held_by` is the attestation as the key's row stores it, and `grants` are the
 key's stored grants as `GET /v2/keys/{key}` lists them, each `{grant_id, workarea_node_id, role,
 epoch}` without its per-grant `deny` masks. `tenant`, `default_workarea` and `crew`

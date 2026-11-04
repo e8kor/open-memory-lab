@@ -3309,10 +3309,10 @@ where
     /// ids, the read log's input as recall's does (ADR-0025 d9).
     pub async fn guardrails(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &GuardrailRequest,
     ) -> Result<GuardrailSet, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, "guardrails")?;
         let scope_node = self.target_workarea(key, req.workarea.as_ref()).await?;
