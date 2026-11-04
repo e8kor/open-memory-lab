@@ -159,7 +159,7 @@ no key, so it takes the URL of the first source that sets one, and writes `url` 
 nothing else, to the credentials file
 ([owner-only](#installing-oml-and-what-differs-on-windows)). `OML_CLI_CREDENTIALS` selects the
 file, so a second server is a second file. A v0.3.0 file's `server` and `key` are read as `url`
-and `api_key` through v0.4.x, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
+and `api_key` through v0.5.0, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
 `oml audit verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`.
 
 `oml doctor` checks the pair alone and refuses nothing: it reports which source set the URL and
@@ -171,7 +171,7 @@ setting; no URL in the first source sends nothing and is a `fail` (exit `1`).
 
 The v0.3.0 names follow [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12. `--server`
 and `--key` still answer, hidden, each printing one stderr line naming `--url` or `--api-key`,
-until v0.5.0 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
+until v0.5.1 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
 is missing and either is set, the failure names the variable to rename.
 
 ## `oml login` and `oml doctor` — storing and checking the pair
@@ -475,7 +475,7 @@ arguments choose is refused by name before anything is sent (exit `2`), as `oml_
 | `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` | One page of `GET /v2/events`: the journal's events within the key's reader access on the workarea, the key's default when omitted, digest-only, with the head seq and the `next_after_seq` to pass back as `--after-seq`. A feed for audit, not a verification surface: `oml audit verify-chain` reads the chain export. |
 
 **The v0.3.0 verbs.** `oml submit`, `oml recall`, `oml supersede` and `oml review verdict` still
-answer, hidden from `--help`, until v0.5.0 removes them
+answer, hidden from `--help`, until v0.5.1 removes them
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12). Each runs its successor with
 the same request and the same output and prints one stderr line naming it: `oml submit --claim
 <text>` runs `oml write <text>`, `oml recall --query` runs `oml read --query`, `oml supersede

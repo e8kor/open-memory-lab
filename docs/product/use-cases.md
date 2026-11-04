@@ -23,7 +23,7 @@ what happens, not how; each use case links to the page that explains how.
 The stories below tell how each use case works in v0.4.0. In v0.4.0 an agent has three tools:
 `oml_write` saves, `oml_read` finds, and `oml_workarea` says where the agent works and what it may
 do there. People use the `oml` command. v0.3.1 offers the same use cases under older tool names,
-which keep answering through the 0.4 releases ([upgrading from v0.3](../guides/upgrading.md)).
+which keep answering through v0.5.0 ([upgrading from v0.3](../guides/upgrading.md)).
 
 ## How to read the status
 
@@ -229,7 +229,7 @@ who runs the `oml` command
 - **How it plays out:** the agent gets one tool to save, one to read and one to see its
   workarea, in place of eight. The libraries and the command line follow the same shape:
   `write`, `read`, and the review calls. Existing users migrate once, with each change listed;
-  the old tool names and commands keep answering, unlisted, through the 0.4 releases.
+  the old tool names and commands keep answering, unlisted, through v0.5.0.
 - **What they see:** fewer tools to learn, and no invented labels to supply.
 - **How it works:** [MCP plugin](../api/mcp-plugin.md), [upgrading from v0.3](../guides/upgrading.md).
 

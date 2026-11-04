@@ -46,6 +46,11 @@ on 2026-11-04 with release v0.5.0, ADR-0045 but its demotion, planned for v0.6.0
 [releases](product/releases.md) page, which moves v0.5.0 from planned to shipped, llms.txt and the
 README's "What works today" read "introduced in v0.5.0" or "since v0.5.0".
 
+The hidden v0.3.0 names ADR-0039 d12 scheduled to leave in v0.5.0 stay through v0.5.0: 30 of
+the facade's end-to-end tests still drive MCP through them, so their removal moves to v0.5.1 with
+those tests rewritten on the three tools; ADR-0039 d12, releases, the upgrade guides, the CLI
+reference and mcp-plugin.md say v0.5.1.
+
 ### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.0, and the spec is 0.5.0-design
 
 The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and

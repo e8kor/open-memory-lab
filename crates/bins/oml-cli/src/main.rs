@@ -49,10 +49,10 @@ struct Cli {
         hide_env_values = true
     )]
     api_key: Option<String>,
-    /// The v0.3.0 spelling of --url, read through v0.4.x (ADR-0039 d12).
+    /// The v0.3.0 spelling of --url, read through v0.5.0 (ADR-0039 d12).
     #[arg(long, global = true, hide = true)]
     server: Option<String>,
-    /// The v0.3.0 spelling of --api-key, read through v0.4.x (ADR-0039 d12).
+    /// The v0.3.0 spelling of --api-key, read through v0.5.0 (ADR-0039 d12).
     #[arg(long, global = true, hide = true)]
     key: Option<String>,
     /// Emit the server's typed response as one JSON document on stdout.
@@ -155,14 +155,14 @@ enum Command {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// The v0.3.0 name of `oml write`, hidden until v0.5.0 (ADR-0039 d12).
+    /// The v0.3.0 name of `oml write`, hidden until v0.5.1 (ADR-0039 d12).
     #[command(hide = true)]
     Submit(SubmitArgs),
-    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.0
+    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.1
     /// (ADR-0039 d12).
     #[command(hide = true)]
     Recall(RecallArgs),
-    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.0
+    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.1
     /// (ADR-0039 d12).
     #[command(hide = true)]
     Supersede(SupersedeArgs),
@@ -659,7 +659,7 @@ enum ReviewCommand {
         #[arg(long)]
         reason: String,
     },
-    /// The v0.3.0 verdict, hidden until v0.5.0 (ADR-0039 d12).
+    /// The v0.3.0 verdict, hidden until v0.5.1 (ADR-0039 d12).
     #[command(hide = true)]
     Verdict(VerdictArgs),
 }
@@ -902,7 +902,7 @@ fn main() -> ExitCode {
             ("--key", "--api-key", cli.key.is_some()),
         ] {
             if used {
-                eprintln!("warning: {old} is renamed {new}; v0.5.0 removes {old} (ADR-0039 d12)");
+                eprintln!("warning: {old} is renamed {new}; v0.5.1 removes {old} (ADR-0039 d12)");
             }
         }
     }
@@ -1345,7 +1345,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Review { command } => run_review(cli, &stored, command),
 
         // The v0.3.0 verbs run their successors, each naming it on one
-        // stderr line, until v0.5.0 removes them (ADR-0039 d12).
+        // stderr line, until v0.5.1 removes them (ADR-0039 d12).
         Command::Submit(args) => {
             renamed("oml submit", "oml write");
             run_write(
@@ -1508,7 +1508,7 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// The one stderr line a v0.3.0 verb prints before it runs its successor
 /// (ADR-0039 d12).
 fn renamed(old: &str, new: &str) {
-    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.0 removes `{old}` (ADR-0039 d12)");
+    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.1 removes `{old}` (ADR-0039 d12)");
 }
 
 /// One write, from `oml write`'s flags or a v0.3.0 verb's.

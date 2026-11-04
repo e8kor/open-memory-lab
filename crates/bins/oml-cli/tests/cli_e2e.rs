@@ -4756,7 +4756,7 @@ async fn each_old_cli_verb_runs_its_new_verb_and_names_it_on_stderr() {
         let lines: Vec<&str> = old_err.lines().collect();
         assert_eq!(lines.len(), 1, "{old:?}: one stderr line: {old_err}");
         assert!(
-            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.0"),
+            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.1"),
             "{old:?} names {successor} and the release that removes it: {old_err}"
         );
     }

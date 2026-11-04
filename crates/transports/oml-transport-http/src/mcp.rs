@@ -13,7 +13,7 @@
 //! `oml_workarea` (ADR-0039 d2). The designed tools and arguments live in
 //! docs/api/mcp-tools.designed.json, which is never served. The eight v0.3.0
 //! tool names are not listed and still answer with their v0.3.0 shapes,
-//! through v0.4.x, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
+//! through v0.5.0, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
 
 mod alias;
 mod call;

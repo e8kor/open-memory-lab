@@ -208,7 +208,7 @@ so the server, the `oml` CLI and the Claude Code plugin move in one window; the
 3. **Install the v0.4.0 CLI** on every host that runs `oml`, the session-start hook's host
    included. The v0.3 CLI sends request spellings v0.4.0 refuses, each refusal naming the new
    one. The CLI starts from `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then its
-   credentials file; it reads a v0.3 file's `server` and `key` through v0.4.x, and
+   credentials file; it reads a v0.3 file's `server` and `key` through v0.5.0, and
    `oml login <url>` rewrites the file with `url` and `api_key` once
    ([CLI reference](../cli/reference.md#start-settings)).
 4. **Update and configure the plugin**: `claude plugin update oml@open-memory-lab`, then set
@@ -230,8 +230,8 @@ so the server, the `oml` CLI and the Claude Code plugin move in one window; the
    off and nothing else changes.
 
 A raw MCP client or a script that still calls a v0.3 tool name or CLI verb keeps working
-through v0.4.x, hidden, and each MCP call logs `mcp_alias_called` with the calling key's
-`key_id`, so the log names the keys to move before v0.5.0 removes the old names. That window is
+through v0.5.0, hidden, and each MCP call logs `mcp_alias_called` with the calling key's
+`key_id`, so the log names the keys to move before v0.5.1 removes the old names. That window is
 ADR-0039 d12's reading, which the maintainer has not decided. Rolling back means the v0.3
 server, CLI and plugin together; the two migrations stay, as every migration does, and no
 v0.3 binary has been run on the v0.4.0 schema yet.
