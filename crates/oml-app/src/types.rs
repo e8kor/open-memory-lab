@@ -1582,7 +1582,7 @@ pub enum AppError {
     #[error("{0} (ADR-0044 d2, request.validation, field user)")]
     UserRefused(&'static str),
     /// A node grant carries no deny entry, since nothing beneath it is
-    /// covered (ADR-0044 d4; request.validation, field /grants/<i>/deny).
+    /// covered (ADR-0044 d4; request.validation, field `/grants/<i>/deny`).
     #[error(
         "grant {grant_index} covers its node alone and takes no deny entry (ADR-0044 d4, request.validation)"
     )]
