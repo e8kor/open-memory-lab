@@ -1,8 +1,8 @@
--- 0017_claim_edges — a labelled, ratifiable edge between two claims, keyed
+-- 0018_claim_edges — a labelled, ratifiable edge between two claims, keyed
 -- inside its tenant (ADR-0008 d5, ADR-0021, ADR-0012 R2). Forward-only
 -- (docs/data/postgres-schema.md "Migrations"): 0001–0009 are never edited,
--- a correction is the next numbered file. 0010 is reserved for the workarea
--- transitions lane and is left unused here. Normative shape:
+-- a correction is the next numbered file. Numbered after v0.5.1's 0016 and
+-- after 0017_workarea_transitions, its v0.5.2 sibling. Normative shape:
 -- docs/data/postgres-schema.md "claim_edges", under "workareas and edges".
 --
 -- The columns are the schema page's: an edge is 'pending' until a ratifier

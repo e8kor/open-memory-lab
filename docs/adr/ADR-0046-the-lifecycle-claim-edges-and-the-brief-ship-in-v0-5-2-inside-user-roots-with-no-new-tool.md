@@ -139,9 +139,10 @@ say otherwise.
 
 ## Consequences
 
-- **Migrations.** The replayed migrations are `0016_workarea_transitions.sql` and
-  `0017_claim_edges.sql`, and the brief edges are `0018_brief_edges.sql`, all after main's 0013,
-  leaving 0014 and 0015 to the v0.5.0 lanes (`0015_web.sql` is on `feat/web-console-build`).
+- **Migrations.** The replayed migrations are `0017_workarea_transitions.sql` and
+  `0018_claim_edges.sql`, and the brief edges are `0019_brief_edges.sql`. The release order
+  numbers the lanes: 0014 user roots and 0015 the web pages (v0.5.0), 0016 guardrails (v0.5.1),
+  then 0017 onward for v0.5.2.
   sqlx applies an unapplied lower version, so the merge order of the lanes does not matter to a
   fresh database.
 - **Vocabulary domain modules ride along.** The claim-edge code needs `oml-domain`'s `vocab`,
@@ -192,4 +193,4 @@ say otherwise.
 | **Admins curate briefs** (question 7 c) | An admin key holds no grant and reads no claim content (ADR-0010 d6). |
 | **The brief through the hook alone, or the read alone** (question 8 a, b) | The hook is the "on entering an area" moment; the read is the same data for an agent that changes workarea mid-session. |
 | **Refuse reject in a `validated` area** (question 9 a) | A held row left by a freeze would stay held for good, and a rejection promotes nothing. |
-| **Keep the replayed migration numbers 0010 and 0011** | They sit below main's 0012 and 0013, so a database already at 0013 would apply them out of order. |
+| **Keep the replayed migration numbers 0010 and 0011** | They sit below main's 0012 and 0013 and the earlier lanes' 0014 to 0016, so a database already migrated would apply them out of order. |

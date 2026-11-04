@@ -1918,7 +1918,7 @@ async fn apply_fold(
             // against a principal no key holds (ADR-0010 R2). The schema
             // refuses a step other than one rung forward, a ratified row
             // with no ratifier or no seq, and a node or key of another
-            // tenant (0016_workarea_transitions.sql); the record's state is
+            // tenant (0017_workarea_transitions.sql); the record's state is
             // written as carried, so a record that is not pending meets
             // those checks rather than being coerced.
             let principal: Option<String> = sqlx::query_scalar(

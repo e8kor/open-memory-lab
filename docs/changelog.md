@@ -194,7 +194,7 @@ leaves the brief and eight other points to the maintainer.
   [workareas](architecture/workareas.md#readings-the-build-takes).
 - **The freeze** (ADR-0009 d5). A `validated` workarea refuses a submit, a supersede, an approval and a
   child create as `workarea.frozen`, while its crew record stays correctable.
-- **The table** (ADR-0034 d1, d11, d12). Migration `0017_claim_edges.sql` builds `claim_edges` as
+- **The table** (ADR-0034 d1, d11, d12). Migration `0018_claim_edges.sql` builds `claim_edges` as
   [postgres-schema](data/postgres-schema.md#claim_edges) states it: pending or ratified, its keys
   carrying `tenant_id`, R2's key inequality and a ratified row's ratifier as `CHECK`s, row security
   forced, no `DELETE` granted, not partitioned and with statistics target 0 on every column.
@@ -218,8 +218,8 @@ leaves the brief and eight other points to the maintainer.
 - **Reconciled with v0.4.x** (ADR-0039 d9, ADR-0046 d4). The claim-edge use cases digest their
   requests as `POST /v2/edges` with `kind: claim` and `POST /v2/edges/{edge_id}/ratify`, the
   designed family, in place of the branch's `/v2/claim-edges`. One `RatifierIsProposer` refusal
-  covers a transition and an edge. The migrations are renumbered `0016_workarea_transitions.sql`
-  and `0017_claim_edges.sql`, leaving 0014 and 0015 to the v0.5.0 lanes.
+  covers a transition and an edge. The migrations are renumbered `0017_workarea_transitions.sql`
+  and `0018_claim_edges.sql`, after 0014 and 0015 (v0.5.0) and 0016 (guardrails, v0.5.1).
 - **Not built:** the transition and edge routes, the workarea read's `policy` and
   `pending_transitions` fields, the CLI verbs, a `rejected` edge state, `oml:about`,
   reassignment, re-parent, demote, erasure, the simulation fence and the brief. The Postgres
