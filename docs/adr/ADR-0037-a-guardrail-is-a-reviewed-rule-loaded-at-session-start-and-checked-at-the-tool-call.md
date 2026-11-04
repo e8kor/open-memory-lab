@@ -398,6 +398,13 @@ deciding it.
       writing to the HTTP API against MCP and the CLI is an HTTP client. [yes]
     - **Q9** The spec revision v0.5.1 carries: `info.version` moves with S1's contract change,
       after whatever v0.5.0 moves it to. [one step past v0.5.0's]
+    - **Q10** Where the rule check lives for the hooks. S3 and S4 run in `oml`, and the
+      check, the glob and the cache codec are in `oml-domain`'s `guardrail` module, but
+      [ADR-0006](ADR-0006-pure-rust.md) d6 and the
+      [workspace plan](../engineering/workspace-plan.md) give `oml-cli` "no inward edge": it
+      links no domain crate. Either `oml-cli` links `oml-domain` for this module alone (amending
+      ADR-0006 d6), or the module moves into a leaf crate of its own that both link, or the CLI
+      keeps a second copy held equal by shared test vectors. [none taken: S3 and S4 wait]
 
 ## Consequences
 
