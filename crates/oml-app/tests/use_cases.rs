@@ -10133,6 +10133,8 @@ fn pending_edge(tenant: Uuid, proposer: &IssuedKey, src: Uuid, dst: Uuid) -> Cla
         proposer_key_id: proposer.key_id,
         proposer_principal: proposer.principal.clone(),
         ratifier_key_id: None,
+        // Stamped with the proposal event's at when it is committed.
+        created_at: EventTime::parse("2026-10-29T12:00:00.000000Z").expect("a fixed-width time"),
     }
 }
 
@@ -10142,6 +10144,10 @@ fn pending_edge(tenant: Uuid, proposer: &IssuedKey, src: Uuid, dst: Uuid) -> Cla
 fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
     store.commit_before_next_head(move |head| {
         let head = head.expect("the tenant's chain");
+        let edge = ClaimEdgeRecord {
+            created_at: head.envelope.at.clone(),
+            ..edge
+        };
         let draft = EventDraft {
             tenant_id: edge.tenant_id,
             event_id: Uuid::from_u128(0xED6E_0000_0000_0000_0000_0000_0000_00EE),
