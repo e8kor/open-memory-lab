@@ -9,6 +9,8 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
 
+**Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 OML authenticates agents with API keys that carry a role and workarea-scoped grants. OML is

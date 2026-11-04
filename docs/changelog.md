@@ -34,6 +34,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The release map covers the v0.4.0 records and pages (merge of main)
+
+A documentation change with no decision or surface change. Merging main brings
+[releases](product/releases.md) to this branch; the proposed
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) and
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md) each gain a **Release:** line, planned for
+v0.4.0, and a Release cell in the [register](adr/index.md), and the releases page links them.
+
+- **Pages touched:** the three records, the register, releases, `README.md`,
+  `plugins/oml/README.md`, [http-api](api/http-api.md), [the MCP plugin](api/mcp-plugin.md),
+  [retrieval](architecture/retrieval.md), the [CLI reference](cli/reference.md),
+  [upgrades](operations/upgrades.md) and this page. Each section this branch added or rewrote
+  carries the release line main gave its neighbours: the three tools, `GET /v2/whoami`, the start
+  settings, `oml login`, `oml write`, `oml read`, `oml events`, `oml hook tool-failure`, the
+  librarian and the upgrade to v0.4.0 are planned for v0.4.0.
+- **No surface change:** `info.version` stays `0.4.0-design`; no record's decision moves.
+
 ### 2026-11-04 — The plugin's librarian subagent answers what OML holds about a subject, reading with `oml_read` alone (ADR-0038 d10)
 
 The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
@@ -425,6 +443,22 @@ ADR-0039's build.
 - **Not built.**
 
 ## 0.3.0-design
+
+### 2026-11-03 — Every record and feature page names the release that built it or is planned to
+
+A documentation change with no decision or surface change. [Releases](product/releases.md), a new
+client page, is the one declaration site for when each feature and decision record shipped, read
+from the tags v0.1.0 to v0.3.1, and for the plan the maintainer made on 2026-11-03: v0.4.0 (the API
+rewrite, plugin setup, turn context, OAuth by connect code, the librarian, the quick start, a
+documentation upgrade), v0.5.0 (guardrails, workarea transitions, claim edges, the workarea brief),
+v0.6.0 (in-progress workareas) and what is parked. Every record carries a **Release:** line under
+its Status line, and the [register](adr/index.md) a Release column; neither restates the page.
+
+- **Pages touched:** the new page, `mkdocs.yml`, [llms.txt](llms.txt), every record, the register,
+  the architecture, API, CLI reference and operations pages, `README.md`, `plugins/oml/README.md`
+  and this page. The CLI reference and the deployment page no longer say that no tag has run the
+  per-platform archive jobs; v0.3.1 ran them.
+- **No surface change:** `info.version` stays `0.3.0-design`; no record's decision moves.
 
 ### 2026-11-03 — Releases ship the Claude Code plugins and an agent kit (implementation)
 

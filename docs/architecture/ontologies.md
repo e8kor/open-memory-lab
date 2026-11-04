@@ -9,6 +9,8 @@ answers: how vocabularies, terms, pinned releases and deprecation work as govern
 
 **Status:** design draft for review · decided, not built
 
+**Release:** parked ([releases](../product/releases.md)).
+
 A vocabulary is a governed set of shared words: terms with permanent identifiers, a hierarchy, a
 deprecation discipline and pinned releases, so that two crews citing `biz:churn-risk` provably mean
 the same thing. OML hosts vocabularies **as claims** — a term is proposed, held, reviewed by an

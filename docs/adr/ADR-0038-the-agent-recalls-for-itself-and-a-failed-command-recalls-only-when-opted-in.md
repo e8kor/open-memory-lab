@@ -9,6 +9,8 @@ answers: how an agent gets the memory a turn needs beyond what the session-start
 
 **Status:** proposed · 2026-11-03
 
+**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0029 (d6, d7) — the session-start context gains one line asking Claude to recall (d3 below), and the plugin's hook file gains two entries beside SessionStart (d9 below).
 
 **Rebased onto ADR-0039 and ADR-0040, 2026-11-04.** Built first on v0.3.0's tools, this record

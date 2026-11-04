@@ -11,6 +11,8 @@ answers: what a disaster can cost per install profile — recovery point and rec
 page is structural; no recovery time or loss window has been measured, and
 none is stated as a number.
 
+**Release:** not scheduled ([releases](../product/releases.md)).
+
 This page states, per install profile, what a disaster can cost: the recovery
 point (what is lost) and the recovery time (what getting back costs), both
 given as **compositions of named mechanisms rather than numbers**, because no

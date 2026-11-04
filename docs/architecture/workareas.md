@@ -9,6 +9,8 @@ answers: how the workarea algebra works — universe tree, node-id grants, deny-
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.0 ([releases](../product/releases.md)).
+
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
 a deny, an edge, or a status links here rather than restating the rules. The
@@ -24,6 +26,8 @@ crews write — and that cost is accepted deliberately (see
 [Crews](#crews-recorded-not-operated)).
 
 ## The tree: one universe per tenant
+
+*Available since v0.1.0; the root named `universe` since v0.3.0 · [releases](../product/releases.md)*
 
 A workarea is a governed node in exactly one tree per tenant, rooted at that
 tenant's `universe`. Inclusion is single-parent: every workarea except the
@@ -84,6 +88,8 @@ child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 
 ## Grants bind to node ids; paths are derived
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 A grant names a workarea **node id**, never a path. The path (stored as
 Postgres `ltree`) is derived from the tree at check time — the names from
 `universe` down to the node, joined with `.` — and the subtree a grant covers is
@@ -140,6 +146,8 @@ deployment, the default, has no such window. A cache would be a new decision
 that states its own staleness window there.
 
 ## Effective access: union of attenuated grants, then deny-wins
+
+*Available since v0.2.0 · [releases](../product/releases.md)*
 
 One formula, applied everywhere a key touches a workarea:
 
@@ -198,6 +206,8 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
+*Planned for v0.5.0 · [releases](../product/releases.md)*
+
 ### Edge kinds
 
 `related` is a separate labelled edge between two workarea nodes. The label set
@@ -229,6 +239,8 @@ neither side's governance may be bypassed. A pending edge confers nothing and
 appears as pending in graph reads.
 
 ## Crews: recorded, not operated
+
+*Available since v0.3.0 · [releases](../product/releases.md)*
 
 A crew is a named record of its own: `{crew_id, name, charter_uri,
 external_manager}`. This section is the single declaration site for the record
@@ -270,6 +282,8 @@ which is why every change to them is a journalled act rather than a free edit.
 
 ## Re-parenting
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Re-parenting a workarea — giving the node a different parent — exists as a
 **journalled admin act**. It performs, in a single Postgres transaction:
 
@@ -295,6 +309,8 @@ refusal below covers acquiring new children in any form). Lake rows keep
 [storage.md](storage.md)), so re-parenting never rewrites the lake.
 
 ## The status ladder (D8)
+
+*Planned for v0.5.0 · [releases](../product/releases.md)*
 
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no

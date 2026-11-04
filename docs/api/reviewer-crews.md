@@ -9,6 +9,8 @@ answers: how a reviewer crew integrates over plain HTTP; the queue → next → 
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the queue, serve and verdict loop since v0.1.0; expiry and policies of more than one verdict not scheduled ([releases](../product/releases.md)).
+
 The provider runs no model: review capacity is **external crews holding dreamer keys**,
 recording verdicts over the same HTTP API every other caller uses
 ([admission](../architecture/admission.md), D11). That makes a reviewer crew the load-bearing

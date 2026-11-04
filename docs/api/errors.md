@@ -9,6 +9,8 @@ answers: which typed error codes exist, their family, HTTP status and retryabili
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the codes of the served operations arrived with them; see each operation on the [HTTP API](http-api.md) ([releases](../product/releases.md)).
+
 This page declares the typed, fail-closed error taxonomy of the [HTTP API](http-api.md) (D13).
 Every refusal the service makes is one of the codes below — a closed vocabulary: a new refusal
 reason is a design change, never an ad-hoc string. The machine-readable form is the

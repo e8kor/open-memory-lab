@@ -9,6 +9,8 @@ answers: how oml-reconciler proves the derived stores still agree with the journ
 
 **Status:** design draft for review · decided, not built
 
+**Release:** not scheduled ([releases](../product/releases.md)).
+
 This page is the single declaration site for reconciliation (D16): how
 `oml-reconciler` proves that the derived stores still agree with the journal,
 what it may find, and how findings are repaired. The stores being compared —

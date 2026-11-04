@@ -9,6 +9,8 @@ answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role sp
 
 **Status:** accepted design · 2026-11-03
 
+**Release:** partly in v0.3.1; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0007 (d2), naming `_sqlx_migrations` as the one table without row-level security
 (d6); no other decision here amends a record
 
@@ -123,8 +125,11 @@ Decided, not built.
   by that superuser, outside the migrations, and no migration this record lands alters an
   extension. Until that build starts, rollback
   reverses the move; after it, the backup and [restore](../operations/restore.md). The live host's
-  split is **not run** and waits for the maintainer; its success is both role names in its log and
-  `/readyz` 200, recorded here with date and output.
+  split ran on 2026-11-03 at 19:41 UTC with v0.3.1. The lead logged `event="role_split_booted"
+  owner_role="oml_owner" serving_role="oml_server"`, and `/readyz` answered 200 with `fork_check`,
+  `names_assigned` and `postgres` ok. A first start failed with `permission denied for database`
+  until `GRANT CONNECT ON DATABASE oml_server TO oml_server` was run: the kept role had connected as
+  the database's owner, and the runbook on [upgrades](../operations/upgrades.md) now carries the grant.
 
 - **d8 — The checks that close it.** Every Postgres suite migrates through the owner login of a
   uniquely named role pair minted for its database, `oml.serving_role` set, and asserts over the

@@ -12,6 +12,8 @@ run, because no version has ever shipped; this spec is `0.4.0-design`
 ([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
 future N → N+1.
 
+**Release:** forward-only migrations since v0.1.0; the role split since v0.3.1 ([releases](../product/releases.md)).
+
 This page owns the upgrade discipline: who runs migrations, in what order the
 binaries move, how much version skew a rolling update may hold, and what
 rollback does and does not mean. The workloads being upgraded are placed in
@@ -111,6 +113,8 @@ restart, stated plainly: a one-host profile upgrades with a one-host outage.
 
 ## Splitting a single-role install (the upgrade to v0.3.1)
 
+*Available since v0.3.1 · [releases](../product/releases.md)*
+
 A build before v0.3.1 migrated and served under one Postgres role, which
 owned every table. v0.3.1 refuses that role on both URLs, so an install made
 before it is split once, in one outage, by moving ownership to a new owner
@@ -150,6 +154,9 @@ and `oml_server` (d2).
    ```sql
    SELECT datname FROM pg_database WHERE datdba = '<role>'::regrole;
    REASSIGN OWNED BY <role> TO <owner>;
+   -- the kept role connected as the database's owner; once ownership moves it
+   -- holds CONNECT only if granted, and d2 grants the serving role CONNECT:
+   GRANT CONNECT ON DATABASE <database> TO <role>;
    -- when the kept role was granted CREATE on the database, which d2 refuses it:
    REVOKE CREATE ON DATABASE <database> FROM <role>;
    ```
@@ -180,6 +187,8 @@ live host's split is not run; it waits for the maintainer, and its output is
 recorded in ADR-0034 d7 with the date.
 
 ## Server, CLI and plugin together (the upgrade to v0.4.0)
+
+*Planned for v0.4.0 · [releases](../product/releases.md)*
 
 v0.4.0 rewrites the agent and HTTP surfaces and leaves the data alone: keys, grants, stored
 memories, the journal and the schema do not change, and it adds no migration

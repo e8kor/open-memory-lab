@@ -9,6 +9,8 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 **Status:** proposed · 2026-11-03
 
+**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0014 (d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1), ADR-0029 (d2, d6, d8)
 
 ## Context

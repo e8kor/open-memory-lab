@@ -9,6 +9,8 @@ answers: every administrative CLI verb, its flags and refusals; oml write, oml r
 
 **Status:** design draft for review · decided, not built
 
+**Release:** the verbs below arrived in v0.1.0 to v0.3.1, as each section says ([releases](../product/releases.md)).
+
 `oml` is the administration surface of Open Memory Lab. There is no web UI: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
 ADR-0015. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
@@ -26,8 +28,9 @@ mockup transcripts.
 
 ## Installing `oml`, and what differs on Windows
 
-Built, not yet released: no tag has run the release workflow that produces these archives. Each
-release carries the CLI alone as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
+*Available since v0.3.1; the one-line installer planned for v0.4.0 · [releases](../product/releases.md)*
+
+Each release carries the CLI alone as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
 targets listed under [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance),
 each with a CycloneDX SBOM and a cosign signature bundle. Verify the archive, then extract it.
 
@@ -95,7 +98,7 @@ and is not made here.
 
 ## Conventions
 
-Every verb below is designed, not built; no transcript or flag on this page has run.
+A verb is designed, not built, unless its section names the release that ships it ([releases](../product/releases.md)).
 
 - **`--json` everywhere.** Every verb accepts `--json` and then emits exactly one JSON document on
   stdout — the server's typed response, unreshaped — so scripting never parses the human layout.
@@ -137,6 +140,8 @@ Every verb below is designed, not built; no transcript or flag on this page has 
 
 ## Start settings
 
+*Planned for v0.4.0 · [releases](../product/releases.md)*
+
 The CLI starts from one URL and one API key, and the server derives everything else
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d15). Three sources can set them:
 
@@ -176,6 +181,8 @@ is missing and either is set, the failure names the variable to rename.
 
 ## `oml login` and `oml doctor` — storing and checking the pair
 
+*Available since v0.1.0 (`doctor`); `login` planned for v0.4.0 · [releases](../product/releases.md)*
+
 `oml login` stores the [start pair](#start-settings) and `oml doctor` checks it; they replace
 the designed `oml context` verbs ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 d15). There are no named contexts: a second server is a second credentials file, selected with
@@ -189,6 +196,8 @@ from the file ([security](../architecture/security.md)).
 
 ## `oml bootstrap` — claiming the root operator key
 
+*Available since v0.1.0, as the first admin key; the operator key not scheduled · [releases](../product/releases.md)*
+
 The first-start Helm job never prints key material: it mints a single-use, expiring **enrollment
 secret**, stored as a Kubernetes Secret, and its logs carry progress only
 ([deployment](../operations/deployment.md)). `oml bootstrap claim` exchanges that secret over TLS
@@ -200,6 +209,8 @@ alone ([start settings](#start-settings)).
 | `oml bootstrap claim <key-name> --url <https://…> --token-stdin [--tenant-name <name>] [--principal <text>]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). `--token-stdin` is required: the secret is read once, without echo on a terminal, or as the first line of stdin when stdin is not one (`printf '%s\n' "$TOKEN" \| oml … --token-stdin`), never from argv or shell history. v0.3.0's `--token <secret>` is removed with no alias, which would keep that path open, and is refused as an unknown flag (exit `2`), as an empty stdin is, nothing sent. On success the claim writes `url` and `api_key`, nothing else, to the credentials file, as `oml login` does. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). A re-run claims a `<key-name>` no earlier operator key held, since no name is released; a taken one answers [`name.taken`](../api/errors.md) and leaves the secret unconsumed. |
 
 ## `oml tenants` — the operator's verbs
+
+*Not scheduled · [releases](../product/releases.md)*
 
 The operator role exists to bootstrap tenants and nothing else: it never writes, reads or reviews
 content ([roles and keys](../architecture/roles-and-keys.md)). The root operator key is claimed
@@ -215,6 +226,8 @@ shows the whole ceremony.
 | `oml tenants issue-admin <tenant> <key-name> [--label <text>]` | Issue the tenant's **first** admin key, named `<key-name>`, show-once; `<tenant>` is the tenant's id or name. Refused (`access.issuer_ceiling`) once the tenant holds a key of any role, revoked or expired included ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 2): further keys come from the tenant's admins under the issuer ceiling. |
 
 ## `oml keys` — issuance, revocation, rotation
+
+*Available since v0.1.0 (`issue`), v0.2.1 (`issue-agent`) and v0.3.0 (`show`); revocation and rotation not scheduled · [releases](../product/releases.md)*
 
 Key lifecycle rules — issuer ceiling, expiry, the bootstrap ceremony — are declared in
 [roles and keys](../architecture/roles-and-keys.md). The CLI adds the **show-once ceremony**: a key
@@ -303,6 +316,8 @@ export line they chose has run.
 
 ## `oml grants`, `oml deny`, `oml bans` — scope and refusal
 
+*Available since v0.2.0 (`deny set`); grants and bans not scheduled · [releases](../product/releases.md)*
+
 Grant and deny semantics (node-id binding, per-grant deny masks, the global per-key deny object,
 deny-wins, the permission epoch) are declared in [workareas](../architecture/workareas.md); bans
 are declared in [roles and keys](../architecture/roles-and-keys.md) and checked at admission. All
@@ -324,6 +339,8 @@ a ban would refuse — without journalling anything.
 | `oml bans list` | Active and lifted bans with who imposed and who lifted each. |
 
 ## `oml workareas` — tree, edges, status
+
+*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.0 · [releases](../product/releases.md)*
 
 The algebra — one tree per tenant under `universe`, labelled `related` edges conferring zero
 access, forward-only status ladder — is declared in [workareas](../architecture/workareas.md).
@@ -349,6 +366,8 @@ them into `propose` and `ratify` run under different keys.
 
 ## `oml crews` — crew records
 
+*Available since v0.3.0 · [releases](../product/releases.md)*
+
 A crew is a named record — name, charter URI, external manager — recorded, not operated; a
 workarea names at most one, and a key may name one at issuance
 ([workareas](../architecture/workareas.md#crews-recorded-not-operated)). Admin key role
@@ -362,6 +381,8 @@ throughout; no agent role reaches these verbs.
 | `oml crews show <crew>` | One crew record, by id or name. |
 
 ## `oml write`, `oml read`, `oml events` — memories and the journal
+
+*Planned for v0.4.0 · [releases](../product/releases.md)*
 
 These three verbs run under any key within its access, the agent's own key among them, and each
 is one request to the [HTTP API](../api/http-api.md) the [MCP tools](../api/mcp-plugin.md)
@@ -389,6 +410,8 @@ serve of that memory.
 
 ## `oml review` — the review ceremony
 
+*Available since v0.1.0 · [releases](../product/releases.md)*
+
 The CLI is the *exception* path for review — the designed reviewers are external crews holding
 dreamer keys over the HTTP API ([admission](../architecture/admission.md)) — but the ceremony is
 identical on both surfaces, and the CLI is where a human exercises it.
@@ -413,6 +436,8 @@ isolation.
 
 ## `oml simulations` — the fenced channel
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Semantics — indelible `provenance: simulation`, audience-scoped visibility, taint propagation,
 fail-closed promotion — are declared in [simulations](../architecture/simulations.md). The CLI
 operates the fence; it cannot weaken it.
@@ -426,6 +451,8 @@ operates the fence; it cannot weaken it.
 
 ## `oml claims` and `oml erase` — claim administration
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Admin verbs over existing claims. None of them is a verdict: admin ≠ reviewer.
 
 | Verb | Does |
@@ -436,6 +463,8 @@ Admin verbs over existing claims. None of them is a verdict: admin ≠ reviewer.
 | `oml erase <artifact> [--dry-run]` | Journalled crypto-shredding: an erase event plus DEK destruction, scoped to body and attachment bytes. `--dry-run` prints the erasure inventory for this artifact — every copy class and its disposition, including the retention windows plaintext-derived data persists under ([audit and lineage](../architecture/audit-and-lineage.md)). Attribution metadata survives erasure; closing that is [FR-1](../product/roadmap.md). |
 
 ## `oml audit` — evidence export and chain verification
+
+*Available since v0.1.0 (`verify-chain` over an exported chain); the export not scheduled · [releases](../product/releases.md)*
 
 What the export contains and what the chain proves are declared in
 [audit and lineage](../architecture/audit-and-lineage.md). The sanctioned claim, verbatim: the
@@ -448,6 +477,8 @@ export **produces the evidence an auditor asks for** — never "compliant", neve
 
 ## `oml settings` — configured vs effective
 
+*Not scheduled · [releases](../product/releases.md)*
+
 Settings are journalled records on the server; the CLI never edits a live value in place.
 
 | Verb | Does |
@@ -457,6 +488,8 @@ Settings are journalled records on the server; the CLI never edits a live value 
 | `oml settings apply <file>` | Validate, then journal and apply. Refused on any validation error; there is no `--force`. |
 
 ## `oml status` and `oml doctor` — the named signals
+
+*Available since v0.1.0 (`doctor`); `status` not scheduled · [releases](../product/releases.md)*
 
 `status` is a snapshot; `doctor` evaluates each signal against its configured threshold and says
 what to do next. Both emit the same four named signals — the contract that
@@ -475,6 +508,8 @@ what to do next. Both emit the same four named signals — the contract that
 | `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. |
 
 ## The `oml-admin` plugin
+
+*Available since v0.2.1 · [releases](../product/releases.md)*
 
 A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
 is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3; the shipped
@@ -509,6 +544,8 @@ ADR-0014 d2).
   [key format rule](../architecture/roles-and-keys.md#key-format) forbid.
 
 ## `oml hook session-start` — session context for the agent plugin
+
+*Available since v0.2.2 · [releases](../product/releases.md)*
 
 This section is the single declaration site of the verb
 ([ADR-0029](../adr/ADR-0029-session-start-hook.md)). The `oml` [agent plugin](../api/mcp-plugin.md)
@@ -619,6 +656,8 @@ no context. On Windows the command runs as written only under Git Bash
 ([what differs on Windows](#installing-oml-and-what-differs-on-windows)).
 
 ## `oml hook tool-failure` — recall after a failed command
+
+*Planned for v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site of `oml hook tool-failure` and `oml hook session-end`
 ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)). The `oml` plugin runs the first from its PostToolUseFailure hook when a Bash

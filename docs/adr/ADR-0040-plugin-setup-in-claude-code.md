@@ -9,6 +9,8 @@ answers: how a user points the oml plugin at a server and gives it a key inside 
 
 **Status:** proposed · 2026-11-03
 
+**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+
 **Amends:** ADR-0028 (d1), ADR-0029 (d4)
 
 ## Context

@@ -9,6 +9,8 @@ answers: how an append-only chain coexists with the right to erasure; what crypt
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 An append-only, hash-chained journal and a right to erasure look irreconcilable. One move

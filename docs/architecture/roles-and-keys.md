@@ -9,6 +9,8 @@ answers: which verbs each of the five roles may perform; how keys are issued, sc
 
 **Status:** design draft for review · decided, not built
 
+**Release:** reader, writer, dreamer and admin keys since v0.1.0; one key with grants since v0.2.0; names since v0.3.0 ([releases](../product/releases.md)).
+
 This page owns decision **D9**: the role vocabulary, the verb ceiling per role, the dreamer's two
 capability classes, the admin and operator verbs, key issuance and lifecycle, and the independence
 axis that review policies apply at promotion time. Workarea grants and deny semantics are declared
@@ -151,6 +153,8 @@ matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
 
+*Available since v0.2.0 · [releases](../product/releases.md)*
+
 This section is the single declaration site for which grant roles a key may carry and for the
 order in which a workarea-scoped verb is refused
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d2).
@@ -285,6 +289,8 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 
 ## Own
 
+*Available since v0.2.0 · [releases](../product/releases.md)*
+
 A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
 key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
 chain. Principal equality never makes a row own. This definition governs get of held or rejected
@@ -339,6 +345,8 @@ set states the access conferred, not what a given server build serves; `tools/li
 [agent plugin](../api/mcp-plugin.md) states that.
 
 ## The dreamer split
+
+*Not scheduled · [releases](../product/releases.md)*
 
 A dreamer key carries one role name and two capability classes:
 
@@ -445,6 +453,8 @@ unreviewed admin write, because none can exist.
 
 ## Operator and the bootstrap ceremony
 
+*Available since v0.1.0, as the first admin key; the operator not scheduled · [releases](../product/releases.md)*
+
 The operator is the provider-level role. Its verbs are creating tenants, issuing operator keys and
 issuing each tenant's first admin key. It holds no grant inside any tenant: it never writes, reads
 or reviews content, and the matrix above gives it no content verb to misuse. Tenant isolation
@@ -483,6 +493,8 @@ does not prevent an admin from issuing another admin key — tenant administrati
 design — it prevents escalation above the issuer.
 
 ## Key names, principals and labels
+
+*Available since v0.3.0 · [releases](../product/releases.md)*
 
 A key carries three identifying fields, and they are independent: none is derived from another on
 the server ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d9). This section is their single
@@ -548,6 +560,8 @@ is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance
 
 ## Key lifecycle
 
+*Available since v0.1.0 (issuance); revocation, rotation and expiry not scheduled · [releases](../product/releases.md)*
+
 ```mermaid
 stateDiagram-v2
     [*] --> active : issue (show-once,\njournalled issued-without-value)
@@ -587,6 +601,8 @@ X" is answerable from journalled grants plus epochs — reproducibly, which is t
 evidence export leans on.
 
 ## Review independence and the evidence of collusion
+
+*Available since v0.1.0 (the lineage check); crew and manager comparisons not scheduled · [releases](../product/releases.md)*
 
 Lineage-closure exclusion stops a key from reviewing its own declared work. The **independence
 axis** in per-workarea review policies ([admission.md](admission.md)) goes further, and is

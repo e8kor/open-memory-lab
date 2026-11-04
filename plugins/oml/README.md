@@ -9,6 +9,8 @@ you store it.
 
 ## Install
 
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The plugin takes two settings: `url`, your server without `/mcp`, such as
 `https://oml.example.com`, and `api_key`, this agent's own key. Claude Code keeps the key in the
 system keychain, never in `settings.json`, and neither setting has a default, so the key goes
@@ -120,6 +122,8 @@ conversation. See the
 
 ## The `oml` CLI
 
+*Available since v0.1.0; per-platform archives since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 The session-start hook below and key issuance need the `oml` CLI on your `PATH`. From the first
 release that carries them, each release attaches it as `oml-cli-X.Y.Z-<target>.tar.gz`, or `.zip`
 on Windows, with a signature bundle beside each archive. Verify the archive, then extract it:
@@ -165,6 +169,8 @@ the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-
 
 ## Every session starts from memory
 
+*Available since v0.2.2 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It
 sends two requests with the agent's key, both to that one server: `GET
@@ -204,6 +210,8 @@ still held until a different identity reviews it, so nothing it records is share
 
 ## Recall after a failed command (opt-in)
 
+*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 Set `OML_FAILURE_RECALL=1` and, when a Bash command fails, the plugin's PostToolUseFailure hook
 runs `oml hook tool-failure`: it searches with up to three distinctive words of the error, such
 as an error code or an identifier, with keys and tokens removed first, and adds at most three
@@ -216,6 +224,8 @@ the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
 
 ## The librarian
+
+*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
 to it, or you ask for it with `@agent-oml:librarian`. Recall matches every word exactly, with no
@@ -230,6 +240,8 @@ context; the cost is that a smaller model chooses the variants and which hits ma
 calls included; without it, each of its calls asks you in the main session.
 
 ## Other MCP clients
+
+*Available since v0.1.0; the agent kit since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape
 works:
@@ -255,6 +267,8 @@ that documentation does not settle as unverified.
 
 ## Upgrading from 0.3
 
+*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
 Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
 you configure the plugin once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
@@ -272,6 +286,8 @@ tool: an agent learns what became of its writes with `oml_read` and `state`, and
 `GET /v2/events`.
 
 ## What is served today
+
+*Eight tools since v0.2.0; three task-shaped tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the three tools above,
 each with its MCP annotations: `oml_read` and `oml_workarea` are read-only, and `oml_write` is

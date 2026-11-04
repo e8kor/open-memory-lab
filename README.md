@@ -62,39 +62,40 @@ approved can be locked as the baseline the next team starts from.
 
 ## The foundation
 
-Everything in this section is part of every OML deployment.
+Everything in this section is part of every OML deployment. The Release column says which release
+built each part, or when it is planned; [releases](docs/product/releases.md) has the detail.
 
-| | What you get |
-| --- | --- |
-| **Memory store** | Agents remember, recall, fetch and revise memories through one stable agent interface. A new version keeps the full history behind it, and retiring a memory is a recorded step, never a silent delete. |
-| **Workareas** | One tree per organisation, with a workarea for each crew. Access follows the tree, so a key granted a workarea covers what sits beneath it, and nothing else. |
-| **Artifact store** | Documents, images and PDFs live with the memory they belong to. Each file is named by its own fingerprint, so it can't be swapped later, and encrypted with its own key. |
-| **Recall** | Keyword and semantic search within a budget you set. Standing instructions always come first and are never cut, so house rules are never crowded out by search results. |
-| **Lifecycle** | A workarea moves one way from development, to committed, to validated. Each step is proposed by one person or agent and confirmed by another. A validated workarea is locked: it stays readable and takes no new writes. |
-| **Access** | A key per agent, scoped to the workareas it needs. Names instead of ids everywhere, safe retries on every write, and an event feed that shows each key only what it may see. |
+| | What you get | Release |
+| --- | --- | --- |
+| **Memory store** | Agents remember, recall, fetch and revise memories through one stable agent interface. A new version keeps the full history behind it, and retiring a memory is a recorded step, never a silent delete. | Since v0.1.0; versions and retiring since v0.2.0 |
+| **Workareas** | One tree per organisation, with a workarea for each crew. Access follows the tree, so a key granted a workarea covers what sits beneath it, and nothing else. | Since v0.1.0 |
+| **Artifact store** | Documents, images and PDFs live with the memory they belong to. Each file is named by its own fingerprint, so it can't be swapped later, and encrypted with its own key. | Not scheduled |
+| **Recall** | Keyword and semantic search within a budget you set. Standing instructions always come first and are never cut, so house rules are never crowded out by search results. | Keyword search since v0.1.0; the budget and instructions first since v0.2.0; semantic search not scheduled |
+| **Lifecycle** | A workarea moves one way from development, to committed, to validated. Each step is proposed by one person or agent and confirmed by another. A validated workarea is locked: it stays readable and takes no new writes. | Planned for v0.5.0 |
+| **Access** | A key per agent, scoped to the workareas it needs. Names instead of ids everywhere, safe retries on every write, and an event feed that shows each key only what it may see. | Since v0.2.0; names since v0.3.0 |
 
 ## Capabilities
 
 Each capability builds on the foundation and shares its access model, so you add value without
 moving your data.
 
-| Capability | What it adds |
-| --- | --- |
-| **Vocabularies** | Shared glossaries and ontologies. Terms keep permanent identifiers, are released in versions, and are deprecated with a pointer to their successor. A workarea can require every write to use valid terms, so "active customer" means the same thing in every crew. |
-| **Trusted memory** | A second look on every write. A new memory reaches other agents once someone other than its author approves it, and every decision is kept in a tamper-evident history. One export answers "who wrote this, who approved it, and when" for any memory, and erasure is a recorded act that makes content permanently unreadable. |
-| **Simulations** | Safe what-if testing. Run a crew against invented facts, such as a market shock, inside a fenced scenario. Only the agents in it can see those facts, and real memory never changes. |
-| **Datasets** | Import a snapshot of an existing table or file set as memory, checked as one batch with sampled rows. An analytics layer keeps lineage, so every figure traces back to its source. |
-| **Plugins** | Swap in your own content checks, embedding models and export formats. A plugin can make the rules stricter, never looser. |
+| Capability | What it adds | Release |
+| --- | --- | --- |
+| **Vocabularies** | Shared glossaries and ontologies. Terms keep permanent identifiers, are released in versions, and are deprecated with a pointer to their successor. A workarea can require every write to use valid terms, so "active customer" means the same thing in every crew. | Parked |
+| **Trusted memory** | A second look on every write. A new memory reaches other agents once someone other than its author approves it, and every decision is kept in a tamper-evident history. One export answers "who wrote this, who approved it, and when" for any memory, and erasure is a recorded act that makes content permanently unreadable. | Review by another identity and the tamper-evident history since v0.1.0; the export and erasure not scheduled |
+| **Simulations** | Safe what-if testing. Run a crew against invented facts, such as a market shock, inside a fenced scenario. Only the agents in it can see those facts, and real memory never changes. | Not scheduled |
+| **Datasets** | Import a snapshot of an existing table or file set as memory, checked as one batch with sampled rows. An analytics layer keeps lineage, so every figure traces back to its source. | Not scheduled |
+| **Plugins** | Swap in your own content checks, embedding models and export formats. A plugin can make the rules stricter, never looser. | Not scheduled |
 
 ## Works with
 
-| Surface | Use it for |
-| --- | --- |
-| **Claude Code plugin** | Give a coding agent its memory in two commands ([plugins/oml](plugins/oml/README.md)). |
-| **Any MCP client** | The same agent tools over the open Model Context Protocol ([docs](docs/api/mcp-plugin.md)). |
-| **HTTP API** | Any language, any framework ([OpenAPI](docs/api/openapi.yaml)). |
-| **Python and TypeScript SDKs** | Typed clients for the HTTP API ([Python](sdks/python/README.md), [TypeScript](sdks/typescript/README.md)). |
-| **`oml` CLI** | Writing, reading, review and administration, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). |
+| Surface | Use it for | Release |
+| --- | --- | --- |
+| **Claude Code plugin** | Give a coding agent its memory in two commands ([plugins/oml](plugins/oml/README.md)). | Since v0.1.0 |
+| **Any MCP client** | The same agent tools over the open Model Context Protocol ([docs](docs/api/mcp-plugin.md)). | Since v0.1.0; the agent kit since v0.3.1 |
+| **HTTP API** | Any language, any framework ([OpenAPI](docs/api/openapi.yaml)). | Since v0.1.0 |
+| **Python and TypeScript SDKs** | Typed clients for the HTTP API ([Python](sdks/python/README.md), [TypeScript](sdks/typescript/README.md)). | In the source tree since v0.3.0; not on a package registry |
+| **`oml` CLI** | Writing, reading, review and administration, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). | Since v0.1.0; per platform since v0.3.1; writing and reading planned for v0.4.0 |
 
 ## Quickstart
 
@@ -257,11 +258,11 @@ depend on it.
 
 ## Run it your way
 
-| Profile | Use it for |
-| --- | --- |
-| **One host** | A laptop or a single server. |
-| **Compose** | A small team, with read followers when more agents rely on it. |
-| **Cluster** | Production, from one chart, with read followers for scale. |
+| Profile | Use it for | Release |
+| --- | --- | --- |
+| **One host** | A laptop or a single server. | Since v0.1.0 |
+| **Compose** | A small team, with read followers when more agents rely on it. | Since v0.1.0; read followers not scheduled |
+| **Cluster** | Production, from one chart, with read followers for scale. | One instance on the chart since v0.3.0; read followers not scheduled |
 
 Every profile runs the same binaries, the same history format and the same conformance suite.
 See [deployment](docs/operations/deployment.md) and [configuration](docs/operations/configuration.md).
@@ -271,11 +272,13 @@ See [deployment](docs/operations/deployment.md) and [configuration](docs/operati
 - **Your infrastructure.** OML runs where you deploy it, and your memories and files never
   leave it.
 - **Least privilege.** Every key is scoped to the workareas it needs, and every read is logged
-  for the retention period you set.
+  for the retention period you set. Scoped keys since v0.2.0; the read log is not scheduled
+  ([releases](docs/product/releases.md)).
 - **Encryption per item.** Memory content and files are encrypted with their own keys, and
-  erasure destroys the key.
+  erasure destroys the key. Not scheduled: this build stores memory text unencrypted
+  ([releases](docs/product/releases.md)).
 - **Verifiable releases.** Every release ships with signatures and a software bill of
-  materials on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
+  materials on the [releases page](https://github.com/e8kor/open-memory-lab/releases), since v0.1.0.
 
 Found a vulnerability? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 

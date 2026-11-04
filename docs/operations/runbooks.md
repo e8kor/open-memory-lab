@@ -11,6 +11,8 @@ answers: how to diagnose and act on each named operational condition — what it
 is a designed verb that has never run, and every metric is a declared name no
 binary emits yet.
 
+**Release:** each runbook applies once the mechanism it names ships; most are not scheduled ([releases](../product/releases.md)).
+
 This is the one runbook page. `oml doctor` names its next action as a command
 or an anchor on this page ([CLI reference](../cli/reference.md)); the alerting
 table in [observability](observability.md) links each condition here; nothing

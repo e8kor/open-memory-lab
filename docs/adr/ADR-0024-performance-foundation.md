@@ -9,6 +9,8 @@ answers: what the performance foundation commits before any measurement exists, 
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists and no measurement of OML exists.
 Per the [roadmap](../product/roadmap.md) rules, no OML performance number appears here or
 anywhere else; every quantity this record cares about resolves to [FR-25](../product/roadmap.md),

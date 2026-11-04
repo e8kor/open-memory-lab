@@ -77,6 +77,7 @@
 - [Positioning](https://e8kor.github.io/open-memory-lab/product/positioning/): who the product is for and the scoped market claim
 - [Commitments](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee, sorted into four honesty tiers with enforcement points and assumptions
 - [Compliance evidence](https://e8kor.github.io/open-memory-lab/product/compliance/): the evidence OML produces for the questions compliance frameworks ask
+- [Releases](https://e8kor.github.io/open-memory-lab/product/releases/): which release introduced each feature and decision record, which release each planned one is for, and what is parked or not scheduled
 - [Roadmap](https://e8kor.github.io/open-memory-lab/product/roadmap/): the honesty ledger — every open FR/RS row with its exit criterion
 - [Critical path](https://e8kor.github.io/open-memory-lab/product/critical-path/): milestone order M0–M6, dependency without dates
 - [Spec changelog](https://e8kor.github.io/open-memory-lab/changelog/): how the design spec is versioned and what each revision changed

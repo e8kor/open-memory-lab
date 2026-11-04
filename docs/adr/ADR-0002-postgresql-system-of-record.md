@@ -9,6 +9,8 @@ answers: why PostgreSQL is the sole system of record and commit point; why each 
 
 **Status:** accepted design · 2026-10-29 · [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13 supersedes d6's every-replica-loads-the-key statement — the signing key is the lead's alone; the attests-the-deployment boundary stands
 
+**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+
 Everything this record decides is design — no code exists. Mechanics (schemas, the outbox
 protocol, the chain layout) are owned by [architecture/storage.md](../architecture/storage.md);
 this record decides and gives the reasons.

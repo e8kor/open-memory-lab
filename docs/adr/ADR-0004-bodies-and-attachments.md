@@ -9,6 +9,8 @@ answers: how bodies and attachments are content-addressed, encrypted per artifac
 
 **Status:** accepted design · 2026-10-29
 
+**Release:** not scheduled ([releases](../product/releases.md#decisions))
+
 ## Context
 
 A memory is words plus, often, files: a screenshot and what it shows, a regulator's PDF and a

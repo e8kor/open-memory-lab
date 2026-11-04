@@ -13,6 +13,8 @@ replace the symbols with measurements are
 [FR-7](../product/roadmap.md), [FR-18](../product/roadmap.md) and
 [FR-25](../product/roadmap.md).
 
+**Release:** not scheduled; nothing on this page is measured ([releases](../product/releases.md)).
+
 This page declares the **growth drivers**: what each unit of work writes,
 what accumulates, and which resource each workload exhausts first. It states
 no number — not a throughput, not a byte ceiling, not a latency — because

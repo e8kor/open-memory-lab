@@ -61,6 +61,7 @@ nav:
   - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
   - Product:
       - Positioning: product/positioning.md
+      - Releases: product/releases.md
       - Roadmap: product/roadmap.md
       - Commitments: product/commitments.md
       - Critical path: product/critical-path.md
