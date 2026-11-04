@@ -195,7 +195,7 @@ verdict naming it answers `review.serve_invalid` with `details.reason: "consumed
 ## Walkthrough: reject
 
 The second held item in the queue is the derived fact from
-[mcp-plugin.md](mcp-plugin.md) — `oml_learn`'s output. `POST /v2/review/next` again
+[mcp-plugin.md](mcp-plugin.md) — `oml_write`'s example with `derives_from`. `POST /v2/review/next` again
 (`Idempotency-Key: crew-review/run-818/next-2`) serves it:
 
 ```json

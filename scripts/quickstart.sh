@@ -24,7 +24,7 @@
 # Environment:
 #   OML_URL               server URL as seen from this shell (default http://127.0.0.1:8080)
 #   OML_CLI               the oml command (default: docker compose exec -T oml-server oml)
-#   OML_CLI_SERVER        server URL as seen by OML_CLI (default: 127.0.0.1:8080 inside
+#   OML_CLI_URL           server URL as seen by OML_CLI (default: 127.0.0.1:8080 inside
 #                         the container, else OML_URL)
 #   OML_ENROLLMENT_TOKEN  the token the server printed at first boot (default: read
 #                         from `docker compose logs oml-server`)
@@ -37,11 +37,11 @@ OML_URL="${OML_URL:-http://127.0.0.1:8080}"
 WORKAREA_NAME="${OML_WORKAREA_NAME:-crew}"
 if [ -n "${OML_CLI:-}" ]; then
     read -r -a CLI <<<"$OML_CLI"
-    CLI_SERVER="${OML_CLI_SERVER:-$OML_URL}"
+    CLI_SERVER="${OML_CLI_URL:-$OML_URL}"
     IN_COMPOSE=""
 else
     CLI=(docker compose exec -T oml-server oml)
-    CLI_SERVER="${OML_CLI_SERVER:-http://127.0.0.1:8080}"
+    CLI_SERVER="${OML_CLI_URL:-http://127.0.0.1:8080}"
     IN_COMPOSE=1
 fi
 

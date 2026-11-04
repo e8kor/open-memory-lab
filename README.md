@@ -94,11 +94,13 @@ moving your data.
 | **Any MCP client** | The same agent tools over the open Model Context Protocol ([docs](docs/api/mcp-plugin.md)). |
 | **HTTP API** | Any language, any framework ([OpenAPI](docs/api/openapi.yaml)). |
 | **Python and TypeScript SDKs** | Typed clients for the HTTP API ([Python](sdks/python/README.md), [TypeScript](sdks/typescript/README.md)). |
-| **`oml` CLI** | Administration and review, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). |
+| **`oml` CLI** | Writing, reading, review and administration, with JSON output for scripts and your own dashboards ([reference](docs/cli/reference.md)). |
 
 ## Quickstart
 
-You need Docker with the compose plugin, `curl` and `jq`. From a checkout:
+You need Docker with the compose plugin, `curl` and `jq`.
+
+**1. Start the server.** From a checkout:
 
 ```sh
 docker compose up -d          # the database and oml-server on 127.0.0.1:8080
@@ -107,15 +109,34 @@ bash scripts/quickstart.sh    # enroll the server, create a workarea, issue keys
 
 The quickstart creates a workarea and issues two keys: an agent key that stores and searches,
 and a reviewer key. It writes a first memory with the agent key, approves it with the reviewer
-key, and finds it again with a search. Then it prints the lines to connect Claude Code. Each key
-is shown once, so store them when they're printed.
+key, and finds it again with a search. Each key is shown once, so store them when they're
+printed.
 
-To review what agents have written:
+**2. Log the CLI in.** Install the `oml` CLI
+([installing `oml`](docs/cli/reference.md#installing-oml-and-what-differs-on-windows)).
+`oml login` reads the key without echo, checks it with the server, and only then stores the URL
+and the key in an owner-only file, so the key never reaches your shell history:
 
 ```sh
-docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> review next
-docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> review approve
+oml login http://127.0.0.1:8080       # paste the agent key
+oml write "The canary stage must drain before the next one starts."
+oml read                              # your own writes, held until reviewed
+oml read --query "canary stage"       # approved memories, after review
 ```
+
+A second key is a second credentials file. To review as the reviewer key:
+
+```sh
+OML_CLI_CREDENTIALS="$HOME/.config/oml/reviewer" oml login http://127.0.0.1:8080
+OML_CLI_CREDENTIALS="$HOME/.config/oml/reviewer" oml review next
+OML_CLI_CREDENTIALS="$HOME/.config/oml/reviewer" oml review approve
+```
+
+`oml doctor` shows where the URL and the key came from, never the key, and which key the server
+sees.
+
+**3. Configure the plugin.** Install the Claude Code plugin and give it the server's URL and the
+agent key, as [Connect your agent](#connect-your-agent) shows.
 
 Compose creates two database roles on a new volume: `oml_owner`, which owns the database and
 runs the migrations through `OML_POSTGRES__OWNER_URL`, and `oml_server`, which owns nothing and
@@ -138,8 +159,27 @@ only. For production, see [Run it your way](#run-it-your-way).
 
 In a Claude Code session the install asks for two settings: `url`, here
 `http://127.0.0.1:8080`, and `api_key`, the agent key, which Claude Code keeps in the system
-keychain. The plugin adds the OML tools and a skill that tells the agent when to recall,
-remember and revise. See [plugins/oml](plugins/oml/README.md).
+keychain. Run `/plugin configure oml@open-memory-lab` to change them later. The plugin adds three
+tools, `oml_write`, `oml_read` and `oml_workarea`, and a skill that tells the agent when to
+recall, write and revise.
+
+Claude Code asks before each tool call until you allow it. To stop the question on reads and keep
+it on every write, add the two read tools to `permissions.allow` in your settings:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_oml_oml__oml_read",
+      "mcp__plugin_oml_oml__oml_workarea"
+    ]
+  }
+}
+```
+
+`mcp__plugin_oml_oml` allows all three, the write too, which Claude then makes without showing
+you the call; every write is still held until a different identity reviews it. See
+[plugins/oml](plugins/oml/README.md).
 </details>
 
 <details>

@@ -176,8 +176,8 @@ discipline of [ADR-0024](../adr/ADR-0024-performance-foundation.md) binds from t
 provider-ring endpoint, with [FR-25](roadmap.md)'s harness built alongside. Plus five gaps
 carried as first-class items, not polish:
 
-- own-held recall (`include_own_held`) and `oml_get` on MCP — [FR-10](roadmap.md);
-- `oml_supersede` on MCP and the journalled author retire-proposal — [FR-10](roadmap.md);
+- own-held recall (`include_unreviewed`) and a fetch by id on MCP (`oml_read` with `artifact_id`) — [FR-10](roadmap.md);
+- supersession on MCP (`oml_write` with `replaces`) and the journalled author retire-proposal — [FR-10](roadmap.md);
 - `max_tokens` on recall with deterministic truncation — [FR-11](roadmap.md);
 - batch submit with per-item idempotency, and generated Python/TypeScript SDKs —
   [FR-12](roadmap.md);

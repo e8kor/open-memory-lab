@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design and 0.3.0-design cover, and what each revision changed
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design and 0.4.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -33,6 +33,52 @@ Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-f
 records. `info.version` moved to `0.4.0-design` with the contract split below; entries land
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
+
+### 2026-11-04 — The 0.4.0 breaks, each with its migration (ADR-0039 d13, d14 step 5, implementation)
+
+This entry is the break list a v0.3 user reads before upgrading; the entries below record each
+change as it was built. Keys, grants, stored memories, the journal and the schema do not change,
+and v0.4.0 adds no migration.
+
+| Break | Who it reaches | Migration |
+|---|---|---|
+| Three tools, `oml_write`, `oml_read` and `oml_workarea`, replace the eight of v0.3.0 | `permissions.allow` rules naming the v0.3.0 read tools, which now allow nothing | allow `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea`, or the server-wide `mcp__plugin_oml_oml`; the plugin README and the root README carry both |
+| The events tail leaves MCP | callers of `oml_events_tail` | `oml_read` with `state` for an agent's own writes; `GET /v2/events`, the SDKs' `events` or `oml events` to audit |
+| The plugin takes `url` and `api_key` as its own settings, and its cached skill and hook name the old tools | plugin 0.3 installs, which serve no tools after the update until configured | `claude plugin update oml@open-memory-lab`, then `/plugin configure oml@open-memory-lab` or `claude plugin configure --values-stdin`; install the v0.4.0 CLI for the hook |
+| One `workarea` field replaces the `X-OML-Workarea` header and the `workarea_id` filter; `include_unreviewed` replaces `include_own_held`; recall takes `include_text`; a sent `auto-` claim key is refused | HTTP callers, the CLI, the hook | upgrade the CLI with the server; a renamed spelling is refused with `request.validation` naming the new one in `details.renamed_to`, and an `auto-` key naming `/claim_key` |
+| A served claim's `body` is `text` | HTTP readers, the SDKs | read `text` |
+| A submission with `derives_from` and no `verb` is journalled `submission.learn` | journal readers | none; an explicit `verb: "remember"` keeps the old event |
+| The SDKs' verbs are `write`, `read`, `workarea`, `events`, `review_next`, `approve` and `reject`, at `0.2.0`; openapi.yaml declares only the 23 routed operations, so the unrouted ones leave the generated modules for the designed annex | SDK users | the wrapper's `write` and `read`; the removed generated calls never reached a route |
+| CLI verbs, flags and variables renamed: `oml write`, `oml read`, `oml events`, `oml review approve` and `reject`, `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`; the bootstrap secret's argv flag removed | scripts, shell profiles | the new names; `oml login <url>` once; `oml bootstrap claim … --token-stdin` |
+| `oml.doublegate.io` on a v0.3 release | the maintainer's deployment | upgrade the server, the CLI and the plugin together, configure the plugin, replace the permission rules, and record the upgrade with its date in [upgrades](operations/upgrades.md#server-cli-and-plugin-together-the-upgrade-to-v040); not run yet |
+
+**The alias window.** The eight v0.3.0 tool names answer through `tools/call`, never in
+`tools/list`, with their v0.3.0 inputs, outputs and refusal codes, and each call logs
+`mcp_alias_called`; `oml submit`, `oml recall`, `oml supersede`, `oml review verdict`,
+`--server` and `--key` run their successors, naming each on stderr; and a v0.3.0 credentials
+file's `server` and `key` are read as `url` and `api_key`. All of these answer through v0.4.x
+and leave in v0.5.0, as ADR-0039 d12 reads the window since the rewrite moved to v0.4.0
+(2026-11-03, below). **The maintainer has not decided that reading**; the other is no aliases
+at all. HTTP and the SDKs have none. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read, and a
+missing start setting names the variable to rename.
+
+**The catalog an agent reads.** The three served entries of
+[mcp-tools.json](api/mcp-tools.json) come to 8,130 characters, against 18,893 for v0.3.0's
+twelve, each counted as the length of the entry's JSON from Python's `json.dumps` with its
+default separators, the measure that gives the 18,893 ADR-0039 records.
+
+`scripts/check_contract_sync.py` now fails a start page, the READMEs, the plugin skills, the
+agent kit's README, the docs index, `llms.txt`, [SDKs](engineering/sdks.md), the operations
+pages and the scripts, that names a v0.3.0 spelling outside a section headed "Upgrading
+from …", and the quickstart's own CLI URL variable is `OML_CLI_URL`.
+
+- **Pages touched:** the root README's quickstart (the server, `oml login`, the plugin, `oml
+  write` and `oml read`, the permission rules), the `oml-memory` skill's mode rules and its file
+  rule, [upgrades](operations/upgrades.md), the [overview](index.md), `llms.txt`, the
+  [HTTP API](api/http-api.md), [reviewer crews](api/reviewer-crews.md),
+  [roles and keys](architecture/roles-and-keys.md), the
+  [PostgreSQL schema](data/postgres-schema.md), the [critical path](product/critical-path.md),
+  [CI and toolchain](engineering/ci-and-toolchain.md) and this page.
 
 ### 2026-11-04 — The agent kit reads the OML_URL and OML_API_KEY pair (ADR-0039 d15, implementation)
 

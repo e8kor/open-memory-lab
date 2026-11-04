@@ -8,7 +8,7 @@ answers: who runs migrations and when; in what order the binaries move; how much
 # Upgrades
 
 **Status:** design draft for review · decided, not built — no upgrade has ever
-run, because no version has ever shipped; this spec is `0.3.0-design`
+run, because no version has ever shipped; this spec is `0.4.0-design`
 ([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
 future N → N+1.
 
@@ -178,6 +178,47 @@ TO <role>`, or the same `ALTER … OWNER TO` back) and restarts the old build;
 after it starts, the way back is the backup and [restore](restore.md). The
 live host's split is not run; it waits for the maintainer, and its output is
 recorded in ADR-0034 d7 with the date.
+
+## Server, CLI and plugin together (the upgrade to v0.4.0)
+
+v0.4.0 rewrites the agent and HTTP surfaces and leaves the data alone: keys, grants, stored
+memories, the journal and the schema do not change, and it adds no migration
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). Its clients change with it,
+so the server, the `oml` CLI and the Claude Code plugin move in one window; the
+[changelog](../changelog.md) lists every break with its migration.
+
+1. **Back up**, as step 1 of the upgrade order requires.
+2. **Upgrade the server** in the order above.
+3. **Install the v0.4.0 CLI** on every host that runs `oml`, the session-start hook's host
+   included. The v0.3 CLI sends request spellings v0.4.0 refuses, each refusal naming the new
+   one. The CLI starts from `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then its
+   credentials file; it reads a v0.3 file's `server` and `key` through v0.4.x, and
+   `oml login <url>` rewrites the file with `url` and `api_key` once
+   ([CLI reference](../cli/reference.md#start-settings)).
+4. **Update and configure the plugin**: `claude plugin update oml@open-memory-lab`, then set
+   its `url` and `api_key` with `/plugin configure oml@open-memory-lab` or the
+   `claude plugin configure --values-stdin` pipeline
+   ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)). The plugin serves no tools
+   until both are set; exported variables alone no longer reach it.
+5. **Replace the permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
+   nothing. Allow `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea`, or
+   `mcp__plugin_oml_oml` for all three tools, the write included
+   ([plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md)).
+6. **Check** with `oml doctor`, which names each setting's source and the key the server sees,
+   and in a Claude Code session, where `oml_write`, `oml_read` and `oml_workarea` are the
+   plugin's tools.
+
+A raw MCP client or a script that still calls a v0.3 tool name or CLI verb keeps working
+through v0.4.x, hidden, and each MCP call logs `mcp_alias_called` with the calling key's
+`key_id`, so the log names the keys to move before v0.5.0 removes the old names. That window is
+ADR-0039 d12's reading, which the maintainer has not decided. Rolling back means the v0.3
+server, CLI and plugin together; with no schema change, the v0.3 binaries run on the data as
+it stands.
+
+**oml.doublegate.io**, the maintainer's deployment, runs a v0.3 release. Its upgrade is these
+steps, the server, the CLI and the plugin together, with the plugin configured and the
+permission rules replaced. It has not run; it waits for the maintainer, and its date is recorded
+here when it does.
 
 ## Version skew: one minor, as policy
 

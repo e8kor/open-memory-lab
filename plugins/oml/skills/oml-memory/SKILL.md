@@ -28,8 +28,15 @@ is one connection:
 
 `oml_write` stores, `oml_read` reads and `oml_workarea` describes a workarea. The
 arguments you pass choose what `oml_write` and `oml_read` do, and the result's `mode` says
-which ran. An argument outside the call's mode is refused with `request.validation`
-naming it in `details.field`: drop that argument and call again.
+which ran:
+
+- `oml_write` without `replaces` writes a new claim; with `replaces` it proposes a new
+  version of that claim, and with `replaces` and `retirement: true` it proposes retiring it.
+- `oml_read` with `artifact_id` reads one memory, with `query` recalls, and with neither
+  lists. Never pass `query` and `artifact_id` together.
+
+An argument outside the call's mode is refused with `request.validation` naming it in
+`details.field`: drop that argument and call again.
 
 ## Name a workarea
 
@@ -128,6 +135,9 @@ No tool promotes, approves, deletes or rewrites a memory, and none issues keys. 
 actions belong to other identities on purpose. When a write is refused, the result carries
 `isError: true` and an `error` object with `code`, `rule` and `message`. Report the code
 and the rule, and do not retry a refusal whose `retryable` is `false`.
+
+No tool attaches or reads a file: MCP carries no file bytes, so files go through the `oml`
+CLI or the SDKs, once the server serves uploads. Write the claim's text with `oml_write`.
 
 No tool streams events. To follow what happened after a write, list your own work again
 with `oml_read` and `state`; an item stays `held` until a different identity reviews it.

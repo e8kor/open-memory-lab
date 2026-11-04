@@ -398,7 +398,7 @@ CREATE TABLE api_keys (
                                           -- satisfies it; 'service' never counts as review capacity
     default_workarea_id uuid,
                                           -- provider-ring target (ADR-0022 d4): a /v1 request
-                                          -- names no workarea — this, or X-OML-Workarea, resolves it
+                                          -- names no workarea — this, or a sent workarea, resolves it
     issued_seq bigint      NOT NULL,      -- journal seq of this key's key.issued, or of the
                                           -- key.rotated that minted it; the floor of its
                                           -- permission epoch (ADR-0025 d14)
@@ -618,7 +618,7 @@ CREATE TABLE idempotency (
     key_id         uuid        NOT NULL,
     workarea_id    uuid        NOT NULL,  -- the resolved node id; the nil UUID
                                           -- (00000000-0000-0000-0000-000000000000) for endpoints
-                                          -- that name no workarea; for a /v1 X-OML-Workarea name
+                                          -- that name no workarea; for a /v1 workarea name
                                           -- that names no row, its version-8 unresolved value
                                           -- (http-api.md, the unresolved value), never an id
     idem_key       text        NOT NULL,

@@ -40,6 +40,13 @@ This script extracts each surface and fails with a diff on any disagreement:
     and changelog.md): `oml login` with one credentials file per identity
     replaces it, and a page that still runs it contradicts the reference
     (ADR-0039 d15)
+  * a v0.3.0 name, `oml_remember`, `oml_recall`, `X-OML-Workarea`,
+    `include_own_held`, `OML_CLI_SERVER`, the `--token` flag or the release
+    0.3.2, on a start page (README.md, a plugin or SDK README, a plugin skill,
+    kit/README.md, docs/index.md, docs/llms.txt, docs/engineering/sdks.md,
+    docs/operations/ or a script under scripts/) outside a section headed
+    "Upgrading from …": the migration names the old spelling, a start page
+    teaches the new one (ADR-0039 d13, d14 step 5)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -97,6 +104,11 @@ MEMORY_READ_RE = re.compile(r"\bmemory\??\.([a-z_]+)\b")
 CONTRACT_MARKS = {"served", "designed"}
 RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
 RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
+RETIRED_NAME_RE = re.compile(
+    r"\boml_remember\b|\boml_recall\b|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_SERVER\b"
+    r"|--token(?![-\w])|(?<![\w.])0\.3\.2(?![\w.])"
+)
+MIGRATION_HEADING_RE = re.compile(r"^(#+) Upgrading from ")
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 SPAN_RE = re.compile(r"`([^`]+)`")
@@ -374,6 +386,38 @@ def retired_verb_problems() -> list[str]:
     return problems
 
 
+def start_pages() -> list[Path]:
+    """The pages a new reader starts from, which teach only v0.4.0's names."""
+    return [ROOT / "README.md", *sorted((ROOT / "plugins").glob("*/README.md")),
+            *sorted((ROOT / "plugins").glob("*/skills/*/SKILL.md")),
+            *sorted((ROOT / "sdks").glob("*/README.md")), ROOT / "kit" / "README.md",
+            ROOT / "docs" / "index.md", ROOT / "docs" / "llms.txt",
+            ROOT / "docs" / "engineering" / "sdks.md",
+            *sorted((ROOT / "docs" / "operations").glob("*.md")),
+            *sorted((ROOT / "scripts").glob("*.sh"))]
+
+
+def retired_name_problems() -> list[str]:
+    """Each line of a start page that names a v0.3.0 spelling ADR-0039 d13 breaks,
+    outside a section headed "Upgrading from …", whose migration names it."""
+    problems: list[str] = []
+    for path in start_pages():
+        migration_level = 0
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            heading = re.match(r"^(#+) ", line) if path.suffix == ".md" else None
+            if heading:
+                level = len(heading.group(1))
+                if migration_level and level <= migration_level:
+                    migration_level = 0
+                if MIGRATION_HEADING_RE.match(line):
+                    migration_level = level
+            if migration_level:
+                continue
+            for name in RETIRED_NAME_RE.findall(line):
+                problems.append(f"{path.relative_to(ROOT)}:{number}: {name}")
+    return problems
+
+
 NULL_EXEMPT = {"example", "examples", "default", "const"}
 
 
@@ -541,6 +585,10 @@ def main() -> int:
     retired = retired_verb_problems()
     if retired:
         failures.append(("a reader page runs a CLI verb ADR-0039 d15 retired", retired))
+
+    retired_names = retired_name_problems()
+    if retired_names:
+        failures.append(("a start page names a v0.3.0 spelling ADR-0039 d13 breaks", retired_names))
 
     catalog_problems = mcp_catalog_problems()
     if catalog_problems:

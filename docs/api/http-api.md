@@ -114,7 +114,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.3.0-design`), from which moment the covenant — and this section's definition of
+(currently `0.4.0-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -543,7 +543,8 @@ with `request.workarea_unresolved` (422).
   ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d6).
 - `verb: "learn"` asserts a derived claim: `derives_from` must be non-empty, and an empty or
   omitted `derives_from` is refused (`submission.lineage_required`) — on every surface that fronts
-  this verb, the MCP plugin's `oml_learn` included. A derived conclusion whose author cannot or
+  this verb, the MCP plugin's hidden `oml_learn` alias included; `oml_write` sends `learn` only
+  when `derives_from` is non-empty. A derived conclusion whose author cannot or
   will not name lineage is submitted as `verb: "remember"` with `kind: derived_fact` (journalled
   `submission.remember`), where the honesty rule carries the caveat: an undeclared derivation is
   undetectable by the service — the lineage closure is as good as what writers declare

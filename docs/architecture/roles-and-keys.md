@@ -254,7 +254,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
     5. only then the refusals that depend on the target, in this order: a sent `workarea`
        equal to the target's workarea, else `request.validation`; the target is the current
        served tip, else `submission.tip_conflict`; the kind and retirement checks, and on
-       `oml_supersede` the vocabulary-kind check, else `request.validation`
+       `oml_write` with `replaces` the vocabulary-kind check, else `request.validation`
        ([kind changes](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); the
        workarea is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
 
