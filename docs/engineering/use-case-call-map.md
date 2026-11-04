@@ -12,9 +12,9 @@ answers: for every use case on the use-cases page, its UC id, its status and the
 **Read against v0.3.1.** This page was written on 2026-11-03 as the input to
 [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), and its "today" is v0.3.1's
 surface. The v0.4.0 build took its three tools and most of its candidates; ADR-0039 d10 maps
-every call named here to its successor. The [use cases](../product/use-cases.md) page now holds
-v0.4.0's simplified scenarios, and the use-case titles below name the v0.3.1 catalogue they were
-derived from, which that page no longer lists one by one.
+every call named here to its successor. The [use cases](../product/use-cases.md) catalogue lists
+every use case below one by one, with v0.4.0's statuses, and the
+[quick scenarios](../product/scenarios.md) walk eight of them on the three tools.
 
 This page maps each use case of [use cases](../product/use-cases.md) to the calls it needs today,
 then derives the smallest client surface that serves them all. It is the input the maintainer
@@ -79,73 +79,73 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-DP-01 | Try OML on a laptop | built | `docker compose up -d`; `bash scripts/quickstart.sh`; `oml review next`; `oml review verdict --memory <id> --approve` | the same, through `review next` and `review approve` |
-| UC-KA-01 | Claim the first admin key | built | `oml bootstrap claim <key-name> --token <enr_…> [--tenant-name] [--principal]`; `POST /v2/bootstrap/claim` | unchanged. The reference designs `--token-stdin`, and the build takes `--token` in argv ([sources](#sources-and-their-state)); the reference and the build should agree |
-| UC-KA-02 | Give an agent its key | built | `oml keys issue-agent <key-name> --principal --workarea [--crew] [--held-by] [--write-only] [--out]`; skill `oml-admin:issue-agent-key`; `POST /v2/keys` | `keys issue <key-name> --principal --workarea --out` (merge M9) |
-| UC-SS-08 | Install the plugin | built | `export OML_URL OML_API_KEY`; `claude plugin marketplace add`; `claude plugin install oml@open-memory-lab` | unchanged; UC-SS-05 replaces the exports |
-| UC-SS-05 | Enter the server and key once | designed (ADR-0040 d1–d4) | as UC-SS-08 | plugin `userConfig`: the install dialog, or `claude plugin configure --values-stdin` fed from the `--out` key file; no OML call |
-| UC-DP-06 | Install the CLI | built for x86_64 Linux in `oml-X.Y.Z-x86_64-linux.tar.gz` beside the server (v0.3.0); per-target `oml-cli-X.Y.Z-<target>` built, unreleased | `cosign verify-blob` on the archive | unchanged |
-| UC-SDK-03 | Call OML from any language | built | the routed subset of openapi.yaml plus `/mcp` | the served document only (ADR-0039 d9) |
-| UC-SDK-04 | One obvious call per task | designed (ADR-0039) | today's surface | this page's minimal set |
+| UC-DP-01 | [Try OML on a laptop](../product/use-cases.md#try-oml-on-a-laptop) | built | `docker compose up -d`; `bash scripts/quickstart.sh`; `oml review next`; `oml review verdict --memory <id> --approve` | the same, through `review next` and `review approve` |
+| UC-KA-01 | [Claim the first admin key](../product/use-cases.md#claim-the-first-admin-key) | built | `oml bootstrap claim <key-name> --token <enr_…> [--tenant-name] [--principal]`; `POST /v2/bootstrap/claim` | unchanged. The reference designs `--token-stdin`, and the build takes `--token` in argv ([sources](#sources-and-their-state)); the reference and the build should agree |
+| UC-KA-02 | [Give an agent its key](../product/use-cases.md#give-an-agent-its-key-without-showing-it) | built | `oml keys issue-agent <key-name> --principal --workarea [--crew] [--held-by] [--write-only] [--out]`; skill `oml-admin:issue-agent-key`; `POST /v2/keys` | `keys issue <key-name> --principal --workarea --out` (merge M9) |
+| UC-SS-08 | [Install the plugin](../product/use-cases.md#install-the-plugin-in-claude-code) | built | `export OML_URL OML_API_KEY`; `claude plugin marketplace add`; `claude plugin install oml@open-memory-lab` | unchanged; UC-SS-05 replaces the exports |
+| UC-SS-05 | [Enter the server and key once](../product/use-cases.md#enter-the-server-and-key-once-kept-in-the-keychain) | designed (ADR-0040 d1–d4) | as UC-SS-08 | plugin `userConfig`: the install dialog, or `claude plugin configure --values-stdin` fed from the `--out` key file; no OML call |
+| UC-DP-06 | [Install the CLI](../product/use-cases.md#install-the-command-line-tool-from-a-verified-download) | built for x86_64 Linux in `oml-X.Y.Z-x86_64-linux.tar.gz` beside the server (v0.3.0); per-target `oml-cli-X.Y.Z-<target>` built, unreleased | `cosign verify-blob` on the archive | unchanged |
+| UC-SDK-03 | [Call OML from any language](../product/use-cases.md#call-oml-from-any-language) | built | the routed subset of openapi.yaml plus `/mcp` | the served document only (ADR-0039 d9) |
+| UC-SDK-04 | [One obvious call per task](../product/use-cases.md#one-obvious-call-for-each-task) | designed (ADR-0039) | today's surface | this page's minimal set |
 
 ### Everyday memory
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-LC-01 | Save something | built | `oml_remember {claim_key, text, idempotency_key, kind?, workarea?}`; `POST /v1/memories {verb, claim_key, kind, body}`; `oml submit --claim` | `write {text}` |
-| UC-LC-02 | Record a conclusion | built | `oml_learn {claim_key, text, derives_from, idempotency_key}`; `POST /v1/memories {verb: learn}`; `oml submit --verb learn --derives-from` | `write {text, derives_from}` |
-| UC-LC-03 | Search before acting | built; keyword search only, semantic search waits on RS-1 | `oml_recall {query, scope?, k?, max_tokens?}`; `POST /v1/memories/recall`; `oml recall --query` | `read {query}` |
-| UC-LC-04 | See its own work | built | `oml_my_work {…}`; `oml_recall {include_own_held: true}`; `GET /v1/memories?own=true` | `read {}`; `read {query, include_held: true}` (merge M3) |
-| UC-LC-05 | Read one memory back | built | `oml_get {artifact_id}`; `GET /v1/memories/{artifact_id}` | `read {artifact_id}` |
-| UC-LC-06 | Correct a memory | built | `oml_supersede {artifact_id, text, idempotency_key}`; `POST /v1/memories/{id}/supersede`; `oml supersede --target --claim` | `write {text, replaces}` |
-| UC-LC-07 | Propose retiring | built; no CLI flag | `oml_supersede {artifact_id, retirement: true, reason}` | `write {text, replaces, retire: true}`, `text` stating why (cut C5) |
-| UC-LC-08 | Learn when a write was promoted or rejected | built; the state only, since neither call serves the author a verdict's reason ([`oml_my_work`](../api/mcp-plugin.md#oml_my_work)) | `oml_events_tail {after_seq?, scope?}`; `oml_my_work {state}`; `GET /v2/events` | `read {state?}` (cut C1); no call loses a reason, since none serves one |
-| UC-LC-09 | Check where it works | built | `oml_workarea_info {workarea?}`; `GET /v2/workareas/{w}` | `workarea {}` |
-| UC-LC-10 | Link two memories | designed; `oml_relate_propose` and `oml_graph` answer "not built yet" | designed: `oml_relate_propose {kind, label, from, to}`, `oml_graph`, `/v2/claim-edges`, `GET /v2/memories/{id}/lineage` | `relate {from, to, label}` (designed); browsing is `read {artifact_id, lineage}` (merge M4) |
-| UC-LC-12 | List what a workarea holds | built on HTTP and the SDKs; not on MCP | `GET /v1/memories?workarea=&kind=&claim_key=`; SDK `list_memories`/`iter_memories` | `read {mine: false}` (ADR-0039 d4) |
-| UC-LC-11 | Save many at once | designed | reserved `POST /v1/memories:batch` | `write` taking a list, on HTTP and the SDKs only |
-| UC-SDK-01 | Store and search from an application | built; not on PyPI or npm | `remember`, `learn`, `recall`, `get`, `list_memories`/`iter_memories`, `supersede` | `write`, `read`, `workarea` |
-| UC-FL-01 | When a request is refused | built | the typed error envelope on every surface | unchanged; one envelope on MCP too (ADR-0039 d11) |
-| UC-FL-02 | Retry without a duplicate | built | `Idempotency-Key` header; `idempotency_key` on MCP; SDK-generated | unchanged (see [D2](#default-candidates)) |
-| UC-FL-04 | Reuse a label that is taken | built | `oml_remember` → `submission.claim_key_conflict`; `oml_my_work {claim_key}` | arises only when the caller sends `claim_key`, or writes the same text twice (D1) |
+| UC-LC-01 | [Save something](../product/use-cases.md#save-something-worth-keeping) | built | `oml_remember {claim_key, text, idempotency_key, kind?, workarea?}`; `POST /v1/memories {verb, claim_key, kind, body}`; `oml submit --claim` | `write {text}` |
+| UC-LC-02 | [Record a conclusion](../product/use-cases.md#record-a-conclusion-and-what-it-came-from) | built | `oml_learn {claim_key, text, derives_from, idempotency_key}`; `POST /v1/memories {verb: learn}`; `oml submit --verb learn --derives-from` | `write {text, derives_from}` |
+| UC-LC-03 | [Search before acting](../product/use-cases.md#search-before-acting) | built; keyword search only, semantic search waits on RS-1 | `oml_recall {query, scope?, k?, max_tokens?}`; `POST /v1/memories/recall`; `oml recall --query` | `read {query}` |
+| UC-LC-04 | [See its own work](../product/use-cases.md#see-its-own-work-while-it-waits) | built | `oml_my_work {…}`; `oml_recall {include_own_held: true}`; `GET /v1/memories?own=true` | `read {}`; `read {query, include_held: true}` (merge M3) |
+| UC-LC-05 | [Read one memory back](../product/use-cases.md#read-one-memory-back) | built | `oml_get {artifact_id}`; `GET /v1/memories/{artifact_id}` | `read {artifact_id}` |
+| UC-LC-06 | [Correct a memory](../product/use-cases.md#correct-a-memory) | built | `oml_supersede {artifact_id, text, idempotency_key}`; `POST /v1/memories/{id}/supersede`; `oml supersede --target --claim` | `write {text, replaces}` |
+| UC-LC-07 | [Propose retiring](../product/use-cases.md#propose-retiring-a-memory) | built; no CLI flag | `oml_supersede {artifact_id, retirement: true, reason}` | `write {text, replaces, retire: true}`, `text` stating why (cut C5) |
+| UC-LC-08 | [Learn when a write was promoted or rejected](../product/use-cases.md#learn-when-a-memory-was-approved-or-rejected) | built; the state only, since neither call serves the author a verdict's reason ([`oml_my_work`](../api/mcp-plugin.md#oml_my_work)) | `oml_events_tail {after_seq?, scope?}`; `oml_my_work {state}`; `GET /v2/events` | `read {state?}` (cut C1); no call loses a reason, since none serves one |
+| UC-LC-09 | [Check where it works](../product/use-cases.md#check-where-it-works-and-what-it-may-do) | built | `oml_workarea_info {workarea?}`; `GET /v2/workareas/{w}` | `workarea {}` |
+| UC-LC-10 | [Link two memories](../product/use-cases.md#link-two-memories) | designed; `oml_relate_propose` and `oml_graph` answer "not built yet" | designed: `oml_relate_propose {kind, label, from, to}`, `oml_graph`, `/v2/claim-edges`, `GET /v2/memories/{id}/lineage` | `relate {from, to, label}` (designed); browsing is `read {artifact_id, lineage}` (merge M4) |
+| UC-LC-12 | [List what a workarea holds](../product/use-cases.md#list-what-a-workarea-holds) | built on HTTP and the SDKs; not on MCP | `GET /v1/memories?workarea=&kind=&claim_key=`; SDK `list_memories`/`iter_memories` | `read {mine: false}` (ADR-0039 d4) |
+| UC-LC-11 | [Save many at once](../product/use-cases.md#save-many-memories-at-once) | designed | reserved `POST /v1/memories:batch` | `write` taking a list, on HTTP and the SDKs only |
+| UC-SDK-01 | [Store and search from an application](../product/use-cases.md#store-and-search-from-an-application) | built; not on PyPI or npm | `remember`, `learn`, `recall`, `get`, `list_memories`/`iter_memories`, `supersede` | `write`, `read`, `workarea` |
+| UC-FL-01 | [When a request is refused](../product/use-cases.md#when-a-request-is-refused) | built | the typed error envelope on every surface | unchanged; one envelope on MCP too (ADR-0039 d11) |
+| UC-FL-02 | [Retry without a duplicate](../product/use-cases.md#retry-without-creating-a-duplicate) | built | `Idempotency-Key` header; `idempotency_key` on MCP; SDK-generated | unchanged (see [D2](#default-candidates)) |
+| UC-FL-04 | [Reuse a label that is taken](../product/use-cases.md#reuse-a-label-that-is-taken) | built | `oml_remember` → `submission.claim_key_conflict`; `oml_my_work {claim_key}` | arises only when the caller sends `claim_key`, or writes the same text twice (D1) |
 
 ### Review
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-RV-01 | Take the next held item and record a verdict | built | `oml review next`; `oml review verdict --memory <id> --approve\|--reject --reason`; `POST /v2/review/next`, `POST /v2/review/verdicts {serve_id, verdict}`; SDK `review_next`, `verdict`; no MCP (R1) | `review next {}`; `review approve {}`, `review reject {reason}` (default D5) |
+| UC-RV-01 | [Take the next held item and record a verdict](../product/use-cases.md#approve-or-reject-the-next-memory) | built | `oml review next`; `oml review verdict --memory <id> --approve\|--reject --reason`; `POST /v2/review/next`, `POST /v2/review/verdicts {serve_id, verdict}`; SDK `review_next`, `verdict`; no MCP (R1) | `review next {}`; `review approve {}`, `review reject {reason}` (default D5) |
 | UC-SDK-02 | Reviewer bot | built | SDK `review_next()`, `verdict(…)` | the same two calls |
-| UC-RV-02 | See how much waits | designed | designed: `oml review queue`, `GET /v2/review/queue` | `review queue {}` |
-| UC-RV-03 | Reopen a wrong rejection | designed | designed: `oml review reopen <artifact>@<version>`, `POST /v2/review/reopen {artifact_id, version, reason}` | `review reopen {artifact_id, reason}`; `version` derived (D6) |
-| UC-RV-04 | Review with its files | designed | designed: `GET /v1/attachments/{digest}?artifact_id=`; `oml review next` fetches and checks | `review next` fetches; no client call |
-| UC-RV-05 | k > 1, or a human verdict | designed | designed: tenant policy through `oml settings apply` | `settings apply` |
-| UC-RV-06 | A self-signed promotion, alone | designed | designed: a verdict on one's own row in a development workarea | `review approve`; no new call |
-| UC-RV-07 | A rubric beside the item | decided, not designed (FR-59) | none | a field of the `review next` answer, not a call |
+| UC-RV-02 | [See how much waits](../product/use-cases.md#see-how-much-waits) | designed | designed: `oml review queue`, `GET /v2/review/queue` | `review queue {}` |
+| UC-RV-03 | [Reopen a wrong rejection](../product/use-cases.md#reopen-a-wrong-rejection) | designed | designed: `oml review reopen <artifact>@<version>`, `POST /v2/review/reopen {artifact_id, version, reason}` | `review reopen {artifact_id, reason}`; `version` derived (D6) |
+| UC-RV-04 | [Review with its files](../product/use-cases.md#review-a-memory-with-its-files) | designed | designed: `GET /v1/attachments/{digest}?artifact_id=`; `oml review next` fetches and checks | `review next` fetches; no client call |
+| UC-RV-05 | [k > 1, or a human verdict](../product/use-cases.md#require-more-than-one-approval-or-a-persons) | designed | designed: tenant policy through `oml settings apply` | `settings apply` |
+| UC-RV-06 | [A self-signed promotion, alone](../product/use-cases.md#approve-your-own-work-when-you-work-alone) | designed | designed: a verdict on one's own row in a development workarea | `review approve`; no new call |
+| UC-RV-07 | [A rubric beside the item](../product/use-cases.md#a-rubric-beside-the-item) | decided, not designed (FR-59) | none | a field of the `review next` answer, not a call |
 
 ### Teams and access
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-WA-01 | Create a workarea | built | `oml workareas create <parent> <name> [--crew]`; `POST /v2/workareas {parent_id, name}` | unchanged; `parent` stays required (kept K3) |
+| UC-WA-01 | [Create a workarea](../product/use-cases.md#organize-work-into-workareas) | built | `oml workareas create <parent> <name> [--crew]`; `POST /v2/workareas {parent_id, name}` | unchanged; `parent` stays required (kept K3) |
 | UC-WA-02 | See the tree and one workarea | built | `oml workareas tree [--root]`, `oml workareas show`; `GET /v2/workareas/{w}/tree`, `GET /v2/workareas/{w}` | unchanged |
 | UC-WA-03 | Record crews | built | `oml crews create\|update\|list\|show`; `oml workareas crew set`; `/v2/crews…`, `POST /v2/workareas/{w}/crew` | unchanged |
 | UC-WA-04 | Address by name | built | every reference argument takes an id or a name; `X-OML-Workarea` | one spelling per concept (ADR-0039 d7) and one place for the workarea on HTTP (merge M7) |
-| UC-KA-03 | Issue a key with a role | built | `oml keys issue <name> --role --grant … [--default-workarea] [--crew] [--write-only] [--label]`; `POST /v2/keys {role, name, …}` | `keys issue` (merge M9) |
-| UC-KA-13 | A key that writes and does not read | built ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d2) | `oml keys issue-agent … --write-only`, `oml keys issue … --write-only` | `keys issue … --write-only` (kept K9) |
-| UC-KA-04 | Look up a key | built | `oml keys show`; `GET /v2/keys/{key}` | `keys show`, carrying effective access (merge M6) |
+| UC-KA-03 | [Issue a key with a role](../product/use-cases.md#issue-a-key-with-a-chosen-role) | built | `oml keys issue <name> --role --grant … [--default-workarea] [--crew] [--write-only] [--label]`; `POST /v2/keys {role, name, …}` | `keys issue` (merge M9) |
+| UC-KA-13 | [A key that writes and does not read](../product/use-cases.md#let-an-agent-write-without-reading-its-colleagues-work) | built ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d2) | `oml keys issue-agent … --write-only`, `oml keys issue … --write-only` | `keys issue … --write-only` (kept K9) |
+| UC-KA-04 | [Look up a key](../product/use-cases.md#look-up-a-key) | built | `oml keys show`; `GET /v2/keys/{key}` | `keys show`, carrying effective access (merge M6) |
 | UC-KA-09 | List keys | designed | designed: `oml keys list [--role] [--expiring]`; `GET /v2/keys` | unchanged |
-| UC-KA-05 | Cut a key off | designed; workaround `oml deny set <key> universe` | designed: `oml keys revoke`, `POST /v2/keys/{key}/revoke` | unchanged; revoke and deny stay separate (kept K4) |
-| UC-KA-06 | Keep a key out of a subtree | built; lift designed | `oml deny set <key> <subtree> [--reason]`; `POST /v2/keys/{key}/denials`; designed lift | unchanged; `--reason` is cut C7 |
-| UC-KA-07 | Replace a key | designed | designed: `oml keys rotate <key> <new-name> [--grace]` | unchanged |
-| UC-KA-08 | Change a key's access | designed | designed: `oml grants add\|remove\|list\|effective`, three routes | `grants add\|remove`; `list` and `effective` fold into `keys show` (merge M6) |
-| UC-KA-10 | Stop an author or source | designed | designed: `oml bans add\|lift\|list`, `/v2/bans` | unchanged, under one preview convention (merge M10) |
-| UC-KA-11 | Host another organization | designed; `oml tenants create` refuses locally | designed: `oml tenants create`, `oml tenants issue-admin`, `POST /v2/tenants` | unchanged |
-| UC-KA-12 | Switch servers and keys | designed | today `--server`/`--key`, `OML_CLI_SERVER`/`OML_CLI_KEY`, the credentials file; the designed context verbs, which ADR-0039 d15 replaced with `oml login <url>` and one credentials file per server | `oml login` (v0.4.0) |
-| UC-WA-05 | A workarea grows up | designed (ADR-0009) | designed: `oml workareas status propose\|ratify\|pending`; three routes | `status propose\|ratify`; `pending` reads from `workareas show` (ADR-0039 d9) |
+| UC-KA-05 | [Cut a key off](../product/use-cases.md#cut-a-key-off) | designed; workaround `oml deny set <key> universe` | designed: `oml keys revoke`, `POST /v2/keys/{key}/revoke` | unchanged; revoke and deny stay separate (kept K4) |
+| UC-KA-06 | [Keep a key out of a subtree](../product/use-cases.md#keep-a-key-out-of-part-of-the-tree) | built; lift designed | `oml deny set <key> <subtree> [--reason]`; `POST /v2/keys/{key}/denials`; designed lift | unchanged; `--reason` is cut C7 |
+| UC-KA-07 | [Replace a key](../product/use-cases.md#replace-a-key) | designed | designed: `oml keys rotate <key> <new-name> [--grace]` | unchanged |
+| UC-KA-08 | [Change a key's access](../product/use-cases.md#change-a-keys-access) | designed | designed: `oml grants add\|remove\|list\|effective`, three routes | `grants add\|remove`; `list` and `effective` fold into `keys show` (merge M6) |
+| UC-KA-10 | [Stop an author or source](../product/use-cases.md#stop-an-author-or-source) | designed | designed: `oml bans add\|lift\|list`, `/v2/bans` | unchanged, under one preview convention (merge M10) |
+| UC-KA-11 | [Host another organization](../product/use-cases.md#host-another-organization) | designed; `oml tenants create` refuses locally | designed: `oml tenants create`, `oml tenants issue-admin`, `POST /v2/tenants` | unchanged |
+| UC-KA-12 | [Switch servers and keys](../product/use-cases.md#switch-between-servers-and-keys) | designed | today `--server`/`--key`, `OML_CLI_SERVER`/`OML_CLI_KEY`, the credentials file; the designed context verbs, which ADR-0039 d15 replaced with `oml login <url>` and one credentials file per server | `oml login` (v0.4.0) |
+| UC-WA-05 | [A workarea grows up](../product/use-cases.md#a-workarea-grows-up) | designed (ADR-0009) | designed: `oml workareas status propose\|ratify\|pending`; three routes | `status propose\|ratify`; `pending` reads from `workareas show` (ADR-0039 d9) |
 | UC-WA-06 | Relate two workareas | designed | designed: `oml workareas relate propose\|ratify`; `oml_relate_propose {kind: workarea}`; workarea-edge routes | `workareas relate propose\|ratify` over one edge family (M12) |
 | UC-WA-07 | Move a workarea | designed | designed: `oml workareas re-parent <w> --new-parent [--apply]` | unchanged |
 | UC-WA-08 | Move a memory, or serve an earlier version | designed | designed: `oml claims reassign`, `oml claims tip-override`; two routes | unchanged |
-| UC-IP-01 | Open an in-progress workarea | designed (ADR-0030) | designed: `oml workareas create --in-progress`; `oml workareas in-progress <w>`; two routes | `workareas in-progress <w>` (merge M8) |
+| UC-IP-01 | [Open an in-progress workarea](../product/use-cases.md#work-together-before-review) | designed (ADR-0030) | designed: `oml workareas create --in-progress`; `oml workareas in-progress <w>`; two routes | `workareas in-progress <w>` (merge M8) |
 | UC-IP-02 | Teammates' held memories inside | designed (ADR-0030 d5, d8) | designed: `oml_recall {include_unreviewed}`, default `true` inside | `read {query}`; the default decides (merge M3) |
 | UC-IP-03 | Keep a key from other keys' held memories | designed (ADR-0030 d6) | designed: reader grant `unreviewed: block` at issuance | `keys issue … --block-unreviewed` |
 | UC-IP-04 | Release a finished workarea | designed (ADR-0030 d12) | designed: `status propose --to committed`, ratify by another identity | `status propose\|ratify` |
@@ -162,18 +162,18 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-SS-01 | Start every session from memory | built; a recorded Claude Code run is owed (FR-33) | hook `oml hook session-start` → `GET /v1/memories?own=true&limit=10`, `POST /v1/memories/recall {k: 10, include_bodies, include_own_held, max_tokens}` | unchanged: two reads, made by the hook, not the agent |
-| UC-SS-02 | Save what a compaction summarized | built | hook asks; `oml_remember` | `write {text}` |
-| UC-SS-03 | Be told when to search | built on a branch (ADR-0038 d1–d3) | MCP `initialize` → `instructions`; `oml_recall` | `read {query}`; no new call |
-| UC-SS-04 | Recall fixes on failure | built on a branch (ADR-0038 d4–d9) | `oml hook tool-failure` with `OML_FAILURE_RECALL=1`; `oml hook session-end`; recall `{k: 3, max_tokens: 200}` | unchanged; hooks, not agent calls |
-| UC-SS-06 | Allow reads once | built | five `mcp__plugin_oml_oml__…` rules in `permissions.allow` | two rules, `…__oml_read` and `…__oml_workarea` (cut C1) |
-| UC-SS-07 | Hand lookups to a librarian | decided, not designed | none | a plugin subagent over `read`; no new call |
-| UC-ST-01 | Standing instructions | built | `oml_remember {kind: steering}`; `POST /v1/memories {kind: steering}`; `oml submit --kind steering`; then review | `write {text, kind: steering}` |
+| UC-SS-01 | [Start every session from memory](../product/use-cases.md#start-every-session-from-memory) | built; a recorded Claude Code run is owed (FR-33) | hook `oml hook session-start` → `GET /v1/memories?own=true&limit=10`, `POST /v1/memories/recall {k: 10, include_bodies, include_own_held, max_tokens}` | unchanged: two reads, made by the hook, not the agent |
+| UC-SS-02 | [Save what a compaction summarized](../product/use-cases.md#save-what-a-compaction-summarized) | built | hook asks; `oml_remember` | `write {text}` |
+| UC-SS-03 | [Be told when to search](../product/use-cases.md#be-told-when-to-search) | built on a branch (ADR-0038 d1–d3) | MCP `initialize` → `instructions`; `oml_recall` | `read {query}`; no new call |
+| UC-SS-04 | [Recall fixes on failure](../product/use-cases.md#recall-known-fixes-when-a-command-fails) | built on a branch (ADR-0038 d4–d9) | `oml hook tool-failure` with `OML_FAILURE_RECALL=1`; `oml hook session-end`; recall `{k: 3, max_tokens: 200}` | unchanged; hooks, not agent calls |
+| UC-SS-06 | [Allow reads once](../product/use-cases.md#allow-reads-once-keep-asking-on-writes) | built | five `mcp__plugin_oml_oml__…` rules in `permissions.allow` | two rules, `…__oml_read` and `…__oml_workarea` (cut C1) |
+| UC-SS-07 | [Hand lookups to a librarian](../product/use-cases.md#hand-lookups-to-a-librarian) | decided, not designed | none | a plugin subagent over `read`; no new call |
+| UC-ST-01 | [Standing instructions](../product/use-cases.md#standing-instructions) | built | `oml_remember {kind: steering}`; `POST /v1/memories {kind: steering}`; `oml submit --kind steering`; then review | `write {text, kind: steering}` |
 | UC-ST-02 | Receive steering first | built | `oml_recall`; the session-start hook | `read {query}` |
-| UC-MB-01 | Use OML from another tool | built; no client other than Claude Code checked | `/mcp` with a bearer key, the eight served tools | the three agent tools |
-| UC-MB-02 | Connect claude.ai with a code | designed (ADR-0031) | designed: `oml keys issue-agent … --connect-code`; OAuth discovery, authorize and token endpoints | `keys issue … --connect-code`; the OAuth endpoints are the client's, not the user's |
+| UC-MB-01 | [Use OML from another tool](../product/use-cases.md#use-oml-from-another-tool) | built; no client other than Claude Code checked | `/mcp` with a bearer key, the eight served tools | the three agent tools |
+| UC-MB-02 | [Connect claude.ai with a code](../product/use-cases.md#connect-claudeai-and-the-claude-apps-with-a-one-time-code) | designed (ADR-0031) | designed: `oml keys issue-agent … --connect-code`; OAuth discovery, authorize and token endpoints | `keys issue … --connect-code`; the OAuth endpoints are the client's, not the user's |
 | UC-MB-05 | Told when to search, without a plugin | built on a branch (ADR-0038 d1) | MCP `initialize` → `instructions` | no call |
-| UC-BR-01 | Brief on entering an area | decided, not designed (FR-60; ratified edges) | none; steering is the nearest | a kind read by `read`, or a hook; no tool (ADR-0039 d8) |
+| UC-BR-01 | [Brief on entering an area](../product/use-cases.md#briefs-summaries-and-handoff-notes) | decided, not designed (FR-60; ratified edges) | none; steering is the nearest | a kind read by `read`, or a hook; no tool (ADR-0039 d8) |
 | UC-BR-02 | Reviewed area summary | decided, not designed (FR-61) | workaround `oml_learn` with `derives_from` | `write {text, derives_from}` |
 | UC-BR-03 | Handoff note | decided, not designed (FR-55) | workaround `oml_remember`, read back by the hook's own-work lines | `write {text}` with a kind; read by the hook |
 | UC-BR-04 | Definition of done | decided, not designed (FR-56) | none | a hook |
@@ -183,19 +183,19 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-DL-01 | Hand in finished work | designed (ADR-0035 d1, d4, d7, d8; the object store S1 on `feat/objectstore`, #23) | designed: `oml_remember {kind: deliverable, attachments, derives_from}`; `oml attach put` | `write {text, kind: deliverable, attachments, derives_from}` |
-| UC-DL-02 | Attach files | designed; `oml_attach` answers "not built yet", SDK `upload_attachment` raises `NotBuiltError` | designed: `oml_attach {action: open\|status}`; `POST /v1/attachments/uploads`, `PUT …/parts/{n}`, `POST …/complete` | `oml attach put <file>` in the terminal, then `write {attachments: [{upload_session}]}` (cut C2) |
+| UC-DL-01 | [Hand in finished work](../product/use-cases.md#hand-in-finished-work) | designed (ADR-0035 d1, d4, d7, d8; the object store S1 on `feat/objectstore`, #23) | designed: `oml_remember {kind: deliverable, attachments, derives_from}`; `oml attach put` | `write {text, kind: deliverable, attachments, derives_from}` |
+| UC-DL-02 | [Attach files](../product/use-cases.md#attach-files-to-a-memory) | designed; `oml_attach` answers "not built yet", SDK `upload_attachment` raises `NotBuiltError` | designed: `oml_attach {action: open\|status}`; `POST /v1/attachments/uploads`, `PUT …/parts/{n}`, `POST …/complete` | `oml attach put <file>` in the terminal, then `write {attachments: [{upload_session}]}` (cut C2) |
 | UC-MB-04 | Short text files from claude.ai | designed (ADR-0035 d4, d6) | designed: `attachments: [{path, media_type, text}]`; forms on `oml_workarea_info` | `write {attachments: [{path, text}]}`; `media_type` derived from the path (D7) |
-| UC-DL-03 | Read and download | designed (ADR-0035 d3, d5) | designed: `oml_get {include_text}`; `GET /v1/attachments/{digest}?artifact_id=`; `oml attach get` | `read {artifact_id, include_text}`; the download stays HTTP |
+| UC-DL-03 | [Read and download](../product/use-cases.md#read-and-download-a-deliverable) | designed (ADR-0035 d3, d5) | designed: `oml_get {include_text}`; `GET /v1/attachments/{digest}?artifact_id=`; `oml attach get` | `read {artifact_id, include_text}`; the download stays HTTP |
 | UC-DL-04 | List deliverables | designed (ADR-0035 d7) | partly `GET /v1/memories?kind=`; designed `oml_my_work {kind}`, `oml_recall {kinds}` | `read {kind: deliverable, mine: false}` |
 | UC-DL-05 | Trace a result | designed (ADR-0035 d8) | designed: `GET /v2/memories/{id}/lineage?direction&depth`; `oml_graph` | `read {artifact_id, lineage: ancestors\|descendants}` (merge M4) |
-| UC-DL-06 | Choose where files are kept | designed (ADR-0035 d9, d10) | designed: `oml storage copy <from-url> <to-url>` with the writers stopped, then boot setting `storage.url` | unchanged; an operator's command and a setting, not a client call |
+| UC-DL-06 | [Choose where files are kept](../product/use-cases.md#choose-where-files-are-kept) | designed (ADR-0035 d9, d10) | designed: `oml storage copy <from-url> <to-url>` with the writers stopped, then boot setting `storage.url` | unchanged; an operator's command and a setting, not a client call |
 
 ### Time
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-TT-01 | Say when a memory is true | designed (ADR-0036 d2) | designed: `valid_from`, `valid_to` on the three writes and `POST /v1/memories` | `write {text, valid_from?, valid_to?}` |
+| UC-TT-01 | [Say when a memory is true](../product/use-cases.md#time) | designed (ADR-0036 d2) | designed: `valid_from`, `valid_to` on the three writes and `POST /v1/memories` | `write {text, valid_from?, valid_to?}` |
 | UC-TT-02 | What OML held at a date | designed (ADR-0036 d3) | designed: `as_of` or `as_of_seq` on recall, get and both listings | `read {as_of}`, taking an instant or a seq (merge M2) |
 | UC-TT-03 | True at a time or in a range | designed (ADR-0036 d4) | designed: `valid_at`, `valid_since`, `valid_until` | unchanged |
 | UC-TT-04 | Read-only MCP resources | designed (ADR-0036 d5) | designed: `resources/list`, `resources/templates/list`, `resources/read` | unchanged; a second read path, kept K5 |
@@ -205,7 +205,7 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-GR-01 | Set a team rule | designed (ADR-0037 d1–d3, d10; domain core on `feat/guardrails-domain`, #21) | designed: `POST /v1/memories {kind: guardrail, severity, rule?}`, not on MCP; then review | `write` over HTTP with `kind: guardrail` |
+| UC-GR-01 | [Set a team rule](../product/use-cases.md#team-rules) | designed (ADR-0037 d1–d3, d10; domain core on `feat/guardrails-domain`, #21) | designed: `POST /v1/memories {kind: guardrail, severity, rule?}`, not on MCP; then review | `write` over HTTP with `kind: guardrail` |
 | UC-GR-02 | Load rules at start | designed (ADR-0037 d5–d7) | designed: `oml hook guardrails` → `GET /v1/guardrails` | unchanged (kept K6) |
 | UC-GR-03 | Deny before the tool runs | designed (ADR-0037 d8, d9, d13) | designed: `oml hook pre-tool-use`, from the local cache | unchanged; no network call |
 | UC-GR-04 | Rule scope per key | designed (ADR-0037 d4) | designed: `--guardrail-scope workarea\|ancestors` at issuance and rotation | `keys issue … --guardrail-scope`, default `ancestors` |
@@ -217,16 +217,16 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
 | UC-FL-03 | Start when the server is down | built (ADR-0029 d5) | the hook exits 0 and prints nothing | unchanged |
-| UC-FL-05 | Check health | built in part | `oml doctor`; `GET /healthz`, `GET /readyz`; designed `oml status` | `doctor` (merge M11) |
+| UC-FL-05 | [Check health](../product/use-cases.md#check-health) | built in part | `oml doctor`; `GET /healthz`, `GET /readyz`; designed `oml status` | `doctor` (merge M11) |
 | UC-FL-06 | Diagnose a named condition | designed | partly `/readyz` and `oml doctor`; designed runbook verbs, a dead-letter re-enqueue with no verb (FR-28) | `doctor` names the runbook |
-| UC-DP-02 | Install on one host | built for x86_64 Linux in `oml-X.Y.Z-x86_64-linux.tar.gz` (v0.3.0); `oml-server-lead-X.Y.Z-<target>.tar.gz` for x86_64 and aarch64 built, unreleased | `cosign verify-blob` on the archive | unchanged |
-| UC-DP-03 | Install on Kubernetes | built (ADR-0033) | `kubectl create secret`; `helm install`; `kubectl logs`; `kubectl port-forward`; `oml bootstrap claim`; `helm upgrade --set ingress.enabled=true` | unchanged |
-| UC-DP-04 | Upgrade without losing identity | built (ADR-0033 d2, d3) | `helm upgrade`; `--set keyring.existingClaim` | unchanged |
-| UC-DP-05 | Least privilege | built, unreleased (ADR-0034) | owner role, one `ALTER … OWNER`, `OML_POSTGRES__OWNER_URL` beside `OML_POSTGRES__URL` | unchanged |
-| UC-OP-01 | Apply settings | designed | designed: `oml settings show [--effective]\|validate\|apply`; three routes | `settings show\|apply [--dry-run]` (merge M10) |
-| UC-SIM-01 | Rehearse with invented facts | designed (ADR-0011) | designed: `oml simulations open\|list\|show\|end`; `simulation_id` on writes, refused | unchanged at build; the write fields leave until then (cut C3) |
-| UC-DS-01 | Import a data set | designed (ADR-0020) | none | unchanged at build |
-| UC-DP-07 | Run in production | designed (ADR-0016, ADR-0023) | none | unchanged |
+| UC-DP-02 | [Install on one host](../product/use-cases.md#install-or-upgrade-on-one-host) | built for x86_64 Linux in `oml-X.Y.Z-x86_64-linux.tar.gz` (v0.3.0); `oml-server-lead-X.Y.Z-<target>.tar.gz` for x86_64 and aarch64 built, unreleased | `cosign verify-blob` on the archive | unchanged |
+| UC-DP-03 | [Install on Kubernetes](../product/use-cases.md#install-on-kubernetes) | built (ADR-0033) | `kubectl create secret`; `helm install`; `kubectl logs`; `kubectl port-forward`; `oml bootstrap claim`; `helm upgrade --set ingress.enabled=true` | unchanged |
+| UC-DP-04 | [Upgrade without losing identity](../product/use-cases.md#upgrade-without-losing-identity) | built (ADR-0033 d2, d3) | `helm upgrade`; `--set keyring.existingClaim` | unchanged |
+| UC-DP-05 | [Least privilege](../product/use-cases.md#run-the-server-with-least-privilege) | built, unreleased (ADR-0034) | owner role, one `ALTER … OWNER`, `OML_POSTGRES__OWNER_URL` beside `OML_POSTGRES__URL` | unchanged |
+| UC-OP-01 | [Apply settings](../product/use-cases.md#apply-settings-and-see-what-is-in-effect) | designed | designed: `oml settings show [--effective]\|validate\|apply`; three routes | `settings show\|apply [--dry-run]` (merge M10) |
+| UC-SIM-01 | [Rehearse with invented facts](../product/use-cases.md#rehearse-with-invented-facts) | designed (ADR-0011) | designed: `oml simulations open\|list\|show\|end`; `simulation_id` on writes, refused | unchanged at build; the write fields leave until then (cut C3) |
+| UC-DS-01 | [Import a data set](../product/use-cases.md#import-an-existing-data-set) | designed (ADR-0020) | none | unchanged at build |
+| UC-DP-07 | [Run in production](../product/use-cases.md#run-in-production) | designed (ADR-0016, ADR-0023) | none | unchanged |
 | UC-DP-08 | Back up and restore | designed | the operator's own database backups | unchanged |
 | UC-DP-09 | Rotate keys, respond to compromise | designed | none | unchanged |
 | UC-DP-10 | Move between profiles | designed (ADR-0023 d10) | none | unchanged |
@@ -236,15 +236,15 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 
 | UC | Use case | Status | Calls today | Minimal |
 |---|---|---|---|---|
-| UC-AU-01 | Follow the record | built | `GET /v2/events?after_seq=&limit=`; `oml_events_tail` | `events {}` on HTTP and the SDKs (cut C1) |
-| UC-AU-02 | Check history | designed; `oml audit verify-chain` built, refused live | designed: `POST /v2/exports {kind: chain}` | `audit verify-chain` |
-| UC-AU-03 | One bundle of evidence | designed | designed: `oml audit export --out`; three export routes | `audit export` |
+| UC-AU-01 | [Follow the record](../product/use-cases.md#follow-the-record) | built | `GET /v2/events?after_seq=&limit=`; `oml_events_tail` | `events {}` on HTTP and the SDKs (cut C1) |
+| UC-AU-02 | [Check history](../product/use-cases.md#check-that-history-was-not-changed) | designed; `oml audit verify-chain` built, refused live | designed: `POST /v2/exports {kind: chain}` | `audit verify-chain` |
+| UC-AU-03 | [One bundle of evidence](../product/use-cases.md#one-bundle-of-evidence) | designed | designed: `oml audit export --out`; three export routes | `audit export` |
 | UC-AU-06 | Who read what | designed | designed: the read log in the evidence export | `audit export`; no call of its own |
-| UC-AU-04 | Erase | designed (ADR-0005) | designed: `oml erase <artifact> [--dry-run]`; `POST /v2/memories/{id}/erase` | unchanged, under one preview convention (merge M10) |
+| UC-AU-04 | [Erase](../product/use-cases.md#withdraw-or-erase-a-memory) | designed (ADR-0005) | designed: `oml erase <artifact> [--dry-run]`; `POST /v2/memories/{id}/erase` | unchanged, under one preview convention (merge M10) |
 | UC-AU-05 | Withdraw (demote) | designed | designed: `oml claims demote <artifact>@<v> --reason`; `POST /v2/memories/{id}/demote {version, reason}` | `claims demote <artifact> --reason`; `version` derived (D6) |
-| UC-AU-07 | Retention and legal hold | decided, not designed (FR-26) | none | settings and an admin verb, shape open |
-| UC-AU-08 | Offboard an organization | designed (FR-27) | designed: a ceremony of revocations, exports and erasures | the composed verbs |
-| UC-AU-09 | Analytics lake | designed (ADR-0003) | none | not a client call of the gate |
+| UC-AU-07 | [Retention and legal hold](../product/use-cases.md#retention-and-legal-hold) | decided, not designed (FR-26) | none | settings and an admin verb, shape open |
+| UC-AU-08 | [Offboard an organization](../product/use-cases.md#offboard-an-organization) | designed (FR-27) | designed: a ceremony of revocations, exports and erasures | the composed verbs |
+| UC-AU-09 | [Analytics lake](../product/use-cases.md#analyze-memory-in-an-analytics-store) | designed (ADR-0003) | none | not a client call of the gate |
 
 ## The minimal call set
 
@@ -300,6 +300,27 @@ issue` absorbs `keys issue-agent` (M9), `keys show` absorbs `grants list` and `g
 `oml hook session-start`, and the designed `tool-failure`, `session-end`, `guardrails` and
 `pre-tool-use`, are calls the harness makes, not the agent. Each reads with the agent's key
 through the same `read` routes and adds no route of its own, except `GET /v1/guardrails` (K6).
+
+## The calls in v0.4.0
+
+The Status and "Calls today" columns above are v0.3.1's; the [use cases](../product/use-cases.md)
+catalogue carries each use case's v0.4.0 status. The Minimal column is what v0.4.0 serves for
+every built use case, under these spellings, which ADR-0039 d10 maps call by call:
+
+| Minimal, on this page | Served in v0.4.0 | Where the build differs from the map |
+|---|---|---|
+| `write {text, …}` | MCP `oml_write`, CLI `oml write <text>`, SDK `write` | `retire` is `retirement`, and the optional `reason` stays (C5 not taken); `kind` keeps `derived_fact` (C4 not taken); `idempotency_key` stays required on MCP (D2) |
+| `read {…}` | MCP `oml_read`, CLI `oml read`, SDK `read` | `include_held` is `include_unreviewed` (M3, under ADR-0030's name); `mine` is `own`; the lineage mode (M4) is designed, refused until the lineage read is routed |
+| `workarea {}` | MCP `oml_workarea`, SDK `workarea` | none |
+| `events {}` | `GET /v2/events`, CLI `oml events`, SDK `events`; not on MCP (C1 taken) | none |
+| `review next`, `review approve {}`, `review reject {reason}` | `oml review next`, `oml review approve [<serve_id>] [--note]`, `oml review reject [<serve_id>] --reason`; SDK `review_next`, `approve`, `reject` | `serve_id` is optional (D5 taken); `--note` on approve stays (C8 not taken) |
+| `oml login` (UC-KA-12) | `oml login <url>`, checked through `GET /v2/whoami`; `oml doctor` | `OML_CLI_SERVER` and `OML_CLI_KEY` are gone, against K7 (ADR-0039 d15) |
+| plugin `userConfig` (UC-SS-05) | the plugin's `url` and `api_key` settings, and `oml setup claude-code [--key-file]` (ADR-0040, ADR-0041 d7) | none |
+| `keys issue … --connect-code` (UC-MB-02) | `oml keys issue-agent … --connect-code` (ADR-0031) | `keys issue-agent` stays a verb of its own (M9 not taken) |
+| `doctor` (UC-FL-05) | `oml doctor` | `oml status` stays designed (M11 not taken) |
+
+v0.4.0 also took D1, D3, D4, M1, M7 and C3. Every other row's Minimal is a candidate for the
+record its row names, and the use case keeps its catalogue status until that record is built.
 
 ## Cut candidates
 
@@ -386,7 +407,8 @@ review loop and M14 on the agent's terminal reads. None changes an agent tool.
 
 ## Refusals, retries and taken labels
 
-Moved here from the use-cases page, whose v0.4.0 scenarios leave them out.
+The [use cases](../product/use-cases.md) catalogue tells these from the user's side; the quick
+[scenarios](../product/scenarios.md) leave them out.
 
 - **A refused request** answers the one envelope of [errors](../api/errors.md#the-envelope) on
   every surface: its code names the rule, `retryable` says whether a retry can help, and on MCP

@@ -34,7 +34,7 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
-### 2026-11-04 — The v0.4.0 documentation: Get started, install, five guides, the use cases as eight scenarios, and every front page rewritten for the three tools and the one pair (ADR-0018, ADR-0041)
+### 2026-11-04 — The v0.4.0 documentation: Get started, install, five guides, eight quick scenarios beside the use-case catalogue, and every front page rewritten for the three tools and the one pair (ADR-0018, ADR-0041)
 
 A documentation change carrying out the [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md)
 steps 1 to 5. The README marks each unbuilt capability as planned with its release, or not
@@ -42,13 +42,15 @@ scheduled, and its Quickstart is the installer at `v0.4.0`, `oml login` and `oml
 claude-code`. New: [Get started](start/index.md), [install](start/install.md), and the guides for
 [Claude Code](guides/claude-code.md), [claude.ai and mobile](guides/claude-ai-and-mobile.md),
 [other agent tools](guides/other-harnesses.md), [self-hosting](guides/self-hosting.md) and
-[upgrading from v0.3](guides/upgrading.md). [Use cases](product/use-cases.md), from PR #26, is
-rewritten as eight scenarios, and the [use-case call map](engineering/use-case-call-map.md) comes
-with it, read against v0.3.1.
+[upgrading from v0.3](guides/upgrading.md). Eight [quick scenarios](product/scenarios.md) on
+the three tools sit beside the [use cases](product/use-cases.md) catalogue from PR #26, whose
+statuses read v0.3.1 as released and v0.4.0 as built, and the
+[use-case call map](engineering/use-case-call-map.md) names the calls v0.4.0 serves for each.
 
 - **Checks:** `check_release.py` fails an installer URL on a reader page at a tag other than the
   workspace version's or `vX.Y.Z`, and a README Quickstart other than those three lines;
-  `check_contract_sync.py` reads `docs/start/`, `docs/guides/` and the use cases as start pages.
+  `check_contract_sync.py` reads `docs/start/`, `docs/guides/`, the use cases and the quick
+  scenarios as start pages.
 - **No surface change:** `info.version` stays `0.4.0-design`.
 - **Unmeasured:** every time named is ADR-0041 d10's target, FR-68.
 
@@ -725,6 +727,22 @@ Caddy's `log` directive documentation, all fetched 2026-10-31.
   pure modules d16 names may land before it.
 
 ## 0.3.0-design
+
+### 2026-11-03 — Use cases and the use-case call map (documentation)
+
+A documentation change; no decision changes. The maintainer asked on 2026-11-03 for
+comprehensive use-case documentation and for a client API designed by Occam's razor. Two pages
+answer it. [Use cases](product/use-cases.md), on the client tier, gives every use case by journey
+and user, with its goal, its story, what its user sees and its status, and a day of an agent and
+a reviewer. The [use-case call map](engineering/use-case-call-map.md), on the engineering tier,
+declares the `UC-` ids, maps each use case to the calls it needs today, derives the minimal
+client call set, lists the cut, merge and default candidates, and states which decisions of the
+proposed ADR-0039, the v0.3.2 API rewrite, it supports or contradicts.
+
+- **Roadmap:** no row opens or closes.
+- **No surface change:** `info.version` stays `0.3.0-design`.
+- **Pages touched:** the two pages, `mkdocs.yml`, `llms.txt` and this page.
+- **Not built:** the candidates are inputs to ADR-0039 and to the proposed records each names.
 
 ### 2026-11-03 — Every record and feature page names the release that built it or is planned to
 

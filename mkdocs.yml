@@ -71,6 +71,7 @@ nav:
   - Product:
       - Positioning: product/positioning.md
       - Use cases: product/use-cases.md
+      - Quick scenarios: product/scenarios.md
       - Releases: product/releases.md
       - Roadmap: product/roadmap.md
       - Commitments: product/commitments.md

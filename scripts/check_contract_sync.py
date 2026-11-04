@@ -48,8 +48,8 @@ This script extracts each surface and fails with a diff on any disagreement:
     the pattern first checked against probe lines it must catch and pass, on a
     start page (README.md, a plugin or SDK README, a plugin skill,
     kit/README.md, docs/index.md, docs/llms.txt, docs/engineering/sdks.md,
-    docs/operations/, docs/start/, docs/guides/, docs/product/use-cases.md or a
-    script under scripts/) outside a section headed
+    docs/operations/, docs/start/, docs/guides/, docs/product/use-cases.md,
+    docs/product/scenarios.md or a script under scripts/) outside a section headed
     "Upgrading from …": the migration names the old spelling, a start page
     teaches the new one (ADR-0039 d13, d14 step 5)
 
@@ -419,7 +419,8 @@ def start_pages() -> list[Path]:
             *sorted((ROOT / "docs" / "operations").glob("*.md")),
             *sorted((ROOT / "docs" / "start").glob("*.md")),
             *sorted((ROOT / "docs" / "guides").glob("*.md")),
-            *[p for p in [ROOT / "docs" / "product" / "use-cases.md"] if p.exists()],
+            *[p for p in [ROOT / "docs" / "product" / "use-cases.md",
+                         ROOT / "docs" / "product" / "scenarios.md"] if p.exists()],
             *sorted((ROOT / "scripts").glob("*.sh"))]
 
 

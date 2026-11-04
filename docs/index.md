@@ -92,7 +92,8 @@ on a particular machine. (Design commitment, not yet exercised.)
 
 - **New here?** Start with [Get started](start/index.md): use OML with a server and a key, run
   it with Docker, or add an agent, each in one command. The [guides](guides/claude-code.md) and
-  the [use cases](product/use-cases.md) follow from there.
+  the [quick scenarios](product/scenarios.md) follow from there, and the
+  [use cases](product/use-cases.md) list every use case with its status.
 - **New to the design?** Start with [Concepts](concepts.md) — the vocabulary, one concept at a
   time, each linked to the page that decides it.
 - **Reviewing this design?** Start with the [review guide](review-guide.md) — the decisions that

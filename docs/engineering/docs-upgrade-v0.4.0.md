@@ -2,7 +2,7 @@
 id: engineering/docs-upgrade-v0.4.0
 tier: engineering
 status: plan for review · steps 1 to 5 carried out on 2026-11-04; step 6 waits for the v0.4.0 tag
-answers: which pages the v0.4.0 documentation upgrade rewrites, adds or retires; for each, what changes, which record or file is its source of truth, and whether it waits for the API rewrite, the installer verbs or OAuth; the simplified scenarios that replace the use-case catalogue; the order of work and the checks that close each step
+answers: which pages the v0.4.0 documentation upgrade rewrites, adds or retires; for each, what changes, which record or file is its source of truth, and whether it waits for the API rewrite, the installer verbs or OAuth; the simplified scenarios beside the use-case catalogue; the order of work and the checks that close each step
 -->
 
 # Documentation upgrade for v0.4.0: a page-by-page plan
@@ -10,7 +10,7 @@ answers: which pages the v0.4.0 documentation upgrade rewrites, adds or retires;
 **Status:** plan for review · steps 1 to 5 carried out on 2026-11-04; step 6 waits for the v0.4.0 tag
 
 **Carried out on 2026-11-04**, on `feat/v0.4.0`: the Get started and install pages, the five
-guides, the use cases as eight scenarios (taken from `feat/use-cases`, PR #26, which is not
+guides, the use cases as eight scenarios (taken from `feat/use-cases`, PR #26, before it
 merged), the call map with the refusal and retry notes, the README, the overview's build and
 client sections, the CLI reference's installer, the plugin, `oml-admin` and kit READMEs, the
 deployment and configuration pages, the home page, `llms.txt`, the nav and the releases page.
@@ -56,12 +56,15 @@ Every page in the upgrade follows four rules.
 | `docs/start/index.md`, new, client tier | One page with three paths, each a short block led by its single command. **Use OML** gives the installer, `oml login`, `oml setup claude-code` and the first write. **Run OML** gives `oml quickstart`. **Add an agent** gives `oml keys issue-agent --out` and what to send the user. Each path states its target time and its "held" sentence. It replaces the README's Quickstart as the place the site sends a newcomer. | ADR-0041 d1, d6, d7, d9, d10; ADR-0039 d15 | Q (setup and quickstart), R (login) |
 | `docs/start/install.md`, new, engineering tier | The installer reference covers: what each script checks (ADR-0041 d2) and both of its outcomes, word for word; the flags and variables; where it writes; the `PATH` line; the inspect-first form; ADR-0041 d5's trust notes; uninstalling (delete one file); and Windows PowerShell 5.1 and 7. The manual cosign lines move here from the CLI reference. Homebrew, Scoop and winget are listed as not offered, with ADR-0041's reasons. | ADR-0041 d1–d5; `scripts/install/` | — for the installer; Q for `--quickstart` |
 
-## Use cases: rewritten as simplified scenarios
+## Use cases: simplified scenarios beside the catalogue
 
-`docs/product/use-cases.md` (U) catalogues every call. v0.4.0 replaces the catalogue's reading
-order with a few scenarios, each of five steps or fewer and one tool call per step, on the three
-tools. The catalogue's detail moves to the call map, which stays engineering tier. The page is
-client tier, so it uses plain words: "save", "find", "approve".
+`docs/product/use-cases.md` (U) catalogues every use case. v0.4.0 adds a quick reading order
+beside it, [`docs/product/scenarios.md`](../product/scenarios.md): a few scenarios, each of five
+steps or fewer and one tool call per step, on the three tools. Both pages are client tier, so
+they use plain words: "save", "find", "approve". On 2026-11-04 PR #26 merged into `main` with the
+catalogue, and the merge into `feat/v0.4.0` kept both pages: the scenarios moved to their own
+page, and the catalogue keeps every use case, its statuses read against v0.3.1 as released and
+v0.4.0 as built, its stories told in v0.4.0's behaviour.
 
 | Scenario | Steps | Waits for |
 |---|---|---|
@@ -74,8 +77,9 @@ client tier, so it uses plain words: "save", "find", "approve".
 | **Try OML on a laptop** | `oml quickstart`, then the first scenario | Q |
 | **Use OML from claude.ai or a phone** | add the server as a custom connector and sign in once | O, and the open check below |
 
-The scenarios replace the page's "Getting started" and "Everyday memory" sections. The sections
-on refusals and retries move into the call map.
+The scenarios are the quick read of the catalogue's "Getting started" and "Everyday memory"
+sections. The call map keeps the engineering notes on refusals and retries; the catalogue tells
+them from the user's side.
 
 ## Architecture
 

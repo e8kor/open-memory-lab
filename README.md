@@ -291,7 +291,8 @@ The full documentation is at **<https://e8kor.github.io/open-memory-lab/>**.
 | --- | --- |
 | [Get started](docs/start/index.md) | Use OML, run OML, or add an agent, each in one command |
 | [Guides](docs/guides/claude-code.md) | Claude Code, claude.ai and mobile, other tools, self-hosting, upgrading from v0.3 |
-| [Use cases](docs/product/use-cases.md) | Short scenarios on the three tools |
+| [Quick scenarios](docs/product/scenarios.md) | Eight short scenarios on the three tools |
+| [Use cases](docs/product/use-cases.md) | Every use case by journey and user, with its status |
 | [Live atlas](https://e8kor.github.io/open-memory-lab/atlas/) | An interactive 3D tour of crews working with OML |
 | [Overview](docs/index.md) | What OML is and what you get |
 | [Concepts](docs/concepts.md) | Workareas, roles, review and the history |
