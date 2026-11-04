@@ -19,7 +19,7 @@ use oml_app::domain::oauth::{
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, VerifyError, verify_chain,
+    SignedEnvelope, VerifyError, WorkareaStatus, verify_chain,
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
@@ -857,7 +857,7 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
 const WORKAREA_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, crew, crew_id, user_root, namespace_root_id";
+    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -877,6 +877,12 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
                  names before it serves (ADR-0026 d11)"
             ))
         })?,
+        status: {
+            let status: String = row.try_get("status").map_err(backend)?;
+            WorkareaStatus::parse(&status).ok_or_else(|| {
+                StoreError::Backend(format!("workarea {workarea_id} has status {status:?}"))
+            })?
+        },
         crew: crew
             .map(serde_json::from_value)
             .transpose()
@@ -1324,12 +1330,11 @@ async fn apply_fold(
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
         MetadataFold::WorkareaCreated(w) => {
-            // No status transition is built, so the status stored is the one
-            // the workarea read serves: the universe root's permanent
-            // 'committed', every other node's 'development'. The path is the
-            // parent's with this node's name appended, the root's its name
-            // alone (ADR-0026 d7); a parent the lead has not named yet has
-            // no path, and neither does its child until the naming fold. A
+            // The status stored is the record's, the one column every
+            // workarea read serves (ADR-0009 d1). The path is the parent's
+            // with this node's name appended, the root's its name alone
+            // (ADR-0026 d7); a parent the lead has not named yet has no
+            // path, and neither does its child until the naming fold. A
             // parent the tenant does not hold, another tenant's node
             // included, meets the key (tenant_id, parent_id) and is the
             // backend's refusal, as any 23503 is (ADR-0034 d12).
@@ -1351,7 +1356,7 @@ async fn apply_fold(
             .bind(w.tenant_id)
             .bind(w.parent_id)
             .bind(w.name.as_str())
-            .bind(w.status())
+            .bind(w.status.as_str())
             .bind(crew)
             .bind(w.crew_id)
             .bind(w.user_root)
@@ -3007,7 +3012,7 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
@@ -3041,7 +3046,7 @@ impl JournalStore for PgStore {
                  SELECT {WORKAREA_COLUMNS}, 0 AS depth FROM workareas \
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
-                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
+                 SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
                         w.user_root, w.namespace_root_id, down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \

@@ -9,7 +9,7 @@ use oml_domain::oauth::{
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError, WorkareaStatus,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -715,8 +715,8 @@ pub struct Crew {
     pub external_manager: Option<String>,
 }
 
-/// A workarea node (the PoC slice: id, parent, name and crew — no status
-/// ladder yet).
+/// A workarea node: id, parent, name, its rung on the status ladder and
+/// its crew.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaRecord {
     pub workarea_id: Uuid,
@@ -725,6 +725,12 @@ pub struct WorkareaRecord {
     /// Unique in the tenant across the whole tree and never changed; the
     /// root's is `universe` (ADR-0026 d1, d6).
     pub name: Name,
+    /// The node's rung on the status ladder, as its row stores it: one
+    /// column, written at create and by a ratified transition alone
+    /// (ADR-0009 d1; workareas.md the status ladder). `workarea.create`
+    /// stores `development`, and a tenant's bootstrap stores `committed` on
+    /// the universe root, which never moves (http-api.md workareas).
+    pub status: WorkareaStatus,
     /// The crew object a PoC `workarea.create` copied in, kept as the
     /// history the naming of rows that predate names reads it from; `None`
     /// on every workarea created since crews are records (ADR-0026 d8, d11).
@@ -767,21 +773,6 @@ pub struct CrewRecord {
     pub name: Name,
     pub charter_uri: Option<String>,
     pub external_manager: Option<String>,
-}
-
-impl WorkareaRecord {
-    /// The node's rung on the status ladder (workareas.md the status
-    /// ladder). No status transition is built, so a node keeps the status it
-    /// was created with: the universe root is permanently `committed`, and
-    /// every other node is created in `development` (http-api.md workareas).
-    #[must_use]
-    pub fn status(&self) -> &'static str {
-        if self.parent_id.is_none() {
-            "committed"
-        } else {
-            "development"
-        }
-    }
 }
 
 /// A node as `workarea.create` committed it, with the path derived from the
