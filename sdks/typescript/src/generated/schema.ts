@@ -727,7 +727,7 @@ export interface paths {
         };
         /**
          * The search pipelines served, the deployment's default, the tenant's and the one in effect.
-         * @description Requires: admin key role (ADR-0049 d4). Since v0.5.3.
+         * @description Requires: admin key role (ADR-0049 d4). Since v0.5.5.
          */
         get: operations["searchSettings"];
         put?: never;
@@ -749,7 +749,7 @@ export interface paths {
         put?: never;
         /**
          * Set the tenant's default search pipeline, or clear it with null; in force from the next request.
-         * @description Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else request.validation with details.field /search. Journalled as search.default_set with the name and the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.
+         * @description Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else request.validation with details.field /search. Journalled as search.default_set with the name and the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
          */
         post: operations["setSearchDefault"];
         delete?: never;

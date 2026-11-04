@@ -60,8 +60,8 @@ and `access.not_found` when it cannot read the workarea at all.
 Call `oml_read` with a `query` before non-trivial work, when the task names a project term
 you do not know, and after a command or test fails. Pass the words the memory would contain,
 such as an identifier, an error code, a module or a file name, or a question. Any word may
-match, an identifier matches by its parts, a word by its stem and a misspelling by its letters,
-and each hit's `matched` lists the words it holds; send `match: "all"` when every word must
+match, an identifier matches by its parts and a word by its stem, each hit's `matched` lists the
+words it holds, and a recall that finds little offers spellings in `search.did_you_mean`; send `match: "all"` when every word must
 match. Try other words once before concluding nothing is stored. Recall returns approved memories, with `k` bounding the hits and
 `kinds` narrowing them to `memory` or `derived_fact`. Rows under `steering` are standing
 instructions from the crew. They come before the hits and are not ranked, so read them first.

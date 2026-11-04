@@ -63,8 +63,9 @@ standing instructions that agents and people recorded and a different identity r
 Call oml_read with a query before non-trivial work, when the task names a project term you do \
 not know, and after a command or test fails. Pass the words a note would use, or a question: an \
 identifier, an error code, a module, file or project name. Any word may match, an identifier \
-matches by its parts, a word by its stem and a misspelling by its letters, and rows holding more \
-of the words rank higher; each hit's matched lists the words it holds. Send match all when every \
+matches by its parts and a word by its stem, and rows holding more of the words rank higher; \
+each hit's matched lists the words it holds, and a recall that finds little suggests spellings \
+in did_you_mean. Send match all when every \
 word must match. If nothing useful comes back, try other words once before concluding OML holds \
 nothing.
 

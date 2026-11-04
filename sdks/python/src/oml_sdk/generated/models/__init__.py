@@ -150,8 +150,8 @@ from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
-from .severity import Severity
 from .set_search_default_body import SetSearchDefaultBody
+from .severity import Severity
 from .submit_accepted import SubmitAccepted
 from .submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
 from .submit_accepted_scan import SubmitAcceptedScan
@@ -333,8 +333,8 @@ __all__ = (
     "ServedGuardrail",
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemHeldBy",
-    "Severity",
     "SetSearchDefaultBody",
+    "Severity",
     "SubmitAccepted",
     "SubmitAcceptedReplacesType0",
     "SubmitAcceptedScan",

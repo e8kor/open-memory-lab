@@ -85,7 +85,7 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else
     request.validation with details.field /search. Journalled as search.default_set with the name and
-    the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.
+    the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -130,7 +130,7 @@ def sync(
 
      Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else
     request.validation with details.field /search. Journalled as search.default_set with the name and
-    the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.
+    the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -170,7 +170,7 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else
     request.validation with details.field /search. Journalled as search.default_set with the name and
-    the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.
+    the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -213,7 +213,7 @@ async def asyncio(
 
      Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else
     request.validation with details.field /search. Journalled as search.default_set with the name and
-    the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.
+    the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):

@@ -14,8 +14,8 @@ records it with `oml_write`.
 ## Search
 
 `oml_read` with a `query` recalls the reviewed memories of a workarea. Any word of the query
-may match; an identifier matches by its parts, a word by its stem and a misspelling by its
-letters, and rows holding more of the words rank higher. Each hit's `matched` lists the words it
+may match; an identifier matches by its parts and a word by its stem, rows holding more of the
+words rank higher, and a recall that finds little offers spellings in `search.did_you_mean`. Each hit's `matched` lists the words it
 holds out of how many the query had, so a hit that matched one common word of five is weak
 evidence. So:
 

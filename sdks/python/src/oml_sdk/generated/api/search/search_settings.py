@@ -72,7 +72,7 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | SearchSettings]:
     """The search pipelines served, the deployment's default, the tenant's and the one in effect.
 
-     Requires: admin key role (ADR-0049 d4). Since v0.5.3.
+     Requires: admin key role (ADR-0049 d4). Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -109,7 +109,7 @@ def sync(
 ) -> ErrorEnvelope | SearchSettings | None:
     """The search pipelines served, the deployment's default, the tenant's and the one in effect.
 
-     Requires: admin key role (ADR-0049 d4). Since v0.5.3.
+     Requires: admin key role (ADR-0049 d4). Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -141,7 +141,7 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | SearchSettings]:
     """The search pipelines served, the deployment's default, the tenant's and the one in effect.
 
-     Requires: admin key role (ADR-0049 d4). Since v0.5.3.
+     Requires: admin key role (ADR-0049 d4). Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
@@ -176,7 +176,7 @@ async def asyncio(
 ) -> ErrorEnvelope | SearchSettings | None:
     """The search pipelines served, the deployment's default, the tenant's and the one in effect.
 
-     Requires: admin key role (ADR-0049 d4). Since v0.5.3.
+     Requires: admin key role (ADR-0049 d4). Since v0.5.5.
 
     Args:
         x_request_id (str | Unset):
