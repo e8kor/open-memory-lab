@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.guardrail_scope import GuardrailScope
 from ..models.key_issue_request_held_by import KeyIssueRequestHeldBy
 from ..models.role import Role
 from ..types import UNSET, Unset
@@ -37,6 +38,10 @@ class KeyIssueRequest:
             d4).
         label (str | Unset): A free-text note; unique nowhere.
         principal (str | Unset): Who acts — the attribution identity, shared across one identity's keys; free text.
+        guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
+            alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
+            journalled in key.issued; no request changes it, and any other value is request.validation, details.field
+            /guardrail_scope (proposed ADR-0037 d4; planned for v0.5.1).
         connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
             connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
             held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
@@ -50,6 +55,7 @@ class KeyIssueRequest:
     crew: str | Unset = UNSET
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
+    guardrail_scope: GuardrailScope | Unset = UNSET
     connect_code: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +90,10 @@ class KeyIssueRequest:
 
         principal = self.principal
 
+        guardrail_scope: str | Unset = UNSET
+        if not isinstance(self.guardrail_scope, Unset):
+            guardrail_scope = self.guardrail_scope.value
+
         connect_code = self.connect_code
 
         field_dict: dict[str, Any] = {}
@@ -106,6 +116,8 @@ class KeyIssueRequest:
             field_dict["label"] = label
         if principal is not UNSET:
             field_dict["principal"] = principal
+        if guardrail_scope is not UNSET:
+            field_dict["guardrail_scope"] = guardrail_scope
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
 
@@ -154,6 +166,13 @@ class KeyIssueRequest:
 
         principal = d.pop("principal", UNSET)
 
+        _guardrail_scope = d.pop("guardrail_scope", UNSET)
+        guardrail_scope: GuardrailScope | Unset
+        if isinstance(_guardrail_scope, Unset):
+            guardrail_scope = UNSET
+        else:
+            guardrail_scope = GuardrailScope(_guardrail_scope)
+
         connect_code = d.pop("connect_code", UNSET)
 
         key_issue_request = cls(
@@ -165,6 +184,7 @@ class KeyIssueRequest:
             crew=crew,
             label=label,
             principal=principal,
+            guardrail_scope=guardrail_scope,
             connect_code=connect_code,
         )
 

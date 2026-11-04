@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.guardrail_scope import GuardrailScope
 from ..models.key_credential import KeyCredential
 from ..models.key_held_by_type_1 import KeyHeldByType1
 from ..models.key_held_by_type_2_type_1 import KeyHeldByType2Type1
@@ -48,6 +49,10 @@ class Key:
         epoch (int | Unset):
         credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
             a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7).
+        guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
+            alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
+            journalled in key.issued; no request changes it, and any other value is request.validation, details.field
+            /guardrail_scope (proposed ADR-0037 d4; planned for v0.5.1).
         connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
             most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
             (ADR-0031 d11).
@@ -68,6 +73,7 @@ class Key:
     denials: list[Denial] | Unset = UNSET
     epoch: int | Unset = UNSET
     credential: KeyCredential | Unset = UNSET
+    guardrail_scope: GuardrailScope | Unset = UNSET
     connections: list[Connection] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -143,6 +149,10 @@ class Key:
         if not isinstance(self.credential, Unset):
             credential = self.credential.value
 
+        guardrail_scope: str | Unset = UNSET
+        if not isinstance(self.guardrail_scope, Unset):
+            guardrail_scope = self.guardrail_scope.value
+
         connections: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.connections, Unset):
             connections = []
@@ -181,6 +191,8 @@ class Key:
             field_dict["epoch"] = epoch
         if credential is not UNSET:
             field_dict["credential"] = credential
+        if guardrail_scope is not UNSET:
+            field_dict["guardrail_scope"] = guardrail_scope
         if connections is not UNSET:
             field_dict["connections"] = connections
 
@@ -324,6 +336,13 @@ class Key:
         else:
             credential = KeyCredential(_credential)
 
+        _guardrail_scope = d.pop("guardrail_scope", UNSET)
+        guardrail_scope: GuardrailScope | Unset
+        if isinstance(_guardrail_scope, Unset):
+            guardrail_scope = UNSET
+        else:
+            guardrail_scope = GuardrailScope(_guardrail_scope)
+
         _connections = d.pop("connections", UNSET)
         connections: list[Connection] | Unset = UNSET
         if _connections is not UNSET:
@@ -349,6 +368,7 @@ class Key:
             denials=denials,
             epoch=epoch,
             credential=credential,
+            guardrail_scope=guardrail_scope,
             connections=connections,
         )
 

@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.guardrail_scope import GuardrailScope
 from ..models.role import Role
 from ..models.whoami_held_by import WhoamiHeldBy
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.whoami_grant import WhoamiGrant
@@ -33,6 +35,10 @@ class Whoami:
             default_workarea (None | WhoamiWorkarea): The key's journalled default workarea; null when it has none.
             crew (None | WhoamiRef): The key's crew record, fixed for its life; null when none was named.
             grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
+            guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
+                alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
+                journalled in key.issued; no request changes it, and any other value is request.validation, details.field
+                /guardrail_scope (proposed ADR-0037 d4; planned for v0.5.1).
     """
 
     key_id: str
@@ -44,6 +50,7 @@ class Whoami:
     default_workarea: None | WhoamiWorkarea
     crew: None | WhoamiRef
     grants: list[WhoamiGrant]
+    guardrail_scope: GuardrailScope | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_ref import WhoamiRef
@@ -83,6 +90,10 @@ class Whoami:
             grants_item = grants_item_data.to_dict()
             grants.append(grants_item)
 
+        guardrail_scope: str | Unset = UNSET
+        if not isinstance(self.guardrail_scope, Unset):
+            guardrail_scope = self.guardrail_scope.value
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -98,6 +109,8 @@ class Whoami:
                 "grants": grants,
             }
         )
+        if guardrail_scope is not UNSET:
+            field_dict["guardrail_scope"] = guardrail_scope
 
         return field_dict
 
@@ -175,6 +188,13 @@ class Whoami:
 
             grants.append(grants_item)
 
+        _guardrail_scope = d.pop("guardrail_scope", UNSET)
+        guardrail_scope: GuardrailScope | Unset
+        if isinstance(_guardrail_scope, Unset):
+            guardrail_scope = UNSET
+        else:
+            guardrail_scope = GuardrailScope(_guardrail_scope)
+
         whoami = cls(
             key_id=key_id,
             name=name,
@@ -185,6 +205,7 @@ class Whoami:
             default_workarea=default_workarea,
             crew=crew,
             grants=grants,
+            guardrail_scope=guardrail_scope,
         )
 
         return whoami
