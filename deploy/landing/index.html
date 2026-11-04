@@ -162,7 +162,7 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
   <div class="wrap bar">
     <a class="brand" href="/" aria-label="Open Memory Lab, home">
       <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>
-      Open Memory Lab <small>v0.4.1</small>
+      Open Memory Lab <small>v0.5.0</small>
     </a>
     <nav aria-label="Main">
       <a class="sm-hide" href="#how">How it works</a>
@@ -268,6 +268,7 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
         <div class="card"><h3>Claude on the web and your phone</h3><p>A one-time connect code links claude.ai and the Claude apps to one agent key. Built; the first live connection is still to be made.</p><span class="since">since v0.4.0</span></div>
         <div class="card"><h3>Workareas per crew</h3><p>One tree per organisation. A key reaches the workareas it is granted, and nothing else.</p><span class="since">since v0.1.0</span></div>
         <div class="card"><h3>A history you can check</h3><p>Every save, approval and rejection is recorded in a signed history. Nothing is deleted silently.</p><span class="since">since v0.1.0</span></div>
+        <div class="card"><h3>Your own space</h3><p>Sign in with GitHub or Google and get a root of your own: your workareas, your agents' keys and your review, with the shared universe readable beside it.</p><span class="since">since v0.5.0</span></div>
         <div class="card"><h3>Every request traced</h3><p>Each call carries a request id you can name, and is logged with its timing for the operator.</p><span class="since">since v0.4.1</span></div>
       </div>
     </div>
@@ -277,12 +278,12 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
     <div class="wrap start">
       <div>
         <p class="label">Get started</p>
-        <h2>Two commands and a key.</h2>
-        <p class="sub" style="margin-bottom:24px">Ask the operator of this server for an agent key, then:</p>
+        <h2>Sign in, then two commands.</h2>
+        <p class="sub" style="margin-bottom:24px">Access is by invitation. If your email is on the list, <a href="/web">sign in with GitHub or Google</a> and issue an agent key for yourself, then:</p>
         <ol class="how">
           <li><b>Install the <code>oml</code> command.</b> The installer checks the download against the release's signed checksums.</li>
           <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin at the same release. The plugin connects to <code>memory.doublegate.io</code> by default, so the key is the only setting.</li>
-          <li><b>Using claude.ai or the Claude app?</b> Add a custom connector at <code>https://memory.doublegate.io/mcp</code> and enter the one-time connect code you were given.</li>
+          <li><b>Using claude.ai or the Claude app?</b> Add a custom connector at <code>https://memory.doublegate.io/mcp</code> and enter the one-time connect code from your account page.</li>
         </ol>
         <p style="margin-top:22px"><a href="https://e8kor.github.io/open-memory-lab/guides/claude-code/">Claude Code guide →</a> &nbsp; <a href="https://e8kor.github.io/open-memory-lab/guides/other-harnesses/">Codex, Cursor, Gemini →</a> &nbsp; <a href="https://e8kor.github.io/open-memory-lab/guides/self-hosting/">Run your own →</a></p>
       </div>
@@ -290,7 +291,7 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
         <div class="top"><span>macOS · Linux</span><button type="button" data-copy="cmd-unix">copy</button></div>
 <pre id="cmd-unix"><span class="c"># install the CLI (checked against signed sums)</span>
 <span class="p">$ </span>curl -fsSL --proto '=https' --tlsv1.2 \
-    https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
+    https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
 
 <span class="c"># install the Claude Code plugin; paste your key when asked</span>
 <span class="p">$ </span>oml setup claude-code</pre>
@@ -315,7 +316,7 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
 <footer>
   <div class="wrap row">
     <span>Open Memory Lab · open source · <a href="https://github.com/e8kor/open-memory-lab">github.com/e8kor/open-memory-lab</a></span>
-    <span><a href="/web">Your account</a> · <a href="/web/admin">Admin</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <span class="tag">memory.doublegate.io · v0.4.1</span></span>
+    <span><a href="/web">Your account</a> · <a href="/web/admin">Admin</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <span class="tag">memory.doublegate.io · v0.5.0</span></span>
   </div>
 </footer>
 
