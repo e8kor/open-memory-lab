@@ -522,7 +522,8 @@ workarea arguments are `workarea`, as on the served tools
 
 ### `oml_relate_propose`
 
-*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
+*Not built; links between memories are planned for v0.5.2 on HTTP and the CLI, and this tool is
+not in that plan ([ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md) d4, proposed) · [releases](../product/releases.md)*
 
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a

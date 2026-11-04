@@ -1024,7 +1024,8 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md) · `kind=claim` built for v0.5.2 behind its use
+cases, not routed ([ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md) d4, proposed)*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
