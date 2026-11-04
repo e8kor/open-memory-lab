@@ -467,7 +467,9 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     let (agent, other, wa) = (&crew.agent, &crew.other, crew.workarea.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 
-    // 1. One connection serves the eight built tools (ADR-0025 d12).
+    // 1. One connection serves the eleven built tools: the eight v0.3.0
+    // tools and, beside them, oml_write, oml_read and oml_workarea
+    // (ADR-0025 d12; ADR-0039 d2).
     let listed = agent.rpc("tools/list", json!({})).await;
     let names = set(listed["result"]["tools"]
         .as_array()
@@ -485,6 +487,9 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
             "oml_my_work",
             "oml_workarea_info",
             "oml_events_tail",
+            "oml_write",
+            "oml_read",
+            "oml_workarea",
         ])
     );
 
