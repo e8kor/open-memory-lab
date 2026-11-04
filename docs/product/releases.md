@@ -53,7 +53,7 @@ ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
 ([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0037
-([#20](https://github.com/e8kor/open-memory-lab/pull/20)). The number ADR-0032 is not used by any record.
+([#20](https://github.com/e8kor/open-memory-lab/pull/20)), ADR-0050 (branch `feat/remember`). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -180,3 +180,4 @@ which part is still decided, not built.
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | accepted | Introduced in v0.5.0. |
 | [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | accepted | Introduced in v0.5.0: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |
+| [ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) remembering: the similar check, upserts, revising held writes, findability fields, warnings and freshness | proposed | W1–W3 proposed for v0.5.3, beside ADR-0048's S1–S3; W4–W7 not assigned, each gated on the remember eval. |
