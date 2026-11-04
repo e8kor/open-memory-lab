@@ -1,19 +1,20 @@
 <!--
 id: product/releases
 tier: client
-status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03 and revised on 2026-11-04
 answers: which release introduced each feature and decision, which release each planned one is for, and which are parked or not scheduled
 -->
 
 # Releases
 
-**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03 and revised on 2026-11-04
 
 This page is the one place that says when a feature arrived or when it is planned to arrive.
 Every other page links here instead of repeating it. A shipped release is a signed tag on the
 [releases page](https://github.com/e8kor/open-memory-lab/releases); what it holds is read from
 the tagged source, not from intentions. A planned release is a plan the maintainer made on
-2026-11-03: nothing in it is built until its tag exists, and its contents can still move.
+2026-11-03 and narrowed on 2026-11-04, when v0.5.0 became a person's own workarea and the two web
+pages alone: nothing in it is built until its tag exists, and its contents can still move.
 
 Four words carry the status of everything below:
 
@@ -37,12 +38,14 @@ Four words carry the status of everything below:
 
 ## Planned releases
 
-Nothing in this section is released. Each row is the plan of 2026-11-03.
+Nothing in this section is released. Each row is the plan of 2026-11-03 as revised on 2026-11-04.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. Two web pages on the server's own address, for people and never for agents: sign in with Google or GitHub, if an administrator has put the address on the organisation's list; on the user page, see and make your own agent keys and connect codes, read the setup steps for each agent tool, browse your memories and the shared area's, and make workareas of your own; on the admin page, keep the list, choose who reviews and who curates, see how many memories wait and for how long, and review, curate and replace memories, each act done by the person's own reviewer or curator identity, never the administrator's. | ADR-0037 (proposed); [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
-| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, who wrote, derived and reviewed any one memory, without its text, and demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed) |
+| **v0.5.0** | planned | A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. Two web pages on the server's own address, for people and never for agents: sign in with Google or GitHub, if an administrator has put the address on the organisation's list; on the user page, see and make your own agent keys and connect codes, read the setup steps for each agent tool, browse your memories and the shared area's, make workareas of your own, and review what your own agents wrote; on the admin page, keep the list, choose who reviews and who curates, see how many memories wait and for how long, read any memory with who wrote, derived and reviewed it, each read recorded in the history, and review, curate and replace memories, each act of review or curation done by the person's own reviewer or curator identity, never the administrator's. | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed) |
+| **v0.5.1** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. | ADR-0037 (proposed) |
+| **v0.5.2** | planned | Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
+| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
@@ -109,14 +112,16 @@ many memories in one request. A web console beyond the two pages of ADR-0045 is 
 | One log line per request and per agent tool call, under an id the caller may choose | introduced in v0.4.1 |
 | Request metrics for Prometheus on a separate address | introduced in v0.4.1 |
 | Trace export to an OpenTelemetry collector, off by default | introduced in v0.4.1 |
-| Guardrails | planned for v0.5.0 |
-| Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
-| Labelled links between memories | planned for v0.5.0 |
 | A workarea of one's own for each person, and a curated shared area above them | built for v0.5.0 |
-| A brief for each workarea | planned for v0.5.0 |
 | Sign-in with Google or GitHub to a user page and an admin page | planned for v0.5.0 |
+| Reviewing your own agents' work on the user page | planned for v0.5.0 |
 | Review, curation and replacing memories from the admin page | planned for v0.5.0 |
-| Who wrote, derived and reviewed a memory, and demotion, on the admin page | planned for v0.6.0 |
+| Reading any memory, with who wrote, derived and reviewed it, on the admin page | planned for v0.5.0 |
+| Guardrails | planned for v0.5.1 |
+| Workarea lifecycle: development, committed, validated | planned for v0.5.2 (workareas carry the development status since v0.1.0) |
+| Labelled links between memories | planned for v0.5.2 |
+| A brief for each workarea | planned for v0.5.2 |
+| Demotion on the admin page | planned for v0.6.0 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
 | Deliverables and files on any memory | parked |
@@ -138,8 +143,8 @@ which part is still decided, not built.
 | [ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md) erasure | accepted | Not scheduled. |
 | [ADR-0006](../adr/ADR-0006-pure-rust.md) pure Rust | accepted | Partly in v0.1.0: every binary is Rust. Lake maintenance is not scheduled. |
 | [ADR-0007](../adr/ADR-0007-tenancy-first-class.md) tenancy | accepted | Partly in v0.1.0: the organisation is read from the key and every table is fenced by organisation. v0.3.1 added the account that owns nothing and the per-organisation search index. More than one organisation is not scheduled. |
-| [ADR-0008](../adr/ADR-0008-workarea-algebra.md) workareas | accepted | Partly in v0.1.0: one tree per organisation and access bound to a workarea's id. v0.2.0 added grants combined with denials that win; v0.3.0 added crew records. Links are planned for v0.5.0; moving a workarea is not scheduled. |
-| [ADR-0009](../adr/ADR-0009-status-ladder.md) the workarea lifecycle | accepted | Decided, not built; planned for v0.5.0. Workareas are created in development since v0.1.0. |
+| [ADR-0008](../adr/ADR-0008-workarea-algebra.md) workareas | accepted | Partly in v0.1.0: one tree per organisation and access bound to a workarea's id. v0.2.0 added grants combined with denials that win; v0.3.0 added crew records. Links are planned for v0.5.2; moving a workarea is not scheduled. |
+| [ADR-0009](../adr/ADR-0009-status-ladder.md) the workarea lifecycle | accepted | Decided, not built; planned for v0.5.2. Workareas are created in development since v0.1.0. |
 | [ADR-0010](../adr/ADR-0010-roles-and-keys.md) roles and keys | accepted | Partly in v0.1.0: reader, writer, reviewer and admin keys, the enrollment claim, and admins kept out of review. Key names since v0.3.0. The operator, bans, revocation and rotation are not scheduled. |
 | [ADR-0011](../adr/ADR-0011-simulations.md) simulations | accepted | Not scheduled. |
 | [ADR-0012](../adr/ADR-0012-admission-and-review.md) admission and review | accepted | Partly in v0.1.0: capture, scan, hold, review bound to what was served, approval. Review policies, held writes that expire and comparing crews for independence are not scheduled. |
@@ -151,7 +156,7 @@ which part is still decided, not built.
 | [ADR-0018](../adr/ADR-0018-the-documentation-set.md) the documentation set | accepted | Governs the documentation since the first design revision of 2026-10-29; no software ships it. The documentation upgrade arrived with v0.4.0. |
 | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md) a pure core with ports | accepted | Partly in v0.1.0: the pure core, ports and thin binaries. Two of the five binaries exist; the plugin points are not scheduled. |
 | [ADR-0020](../adr/ADR-0020-dataset-onboarding.md) dataset imports | accepted | Not scheduled. |
-| [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) shared vocabularies | accepted | Decided, not built. Links between memories are planned for v0.5.0; vocabularies are parked. |
+| [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) shared vocabularies | accepted | Decided, not built. Links between memories are planned for v0.5.2; vocabularies are parked. |
 | [ADR-0022](../adr/ADR-0022-two-ring-api.md) the two-ring API | accepted | Introduced in v0.1.0: one listener, a stable agent ring and an evolving lab ring, MCP over both. The compatibility promise is not yet in force. Amended by the v0.4.0 rewrite (ADR-0039). |
 | [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) install profiles and cluster mode | accepted | Partly in v0.1.0: one host and Docker, with a file keyring. The Kubernetes chart in v0.3.0. Read followers and cluster mode are not scheduled. |
 | [ADR-0024](../adr/ADR-0024-performance-foundation.md) the performance foundation | accepted | Not scheduled as a release item. No part of it is measured; batch writes and streamed attachments are not built. |
@@ -166,7 +171,7 @@ which part is still decided, not built.
 | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) the server serves as an account that owns nothing | accepted | Partly in v0.3.1: the two accounts, the startup refusal, the per-organisation search index and the keys that carry the organisation. Its spike groundwork shipped in v0.3.0. The separate bootstrap workload and the health check for the split are not scheduled; one further hardening step waits on search measurements. |
 | ADR-0035 deliverables | proposed | Parked. |
 | ADR-0036 time | proposed | Parked. |
-| ADR-0037 guardrails | proposed | Planned for v0.5.0. |
+| ADR-0037 guardrails | proposed | Planned for v0.5.1. |
 | [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) turn context | accepted | Introduced in v0.4.0. |
 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | accepted | Introduced in v0.4.0. |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | accepted | Introduced in v0.4.0. |
@@ -174,4 +179,4 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | proposed | Built for v0.5.0; accepted at that release. |
-| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | proposed | Planned for v0.5.0 in part: sign-in, sessions, the email list, the user page, and review, curation and replacing memories on the admin page. The admin page's attribution view and demotion are planned for v0.6.0, since each waits for a verb that is not built. Decided, not built. |
+| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | proposed | Planned for v0.5.0 in part: sign-in, sessions, the email list, the user page with review of one's own agents' work, and on the admin page review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. Decided, not built. |

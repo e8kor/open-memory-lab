@@ -9,7 +9,7 @@ answers: how the workarea algebra works — universe tree, node-id grants, deny-
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.0 ([releases](../product/releases.md)).
+**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.2 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
@@ -268,7 +268,7 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 ### Edge kinds
 
@@ -372,7 +372,7 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no

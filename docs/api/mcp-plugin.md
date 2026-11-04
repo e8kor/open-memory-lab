@@ -510,7 +510,7 @@ workarea arguments are `workarea`, as on the served tools
 
 ### `oml_relate_propose`
 
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
 
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a
@@ -1529,7 +1529,7 @@ mismatched session from `oml_remember`. Example:
 
 ### `oml_graph`
 
-*Not built; links between memories are planned for v0.5.0 · [releases](../product/releases.md)*
+*Not built; links between memories are planned for v0.5.2 · [releases](../product/releases.md)*
 
 A scoped read of claims and their edges: the declared lineage
 (`derives_from`), claim↔claim connection edges with their pending/ratified
