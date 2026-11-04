@@ -42,10 +42,10 @@ use oml_domain::vocab::{Curie, OmlLabel};
 use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
-    LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
-    WorkareaStatus, canonical_bytes, check_reviewer, derive_claim_key, event_types, frozen_refuses,
-    next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string,
-    transition,
+    LadderNode, LadderRefusal, LineageClosure, MemoryKind, MemoryStatus, Role, Sha256Hash,
+    SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer, derive_claim_key, event_types,
+    frozen_refuses, next_envelope, nfc, propose_check, ratifier_is_proposer, ratify_check,
+    same_user, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
@@ -427,6 +427,24 @@ impl RecordedVerdict {
             replayed: true,
         })
     }
+}
+
+/// What `node` is to the ladder (ADR-0046 d1): the universe root, or an
+/// ordinary node. A user root is `LadderNode::UserRoot` once the workarea
+/// row carries ADR-0044's `user_root`; until that build no node is one.
+fn ladder_node(node: &WorkareaRecord) -> LadderNode {
+    if node.parent_id.is_none() {
+        LadderNode::Universe
+    } else {
+        LadderNode::Ordinary
+    }
+}
+
+/// The `user` a key names (ADR-0044 d2), which `same_user` compares
+/// (ADR-0046 d2); every key is a tenant key until ADR-0044's build adds the
+/// field, so this is `None`.
+fn key_user(_key: &KeyRecord) -> Option<Uuid> {
+    None
 }
 
 /// The request digest of a claim-edge proposal: SHA-256 over the RFC 8785
@@ -2499,7 +2517,7 @@ where
         // "No simulation is fenced on the subtree" holds vacuously while
         // simulations are unbuilt, and lands in the ladder's preconditions
         // with them (workareas.md, readings the build takes).
-        propose_check(node.parent_id.is_none(), node.status, to, &children).map_err(|reason| {
+        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
             AppError::TransitionRefused {
                 workarea_id,
                 from: node.status,
@@ -2625,7 +2643,7 @@ where
         // takes).
         ratify_check(
             proposal.from,
-            node.parent_id.is_none(),
+            ladder_node(&node),
             node.status,
             proposal.to,
             &children,
@@ -2650,6 +2668,9 @@ where
                 "proposed_by_key_id": proposal.proposer_key_id.to_string(),
                 "ratified_by_key_id": key.key_id.to_string(),
                 "policy_snapshot": policy_snapshot,
+                // The proposer's user is read from its key row once keys
+                // carry ADR-0044's `user`; until then no key names one.
+                "same_user": same_user(None, key_user(key)),
             }),
         )?;
         self.commit(
@@ -4245,6 +4266,7 @@ where
             // verdict precedes it.
             "verdict_event_ids": [],
             "ratifier_key_id": key.key_id.to_string(),
+            "same_user": same_user(None, key_user(key)),
             "policy_snapshot": {
                 "k": 1,
                 "required_roles": ["dreamer"],
