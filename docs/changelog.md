@@ -37,6 +37,33 @@ routes, the `/v2/edges` family for `kind` claim and brief, and the workarea read
 `pending_transitions` and `brief`. The entries below were kept apart until this release, newest
 first.
 
+### 2026-11-04 — Release v0.5.4: the upgrade from v0.5.1 and earlier
+
+v0.5.3 refused to start on the maintainer's v0.5.1 database: migration 0017's
+`workareas_universe_committed` met a `universe` root stored `development`, which v0.1.0 wrote
+and no later build read, since the status was derived from `parent_id` until v0.5.2. The
+failure rolled 0017 back, and the deployment returned to v0.5.1. The v0.5.2 rebase had hidden
+it: the pre-users migration fixture was changed to store the root `committed` so that 0017
+passed, where it should have kept the stored state and made 0017 pass over it. The rebase note
+in the v0.5.2 entry below says "as every build did", and that is wrong for v0.1.0.
+
+- **Reading taken: align in code before 0017, keep 0017's bytes.** The lead's migration step
+  stores each workarea's status as v0.5.1 served it (the root `committed`, every other node
+  `development`) while `_sqlx_migrations` records no version 17 or later, in one transaction,
+  under each tenant's row-level-security context, then runs the migrator. Editing 0017 was
+  rejected: its sqlx checksum would change, and a database v0.5.3 created would refuse to boot
+  until someone edited `_sqlx_migrations` by hand. A new migration file cannot run before 0017,
+  because no number is free between 0016 and 0017.
+- **No journal event.** The served status does not change, so the journal, which records what
+  was served, has nothing new to say; the lead logs the count of rows it aligned.
+- **Fixtures restored.** The pre-users fixture stores the root `development` again, and the PoC
+  fixture stores every node `development`, as v0.1.0 did; a new test migrates a v0.5.1 database
+  through 0019 and checks every served status is unchanged.
+- **0014, 0015, 0016, 0018 and 0019 checked** for the same kind of fault; each holds over every
+  earlier state ([upgrades](operations/upgrades.md#upgrading-from-v051-or-earlier-the-upgrade-to-v054)).
+- **v0.5.3 must not be installed over an existing v0.5.1 database.** No contract changed, so
+  `info.version` stays `0.5.2-design`.
+
 ### 2026-11-04 — Release v0.5.3: v0.5.2 published without macOS
 
 The v0.5.2 tag's release never published: its macOS CLI job waited for a runner GitHub did not

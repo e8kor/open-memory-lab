@@ -242,6 +242,65 @@ plugin together, with the plugin configured and `oauth.issuer` set. The same day
 `oml.doublegate.io` to `memory.doublegate.io`, with no redirect from the old name: the issuer moved
 with it, and the clients were set to the new URL.
 
+## Upgrading from v0.5.1 or earlier (the upgrade to v0.5.4)
+
+*Available since v0.5.4 · [releases](../product/releases.md)*
+
+**Install v0.5.4, not v0.5.3, over a database a v0.5.1 or earlier server ran.** v0.5.3 refuses
+to start on a database whose `universe` root stores the status `development`:
+
+```text
+fatal: migrate on boot: while executing migration 17: error returned from database:
+check constraint "workareas_universe_committed" of relation "workareas" is violated by some row
+```
+
+Migration `0017_workarea_transitions` adds `workareas_universe_committed`, which holds the root on
+`committed`, and its header says every root was already stored that way. That was true from
+v0.2.0 on and false before: v0.1.0 stored every node `development`, its root included, and no
+later build read the column back, because through v0.5.1 a workarea's status was derived from
+its `parent_id` (the root `committed`, every other node `development`). A deployment created
+by v0.1.0, the maintainer's among them, still holds that root, and its API served `committed`
+throughout. The failed start changes nothing: sqlx runs 0017 in one transaction, the failure
+rolls it back, and the database stays at 0016, where a v0.5.1 server serves it again.
+
+v0.5.4 stores, before 0017 runs, each workarea's status as v0.5.1 served it. The lead's boot,
+as the owner role, checks that `_sqlx_migrations` records no version 17 or later; if so, it
+enumerates the tenants under 0003's startup policy and, under each tenant's row-level-security
+context, sets `status` to the derived value on every row whose stored value differs, all in one
+transaction, then runs the migrations. It logs `stored the status v0.5.1 served on workareas whose
+column disagreed, before 0017` with the count when it changed a row. A database past 0017, or a
+fresh one, is left alone, and a second boot changes nothing. No step is the operator's: back
+up, as step 1 of the upgrade order requires, and start v0.5.4.
+
+**Why not edit 0017.** sqlx stores each applied migration's checksum and refuses to start when a
+file's bytes change. A database created by v0.5.3 after its release, 2026-11-04, applied 0017
+as released; an edited 0017 would make every such database refuse to boot, and repairing it
+would need a hand-written `UPDATE _sqlx_migrations`, which is direct SQL on the owner's tables.
+No migration number is free between 0016 and 0017, and sqlx runs every pending file in order, so
+a correction cannot be a new file that runs first. Keeping 0017's bytes and running the
+alignment in code before the migrator costs one function in the store, which applies only while
+0017 is pending; its header's sentence about earlier roots stays wrong, and
+[postgres-schema](../data/postgres-schema.md#workareas-and-edges) records the correction.
+
+**Why nothing is journalled.** The journal records what a workarea read served, and that does
+not change: every read before v0.5.2 served the derived status, and the alignment stores that same
+value. No `workarea.created` event carries a status a later fold would contradict, and the chain
+verifies as before.
+
+**The other constraints, checked.** Each migration since v0.5.0 that adds a constraint over rows
+already held validates against every state an earlier build could store:
+
+| Migration | Constraint over existing rows | Why it holds | Test over earlier rows |
+|---|---|---|---|
+| `0014_user_roots` | `workareas_user_root_shape`, `workareas_user_name`, `grants_node_has_no_deny`, the shared-name index | `user_root` defaults to `false` and `namespace_root_id` to null; `covers` defaults to `subtree`; the shared-name index narrows 0006's tenant-wide unique name | `a_key_issued_before_users_folds_as_a_tenant_key` and the PoC migration test |
+| `0015_web` | `api_keys_credential_check` widened, `api_keys_session_user` | every earlier key is `bearer` or `connection` (0012) with a null `session_for`; `web_emails` is new in the same file | the same two tests, and `a_migrated_v0_3_database_keeps_every_key_as_a_bearer_key` |
+| `0016_guardrails` | `memories_guardrail_fields_check`, `guardrail_scope` | no earlier build accepted the kind `guardrail` (`MemoryKind::parse` refused it), and `severity` and `rule` are new and null | the PoC migration test, whose memories cross 0016 |
+| `0017_workarea_transitions` | `workareas_universe_committed` | held only after the alignment above | `a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_0017_serving_the_same_statuses` and the PoC migration test |
+| `0018_claim_edges`, `0019_brief_edges` | none on an existing table | each creates its own table | — |
+
+The PoC migration test is `a_migrated_poc_database_keeps_every_row_and_every_journal_event`; since
+v0.5.4 its fixture stores every root `development`, as v0.1.0 did.
+
 ## Version skew: one minor, as policy
 
 During a rolling update the deployment may hold **two adjacent minor
