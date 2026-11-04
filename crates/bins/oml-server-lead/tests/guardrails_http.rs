@@ -397,6 +397,8 @@ async fn get_v1_guardrails_serves_the_promoted_set_under_the_keys_scope() {
     .await;
     assert_eq!(status, StatusCode::OK, "{set}");
     assert_eq!(set["scope_node"], t.crew, "{set}");
+    // The header of the hook names the scope node by its path (d6).
+    assert_eq!(set["scope_path"], "universe.metals-crew", "{set}");
     assert_eq!(set["guardrail_scope"], "ancestors", "{set}");
     assert_eq!(set["over_cap"], false, "{set}");
     assert!(
