@@ -2798,9 +2798,9 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     assert_eq!(steering.len(), 1, "{recall}");
     assert_eq!(hits.len(), 1, "{recall}");
 
-    // One claim-item shape: the base fields plus text, and a score on hits
-    // only — never the ring's body (mcp-plugin.md, the claim item; ADR-0025
-    // d12).
+    // One claim-item shape: the base fields plus text, and a score and the
+    // matched words on hits only — never the ring's body (mcp-plugin.md, the
+    // claim item; ADR-0025 d12; ADR-0049 d6).
     let base = [
         "artifact_id",
         "claim_key",
@@ -2819,7 +2819,7 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     ];
     assert_eq!(fields(&steering[0]), base, "{recall}");
     let mut with_score = base.to_vec();
-    with_score.push("score");
+    with_score.extend(["matched", "score"]);
     with_score.sort_unstable();
     assert_eq!(fields(&hits[0]), with_score, "{recall}");
     assert!(hits[0]["score"].is_number(), "{recall}");

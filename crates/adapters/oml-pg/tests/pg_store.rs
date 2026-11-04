@@ -5851,7 +5851,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 19);
+    assert_eq!(applied, 20);
     drop(conn);
     drop_dbs(&created).await;
 }

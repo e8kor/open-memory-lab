@@ -994,6 +994,10 @@ pub async fn start_lead(
 /// caps in place of [`PinnedFetcher`], so a test sees what the composed
 /// page asks of the network without reaching it, and the request line
 /// configured by `traffic` (ADR-0042 d7), as `main` starts it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per setting main composes"
+)]
 pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     store: &PgStore,
     signing_key: SigningKey,

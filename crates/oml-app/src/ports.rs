@@ -682,8 +682,8 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// never a retirement version, and every held version of kind
     /// `guardrail` on them that `author_key_id` authored, never another
     /// key's. Unordered: the read orders the set (d4). The state and the
-    /// author predicate are the store's own, as for
-    /// [`recall_own_held`](Self::recall_own_held).
+    /// author predicate are the store's own, as for the own held rows of
+    /// [`Retriever::retrieve`].
     fn guardrail_rows(
         &self,
         tenant_id: Uuid,
