@@ -336,6 +336,16 @@ jobs:
           claude plugin validate --strict plugins/oml
           claude plugin validate --strict plugins/oml-admin
 
+  recall-eval-data:
+    name: recall eval data parses and its labels resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python eval/recall/check_data.py
+
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md
     # d10): rendered and checked, then installed on kind against Postgres in

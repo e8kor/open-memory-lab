@@ -1,0 +1,1081 @@
+{
+ "version": 1,
+ "queries": [
+  {
+   "id": "q001",
+   "category": "exact",
+   "query": "canary 5% traffic",
+   "relevant": {
+    "m001": 2,
+    "m173": 1
+   }
+  },
+  {
+   "id": "q002",
+   "category": "exact",
+   "query": "PgBouncer transaction mode",
+   "relevant": {
+    "m035": 2,
+    "m036": 2
+   }
+  },
+  {
+   "id": "q003",
+   "category": "exact",
+   "query": "Idempotency-Key header",
+   "relevant": {
+    "m054": 2,
+    "m055": 1,
+    "m182": 1
+   }
+  },
+  {
+   "id": "q004",
+   "category": "exact",
+   "query": "Datastream BIGNUMERIC",
+   "relevant": {
+    "m126": 2,
+    "m123": 1
+   }
+  },
+  {
+   "id": "q005",
+   "category": "exact",
+   "query": "dunning reminders",
+   "relevant": {
+    "m150": 2,
+    "m151": 1
+   }
+  },
+  {
+   "id": "q006",
+   "category": "exact",
+   "query": "reverse charge VAT ID",
+   "relevant": {
+    "m146": 2,
+    "m147": 1
+   }
+  },
+  {
+   "id": "q007",
+   "category": "exact",
+   "query": "Playwright staging",
+   "relevant": {
+    "m097": 2,
+    "m098": 1
+   }
+  },
+  {
+   "id": "q008",
+   "category": "exact",
+   "query": "External Secrets Operator",
+   "relevant": {
+    "m020": 2,
+    "m021": 1,
+    "m176": 1
+   }
+  },
+  {
+   "id": "q009",
+   "category": "exact",
+   "query": "Looker LookML marts",
+   "relevant": {
+    "m140": 2
+   }
+  },
+  {
+   "id": "q010",
+   "category": "exact",
+   "query": "status page incident commander",
+   "relevant": {
+    "m179": 2,
+    "m180": 1
+   }
+  },
+  {
+   "id": "q011",
+   "category": "exact",
+   "query": "TanStack Query refetchOnWindowFocus",
+   "relevant": {
+    "m091": 2,
+    "m090": 1
+   }
+  },
+  {
+   "id": "q012",
+   "category": "paraphrase",
+   "query": "how do we undo a bad release",
+   "relevant": {
+    "m006": 2,
+    "m001": 1
+   }
+  },
+  {
+   "id": "q013",
+   "category": "paraphrase",
+   "query": "where do pods get their credentials from",
+   "relevant": {
+    "m020": 2,
+    "m021": 1
+   }
+  },
+  {
+   "id": "q014",
+   "category": "paraphrase",
+   "query": "schedule for chasing customers who pay late",
+   "relevant": {
+    "m150": 2,
+    "m151": 2
+   }
+  },
+  {
+   "id": "q015",
+   "category": "paraphrase",
+   "query": "database failover copy in another zone",
+   "relevant": {
+    "m025": 2,
+    "m040": 1
+   }
+  },
+  {
+   "id": "q016",
+   "category": "paraphrase",
+   "query": "how long are logs kept",
+   "relevant": {
+    "m160": 2,
+    "m137": 1
+   }
+  },
+  {
+   "id": "q017",
+   "category": "paraphrase",
+   "query": "warehouse query cost too high",
+   "relevant": {
+    "m130": 2
+   }
+  },
+  {
+   "id": "q018",
+   "category": "paraphrase",
+   "query": "gitops continuous delivery tool for kubernetes",
+   "relevant": {
+    "m015": 2,
+    "m016": 2,
+    "m017": 1
+   }
+  },
+  {
+   "id": "q019",
+   "category": "paraphrase",
+   "query": "who gets woken up at night when something breaks",
+   "relevant": {
+    "m166": 2,
+    "m163": 1
+   }
+  },
+  {
+   "id": "q020",
+   "category": "paraphrase",
+   "query": "slow invoice page caused by full table scans",
+   "relevant": {
+    "m043": 2
+   }
+  },
+  {
+   "id": "q021",
+   "category": "paraphrase",
+   "query": "client retry creates duplicate invoice",
+   "relevant": {
+    "m054": 2,
+    "m055": 1
+   }
+  },
+  {
+   "id": "q022",
+   "category": "paraphrase",
+   "query": "store currency values as integers not decimals",
+   "relevant": {
+    "m063": 2,
+    "m195": 2,
+    "m064": 1
+   }
+  },
+  {
+   "id": "q023",
+   "category": "inflection",
+   "query": "rollback deployment",
+   "relevant": {
+    "m006": 2
+   }
+  },
+  {
+   "id": "q024",
+   "category": "inflection",
+   "query": "invoice numbered sequentially",
+   "relevant": {
+    "m141": 2,
+    "m142": 1
+   }
+  },
+  {
+   "id": "q025",
+   "category": "inflection",
+   "query": "renewing certificates failed",
+   "relevant": {
+    "m011": 2,
+    "m010": 1
+   }
+  },
+  {
+   "id": "q026",
+   "category": "inflection",
+   "query": "running database migration jobs",
+   "relevant": {
+    "m023": 2,
+    "m032": 1,
+    "m041": 1
+   }
+  },
+  {
+   "id": "q027",
+   "category": "inflection",
+   "query": "flaky tests quarantine",
+   "relevant": {
+    "m111": 2,
+    "m110": 1
+   }
+  },
+  {
+   "id": "q028",
+   "category": "inflection",
+   "query": "webhook signatures verify",
+   "relevant": {
+    "m059": 2,
+    "m060": 2,
+    "m155": 1
+   }
+  },
+  {
+   "id": "q029",
+   "category": "inflection",
+   "query": "partitioning invoices by months",
+   "relevant": {
+    "m033": 2,
+    "m034": 1
+   }
+  },
+  {
+   "id": "q030",
+   "category": "inflection",
+   "query": "alert paged on symptom",
+   "relevant": {
+    "m163": 2
+   }
+  },
+  {
+   "id": "q031",
+   "category": "inflection",
+   "query": "refunded double charges",
+   "relevant": {
+    "m183": 2,
+    "m181": 2,
+    "m182": 1
+   }
+  },
+  {
+   "id": "q032",
+   "category": "inflection",
+   "query": "pods restarted after secrets rotated",
+   "relevant": {
+    "m021": 2,
+    "m176": 1
+   }
+  },
+  {
+   "id": "q033",
+   "category": "inflection",
+   "query": "rendered invoices PDF",
+   "relevant": {
+    "m198": 2,
+    "m009": 1,
+    "m019": 1,
+    "m200": 1
+   }
+  },
+  {
+   "id": "q034",
+   "category": "partial",
+   "query": "postgres version",
+   "relevant": {
+    "m025": 2,
+    "m026": 1
+   }
+  },
+  {
+   "id": "q035",
+   "category": "partial",
+   "query": "kube cluster name",
+   "relevant": {
+    "m002": 2,
+    "m003": 1
+   }
+  },
+  {
+   "id": "q036",
+   "category": "partial",
+   "query": "autoscal replicas",
+   "relevant": {
+    "m013": 2,
+    "m017": 1
+   }
+  },
+  {
+   "id": "q037",
+   "category": "partial",
+   "query": "pseudonym salt",
+   "relevant": {
+    "m139": 2
+   }
+  },
+  {
+   "id": "q038",
+   "category": "partial",
+   "query": "idempot batch",
+   "relevant": {
+    "m182": 2,
+    "m181": 1
+   }
+  },
+  {
+   "id": "q039",
+   "category": "partial",
+   "query": "otel trace sampling",
+   "relevant": {
+    "m162": 2
+   }
+  },
+  {
+   "id": "q040",
+   "category": "partial",
+   "query": "e-invoic italy",
+   "relevant": {
+    "m157": 2
+   }
+  },
+  {
+   "id": "q041",
+   "category": "partial",
+   "query": "dependabot PRs",
+   "relevant": {
+    "m112": 2
+   }
+  },
+  {
+   "id": "q042",
+   "category": "partial",
+   "query": "authz checks service layer",
+   "relevant": {
+    "m073": 2
+   }
+  },
+  {
+   "id": "q043",
+   "category": "partial",
+   "query": "termination grace",
+   "relevant": {
+    "m009": 2
+   }
+  },
+  {
+   "id": "q044",
+   "category": "partial",
+   "query": "2fa admins",
+   "relevant": {
+    "m078": 2
+   }
+  },
+  {
+   "id": "q045",
+   "category": "typo",
+   "query": "PgBouncr prepared statments",
+   "relevant": {
+    "m036": 2,
+    "m035": 1
+   }
+  },
+  {
+   "id": "q046",
+   "category": "typo",
+   "query": "kubernets cluster europe",
+   "relevant": {
+    "m002": 2
+   }
+  },
+  {
+   "id": "q047",
+   "category": "typo",
+   "query": "cert-manger renewal",
+   "relevant": {
+    "m011": 2,
+    "m010": 1
+   }
+  },
+  {
+   "id": "q048",
+   "category": "typo",
+   "query": "idempotancy key",
+   "relevant": {
+    "m054": 2,
+    "m055": 2,
+    "m182": 1
+   }
+  },
+  {
+   "id": "q049",
+   "category": "typo",
+   "query": "postgress upgrade downtime",
+   "relevant": {
+    "m026": 2,
+    "m028": 1,
+    "m027": 1
+   }
+  },
+  {
+   "id": "q050",
+   "category": "typo",
+   "query": "Datastrem numeric cents",
+   "relevant": {
+    "m126": 2
+   }
+  },
+  {
+   "id": "q051",
+   "category": "typo",
+   "query": "Playwrite flaky",
+   "relevant": {
+    "m098": 2,
+    "m097": 1
+   }
+  },
+  {
+   "id": "q052",
+   "category": "typo",
+   "query": "dunnig schedule",
+   "relevant": {
+    "m150": 2
+   }
+  },
+  {
+   "id": "q053",
+   "category": "typo",
+   "query": "webhok retries",
+   "relevant": {
+    "m061": 2
+   }
+  },
+  {
+   "id": "q054",
+   "category": "typo",
+   "query": "Strpie event order",
+   "relevant": {
+    "m156": 2
+   }
+  },
+  {
+   "id": "q055",
+   "category": "typo",
+   "query": "tanstak query",
+   "relevant": {
+    "m090": 2,
+    "m091": 2
+   }
+  },
+  {
+   "id": "q056",
+   "category": "identifier",
+   "query": "fct_mrr_daily",
+   "relevant": {
+    "m128": 2,
+    "m129": 2
+   }
+  },
+  {
+   "id": "q057",
+   "category": "identifier",
+   "query": "compute_line_vat",
+   "relevant": {
+    "m197": 2,
+    "m144": 1
+   }
+  },
+  {
+   "id": "q058",
+   "category": "identifier",
+   "query": "TL_PDF_CONCURRENCY",
+   "relevant": {
+    "m200": 2
+   }
+  },
+  {
+   "id": "q059",
+   "category": "identifier",
+   "query": ".github/workflows/ci.yml",
+   "relevant": {
+    "m103": 2
+   }
+  },
+  {
+   "id": "q060",
+   "category": "identifier",
+   "query": "useInvoiceFilters",
+   "relevant": {
+    "m089": 2
+   }
+  },
+  {
+   "id": "q061",
+   "category": "identifier",
+   "query": "app.tenant_id",
+   "relevant": {
+    "m045": 2,
+    "m046": 2
+   }
+  },
+  {
+   "id": "q062",
+   "category": "identifier",
+   "query": "europe-west1-docker.pkg.dev/tallyline/images",
+   "relevant": {
+    "m108": 2
+   }
+  },
+  {
+   "id": "q063",
+   "category": "identifier",
+   "query": "InvoiceNumberingTest",
+   "relevant": {
+    "m110": 2
+   }
+  },
+  {
+   "id": "q064",
+   "category": "identifier",
+   "query": "OpenPDF 1.3.30",
+   "relevant": {
+    "m198": 2,
+    "m199": 2
+   }
+  },
+  {
+   "id": "q065",
+   "category": "identifier",
+   "query": "stripe_customer_id",
+   "relevant": {
+    "m154": 2
+   }
+  },
+  {
+   "id": "q066",
+   "category": "identifier",
+   "query": "terminationGracePeriodSeconds",
+   "relevant": {
+    "m009": 2
+   }
+  },
+  {
+   "id": "q067",
+   "category": "question",
+   "query": "What is the maximum page size for the API?",
+   "relevant": {
+    "m053": 2,
+    "m052": 1
+   }
+  },
+  {
+   "id": "q068",
+   "category": "question",
+   "query": "How long do we keep database backups and where are they stored?",
+   "relevant": {
+    "m048": 2,
+    "m039": 2
+   }
+  },
+  {
+   "id": "q069",
+   "category": "question",
+   "query": "Why did we choose Argo CD?",
+   "relevant": {
+    "m015": 2,
+    "m016": 1
+   }
+  },
+  {
+   "id": "q070",
+   "category": "question",
+   "query": "When is the deploy window?",
+   "relevant": {
+    "m008": 2,
+    "m007": 1,
+    "m186": 1
+   }
+  },
+  {
+   "id": "q071",
+   "category": "question",
+   "query": "Which roles can delete the organization?",
+   "relevant": {
+    "m074": 2
+   }
+  },
+  {
+   "id": "q072",
+   "category": "question",
+   "query": "What happens when a webhook endpoint keeps failing?",
+   "relevant": {
+    "m061": 2
+   }
+  },
+  {
+   "id": "q073",
+   "category": "question",
+   "query": "How are API keys stored?",
+   "relevant": {
+    "m071": 2
+   }
+  },
+  {
+   "id": "q074",
+   "category": "question",
+   "query": "Who needs to approve changes to billing code?",
+   "relevant": {
+    "m194": 2,
+    "m106": 1
+   }
+  },
+  {
+   "id": "q075",
+   "category": "question",
+   "query": "What language and framework is the api written in?",
+   "relevant": {
+    "m066": 2
+   }
+  },
+  {
+   "id": "q076",
+   "category": "question",
+   "query": "How often does on-call rotate?",
+   "relevant": {
+    "m166": 2
+   }
+  },
+  {
+   "id": "q077",
+   "category": "question",
+   "query": "Where do the dbt models live?",
+   "relevant": {
+    "m124": 2,
+    "m127": 1
+   }
+  },
+  {
+   "id": "q078",
+   "category": "long",
+   "query": "We need to add a column with a default to the big invoices table without locking it for minutes in production, what should I watch out for?",
+   "relevant": {
+    "m031": 2,
+    "m032": 1,
+    "m033": 1,
+    "m178": 1
+   }
+  },
+  {
+   "id": "q079",
+   "category": "long",
+   "query": "The worker is killing PDF render jobs during a rolling deploy and invoices end up half rendered, how do we stop that?",
+   "relevant": {
+    "m009": 2,
+    "m200": 1
+   }
+  },
+  {
+   "id": "q080",
+   "category": "long",
+   "query": "A partner integration is hammering the invoices list endpoint and getting rate limited, what is the limit and what should they use instead?",
+   "relevant": {
+    "m057": 2,
+    "m058": 2,
+    "m061": 1
+   }
+  },
+  {
+   "id": "q081",
+   "category": "long",
+   "query": "After rotating the API key of the email provider the invoice emails stopped going out, what do we need to do after a secret rotation?",
+   "relevant": {
+    "m021": 2,
+    "m176": 2
+   }
+  },
+  {
+   "id": "q082",
+   "category": "long",
+   "query": "A customer in Kuwait sees wrong amounts because of decimal places on the invoice in the console and the API",
+   "relevant": {
+    "m064": 2,
+    "m094": 1,
+    "m063": 1
+   }
+  },
+  {
+   "id": "q083",
+   "category": "long",
+   "query": "Which German tax rule decides how VAT is rounded on an invoice and why do accountants reject our totals",
+   "relevant": {
+    "m144": 2,
+    "m145": 2
+   }
+  },
+  {
+   "id": "q084",
+   "category": "long",
+   "query": "Our Prometheus bill exploded after adding a label per invoice, what is the rule on metric labels",
+   "relevant": {
+    "m171": 2,
+    "m172": 2
+   }
+  },
+  {
+   "id": "q085",
+   "category": "long",
+   "query": "Console users keep getting logged out with 401 errors in the afternoon because of token expiry",
+   "relevant": {
+    "m072": 2
+   }
+  },
+  {
+   "id": "q086",
+   "category": "long",
+   "query": "Bulk importing users into the identity provider fails halfway through, is there a rate limit",
+   "relevant": {
+    "m077": 2
+   }
+  },
+  {
+   "id": "q087",
+   "category": "long",
+   "query": "Upgrading the web framework to the next major version is blocked by the compiler and annotation processors, what is the plan",
+   "relevant": {
+    "m113": 2,
+    "m114": 2
+   }
+  },
+  {
+   "id": "q088",
+   "category": "long",
+   "query": "The nightly finance DAG misses its SLA after a schema change on an exported table, what process avoids that",
+   "relevant": {
+    "m136": 2,
+    "m135": 2
+   }
+  },
+  {
+   "id": "q089",
+   "category": "negation",
+   "query": "what not to do with money types",
+   "relevant": {
+    "m195": 2,
+    "m063": 2
+   }
+  },
+  {
+   "id": "q090",
+   "category": "negation",
+   "query": "don't deploy on Friday",
+   "relevant": {
+    "m186": 2,
+    "m008": 2
+   }
+  },
+  {
+   "id": "q091",
+   "category": "negation",
+   "query": "never use latest image tag",
+   "relevant": {
+    "m012": 2
+   }
+  },
+  {
+   "id": "q092",
+   "category": "negation",
+   "query": "avoid floats for amounts",
+   "relevant": {
+    "m195": 2,
+    "m063": 2,
+    "m126": 1
+   }
+  },
+  {
+   "id": "q093",
+   "category": "negation",
+   "query": "do not edit the generated api client",
+   "relevant": {
+    "m188": 2,
+    "m102": 1
+   }
+  },
+  {
+   "id": "q094",
+   "category": "negation",
+   "query": "never compare jsonb as text",
+   "relevant": {
+    "m044": 2
+   }
+  },
+  {
+   "id": "q095",
+   "category": "negation",
+   "query": "what must never be committed to the infra repository",
+   "relevant": {
+    "m020": 2
+   }
+  },
+  {
+   "id": "q096",
+   "category": "negation",
+   "query": "forbidden labels on metrics",
+   "relevant": {
+    "m171": 2,
+    "m172": 1
+   }
+  },
+  {
+   "id": "q097",
+   "category": "negation",
+   "query": "no triggers for business logic",
+   "relevant": {
+    "m047": 2
+   }
+  },
+  {
+   "id": "q098",
+   "category": "negation",
+   "query": "do not run destructive SQL on production",
+   "relevant": {
+    "m185": 2
+   }
+  },
+  {
+   "id": "q099",
+   "category": "negation",
+   "query": "do not reuse a voided invoice number",
+   "relevant": {
+    "m142": 2,
+    "m141": 1
+   }
+  },
+  {
+   "id": "q100",
+   "category": "temporal",
+   "query": "latest deploy window",
+   "relevant": {
+    "m008": 2,
+    "m007": 1
+   }
+  },
+  {
+   "id": "q101",
+   "category": "temporal",
+   "query": "after the postgres upgrade",
+   "relevant": {
+    "m027": 2,
+    "m028": 2,
+    "m026": 1
+   }
+  },
+  {
+   "id": "q102",
+   "category": "temporal",
+   "query": "what changed after the August incident",
+   "relevant": {
+    "m175": 2,
+    "m174": 1,
+    "m083": 1
+   }
+  },
+  {
+   "id": "q103",
+   "category": "temporal",
+   "query": "current API version",
+   "relevant": {
+    "m050": 2
+   }
+  },
+  {
+   "id": "q104",
+   "category": "temporal",
+   "query": "which postgres version before the upgrade",
+   "relevant": {
+    "m026": 2
+   }
+  },
+  {
+   "id": "q105",
+   "category": "temporal",
+   "query": "what changed since the double charge",
+   "relevant": {
+    "m182": 2,
+    "m181": 1
+   }
+  },
+  {
+   "id": "q106",
+   "category": "temporal",
+   "query": "most recent incident",
+   "relevant": {
+    "m176": 2
+   }
+  },
+  {
+   "id": "q107",
+   "category": "temporal",
+   "query": "since when is two-factor mandatory",
+   "relevant": {
+    "m078": 2
+   }
+  },
+  {
+   "id": "q108",
+   "category": "temporal",
+   "query": "what is planned for Q1 2027",
+   "relevant": {
+    "m114": 2,
+    "m050": 1
+   }
+  },
+  {
+   "id": "q109",
+   "category": "temporal",
+   "query": "results after moving pdf rendering to new nodes",
+   "relevant": {
+    "m019": 2,
+    "m018": 1
+   }
+  },
+  {
+   "id": "q110",
+   "category": "temporal",
+   "query": "what changed after the pentest",
+   "relevant": {
+    "m075": 2,
+    "m076": 1
+   }
+  },
+  {
+   "id": "q111",
+   "category": "multihop",
+   "query": "which machine type renders invoices and what font does it embed",
+   "relevant": {
+    "m018": 2,
+    "m198": 2
+   }
+  },
+  {
+   "id": "q112",
+   "category": "multihop",
+   "query": "how does SEPA payment finality affect dunning",
+   "relevant": {
+    "m149": 2,
+    "m150": 2,
+    "m148": 1
+   }
+  },
+  {
+   "id": "q113",
+   "category": "multihop",
+   "query": "the outage that motivated the canary",
+   "relevant": {
+    "m173": 2,
+    "m001": 2
+   }
+  },
+  {
+   "id": "q114",
+   "category": "multihop",
+   "query": "incidents caused by secret or key rotation",
+   "relevant": {
+    "m176": 2,
+    "m174": 2,
+    "m021": 1,
+    "m083": 1
+   }
+  },
+  {
+   "id": "q115",
+   "category": "multihop",
+   "query": "where tenant isolation is enforced in the database and in logs",
+   "relevant": {
+    "m045": 2,
+    "m161": 2,
+    "m046": 1
+   }
+  },
+  {
+   "id": "q116",
+   "category": "multihop",
+   "query": "how does the analytics pipeline get invoice data and when do dbt models run",
+   "relevant": {
+    "m123": 2,
+    "m124": 2
+   }
+  },
+  {
+   "id": "q117",
+   "category": "multihop",
+   "query": "idempotency across the API and payment jobs",
+   "relevant": {
+    "m054": 2,
+    "m182": 2,
+    "m055": 1
+   }
+  },
+  {
+   "id": "q118",
+   "category": "multihop",
+   "query": "what depends on the Kotlin version",
+   "relevant": {
+    "m113": 2,
+    "m114": 2,
+    "m104": 1
+   }
+  },
+  {
+   "id": "q119",
+   "category": "multihop",
+   "query": "personal data protection in the database and in analytics",
+   "relevant": {
+    "m084": 2,
+    "m139": 2,
+    "m085": 1
+   }
+  },
+  {
+   "id": "q120",
+   "category": "multihop",
+   "query": "lock problems caused by migrations",
+   "relevant": {
+    "m178": 2,
+    "m031": 2,
+    "m032": 1
+   }
+  },
+  {
+   "id": "q121",
+   "category": "multihop",
+   "query": "certificate and domain renewal failures",
+   "relevant": {
+    "m011": 2,
+    "m184": 2
+   }
+  }
+ ]
+}
