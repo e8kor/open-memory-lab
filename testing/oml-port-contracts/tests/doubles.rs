@@ -9,6 +9,11 @@ async fn journal_store_double_passes_the_suite() {
     contracts::run_journal_store_suite(|| async { MemStore::new() }).await;
 }
 
+#[tokio::test]
+async fn journal_store_double_passes_the_claim_edge_suite() {
+    contracts::run_claim_edge_suite(|| async { MemStore::new() }).await;
+}
+
 #[test]
 fn signer_double_passes() {
     contracts::signer_contract(&MemSigner::new(contracts::TEST_SEED));
