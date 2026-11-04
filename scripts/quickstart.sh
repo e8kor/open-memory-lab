@@ -74,7 +74,8 @@ if [ -z "$TOKEN" ] && [ -n "$IN_COMPOSE" ]; then
 fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
-boot="$(oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token "$TOKEN" --tenant-name quickstart --principal platform/admin)" \
+# The secret travels on stdin, never in argv (ADR-0039 d10).
+boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
 workarea="$(oml workareas create universe "$WORKAREA_NAME" | jq -r .id)"
 
@@ -116,7 +117,7 @@ own="$(call 4 oml_read '{"query":"quickstart wrote","include_unreviewed":true}')
 [ "$(state_of hits "$artifact" "$own")" = "held" ] || fail "oml_read with include_unreviewed did not recall the held write to its author: $own"
 
 oml --url "$CLI_SERVER" --api-key "$dreamer" review next >/dev/null
-oml --url "$CLI_SERVER" --api-key "$dreamer" review verdict --memory "$artifact" --approve >/dev/null
+oml --url "$CLI_SERVER" --api-key "$dreamer" review approve >/dev/null
 approved="$(call 5 oml_read '{"state":"promoted"}')"
 [ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
 recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
@@ -141,5 +142,5 @@ Give the agent its one key and install the plugin:
 
 Nothing the agent writes reaches another key until the dreamer key approves it:
   ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review next
-  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review verdict --memory <artifact_id> --approve
+  ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review approve
 EOF

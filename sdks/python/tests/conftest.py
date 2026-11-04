@@ -177,13 +177,14 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
 
         cli_env = _clean_env(OML_CLI_CREDENTIALS=str(scratch / "credentials"))
 
-        def oml(*args: str) -> dict:
+        def oml(*args: str, stdin: str = "") -> dict:
             # The claim takes the URL alone; every verb after it, the URL and
             # key the claim stored (ADR-0039 d15).
             at = ["--url", url] if args[0] == "bootstrap" else []
             done = subprocess.run(
                 [CLI_BIN, *at, "--json", *args],
                 env=cli_env,
+                input=stdin,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -193,8 +194,9 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
             return json.loads(done.stdout)
 
         boot = oml(
-            "bootstrap", "claim", "sdk-admin", "--token", token,
+            "bootstrap", "claim", "sdk-admin", "--token-stdin",
             "--tenant-name", "sdk-tests", "--principal", "platform/admin",
+            stdin=f"{token}\n",
         )  # fmt: skip
         root = boot["root_workarea_id"]
         workarea = oml("workareas", "create", root, "sdk")["id"]

@@ -143,6 +143,23 @@ impl Client {
         }
         finish(request.send_json(body.clone()))
     }
+
+    /// POST a JSON body under the key, with `idempotency_key` as its
+    /// `Idempotency-Key`, so a re-run naming the same key replays the first
+    /// answer (http-api.md idempotency; ADR-0039 d3).
+    pub fn post_keyed(
+        &self,
+        path: &str,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .post(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .set("Idempotency-Key", idempotency_key);
+        finish(request.send_json(body.clone()))
+    }
 }
 
 /// One path segment carrying a reference exactly as the operator typed it,
@@ -189,7 +206,12 @@ pub fn encode(text: &str) -> String {
 
 /// One idempotency key per invocation: a re-run is a new act, a transport
 /// retry inside the call is not (ureq does not retry POSTs).
-fn new_idempotency_key() -> String {
+///
+/// # Panics
+///
+/// When the OS random source is unavailable.
+#[must_use]
+pub fn new_idempotency_key() -> String {
     let mut bytes = [0_u8; 16];
     getrandom::getrandom(&mut bytes).expect("the OS random source is available");
     format!("oml-cli-{}", hex::encode(bytes))

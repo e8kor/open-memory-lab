@@ -1,6 +1,6 @@
 //! End to end: the real lead composition served over TCP (phase-4 harness
 //! pattern: throwaway database, `lead_state`, one router) driven only through
-//! the `oml` binary — bootstrap → issue → submit → review → approve → recall
+//! the `oml` binary — bootstrap → issue → write → review → approve → read
 //! → verify-chain refused by name while no chain export is served (the
 //! verification vectors live in `vectors.rs`).
 //! The key-tool cases (ADR-0028), the names cases (ADR-0026) and the
@@ -167,9 +167,32 @@ fn oml_command(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> 
 
 /// Runs the `oml` binary; returns (exit code, parsed stdout JSON, stderr).
 fn oml(server: &str, creds: &Path, key: Option<&str>, args: &[&str]) -> (i32, Value, String) {
+    oml_in(server, creds, key, args, "")
+}
+
+/// [`oml`] with `stdin` written to the binary's standard input, as
+/// `oml bootstrap claim --token-stdin` reads the enrollment secret.
+fn oml_in(
+    server: &str,
+    creds: &Path,
+    key: Option<&str>,
+    args: &[&str],
+    stdin: &str,
+) -> (i32, Value, String) {
     let mut cmd = oml_command(server, creds, key, args);
-    cmd.arg("--json").args(args);
-    let out = cmd.output().expect("the oml binary runs");
+    cmd.arg("--json")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("the oml binary runs");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(stdin.as_bytes())
+        .expect("stdin is written");
+    let out = child.wait_with_output().expect("the oml binary ends");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed = serde_json::from_str(stdout.trim()).unwrap_or(Value::Null);
     (
@@ -223,7 +246,7 @@ async fn full_ceremony_through_the_cli() {
     let creds: PathBuf = creds_dir.join("credentials");
 
     // -- bootstrap claim: show-once key, credentials stored 0600 -------------
-    let (code, claim, log) = oml(
+    let (code, claim, log) = oml_in(
         &server,
         &creds,
         None,
@@ -231,13 +254,13 @@ async fn full_ceremony_through_the_cli() {
             "bootstrap",
             "claim",
             "root-admin",
-            "--token",
-            ENROLLMENT,
+            "--token-stdin",
             "--tenant-name",
             "cli-tenant",
             "--principal",
             "platform/admin",
         ],
+        ENROLLMENT,
     );
     assert_eq!(code, 0, "bootstrap claim: {log}");
     let tenant_id = claim["tenant_id"].as_str().expect("tenant id").to_owned();
@@ -263,11 +286,12 @@ async fn full_ceremony_through_the_cli() {
     }
 
     // A second claim is refused: the token is consumed (exit 1, typed).
-    let (code, envelope, log) = oml(
+    let (code, envelope, log) = oml_in(
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "second-admin", "--token", ENROLLMENT],
+        &["bootstrap", "claim", "second-admin", "--token-stdin"],
+        ENROLLMENT,
     );
     assert_eq!(code, 1, "consumed token is a typed refusal: {log}");
     assert_eq!(envelope["error"]["code"], "auth.invalid", "{log}");
@@ -316,26 +340,20 @@ async fn full_ceremony_through_the_cli() {
     assert_eq!(code, 1, "{log}");
     assert_eq!(envelope["error"]["code"], "access.role_exclusive", "{log}");
 
-    // -- submit → review → approve → recall ----------------------------------
+    // -- write → review → approve → read -----------------------------------
     let (code, accepted, log) = oml(
         &server,
         &creds,
         Some(&writer),
         &[
-            "submit",
-            "--claim",
+            "write",
             "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
             "--claim-key",
             "supplier-quote-am-7741",
         ],
     );
-    assert_eq!(code, 0, "submit: {log}");
+    assert_eq!(code, 0, "write: {log}");
     assert_eq!(accepted["state"], "held", "{log}");
-    let artifact = accepted["artifact_id"]
-        .as_str()
-        .expect("artifact id")
-        .to_owned();
-
     let (code, serve, log) = oml(&server, &creds, Some(&dreamer), &["review", "next"]);
     assert_eq!(code, 0, "review next: {log}");
     assert_eq!(
@@ -343,12 +361,7 @@ async fn full_ceremony_through_the_cli() {
         "{log}"
     );
 
-    let (code, verdict, log) = oml(
-        &server,
-        &creds,
-        Some(&dreamer),
-        &["review", "verdict", "--memory", &artifact, "--approve"],
-    );
+    let (code, verdict, log) = oml(&server, &creds, Some(&dreamer), &["review", "approve"]);
     assert_eq!(code, 0, "verdict: {log}");
     assert_eq!(verdict["state"], "promoted", "{log}");
 
@@ -356,7 +369,7 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         Some(&reader),
-        &["recall", "--query", "Accra Metals"],
+        &["read", "--query", "Accra Metals"],
     );
     assert_eq!(code, 0, "recall: {log}");
     let hits = recall["hits"].as_array().expect("hits");
@@ -414,7 +427,7 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         Some(&writer),
-        &["submit", "--claim", "written after the denial"],
+        &["write", "written after the denial"],
     );
     assert_eq!(code, 1, "{log}");
     assert_eq!(envelope["error"]["code"], "access.not_found", "{log}");
@@ -435,6 +448,7 @@ struct Seen {
     path: String,
     query: String,
     authorization: Option<String>,
+    idempotency_key: Option<String>,
     body: Value,
 }
 
@@ -453,6 +467,11 @@ async fn record(State(seen): State<Recorder>, request: Request, next: Next) -> R
         authorization: parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(ToOwned::to_owned),
+        idempotency_key: parts
+            .headers
+            .get("idempotency-key")
             .and_then(|v| v.to_str().ok())
             .map(ToOwned::to_owned),
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -516,7 +535,7 @@ impl Lab {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("fixture directory");
         let creds = dir.join("credentials");
-        let (code, claim, log) = oml(
+        let (code, claim, log) = oml_in(
             &server,
             &creds,
             None,
@@ -524,11 +543,11 @@ impl Lab {
                 "bootstrap",
                 "claim",
                 "root-admin",
-                "--token",
-                ENROLLMENT,
+                "--token-stdin",
                 "--principal",
                 "platform/admin",
             ],
+            ENROLLMENT,
         );
         assert_eq!(code, 0, "bootstrap claim: {log}");
         let root = claim["root_workarea_id"]
@@ -874,10 +893,7 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     );
 
     // The exported value is the key itself, and it writes to the workarea.
-    let (code, accepted, log) = lab.json(
-        Some(&value),
-        &["submit", "--claim", "The exported key remembers."],
-    );
+    let (code, accepted, log) = lab.json(Some(&value), &["write", "The exported key remembers."]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["state"], "held", "{log}");
     assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
@@ -927,10 +943,8 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
     assert!(!stderr.contains(value), "no value on stderr: {stderr}");
 
     // The file holds the key itself.
-    let (code, accepted, log) = lab.json(
-        Some(value),
-        &["submit", "--claim", "The key from the file remembers."],
-    );
+    let (code, accepted, log) =
+        lab.json(Some(value), &["write", "The key from the file remembers."]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["state"], "held", "{log}");
     lab.stop().await;
@@ -1239,14 +1253,13 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
     let (code, accepted, log) = lab.json(
         Some(&writer),
         &[
-            "submit",
-            "--claim",
+            "write",
             "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
             "--claim-key",
             "supplier-quote-am-7741",
         ],
     );
-    assert_eq!(code, 0, "submit: {log}");
+    assert_eq!(code, 0, "write: {log}");
     let artifact = accepted["artifact_id"].as_str().expect("artifact id");
     let (code, serve, log) = lab.json(Some(&dreamer), &["review", "next"]);
     assert_eq!(code, 0, "review next: {log}");
@@ -1257,12 +1270,16 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
     );
     let (code, verdict, log) = lab.json(
         Some(&dreamer),
-        &["review", "verdict", "--memory", artifact, "--approve"],
+        &[
+            "review",
+            "approve",
+            serve["serve_id"].as_str().expect("serve id"),
+        ],
     );
     assert_eq!(code, 0, "verdict: {log}");
     assert_eq!(verdict["state"], "promoted", "{log}");
 
-    let (code, recall, log) = lab.json(Some(&writer), &["recall", "--query", "Accra Metals"]);
+    let (code, recall, log) = lab.json(Some(&writer), &["read", "--query", "Accra Metals"]);
     assert_eq!(code, 0, "the writer key recalls: {log}");
     assert!(
         recall["hits"]
@@ -1300,16 +1317,15 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
     let (code, accepted, log) = lab.json(
         Some(&writer),
         &[
-            "submit",
-            "--claim",
+            "write",
             "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
         ],
     );
-    assert_eq!(code, 0, "submit: {log}");
+    assert_eq!(code, 0, "write: {log}");
     assert_eq!(accepted["state"], "held", "{log}");
     let artifact = accepted["artifact_id"].as_str().expect("artifact id");
 
-    let (code, envelope, log) = lab.json(Some(&writer), &["recall", "--query", "Accra Metals"]);
+    let (code, envelope, log) = lab.json(Some(&writer), &["read", "--query", "Accra Metals"]);
     assert_eq!(code, 1, "recall needs a reader grant: {log}");
     assert_eq!(envelope["error"]["code"], "access.not_found", "{log}");
 
@@ -1414,10 +1430,7 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
 
     // The exported value is the key that answers to the name.
     let value = exported_value(&stdout);
-    let (code, accepted, log) = lab.json(
-        Some(&value),
-        &["submit", "--claim", "The named key remembers."],
-    );
+    let (code, accepted, log) = lab.json(Some(&value), &["write", "The named key remembers."]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
     lab.stop().await;
@@ -1792,7 +1805,7 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
     );
 
     // Structure, never content: the admin context still recalls nothing.
-    let (code, envelope, log) = lab.json(None, &["recall", "--query", "anything"]);
+    let (code, envelope, log) = lab.json(None, &["read", "--query", "anything"]);
     assert_eq!(code, 1, "{log}");
     assert_eq!(envelope["error"]["code"], "access.verb_ceiling", "{log}");
     lab.stop().await;
@@ -2069,17 +2082,9 @@ impl Crew {
     fn submit(&self, key: &str, kind: &str, claim_key: &str, body: &str) {
         let (code, accepted, log) = self.lab.json(
             Some(key),
-            &[
-                "submit",
-                "--claim",
-                body,
-                "--claim-key",
-                claim_key,
-                "--kind",
-                kind,
-            ],
+            &["write", body, "--claim-key", claim_key, "--kind", kind],
         );
-        assert_eq!(code, 0, "submit {claim_key}: {log}");
+        assert_eq!(code, 0, "write {claim_key}: {log}");
         assert_eq!(accepted["state"], "held", "{log}");
     }
 
@@ -2088,11 +2093,10 @@ impl Crew {
         let (code, serve, log) = self.lab.json(Some(&self.dreamer), &["review", "next"]);
         assert_eq!(code, 0, "review next: {log}");
         assert_eq!(serve["item"]["claim_key"], claim_key, "{log}");
-        let artifact = serve["item"]["artifact_id"].as_str().expect("artifact id");
-        let (code, verdict, log) = self.lab.json(
-            Some(&self.dreamer),
-            &["review", "verdict", "--memory", artifact, "--approve"],
-        );
+        let serve_id = serve["serve_id"].as_str().expect("serve id");
+        let (code, verdict, log) = self
+            .lab
+            .json(Some(&self.dreamer), &["review", "approve", serve_id]);
         assert_eq!(code, 0, "verdict: {log}");
         assert_eq!(verdict["state"], "promoted", "{log}");
     }
@@ -3206,10 +3210,10 @@ async fn the_hook_query_is_the_words_of_the_working_directory_name() {
     crew.lab.stop().await;
 }
 
-/// `oml submit` without `--claim-key` sends no `claim_key`, and its human
+/// `oml write` without `--claim-key` sends no `claim_key`, and its human
 /// layout prints the key the server derived (ADR-0039 d6).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn submit_without_claim_key_sends_none_and_prints_the_servers_key() {
+async fn write_without_claim_key_sends_none_and_prints_the_servers_key() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -3231,7 +3235,7 @@ async fn submit_without_claim_key_sends_none_and_prints_the_servers_key() {
         &lab.server,
         &lab.creds,
         Some(&value),
-        &["submit", "--claim", "The server names this claim."],
+        &["write", "The server names this claim."],
     );
     assert_eq!(code, 0, "{stderr}");
     let sent: Vec<Seen> = lab
@@ -3989,4 +3993,631 @@ async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
         "whoami under the pair's key"
     );
     task.abort();
+}
+
+// ---------------------------------------------------------------------------
+// The v0.4.0 verbs: write, read, events, review approve|reject, the claim's
+// --token-stdin, and the hidden v0.3.0 verbs (ADR-0039 d10, d12)
+// ---------------------------------------------------------------------------
+
+/// An artifact id the canned stub's answers name.
+const STUB_ARTIFACT: &str = "0192f0a4-5b6c-7d8e-9fa0-b1c2d3e4f5a6";
+
+/// A stub that records every request behind [`record`] and answers each
+/// `200` with one document carrying every field the write, read, review and
+/// claim layouts print; returns its URL, what it saw and the task serving it.
+async fn canned_stub() -> (String, Recorder, tokio::task::JoinHandle<()>) {
+    let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
+    let memory = json!({
+        "artifact_id": STUB_ARTIFACT,
+        "claim_key": "supplier-quote-am-7741",
+        "version": 1,
+        "kind": "memory",
+        "state": "promoted",
+        "workarea_path": "universe.metals",
+        "text": "Supplier Accra Metals quoted 412 USD/t.",
+    });
+    let canned = json!({
+        "artifact_id": STUB_ARTIFACT,
+        "claim_key": "supplier-quote-am-7741",
+        "version": 1,
+        "kind": "memory",
+        "state": "held",
+        "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+        "workarea_path": "universe.metals",
+        "text": "Supplier Accra Metals quoted 412 USD/t.",
+        "retirement": false,
+        "replaces": null,
+        "plaintext_digest": "sha256:00",
+        "journal_seq": 7,
+        "verdict": "approve",
+        "steering": [],
+        "hits": [{ "memory": memory, "score": 0.5 }],
+        "query_digest": "sha256:01",
+        "items": [memory],
+        "next_cursor": null,
+        "head_seq": 7,
+        "next_after_seq": 7,
+        "name": "root-admin",
+        "key_id": "0192f0a4-0000-7000-8000-000000000001",
+        "value": STUB_VALUE,
+        "tenant_id": "0192f0a4-0000-7000-8000-000000000002",
+        "root_workarea_id": "0192f0a4-0000-7000-8000-000000000003",
+    });
+    let router = axum::Router::new()
+        .fallback(move || {
+            let canned = canned.clone();
+            async move { axum::Json(canned) }
+        })
+        .layer(middleware::from_fn_with_state(seen.clone(), record));
+    let (url, task) = serve_stub(router).await;
+    (url, seen, task)
+}
+
+/// Every request `seen` recorded since the last call.
+fn taken(seen: &Recorder) -> Vec<Seen> {
+    std::mem::take(&mut *seen.lock().expect("recorder lock"))
+}
+
+/// A request as two runs of one verb must agree on it: method, path, query
+/// and body; the idempotency key, minted per run, only by its presence.
+fn sent_as(seen: &[Seen]) -> Vec<(String, String, String, bool, Value)> {
+    seen.iter()
+        .map(|s| {
+            (
+                s.method.clone(),
+                s.path.clone(),
+                s.query.clone(),
+                s.idempotency_key.is_some(),
+                s.body.clone(),
+            )
+        })
+        .collect()
+}
+
+/// `oml --url <stub> --api-key <key> <args>` with a credentials path that
+/// holds nothing; returns (exit code, stdout, stderr).
+fn stub_text(server: &str, dir: &Path, args: &[&str]) -> (i32, String, String) {
+    oml_text(server, &dir.join("credentials"), Some("oml_stub_key"), args)
+}
+
+/// The verb paths `oml <prefix> --help` lists, recursively, each leaf as
+/// `<verb> <subverb>…`: clap's command tree as the binary prints it, hidden
+/// verbs and `help` left out.
+fn built_verbs(prefix: &[String], out: &mut Vec<String>) {
+    let help = Command::new(env!("CARGO_BIN_EXE_oml"))
+        .args(prefix)
+        .arg("--help")
+        .output()
+        .expect("the oml binary runs");
+    assert!(help.status.success(), "oml {prefix:?} --help");
+    let text = String::from_utf8_lossy(&help.stdout);
+    let subverbs: Vec<String> = text
+        .lines()
+        .skip_while(|l| l.trim() != "Commands:")
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .filter(|l| !l.starts_with("   "))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|verb| *verb != "help")
+        .map(ToOwned::to_owned)
+        .collect();
+    if subverbs.is_empty() {
+        out.push(prefix.join(" "));
+    }
+    for verb in subverbs {
+        let mut path = prefix.to_vec();
+        path.push(verb);
+        built_verbs(&path, out);
+    }
+}
+
+#[test]
+fn the_cli_reference_lists_every_built_verb() {
+    let reference = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/cli/reference.md"),
+    )
+    .expect("docs/cli/reference.md reads");
+    let mut verbs = Vec::new();
+    built_verbs(&[], &mut verbs);
+    for v040 in ["write", "read", "events", "review approve", "review reject"] {
+        assert!(
+            verbs.iter().any(|v| v == v040),
+            "{v040} is built: {verbs:?}"
+        );
+    }
+    for hidden in ["submit", "recall", "supersede", "review verdict"] {
+        assert!(!verbs.iter().any(|v| v == hidden), "{hidden} is hidden");
+    }
+    let missing: Vec<&String> = verbs
+        .iter()
+        .filter(|verb| {
+            let row = format!("| `oml {verb}");
+            !reference.match_indices(&row).any(|(at, _)| {
+                matches!(reference[at + row.len()..].chars().next(), Some(' ' | '`'))
+            })
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "built verbs with no row in docs/cli/reference.md: {missing:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_old_cli_verb_runs_its_new_verb_and_names_it_on_stderr() {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("aliases");
+    let serve = format!("srv_{}", STUB_ARTIFACT.replace('-', ""));
+    let pairs: [(&[&str], Vec<&str>, &str); 6] = [
+        (
+            &[
+                "submit",
+                "--claim",
+                "Accra Metals quoted 412 USD/t.",
+                "--claim-key",
+                "quote-am",
+                "--kind",
+                "derived_fact",
+                "--derives-from",
+                STUB_ARTIFACT,
+                "--workarea",
+                "metals",
+            ],
+            vec![
+                "write",
+                "Accra Metals quoted 412 USD/t.",
+                "--claim-key",
+                "quote-am",
+                "--kind",
+                "derived_fact",
+                "--derives-from",
+                STUB_ARTIFACT,
+                "--workarea",
+                "metals",
+            ],
+            "oml write",
+        ),
+        (
+            &[
+                "recall",
+                "--query",
+                "Accra Metals",
+                "--k",
+                "3",
+                "--workarea",
+                "metals",
+            ],
+            vec![
+                "read",
+                "--query",
+                "Accra Metals",
+                "--k",
+                "3",
+                "--workarea",
+                "metals",
+            ],
+            "oml read --query",
+        ),
+        (
+            &[
+                "supersede",
+                "--target",
+                STUB_ARTIFACT,
+                "--claim",
+                "Now 399 USD/t.",
+            ],
+            vec!["write", "Now 399 USD/t.", "--replaces", STUB_ARTIFACT],
+            "oml write --replaces",
+        ),
+        (
+            &["review", "verdict", "--memory", STUB_ARTIFACT, "--approve"],
+            vec!["review", "approve", &serve],
+            "oml review approve",
+        ),
+        (
+            &[
+                "review",
+                "verdict",
+                "--memory",
+                STUB_ARTIFACT,
+                "--approve",
+                "--reason",
+                "checked",
+            ],
+            vec!["review", "approve", &serve, "--note", "checked"],
+            "oml review approve",
+        ),
+        (
+            &[
+                "review",
+                "verdict",
+                "--memory",
+                STUB_ARTIFACT,
+                "--reject",
+                "--reason",
+                "stale quote",
+            ],
+            vec!["review", "reject", &serve, "--reason", "stale quote"],
+            "oml review reject",
+        ),
+    ];
+    for (old, new, successor) in pairs {
+        let (code, old_out, old_err) = stub_text(&server, &dir, old);
+        assert_eq!(code, 0, "{old:?}: {old_err}");
+        let old_sent = sent_as(&taken(&seen));
+        let (code, new_out, new_err) = stub_text(&server, &dir, &new);
+        assert_eq!(code, 0, "{new:?}: {new_err}");
+        let new_sent = sent_as(&taken(&seen));
+        assert_eq!(old_sent.len(), 1, "{old:?} sends one request: {old_sent:?}");
+        assert_eq!(old_sent, new_sent, "{old:?} sends what {new:?} sends");
+        assert_eq!(old_out, new_out, "{old:?} prints what {new:?} prints");
+        assert_eq!(new_err, "", "{new:?} prints nothing on stderr");
+        let lines: Vec<&str> = old_err.lines().collect();
+        assert_eq!(lines.len(), 1, "{old:?}: one stderr line: {old_err}");
+        assert!(
+            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.0"),
+            "{old:?} names {successor} and the release that removes it: {old_err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bootstrap_claim_reads_the_secret_from_stdin_and_takes_no_token_flag() {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("token-stdin");
+    let creds = dir.join("credentials");
+    let claim = ["bootstrap", "claim", "root-admin"];
+
+    // --token is gone with no alias: argv never carries the secret.
+    let mut args = claim.to_vec();
+    args.extend(["--token", ENROLLMENT]);
+    let (code, _, log) = oml(&server, &creds, None, &args);
+    assert_eq!(code, 2, "{log}");
+    assert!(log.contains("--token"), "the refusal names --token: {log}");
+    // Without --token-stdin the claim has no secret to send.
+    let (code, _, log) = oml_in(&server, &creds, None, &claim, ENROLLMENT);
+    assert_eq!(code, 2, "{log}");
+    assert!(log.contains("--token-stdin"), "{log}");
+    // An empty stdin sends nothing.
+    let mut args = claim.to_vec();
+    args.push("--token-stdin");
+    let (code, _, log) = oml_in(&server, &creds, None, &args, "");
+    assert_eq!(code, 2, "{log}");
+    assert!(taken(&seen).is_empty(), "nothing was sent: {log}");
+    assert!(!creds.exists(), "nothing was written");
+
+    let (code, response, log) = oml_in(&server, &creds, None, &args, &format!("{ENROLLMENT}\n"));
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(response["value"], STUB_VALUE, "{log}");
+    let sent = taken(&seen);
+    assert_eq!(routes(&sent), vec!["POST /v2/bootstrap/claim"], "{sent:?}");
+    assert_eq!(sent[0].body["enrollment_token"], ENROLLMENT, "{sent:?}");
+    assert_eq!(sent[0].body["name"], "root-admin", "{sent:?}");
+    assert_eq!(sent[0].authorization, None, "the claim sends no key");
+    let fields: toml::Table =
+        toml::from_str(&std::fs::read_to_string(&creds).expect("credentials written"))
+            .expect("the credentials parse");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["api_key", "url"],
+        "the same two fields as oml login (ADR-0039 d15)"
+    );
+    assert_eq!(fields["api_key"].as_str(), Some(STUB_VALUE));
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_read_refuses_query_with_an_artifact_id() {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("read-modes");
+    let (code, _, stderr) = stub_text(
+        &server,
+        &dir,
+        &["read", STUB_ARTIFACT, "--query", "Accra Metals"],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("--query"),
+        "the refusal names --query: {stderr}"
+    );
+    // Each flag outside the mode its arguments choose is refused by name,
+    // as oml_read refuses the field (ADR-0039 d4).
+    for (args, flag) in [
+        (vec!["read", "--query", "q", "--state", "held"], "--state"),
+        (vec!["read", "--k", "3"], "--k"),
+        (vec!["read", "--include-unreviewed"], "--include-unreviewed"),
+        (
+            vec!["read", STUB_ARTIFACT, "--workarea", "metals"],
+            "--workarea",
+        ),
+        (vec!["read", STUB_ARTIFACT, "--all"], "--all"),
+        (vec!["read", "--own", "--all"], "--all"),
+    ] {
+        let (code, _, stderr) = stub_text(&server, &dir, &args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains(flag), "{args:?} names {flag}: {stderr}");
+    }
+    assert!(taken(&seen).is_empty(), "no refused read sent anything");
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_neither() {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("read-routes");
+    for (args, route, query, body) in [
+        (
+            vec!["read", STUB_ARTIFACT],
+            format!("GET /v1/memories/{STUB_ARTIFACT}"),
+            String::new(),
+            Value::Null,
+        ),
+        (
+            vec![
+                "read",
+                "--query",
+                "Accra Metals",
+                "--k",
+                "3",
+                "--workarea",
+                "metals",
+                "--kinds",
+                "memory",
+                "--kinds",
+                "derived_fact",
+                "--include-unreviewed",
+            ],
+            "POST /v1/memories/recall".to_owned(),
+            String::new(),
+            json!({
+                "query": "Accra Metals",
+                "include_text": true,
+                "k": 3,
+                "workarea": "metals",
+                "kinds": ["memory", "derived_fact"],
+                "include_unreviewed": true,
+            }),
+        ),
+        (
+            vec!["read"],
+            "GET /v1/memories".to_owned(),
+            "own=true".to_owned(),
+            Value::Null,
+        ),
+        (
+            vec![
+                "read",
+                "--all",
+                "--workarea",
+                "universe.metals",
+                "--state",
+                "promoted",
+                "--kind",
+                "memory",
+                "--since",
+                "2026-11-01T00:00:00Z",
+                "--until",
+                "2026-11-03T00:00:00Z",
+                "--limit",
+                "5",
+                "--cursor",
+                "c/1",
+            ],
+            "GET /v1/memories".to_owned(),
+            "own=false&workarea=universe.metals&state=promoted&kind=memory\
+             &since=2026-11-01T00%3A00%3A00Z&until=2026-11-03T00%3A00%3A00Z&limit=5&cursor=c%2F1"
+                .to_owned(),
+            Value::Null,
+        ),
+    ] {
+        let (code, stdout, stderr) = stub_text(&server, &dir, &args);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+        assert!(
+            stdout.contains(STUB_ARTIFACT),
+            "{args:?} prints the claim's artifact id: {stdout}"
+        );
+        let sent = taken(&seen);
+        assert_eq!(routes(&sent), vec![route.clone()], "{args:?}");
+        assert_eq!(sent[0].query, query, "{args:?}");
+        assert_eq!(sent[0].body, body, "{args:?}");
+        assert_eq!(
+            sent[0].idempotency_key, None,
+            "a read sends no Idempotency-Key"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_sends_its_idempotency_key()
+ {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("write-modes");
+    let (code, _, stderr) = stub_text(
+        &server,
+        &dir,
+        &[
+            "write",
+            "Remember this.",
+            "--idempotency-key",
+            "run-1/step-2",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let sent = taken(&seen);
+    assert_eq!(routes(&sent), vec!["POST /v1/memories"], "{sent:?}");
+    assert_eq!(
+        sent[0].body,
+        json!({ "body": "Remember this." }),
+        "{sent:?}"
+    );
+    assert_eq!(sent[0].idempotency_key.as_deref(), Some("run-1/step-2"));
+
+    let (code, _, stderr) = stub_text(
+        &server,
+        &dir,
+        &[
+            "write",
+            "Retired: the 2026 runbook replaces it.",
+            "--replaces",
+            STUB_ARTIFACT,
+            "--retirement",
+            "--reason",
+            "superseded by the runbook",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let sent = taken(&seen);
+    assert_eq!(
+        routes(&sent),
+        vec![format!("POST /v1/memories/{STUB_ARTIFACT}/supersede")],
+        "{sent:?}"
+    );
+    assert_eq!(
+        sent[0].body,
+        json!({
+            "body": "Retired: the 2026 runbook replaces it.",
+            "retirement": true,
+            "reason": "superseded by the runbook",
+        }),
+        "{sent:?}"
+    );
+    assert!(
+        sent[0]
+            .idempotency_key
+            .as_deref()
+            .is_some_and(|k| k.starts_with("oml-cli-")),
+        "a write without --idempotency-key sends a generated one: {sent:?}"
+    );
+
+    // A field outside the mode is refused by name, nothing sent (ADR-0039 d3).
+    for (args, flag) in [
+        (vec!["write", "t", "--retirement"], "--retirement"),
+        (vec!["write", "t", "--reason", "why"], "--reason"),
+        (
+            vec![
+                "write",
+                "t",
+                "--replaces",
+                STUB_ARTIFACT,
+                "--claim-key",
+                "k",
+            ],
+            "--claim-key",
+        ),
+    ] {
+        let (code, _, stderr) = stub_text(&server, &dir, &args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains(flag), "{args:?} names {flag}: {stderr}");
+    }
+    assert!(taken(&seen).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_events_tails_get_v2_events_with_its_filters() {
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("events");
+    let (code, stdout, stderr) = stub_text(
+        &server,
+        &dir,
+        &[
+            "events",
+            "--after-seq",
+            "4182",
+            "--workarea",
+            "metals",
+            "--limit",
+            "50",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("head seq 7"), "{stdout}");
+    let sent = taken(&seen);
+    assert_eq!(routes(&sent), vec!["GET /v2/events"], "{sent:?}");
+    assert_eq!(sent[0].query, "after_seq=4182&workarea=metals&limit=50");
+    let (code, _, stderr) = stub_text(&server, &dir, &["events"]);
+    assert_eq!(code, 0, "{stderr}");
+    let sent = taken(&seen);
+    assert_eq!(sent[0].query, "", "{sent:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let writer = lab.issue(
+        "crew-agent-1",
+        &[
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-1",
+            "--grant",
+            &format!("{wa}:writer"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("writer value")
+        .to_owned();
+    let dreamer = lab.issue(
+        "crew-reviewer-1",
+        &[
+            "--role",
+            "dreamer",
+            "--held-by",
+            "human",
+            "--principal",
+            "crew/reviewer-1",
+            "--grant",
+            &format!("{wa}:dreamer"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("dreamer value")
+        .to_owned();
+    let (code, accepted, log) = lab.json(
+        Some(&writer),
+        &["write", "Supplier Accra Metals quoted 412 USD/t."],
+    );
+    assert_eq!(code, 0, "write: {log}");
+
+    // With nothing claimed, the default has no item to apply to.
+    let (code, envelope, log) = lab.json(Some(&dreamer), &["review", "approve"]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "request.validation", "{log}");
+
+    let (code, serve, log) = lab.json(Some(&dreamer), &["review", "next"]);
+    assert_eq!(code, 0, "review next: {log}");
+    assert_eq!(
+        serve["item"]["artifact_id"], accepted["artifact_id"],
+        "{log}"
+    );
+    lab.take_requests();
+    let (code, verdict, log) = lab.json(
+        Some(&dreamer),
+        &["review", "approve", "--note", "matches the quote"],
+    );
+    assert_eq!(code, 0, "review approve: {log}");
+    assert_eq!(verdict["artifact_id"], accepted["artifact_id"], "{log}");
+    assert_eq!(verdict["state"], "promoted", "{log}");
+    let sent = lab.take_requests();
+    assert_eq!(routes(&sent), vec!["POST /v2/review/verdicts"], "{sent:?}");
+    assert_eq!(
+        sent[0].body,
+        json!({ "verdict": "approve", "reason": "matches the quote" }),
+        "no serve_id is sent: {sent:?}"
+    );
+    lab.stop().await;
 }

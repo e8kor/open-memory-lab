@@ -18,7 +18,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oml_cli::client::{CallOpts, CliError, Client, encode, segment};
+use oml_cli::client::{CallOpts, CliError, Client, encode, new_idempotency_key, segment};
 use oml_cli::creds::{self, Credentials};
 use oml_cli::hook;
 use oml_cli::issue::{KeyFile, sh_quote, with_reader_beside_writers};
@@ -125,16 +125,30 @@ enum Command {
         #[command(subcommand)]
         command: CrewsCommand,
     },
-    /// Submit a claim (writer convenience for the demo).
-    Submit(SubmitArgs),
+    /// Write a claim, held until reviewed: a submission, or with --replaces
+    /// a new version of a claim or its retirement (ADR-0039 d3, d10).
+    Write(WriteArgs),
+    /// Read memories: fetch one by artifact id, recall with --query, or
+    /// list with neither (ADR-0039 d4, d10).
+    Read(ReadArgs),
+    /// Tail the journal's events within the key's reader access, digests
+    /// only (GET /v2/events; ADR-0039 d10).
+    Events(EventsArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// Recall promoted memories.
+    /// The v0.3.0 name of `oml write`, hidden until v0.5.0 (ADR-0039 d12).
+    #[command(hide = true)]
+    Submit(SubmitArgs),
+    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.0
+    /// (ADR-0039 d12).
+    #[command(hide = true)]
     Recall(RecallArgs),
-    /// Supersede a promoted claim with a successor (author only).
+    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.0
+    /// (ADR-0039 d12).
+    #[command(hide = true)]
     Supersede(SupersedeArgs),
     /// Evidence verbs.
     Audit {
@@ -170,14 +184,16 @@ enum HookCommand {
 #[derive(Subcommand)]
 enum BootstrapCommand {
     /// Exchange the single-use enrollment token for the first admin key and
-    /// store the credentials locally (0600).
+    /// store the URL and the key, nothing else, owner-only (0600).
     Claim {
         /// The name of the key the claim mints, unique in its namespace and
         /// never released (ADR-0026 d9, d12).
         key_name: String,
-        /// The enrollment token the lead printed at first boot.
-        #[arg(long)]
-        token: String,
+        /// Read the enrollment token the lead printed at first boot from
+        /// stdin, without echo on a terminal, so it never reaches argv or
+        /// shell history; required, since --token is gone (ADR-0039 d10).
+        #[arg(long, required = true)]
+        token_stdin: bool,
         /// Name for the tenant the ceremony creates.
         #[arg(long)]
         tenant_name: Option<String>,
@@ -375,69 +391,178 @@ struct CrewsUpdateArgs {
 }
 
 #[derive(Args)]
-struct SubmitArgs {
-    /// The claim body text.
-    #[arg(long)]
-    claim: String,
-    /// Claim key; omitted, the server derives `auto-<16 hex>` from the
-    /// key and the text (ADR-0039 d6).
-    #[arg(long)]
+struct WriteArgs {
+    /// The claim text.
+    text: String,
+    /// Claim key; omitted, the server derives `auto-<16 hex>` from the key
+    /// and the text (ADR-0039 d6). A new version takes its target's.
+    #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
-    #[arg(long, default_value = "memory")]
-    kind: String,
-    /// remember | learn (learn requires --derives-from); omitted, the server
-    /// journals learn when --derives-from is given and remember otherwise.
+    /// memory | derived_fact | steering | term | term_mapping |
+    /// vocab_release; omitted, memory, or with --replaces the target's.
     #[arg(long)]
-    verb: Option<String>,
-    /// Lineage artifact ids; repeatable.
+    kind: Option<String>,
+    /// Lineage artifact ids; repeatable. Set, a submission is journalled
+    /// learn (ADR-0039 d3).
     #[arg(long = "derives-from")]
-    derives_from: Vec<Uuid>,
-    /// The workarea, by id or name, sent as the body's workarea; omitted,
-    /// the key's default workarea.
+    derives_from: Vec<String>,
+    /// The workarea, by id or name; omitted, the key's default workarea, or
+    /// with --replaces the target's, which alone it may name.
     #[arg(long)]
     workarea: Option<String>,
+    /// The promoted tip this write replaces, by artifact id: a new version
+    /// of its claim, held like any write.
+    #[arg(long)]
+    replaces: Option<String>,
+    /// Propose retiring the --replaces claim; the text says why.
+    #[arg(long, requires = "replaces")]
+    retirement: bool,
+    /// Why the claim changes, journalled with the new version.
+    #[arg(long, requires = "replaces")]
+    reason: Option<String>,
+    /// The write's Idempotency-Key, so a re-run naming it replays the first
+    /// answer; omitted, a fresh one per run.
+    #[arg(long)]
+    idempotency_key: Option<String>,
+}
+
+#[derive(Args)]
+struct ReadArgs {
+    /// Fetch this one version, in any state the key may read.
+    #[arg(value_name = "ARTIFACT_ID")]
+    artifact_id: Option<String>,
+    /// Recall: ranked retrieval over promoted rows, steering first.
+    #[arg(long, conflicts_with = "artifact_id")]
+    query: Option<String>,
+    /// How many hits the recall returns, 1 to 100; omitted, 8.
+    #[arg(long, requires = "query")]
+    k: Option<u32>,
+    /// Recall only these kinds, memory or derived_fact; repeatable.
+    #[arg(long, requires = "query")]
+    kinds: Vec<String>,
+    /// Let the recall return this key's own held rows beside promoted hits.
+    #[arg(long, requires = "query")]
+    include_unreviewed: bool,
+    /// The subtree read, by id or name; omitted, the key's default
+    /// workarea, or for the own listing every workarea the key wrote in.
+    #[arg(long, conflicts_with = "artifact_id")]
+    workarea: Option<String>,
+    /// List this key's own rows in every state (the listing's default).
+    #[arg(long, conflicts_with_all = ["artifact_id", "query", "all"])]
+    own: bool,
+    /// List the promoted tips of the workarea's subtree instead.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    all: bool,
+    /// List only rows in this state: held, promoted, demoted, rejected or
+    /// erased.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    state: Option<String>,
+    /// List only rows of this kind.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    kind: Option<String>,
+    /// List versions written at or after this RFC 3339 instant.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    since: Option<String>,
+    /// List versions written before this RFC 3339 instant.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    until: Option<String>,
+    /// The listing's page size.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    limit: Option<u32>,
+    /// The next_cursor of the listing's previous page.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    cursor: Option<String>,
+}
+
+#[derive(Args)]
+struct EventsArgs {
+    /// Resume after this seq: pass back the previous page's next_after_seq.
+    #[arg(long)]
+    after_seq: Option<u64>,
+    /// The subtree tailed, by id or name; omitted, the key's default
+    /// workarea.
+    #[arg(long)]
+    workarea: Option<String>,
+    /// How many journal events one call scans.
+    #[arg(long)]
+    limit: Option<u32>,
 }
 
 #[derive(Subcommand)]
 enum ReviewCommand {
     /// Serve one held item (claims it for this key).
     Next,
-    /// Record a verdict against a served item.
+    /// Verdict: promote. Omitted, the serve is the one item this key has
+    /// claimed (ADR-0039 d10).
+    Approve {
+        /// The serve_id `oml review next` printed.
+        serve_id: Option<String>,
+        /// A note journalled with the verdict.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Verdict: reject, with the reason. Omitted, the serve is the one
+    /// item this key has claimed (ADR-0039 d10).
+    Reject {
+        /// The serve_id `oml review next` printed.
+        serve_id: Option<String>,
+        /// Why the item is rejected; required.
+        #[arg(long)]
+        reason: String,
+    },
+    /// The v0.3.0 verdict, hidden until v0.5.0 (ADR-0039 d12).
+    #[command(hide = true)]
     Verdict(VerdictArgs),
 }
 
+/// `oml submit`, read as `oml write` (ADR-0039 d12).
+#[derive(Args)]
+struct SubmitArgs {
+    #[arg(long)]
+    claim: String,
+    #[arg(long)]
+    claim_key: Option<String>,
+    #[arg(long)]
+    kind: Option<String>,
+    /// v0.3.0's explicit verb, which the HTTP API still honours.
+    #[arg(long)]
+    verb: Option<String>,
+    #[arg(long = "derives-from")]
+    derives_from: Vec<String>,
+    #[arg(long)]
+    workarea: Option<String>,
+}
+
+/// `oml review verdict`, read as `oml review approve` or `reject` with the
+/// serve the v0.3.0 verb derived from the memory (ADR-0039 d12).
 #[derive(Args)]
 struct VerdictArgs {
-    /// The served memory's artifact id.
     #[arg(long)]
     memory: Uuid,
     #[arg(long, conflicts_with = "reject")]
     approve: bool,
     #[arg(long)]
     reject: bool,
-    /// Required to reject.
     #[arg(long)]
     reason: Option<String>,
 }
 
+/// `oml recall`, read as `oml read --query` (ADR-0039 d12).
 #[derive(Args)]
 struct RecallArgs {
     #[arg(long)]
     query: String,
-    #[arg(long, default_value_t = 8)]
-    k: usize,
-    /// The workarea, by id or name, sent as the body's workarea; omitted,
-    /// the key's default workarea.
+    #[arg(long)]
+    k: Option<u32>,
     #[arg(long)]
     workarea: Option<String>,
 }
 
+/// `oml supersede`, read as `oml write --replaces` (ADR-0039 d12).
 #[derive(Args)]
 struct SupersedeArgs {
-    /// The promoted artifact to supersede (must be the current tip).
     #[arg(long)]
     target: Uuid,
-    /// The successor claim body (the successor keeps the target's claim_key).
     #[arg(long)]
     claim: String,
 }
@@ -673,12 +798,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command:
                 BootstrapCommand::Claim {
                     key_name,
-                    token,
+                    token_stdin: _,
                     tenant_name,
                     principal,
                 },
         } => {
             let client = resolve_url(cli, &stored)?;
+            let token = read_secret(&format!("enrollment token for {}", client.server()))?;
             let mut body = json!({ "enrollment_token": token, "name": key_name });
             if let Some(name) = tenant_name {
                 body["tenant_name"] = json!(name);
@@ -966,170 +1092,62 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Crews { command } => run_crews(cli, &stored, command),
 
+        Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
+        Command::Read(args) => run_read(cli, &stored, args),
+        Command::Events(args) => run_events(cli, &stored, args),
+        Command::Review { command } => run_review(cli, &stored, command),
+
+        // The v0.3.0 verbs run their successors, each naming it on one
+        // stderr line, until v0.5.0 removes them (ADR-0039 d12).
         Command::Submit(args) => {
-            let client = resolve(cli, &stored)?;
-            // An omitted claim_key or verb is sent as none, so the server
-            // derives the key and chooses the verb (ADR-0039 d3, d6).
-            let mut body = json!({
-                "kind": args.kind,
-                "body": args.claim,
-                "derives_from": args.derives_from,
-            });
-            if let Some(claim_key) = &args.claim_key {
-                body["claim_key"] = json!(claim_key);
-            }
-            if let Some(verb) = &args.verb {
-                body["verb"] = json!(verb);
-            }
-            if let Some(workarea) = &args.workarea {
-                body["workarea"] = json!(workarea);
-            }
-            let (_, response) = client.post("/v1/memories", &body, &write_opts())?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "accepted — {} (journal seq {})",
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-                println!("  artifact  : {}", field(&response, "artifact_id"));
-                println!("  claim_key : {}", field(&response, "claim_key"));
-                println!("  digest    : {}", field(&response, "plaintext_digest"));
-                println!("  workarea  : {}", field(&response, "workarea_id"));
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml submit", "oml write");
+            run_write(
+                cli,
+                &stored,
+                &Write {
+                    claim_key: args.claim_key.as_deref(),
+                    kind: args.kind.as_deref(),
+                    verb: args.verb.as_deref(),
+                    derives_from: &args.derives_from,
+                    workarea: args.workarea.as_deref(),
+                    ..Write::submission(&args.claim)
+                },
+            )
         }
-
-        Command::Review {
-            command: ReviewCommand::Next,
-        } => {
-            let client = resolve(cli, &stored)?;
-            let (status, response) = client.post("/v2/review/next", &json!({}), &write_opts())?;
-            if status == 204 {
-                if cli.json {
-                    print_json(&json!({ "serve": Value::Null }));
-                } else {
-                    println!("nothing in scope waits — the queue is empty (204).");
-                }
-                return Ok(ExitCode::SUCCESS);
-            }
-            if cli.json {
-                print_json(&response);
-            } else {
-                let item = &response["item"];
-                println!("serving 1 held item");
-                println!();
-                println!(
-                    "  artifact  {} @ v{}   kind: {}   writer: {}",
-                    field(item, "artifact_id"),
-                    item["version"],
-                    field(item, "kind"),
-                    field(item, "principal")
-                );
-                println!("  claim_key {}", field(item, "claim_key"));
-                println!(
-                    "  body      | {}",
-                    field(item, "text").replace('\n', "\n            | ")
-                );
-                println!();
-                println!(
-                    "  serve_id: {}  (expires {})",
-                    field(&response, "serve_id"),
-                    field(&response, "expires_at")
-                );
-                println!(
-                    "  verdict with: oml review verdict --memory {} --approve|--reject --reason …",
-                    field(item, "artifact_id")
-                );
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
-        Command::Review {
-            command: ReviewCommand::Verdict(args),
-        } => {
-            if !args.approve && !args.reject {
-                return Err(CliError::local("a verdict is one of --approve or --reject"));
-            }
-            let client = resolve(cli, &stored)?;
-            // The PoC serve binding round-trips the memory id
-            // (phase-4 transport: serve_id = "srv_" + simple uuid).
-            let serve_id = format!("srv_{}", args.memory.simple());
-            let verdict = if args.approve { "approve" } else { "reject" };
-            let mut body = json!({ "serve_id": serve_id, "verdict": verdict });
-            if let Some(reason) = &args.reason {
-                body["reason"] = json!(reason);
-            }
-            let (_, response) = client.post("/v2/review/verdicts", &body, &write_opts())?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "verdict recorded — {} is {} (journal seq {})",
-                    field(&response, "artifact_id"),
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-
         Command::Recall(args) => {
-            let client = resolve(cli, &stored)?;
-            let opts = CallOpts {
-                auth: true,
-                idempotency: false, // read-shaped POST (http-api.md idempotency)
-            };
-            let mut body = json!({ "query": args.query, "k": args.k, "include_text": true });
-            if let Some(workarea) = &args.workarea {
-                body["workarea"] = json!(workarea);
-            }
-            let (_, response) = client.post("/v1/memories/recall", &body, &opts)?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                let hits = response["hits"].as_array().cloned().unwrap_or_default();
-                println!(
-                    "{} hit(s) — query digest {}",
-                    hits.len(),
-                    field(&response, "query_digest")
-                );
-                for hit in &hits {
-                    let memory = &hit["memory"];
-                    println!();
-                    println!(
-                        "  {}  {}  ({})",
-                        field(memory, "artifact_id"),
-                        field(memory, "claim_key"),
-                        field(memory, "state")
-                    );
-                    println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
-                }
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml recall", "oml read --query");
+            run_read(
+                cli,
+                &stored,
+                &ReadArgs {
+                    artifact_id: None,
+                    query: Some(args.query.clone()),
+                    k: args.k,
+                    kinds: Vec::new(),
+                    include_unreviewed: false,
+                    workarea: args.workarea.clone(),
+                    own: false,
+                    all: false,
+                    state: None,
+                    kind: None,
+                    since: None,
+                    until: None,
+                    limit: None,
+                    cursor: None,
+                },
+            )
         }
-
         Command::Supersede(args) => {
-            let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
-                &format!("/v1/memories/{}/supersede", args.target),
-                &json!({ "body": args.claim }),
-                &write_opts(),
-            )?;
-            if cli.json {
-                print_json(&response);
-            } else {
-                println!(
-                    "accepted — successor is {} (journal seq {})",
-                    field(&response, "state"),
-                    response["journal_seq"]
-                );
-                println!("  artifact  : {}", field(&response, "artifact_id"));
-                println!("  claim_key : {}", field(&response, "claim_key"));
-                println!("  digest    : {}", field(&response, "plaintext_digest"));
-            }
-            Ok(ExitCode::SUCCESS)
+            renamed("oml supersede", "oml write --replaces");
+            let target = args.target.to_string();
+            run_write(
+                cli,
+                &stored,
+                &Write {
+                    replaces: Some(&target),
+                    ..Write::submission(&args.claim)
+                },
+            )
         }
 
         Command::Audit {
@@ -1203,6 +1221,393 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
         .iter()
         .map(|(node, role)| json!({ "workarea": node, "role": role }))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml write, oml read, oml events, oml review (ADR-0039 d10)
+// ---------------------------------------------------------------------------
+
+/// The one stderr line a v0.3.0 verb prints before it runs its successor
+/// (ADR-0039 d12).
+fn renamed(old: &str, new: &str) {
+    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.0 removes `{old}` (ADR-0039 d12)");
+}
+
+/// One write, from `oml write`'s flags or a v0.3.0 verb's.
+struct Write<'a> {
+    text: &'a str,
+    claim_key: Option<&'a str>,
+    kind: Option<&'a str>,
+    /// v0.3.0's explicit verb: only `oml submit` sends one (ADR-0039 d12).
+    verb: Option<&'a str>,
+    derives_from: &'a [String],
+    workarea: Option<&'a str>,
+    replaces: Option<&'a str>,
+    retirement: bool,
+    reason: Option<&'a str>,
+    idempotency_key: Option<&'a str>,
+}
+
+impl<'a> Write<'a> {
+    fn of(args: &'a WriteArgs) -> Self {
+        Self {
+            text: &args.text,
+            claim_key: args.claim_key.as_deref(),
+            kind: args.kind.as_deref(),
+            verb: None,
+            derives_from: &args.derives_from,
+            workarea: args.workarea.as_deref(),
+            replaces: args.replaces.as_deref(),
+            retirement: args.retirement,
+            reason: args.reason.as_deref(),
+            idempotency_key: args.idempotency_key.as_deref(),
+        }
+    }
+
+    /// A submission of `text` and nothing else.
+    fn submission(text: &'a str) -> Self {
+        Self {
+            text,
+            claim_key: None,
+            kind: None,
+            verb: None,
+            derives_from: &[],
+            workarea: None,
+            replaces: None,
+            retirement: false,
+            reason: None,
+            idempotency_key: None,
+        }
+    }
+}
+
+/// `oml write`: one `POST /v1/memories`, or with `--replaces` one `POST
+/// /v1/memories/{replaces}/supersede`, as `oml_write` chooses by the fields
+/// present (ADR-0039 d3). Each flag outside its mode is refused by clap
+/// before anything is sent; an omitted field is the server's default, so
+/// the server derives the claim key and journals learn when lineage is
+/// named (ADR-0039 d3, d6).
+fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "body": write.text });
+    for (name, value) in [
+        ("claim_key", write.claim_key),
+        ("kind", write.kind),
+        ("verb", write.verb),
+        ("workarea", write.workarea),
+        ("reason", write.reason),
+    ] {
+        if let Some(value) = value {
+            body[name] = json!(value);
+        }
+    }
+    if !write.derives_from.is_empty() {
+        body["derives_from"] = json!(write.derives_from);
+    }
+    if write.retirement {
+        body["retirement"] = json!(true);
+    }
+    let path = match write.replaces {
+        Some(target) => format!("/v1/memories/{}/supersede", segment(target)?),
+        None => "/v1/memories".to_owned(),
+    };
+    let key = write
+        .idempotency_key
+        .map_or_else(new_idempotency_key, ToOwned::to_owned);
+    let (_, response) = client.post_keyed(&path, &body, &key)?;
+    if cli.json {
+        print_json(&response);
+    } else {
+        println!(
+            "accepted — {} (journal seq {})",
+            field(&response, "state"),
+            response["journal_seq"]
+        );
+        println!("  artifact  : {}", field(&response, "artifact_id"));
+        println!("  claim_key : {}", field(&response, "claim_key"));
+        println!("  digest    : {}", field(&response, "plaintext_digest"));
+        println!("  workarea  : {}", field(&response, "workarea_id"));
+        if response["replaces"].is_object() {
+            println!(
+                "  replaces  : {} @ v{}",
+                field(&response["replaces"], "artifact_id"),
+                response["replaces"]["version"]
+            );
+        }
+        if response["retirement"] == json!(true) {
+            println!("  retirement: proposed; the claim retires when the proposal is approved");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml read`, in `oml_read`'s three modes (ADR-0039 d4): with an artifact
+/// id one `GET /v1/memories/{artifact_id}`, with `--query` one `POST
+/// /v1/memories/recall` with the text, and with neither one `GET
+/// /v1/memories`, `own=true` unless `--all`. A flag outside the mode its
+/// arguments choose, `--query` beside an artifact id among them, is refused
+/// by clap, naming it, before anything is sent.
+fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let response = if let Some(id) = &args.artifact_id {
+        client.get(&format!("/v1/memories/{}", segment(id)?))?.1
+    } else if let Some(query) = &args.query {
+        let mut body = json!({ "query": query, "include_text": true });
+        if let Some(k) = args.k {
+            body["k"] = json!(k);
+        }
+        if let Some(workarea) = &args.workarea {
+            body["workarea"] = json!(workarea);
+        }
+        if !args.kinds.is_empty() {
+            body["kinds"] = json!(args.kinds);
+        }
+        if args.include_unreviewed {
+            body["include_unreviewed"] = json!(true);
+        }
+        let read = CallOpts {
+            auth: true,
+            idempotency: false, // read-shaped POST (http-api.md idempotency)
+        };
+        client.post("/v1/memories/recall", &body, &read)?.1
+    } else {
+        let limit = args.limit.map(|l| l.to_string());
+        let mut params = vec![("own", (!args.all).to_string())];
+        for (name, value) in [
+            ("workarea", args.workarea.as_ref()),
+            ("state", args.state.as_ref()),
+            ("kind", args.kind.as_ref()),
+            ("since", args.since.as_ref()),
+            ("until", args.until.as_ref()),
+            ("limit", limit.as_ref()),
+            ("cursor", args.cursor.as_ref()),
+        ] {
+            if let Some(value) = value {
+                params.push((name, value.clone()));
+            }
+        }
+        client
+            .get(&format!("/v1/memories?{}", query_string(&params)))?
+            .1
+    };
+    if cli.json {
+        print_json(&response);
+    } else if args.artifact_id.is_some() {
+        println!(
+            "{} @ v{}  {}  {}  {}",
+            field(&response, "artifact_id"),
+            response["version"],
+            field(&response, "kind"),
+            field(&response, "state"),
+            field(&response, "workarea_path")
+        );
+        println!("  claim_key {}", field(&response, "claim_key"));
+        println!("  | {}", field(&response, "text").replace('\n', "\n  | "));
+    } else if args.query.is_some() {
+        let hits = response["hits"].as_array().cloned().unwrap_or_default();
+        println!(
+            "{} hit(s) — query digest {}",
+            hits.len(),
+            field(&response, "query_digest")
+        );
+        for memory in response["steering"].as_array().into_iter().flatten() {
+            println!();
+            println!(
+                "  steering  {}  {}",
+                field(memory, "artifact_id"),
+                field(memory, "claim_key")
+            );
+            println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
+        }
+        for hit in &hits {
+            let memory = &hit["memory"];
+            println!();
+            println!(
+                "  {}  {}  ({})",
+                field(memory, "artifact_id"),
+                field(memory, "claim_key"),
+                field(memory, "state")
+            );
+            println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
+        }
+    } else {
+        for item in response["items"].as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  v{}  {}  {}  {}  {}",
+                field(item, "artifact_id"),
+                field(item, "claim_key"),
+                item["version"],
+                field(item, "state"),
+                field(item, "kind"),
+                field(item, "workarea_path"),
+                field(item, "created_at")
+            );
+        }
+        if let Some(cursor) = response["next_cursor"].as_str() {
+            println!("more: --cursor {cursor}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml events`: one `GET /v2/events` page within the key's reader access,
+/// each event digest-only (http-api.md events tail; ADR-0039 d10).
+fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut params = Vec::new();
+    if let Some(after) = args.after_seq {
+        params.push(("after_seq", after.to_string()));
+    }
+    if let Some(workarea) = &args.workarea {
+        params.push(("workarea", workarea.clone()));
+    }
+    if let Some(limit) = args.limit {
+        params.push(("limit", limit.to_string()));
+    }
+    let path = if params.is_empty() {
+        "/v2/events".to_owned()
+    } else {
+        format!("/v2/events?{}", query_string(&params))
+    };
+    let (_, page) = client.get(&path)?;
+    if cli.json {
+        print_json(&page);
+    } else {
+        for event in page["items"].as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  {}  {}",
+                event["seq"],
+                field(event, "event_type"),
+                field(event, "at"),
+                field(&event["payload"], "artifact_id")
+            );
+        }
+        println!(
+            "head seq {}; next --after-seq {}",
+            page["head_seq"], page["next_after_seq"]
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `name=value` pairs joined by `&`, each value [`encode`]d.
+fn query_string(params: &[(&str, String)]) -> String {
+    params
+        .iter()
+        .map(|(name, value)| format!("{name}={}", encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// The review ceremony: `next` serves one held item, and `approve` and
+/// `reject` record a verdict against the named serve or, with none, the one
+/// item this key has claimed (ADR-0039 d10, call map D5).
+fn run_review(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &ReviewCommand,
+) -> Result<ExitCode, CliError> {
+    match command {
+        ReviewCommand::Next => run_review_next(cli, stored),
+        ReviewCommand::Approve { serve_id, note } => {
+            run_verdict(cli, stored, "approve", serve_id.as_deref(), note.as_deref())
+        }
+        ReviewCommand::Reject { serve_id, reason } => {
+            run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason))
+        }
+        ReviewCommand::Verdict(args) => {
+            if !args.approve && !args.reject {
+                return Err(CliError::local("a verdict is one of --approve or --reject"));
+            }
+            // The v0.3.0 verb named the memory, and the PoC serve binding
+            // round-trips its id (serve_id = "srv_" + simple uuid).
+            let serve_id = format!("srv_{}", args.memory.simple());
+            let verdict = if args.approve { "approve" } else { "reject" };
+            renamed("oml review verdict", &format!("oml review {verdict}"));
+            run_verdict(
+                cli,
+                stored,
+                verdict,
+                Some(&serve_id),
+                args.reason.as_deref(),
+            )
+        }
+    }
+}
+
+/// `oml review next`: one `POST /v2/review/next`, which claims the item it
+/// serves for this key; 204 when nothing in scope waits.
+fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let (status, response) = client.post("/v2/review/next", &json!({}), &write_opts())?;
+    if status == 204 {
+        if cli.json {
+            print_json(&json!({ "serve": Value::Null }));
+        } else {
+            println!("nothing in scope waits — the queue is empty (204).");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if cli.json {
+        print_json(&response);
+    } else {
+        let item = &response["item"];
+        println!("serving 1 held item");
+        println!();
+        println!(
+            "  artifact  {} @ v{}   kind: {}   writer: {}",
+            field(item, "artifact_id"),
+            item["version"],
+            field(item, "kind"),
+            field(item, "principal")
+        );
+        println!("  claim_key {}", field(item, "claim_key"));
+        println!(
+            "  body      | {}",
+            field(item, "text").replace('\n', "\n            | ")
+        );
+        println!();
+        println!(
+            "  serve_id: {}  (expires {})",
+            field(&response, "serve_id"),
+            field(&response, "expires_at")
+        );
+        println!("  verdict with: oml review approve [--note …] | oml review reject --reason …");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One `POST /v2/review/verdicts`: `serve_id` only when named, so the server
+/// applies an unnamed verdict to the key's one claimed item and refuses it
+/// naming `serve_id` when the key holds none or several; a note or reason
+/// travels as `reason` (ADR-0039 d10).
+fn run_verdict(
+    cli: &Cli,
+    stored: &Credentials,
+    verdict: &str,
+    serve_id: Option<&str>,
+    reason: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "verdict": verdict });
+    if let Some(serve_id) = serve_id {
+        body["serve_id"] = json!(serve_id);
+    }
+    if let Some(reason) = reason {
+        body["reason"] = json!(reason);
+    }
+    let (_, response) = client.post("/v2/review/verdicts", &body, &write_opts())?;
+    if cli.json {
+        print_json(&response);
+    } else {
+        println!(
+            "verdict recorded — {} is {} (journal seq {})",
+            field(&response, "artifact_id"),
+            field(&response, "state"),
+            response["journal_seq"]
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 // ---------------------------------------------------------------------------
@@ -1539,38 +1944,45 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The API key for `url`: prompted for on the terminal and read without
-/// echo when stdin is one, else the first line of stdin, its line ending
-/// cut. An empty key, or one with a byte outside printable ASCII, which no
-/// header carries, is refused before anything is sent.
+/// The API key for `url`, read as [`read_secret`] reads it.
 fn read_key(url: &str) -> Result<String, CliError> {
+    read_secret(&format!("API key for {url}"))
+}
+
+/// The secret `what` names: prompted for on the terminal and read without
+/// echo when stdin is one, else the first line of stdin, its line ending
+/// cut, so it never reaches argv. An empty secret, or one with a byte
+/// outside printable ASCII, which no key or enrollment token holds, is
+/// refused before anything is sent.
+fn read_secret(what: &str) -> Result<String, CliError> {
     use std::io::{BufRead as _, IsTerminal as _};
     let stdin = std::io::stdin();
     let (line, from) = if stdin.is_terminal() {
-        let line = rpassword::prompt_password(format!("API key for {url}: "))
-            .map_err(|e| CliError::local(format!("cannot read the key from the terminal: {e}")))?;
+        let line = rpassword::prompt_password(format!("{what}: ")).map_err(|e| {
+            CliError::local(format!("cannot read the {what} from the terminal: {e}"))
+        })?;
         (line, "the terminal")
     } else {
         let mut line = String::new();
         stdin
             .lock()
             .read_line(&mut line)
-            .map_err(|e| CliError::local(format!("cannot read the key from stdin: {e}")))?;
+            .map_err(|e| CliError::local(format!("cannot read the {what} from stdin: {e}")))?;
         (line, "stdin")
     };
-    let key = line.trim();
-    if key.is_empty() {
+    let secret = line.trim();
+    if secret.is_empty() {
         return Err(CliError::local(format!(
-            "no API key on {from}; nothing was sent and nothing written"
+            "no {what} on {from}; nothing was sent and nothing written"
         )));
     }
-    if !key.bytes().all(|b| b.is_ascii_graphic()) {
+    if !secret.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(CliError::local(format!(
-            "the key on {from} holds a character outside printable ASCII, which no key holds; \
-             nothing was sent and nothing written"
+            "the {what} on {from} holds a character outside printable ASCII; nothing was sent \
+             and nothing written"
         )));
     }
-    Ok(key.to_owned())
+    Ok(secret.to_owned())
 }
 
 // ---------------------------------------------------------------------------

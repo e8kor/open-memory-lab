@@ -2,7 +2,7 @@
 id: cli/reference
 tier: engineering
 status: design draft for review · decided, not built
-answers: every administrative CLI verb, its flags and refusals, and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour; how to verify and install the CLI's release archive on each OS, and what differs on Windows
+answers: every administrative CLI verb, its flags and refusals; oml write, oml read and oml events, the memory verbs every key may run within its access, and the hidden v0.3.0 verbs they replace; and how each rides the lab ring of the same HTTP API with no authority of its own; the reader grant the issuing verbs add beside a writer grant; oml keys issue-agent and its --out key file; the oml-admin plugin; oml hook session-start, the agent plugin's session context, its variables and its fail-open behaviour; how to verify and install the CLI's release archive on each OS, and what differs on Windows
 -->
 
 # CLI reference
@@ -197,7 +197,7 @@ alone ([start settings](#start-settings)).
 
 | Verb | Does |
 |---|---|
-| `oml bootstrap claim <key-name> --url <https://…> [--token-stdin]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). With `--token-stdin` the secret is read once from stdin, never from argv. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). A re-run claims a `<key-name>` no earlier operator key held, since no name is released; a taken one answers [`name.taken`](../api/errors.md) and leaves the secret unconsumed. |
+| `oml bootstrap claim <key-name> --url <https://…> --token-stdin [--tenant-name <name>] [--principal <text>]` | Exchange the enrollment secret for the root operator key, named `<key-name>` in the provider's namespace (fronts `POST /v2/bootstrap/claim` — bootstrap is a lab ceremony, [ADR-0022](../adr/ADR-0022-two-ring-api.md)). `--token-stdin` is required: the secret is read once, without echo on a terminal, or as the first line of stdin when stdin is not one (`printf '%s\n' "$TOKEN" \| oml … --token-stdin`), never from argv or shell history. v0.3.0's `--token <secret>` is removed with no alias, which would keep that path open, and is refused as an unknown flag (exit `2`), as an empty stdin is, nothing sent. On success the claim writes `url` and `api_key`, nothing else, to the credentials file, as `oml login` does. The secret is consumed on first use and expires unclaimed; a second claim is refused. The key value is printed exactly once (show-once) and the issuance is journalled as issued-without-value in the provider chain — the server keeps only the hash. If no operator key survives, re-running the bootstrap ceremony mints a fresh enrollment secret — a deliberate ceremony, not an everyday verb ([roles and keys](../architecture/roles-and-keys.md)). A re-run claims a `<key-name>` no earlier operator key held, since no name is released; a taken one answers [`name.taken`](../api/errors.md) and leaves the secret unconsumed. |
 
 ## `oml tenants` — the operator's verbs
 
@@ -352,6 +352,32 @@ throughout; no agent role reaches these verbs.
 | `oml crews list` | Crew records: name, id, charter URI, external manager. Reads every page; `--json` prints their items as one page. |
 | `oml crews show <crew>` | One crew record, by id or name. |
 
+## `oml write`, `oml read`, `oml events` — memories and the journal
+
+These three verbs run under any key within its access, the agent's own key among them, and each
+is one request to the [HTTP API](../api/http-api.md) the [MCP tools](../api/mcp-plugin.md)
+`oml_write` and `oml_read` ride, so the CLI and an agent write and read alike
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10). A flag outside the mode its
+arguments choose is refused by name before anything is sent (exit `2`), as `oml_write` and
+`oml_read` refuse the field.
+
+| Verb | Does |
+|---|---|
+| `oml write <text> [--claim-key <key>] [--kind <kind>] [--derives-from <artifact_id> …] [--workarea <workarea>] [--replaces <artifact_id> [--retirement] [--reason <text>]] [--idempotency-key <key>]` | Write a claim, held until reviewed. Without `--replaces`, one `POST /v1/memories`: omitted, `--claim-key` is derived by the server from the key and the text, `--kind` is `memory`, `--workarea` the key's default, and a write naming `--derives-from` is journalled `submission.learn` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d3, d6). With `--replaces`, one `POST /v1/memories/{artifact_id}/supersede`: a new version of that promoted tip, or with `--retirement` a proposal to retire the claim, the text saying why; `--claim-key` is refused there, since the new version keeps its target's, and `--retirement` and `--reason` are refused without `--replaces`. `--idempotency-key` names the write's `Idempotency-Key`, so a re-run under the same key replays the first answer; omitted, each run sends a fresh one. |
+| `oml read <artifact_id>` | Fetch one version, `GET /v1/memories/{artifact_id}`, with its text: the key's own rows in any state, others' promoted versions within its reader access. |
+| `oml read --query <q> [--k <n>] [--workarea <workarea>] [--kinds <kind> …] [--include-unreviewed]` | Recall, `POST /v1/memories/recall` with `include_text`: steering first, then ranked promoted hits within the workarea's subtree, the key's default when omitted; `--include-unreviewed` adds this key's own held rows. `--query` beside an artifact id is refused naming `--query`, and `--k`, `--kinds` and `--include-unreviewed` without `--query` are refused by name. |
+| `oml read [--own\|--all] [--workarea <workarea>] [--state <state>] [--kind <kind>] [--since <instant>] [--until <instant>] [--limit <n>] [--cursor <cursor>]` | List, `GET /v1/memories`, one page of summaries, newest first. `--own`, the default, lists this key's own rows in every state; `--all` lists the promoted tips of the workarea's subtree. Each listing flag is refused beside an artifact id or `--query`. |
+| `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` | One page of `GET /v2/events`: the journal's events within the key's reader access on the workarea, the key's default when omitted, digest-only, with the head seq and the `next_after_seq` to pass back as `--after-seq`. A feed for audit, not a verification surface: `oml audit verify-chain` reads the chain export. |
+
+**The v0.3.0 verbs.** `oml submit`, `oml recall`, `oml supersede` and `oml review verdict` still
+answer, hidden from `--help`, until v0.5.0 removes them
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12). Each runs its successor with
+the same request and the same output and prints one stderr line naming it: `oml submit --claim
+<text>` runs `oml write <text>`, `oml recall --query` runs `oml read --query`, `oml supersede
+--target <id> --claim <text>` runs `oml write <text> --replaces <id>`, and `oml review verdict
+--memory <id> --approve|--reject` runs `oml review approve` or `oml review reject` against the
+serve of that memory.
+
 ## `oml review` — the review ceremony
 
 The CLI is the *exception* path for review — the designed reviewers are external crews holding
@@ -371,8 +397,8 @@ isolation.
 | Verb | Does |
 |---|---|
 | `oml review next [--workarea <subtree>]` | Serve one held item: body, all attachments (downloaded to a working directory, verified against their served digests), the superseded version when applicable, and the `serve_id`. Refused with `review.author_in_lineage` when the reviewer's key or principal appears in the item's lineage closure — the server never serves what this key may not judge. |
-| `oml review approve <serve_id> [--note <text>]` | Verdict: promote. Refused without a valid, unexpired, unconsumed serve. |
-| `oml review reject <serve_id> --reason <text>` | Verdict: reject. Same serve rules. |
+| `oml review approve [<serve_id>] [--note <text>]` | Verdict: promote. Refused without a valid, unexpired, unconsumed serve. Without `<serve_id>` the verdict applies to the one item this key has claimed through `oml review next`, and is refused with `request.validation` naming `serve_id` when the key holds none or several ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10). `--note` is journalled with the verdict as its `reason`. |
+| `oml review reject [<serve_id>] --reason <text>` | Verdict: reject, `--reason` required. Same serve rules and the same default. |
 | `oml review reopen <artifact>@<version>` | Non-author reopen of a rejection — a journalled verb in its own right, not a resubmission. Refused for the original author. |
 | `oml review queue [--workarea <subtree>]` | Held-item counts and ages per workarea; the same numbers `oml status` reports as queue depth. |
 

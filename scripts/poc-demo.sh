@@ -5,8 +5,8 @@
 # and drives every ceremony through ./target/release/oml (the lab client speaks
 # only the public HTTP API, ADR-0015), naming the workarea by its name
 # wherever an id would go (ADR-0026 d4): bootstrap claim → workarea → keys →
-# submit → (recall withholds the held row) → review + approve → recall hit →
-# the R2 reviewer-is-author refusal → supersede → verify-chain → doctor →
+# write → (recall withholds the held row) → review + approve → recall hit →
+# the R2 reviewer-is-author refusal → write --replaces → verify-chain → doctor →
 # graceful shutdown.
 #
 # The lead migrates as an owner role and serves as a role that owns nothing
@@ -147,11 +147,11 @@ echo "deployment signing public key (from the boot log, handed out of band): $PU
 # --- bootstrap: the one-time claim ------------------------------------------
 step "bootstrap claim (single-use token -> first admin key, credentials stored 0600)" 0 \
     "$OML" --url "$SERVER_URL" --json bootstrap claim alice-admin \
-    --token "$TOKEN" --tenant-name poc-demo --principal platform/alice
+    --token-stdin --tenant-name poc-demo --principal platform/alice <<<"$TOKEN"
 TENANT="$(jqf .tenant_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
-    "$OML" --url "$SERVER_URL" --json bootstrap claim second-admin --token "$TOKEN"
+    "$OML" --url "$SERVER_URL" --json bootstrap claim second-admin --token-stdin <<<"$TOKEN"
 
 # --- workarea and the crew's keys (admin credentials from the stored file) ---
 # Every workarea below goes by its name, the root as `universe` (ADR-0026 d6),
@@ -182,16 +182,16 @@ step "issue a reader key for a second identity that only reads (a reader key adm
     --principal crew/recall-bot --default-workarea poc-metals --grant poc-metals:reader
 READER="$(jqf .value)"
 
-# --- submit: held on arrival, invisible to recall ----------------------------
-step "submit a claim with the writer key (deterministic scan; held on arrival)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json submit \
-    --claim "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery." \
+# --- write: held on arrival, invisible to recall -----------------------------
+step "write a claim with the writer key (deterministic scan; held on arrival)" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json write \
+    "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery." \
     --claim-key supplier-quote-am-7741
 ARTIFACT="$(jqf .artifact_id)"
-[ "$(jqf .state)" = "held" ] || fail "submitted claim is not held"
+[ "$(jqf .state)" = "held" ] || fail "written claim is not held"
 
 step "recall while held: the claim is NOT served (held rows never leave the gate)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$READER" --json recall --query "Accra Metals"
+    "$OML" --url "$SERVER_URL" --api-key "$READER" --json read --query "Accra Metals"
 [ "$(jqf '.hits | length')" = "0" ] || fail "a held row leaked into recall"
 
 # --- review: serve, approve, and only then recall hits -----------------------
@@ -200,16 +200,16 @@ step "review next with the dreamer key (claims the one held item)" 0 \
 [ "$(jqf .item.artifact_id)" = "$ARTIFACT" ] || fail "review served a different artifact"
 
 step "approve with the dreamer key (k=1 ratifies; the row promotes)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review verdict --memory "$ARTIFACT" --approve
+    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review approve
 [ "$(jqf .state)" = "promoted" ] || fail "approval did not promote"
 
 step "recall after promotion: the claim is served" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$READER" --json recall --query "Accra Metals"
+    "$OML" --url "$SERVER_URL" --api-key "$READER" --json read --query "Accra Metals"
 [ "$(jqf '.hits | length')" -ge 1 ] || fail "promoted row missing from recall"
 jqf '.hits[0].memory.artifact_id' | grep -q "$ARTIFACT" || fail "recall hit is not the promoted artifact"
 
 step "recall after promotion with the agent's own writer key (its reader grant serves recall)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json recall --query "Accra Metals"
+    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json read --query "Accra Metals"
 jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
 
 # --- R2: the reviewer is never the author ------------------------------------
@@ -218,29 +218,35 @@ step "issue a dreamer key to the AUTHOR's principal (crew/agent-blue also review
     --principal crew/agent-blue --default-workarea poc-metals --grant poc-metals:dreamer
 AUTHOR_DREAMER="$(jqf .value)"
 
+# The author's key names the memory's serve as the PoC binding spells it,
+# srv_ and the artifact id's 32 hex digits, since no serve exists to claim.
 step "verdict with the author's key is refused — R2 against the lineage closure (exit 1)" 1 \
-    "$OML" --url "$SERVER_URL" --api-key "$AUTHOR_DREAMER" --json review verdict --memory "$ARTIFACT" --reject --reason "self-review attempt"
+    "$OML" --url "$SERVER_URL" --api-key "$AUTHOR_DREAMER" --json review reject "srv_${ARTIFACT//-/}" --reason "self-review attempt"
 [ "$(jqf .error.code)" = "review.author_in_lineage" ] || fail "expected review.author_in_lineage, got $(jqf .error.code)"
 
 # --- supersede: the author replaces the promoted tip -------------------------
 step "supersede the promoted tip with the writer key (successor enters held)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json supersede --target "$ARTIFACT" \
-    --claim "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t."
+    "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json write \
+    "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t." --replaces "$ARTIFACT"
 SUCCESSOR="$(jqf .artifact_id)"
 [ "$(jqf .state)" = "held" ] || fail "successor is not held"
 [ "$(jqf .replaces.artifact_id)" = "$ARTIFACT" ] || fail "the successor does not name the version it replaces"
 
 step "recall before ratification still serves the old tip (the tip moves only at ratification)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$READER" --json recall --query "Accra Metals"
+    "$OML" --url "$SERVER_URL" --api-key "$READER" --json read --query "Accra Metals"
 jq -r '.hits[].memory.text' "$OUT" | grep -q "412 USD/t" || fail "the old tip left recall before ratification"
 jq -r '.hits[].memory.text' "$OUT" | grep -q "399 USD/t" && fail "the held successor reached recall unreviewed"
 
-step "the successor rides the same review gate: dreamer approves it" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review verdict --memory "$SUCCESSOR" --approve
+step "the successor rides the same review gate: the dreamer is served it" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review next
+[ "$(jqf .item.artifact_id)" = "$SUCCESSOR" ] || fail "review served a different artifact"
+
+step "the dreamer approves the successor it was served" 0 \
+    "$OML" --url "$SERVER_URL" --api-key "$DREAMER" --json review approve "$(jqf .serve_id)"
 [ "$(jqf .state)" = "promoted" ] || fail "successor did not promote"
 
 step "recall now serves the ratified successor (the replaced version is history)" 0 \
-    "$OML" --url "$SERVER_URL" --api-key "$READER" --json recall --query "Accra Metals"
+    "$OML" --url "$SERVER_URL" --api-key "$READER" --json read --query "Accra Metals"
 jq -r '.hits[].memory.text' "$OUT" | grep -q "399 USD/t" || fail "successor text missing from recall"
 jq -r '.hits[].memory.text' "$OUT" | grep -q "412 USD/t" && fail "the replaced version is still a recall hit"
 

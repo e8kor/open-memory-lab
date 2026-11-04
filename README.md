@@ -114,8 +114,7 @@ To review what agents have written:
 
 ```sh
 docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> review next
-docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> \
-    review verdict --memory <artifact_id> --approve
+docker compose exec oml-server oml --url http://127.0.0.1:8080 --api-key <reviewer key> review approve
 ```
 
 Compose creates two database roles on a new volume: `oml_owner`, which owns the database and

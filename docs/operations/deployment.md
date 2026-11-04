@@ -235,7 +235,7 @@ operator's machine (the release's `oml-cli` archive, verified and installed as t
 ```console
 $ TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 $ kubectl --namespace oml port-forward service/oml-server 8080:8080 &
-$ oml --url http://127.0.0.1:8080 bootstrap claim <key-name> --token "$TOKEN" \
+$ printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> --token-stdin \
     --tenant-name <tenant> --principal <you>
 ```
 

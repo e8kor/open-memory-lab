@@ -200,16 +200,20 @@ export async function startServer(): Promise<OmlServer> {
       throw new Error(`oml-server-lead never became ready on ${url}:\n${tail(stderrPath)}`);
     }
 
+    const enrollment = token;
     const cliEnv = cleanEnv({ OML_CLI_CREDENTIALS: join(scratch, "credentials") });
     const oml = (...args: string[]): Record<string, unknown> => {
       try {
-        // The claim takes the URL alone; every verb after it, the URL and
-        // key the claim stored (ADR-0039 d15).
-        const at = args[0] === "bootstrap" ? ["--url", url] : [];
+        // The claim takes the URL alone, and the enrollment token on stdin,
+        // never in argv; every verb after it, the URL and key the claim
+        // stored (ADR-0039 d10, d15).
+        const claim = args[0] === "bootstrap";
+        const at = claim ? ["--url", url] : [];
         const stdout = execFileSync(CLI_BIN, [...at, "--json", ...args], {
           env: cliEnv,
           encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
+          input: claim ? `${enrollment}\n` : "",
+          stdio: ["pipe", "pipe", "pipe"],
         });
         return JSON.parse(stdout) as Record<string, unknown>;
       } catch (error) {
@@ -220,7 +224,7 @@ export async function startServer(): Promise<OmlServer> {
     };
 
     const boot = oml(
-      "bootstrap", "claim", "sdk-admin", "--token", token,
+      "bootstrap", "claim", "sdk-admin", "--token-stdin",
       "--tenant-name", "sdk-tests", "--principal", "platform/admin",
     );
     const root = String(boot.root_workarea_id);
