@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.grant_request_covers import GrantRequestCovers
 from ..models.grant_request_role import GrantRequestRole
 from ..types import UNSET, Unset
 
@@ -19,18 +20,24 @@ T = TypeVar("T", bound="GrantRequest")
 class GrantRequest:
     """
     Attributes:
-        workarea (str): A workarea, by its node id or its name. Resolved server-side before any check that reads state;
-            an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
-            (request.validation).
+        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved server-side before any
+            check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a bare
+            name in its own user root's namespace, plus universe and its root's name; every other key in the shared
+            namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
+            is neither, and is refused (request.validation).
         role (GrantRequestRole): A grant role, admissible under the key's role (the admissibility table in
             docs/architecture/roles-and-keys.md); never admin or operator.
         deny (list[GrantRequestDenyItem] | Unset): Per-grant masks; each masks a subtree within this grant only and must
-            lie inside it (request.validation otherwise).
+            lie inside it (request.validation otherwise). A node grant takes none (request.validation, details.field
+            /grants/<i>/deny).
+        covers (GrantRequestCovers | Unset): subtree covers the node and every descendant; node covers the node alone
+            (ADR-0044 d4). Default: GrantRequestCovers.SUBTREE.
     """
 
     workarea: str
     role: GrantRequestRole
     deny: list[GrantRequestDenyItem] | Unset = UNSET
+    covers: GrantRequestCovers | Unset = GrantRequestCovers.SUBTREE
 
     def to_dict(self) -> dict[str, Any]:
         workarea: str
@@ -45,6 +52,10 @@ class GrantRequest:
                 deny_item = deny_item_data.to_dict()
                 deny.append(deny_item)
 
+        covers: str | Unset = UNSET
+        if not isinstance(self.covers, Unset):
+            covers = self.covers.value
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -55,6 +66,8 @@ class GrantRequest:
         )
         if deny is not UNSET:
             field_dict["deny"] = deny
+        if covers is not UNSET:
+            field_dict["covers"] = covers
 
         return field_dict
 
@@ -80,10 +93,18 @@ class GrantRequest:
 
                 deny.append(deny_item)
 
+        _covers = d.pop("covers", UNSET)
+        covers: GrantRequestCovers | Unset
+        if isinstance(_covers, Unset):
+            covers = UNSET
+        else:
+            covers = GrantRequestCovers(_covers)
+
         grant_request = cls(
             workarea=workarea,
             role=role,
             deny=deny,
+            covers=covers,
         )
 
         return grant_request

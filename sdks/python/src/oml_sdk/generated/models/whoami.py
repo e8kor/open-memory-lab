@@ -32,6 +32,8 @@ class Whoami:
             tenant (None | WhoamiRef): The key's tenant; null for an operator key, which no tenant holds.
             default_workarea (None | WhoamiWorkarea): The key's journalled default workarea; null when it has none.
             crew (None | WhoamiRef): The key's crew record, fixed for its life; null when none was named.
+            user (None | WhoamiRef): The key's user root, from which a client learns its root; null for a tenant key
+                (ADR-0044 d11).
             grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
     """
 
@@ -43,6 +45,7 @@ class Whoami:
     tenant: None | WhoamiRef
     default_workarea: None | WhoamiWorkarea
     crew: None | WhoamiRef
+    user: None | WhoamiRef
     grants: list[WhoamiGrant]
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +81,12 @@ class Whoami:
         else:
             crew = self.crew
 
+        user: dict[str, Any] | None
+        if isinstance(self.user, WhoamiRef):
+            user = self.user.to_dict()
+        else:
+            user = self.user
+
         grants = []
         for grants_item_data in self.grants:
             grants_item = grants_item_data.to_dict()
@@ -95,6 +104,7 @@ class Whoami:
                 "tenant": tenant,
                 "default_workarea": default_workarea,
                 "crew": crew,
+                "user": user,
                 "grants": grants,
             }
         )
@@ -168,6 +178,21 @@ class Whoami:
 
         crew = _parse_crew(d.pop("crew"))
 
+        def _parse_user(data: object) -> None | WhoamiRef:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                user_type_0 = WhoamiRef.from_dict(data)
+
+                return user_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | WhoamiRef, data)
+
+        user = _parse_user(d.pop("user"))
+
         grants = []
         _grants = d.pop("grants")
         for grants_item_data in _grants:
@@ -184,6 +209,7 @@ class Whoami:
             tenant=tenant,
             default_workarea=default_workarea,
             crew=crew,
+            user=user,
             grants=grants,
         )
 

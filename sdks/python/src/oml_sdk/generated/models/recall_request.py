@@ -20,9 +20,11 @@ class RecallRequest:
 
         Attributes:
             query (str):
-            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
-                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
-                (request.validation).
+            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
+                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
+                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
+                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
+                is neither, and is refused (request.validation).
             k (int | Unset):  Default: 8.
             kinds (list[RecallRequestKindsItem] | Unset): Filters hits only; an empty array is refused (request.validation),
                 so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the

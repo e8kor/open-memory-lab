@@ -88,9 +88,12 @@ def sync_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
-            check that reads state; an unknown name answers exactly what an unknown id answers. A
-            derived path is neither, and is refused (request.validation).
+        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -138,9 +141,12 @@ def sync(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
-            check that reads state; an unknown name answers exactly what an unknown id answers. A
-            derived path is neither, and is refused (request.validation).
+        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -183,9 +189,12 @@ async def asyncio_detailed(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
-            check that reads state; an unknown name answers exactly what an unknown id answers. A
-            derived path is neither, and is refused (request.validation).
+        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -231,9 +240,12 @@ async def asyncio(
     (ADR-0025 d14). One call carries all of it.
 
     Args:
-        workarea (str): A workarea, by its node id or its name. Resolved server-side before any
-            check that reads state; an unknown name answers exactly what an unknown id answers. A
-            derived path is neither, and is refused (request.validation).
+        workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
+            server-side before any check that reads state; an unknown name answers exactly what an
+            unknown id answers. A user key resolves a bare name in its own user root's namespace, plus
+            universe and its root's name; every other key in the shared namespace (ADR-0044 d5). A
+            derived path, a value of three or more labels or one whose first label is universe, is
+            neither, and is refused (request.validation).
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):

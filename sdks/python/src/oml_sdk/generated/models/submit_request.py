@@ -34,9 +34,11 @@ class SubmitRequest:
                 conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset):  Default: SubmitRequestKind.MEMORY.
-            workarea (str | Unset): A workarea, by its node id or its name. Resolved server-side before any check that reads
-                state; an unknown name answers exactly what an unknown id answers. A derived path is neither, and is refused
-                (request.validation).
+            workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
+                any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
+                bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
+                namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
+                is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
     """
 
