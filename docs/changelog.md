@@ -34,6 +34,33 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — The user page and the admin page act through session keys, and an admin reads every memory, journalled (ADR-0045 W3, W4, implementation)
+
+The rest of [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+but demotion, on top of ADR-0044's user roots. **W3:** `credential: session` and
+`api_keys.session_for`; the first sign-in issues `<user>-web`, whose issuance creates
+`universe.<user>`, and `<user>-review`, dreamer and reader on that root, under the admin key that
+added the entry (`web_emails.added_by`), and `<user>-admin` for an admin entry; the user page's
+keys (issue, connector key and connect code, cut-off), setup steps naming the server and the
+default `https://memory.doublegate.io`, memories (the person's agents' rows in every state,
+search, and the shared area's anonymous view), workareas, and review of the person's own agents'
+work. **W4:** the admin page's list (add, remove with a confirmation listing the user's keys and a
+cut-off beside each, the admin flag, the last-admin guard), review and curation grants, the
+queue's depth and age, review, curation and supersession; the admin read,
+`POST /v2/admin/memories/search` and `GET /v2/admin/memories/{artifact_id}`, now served, each
+answer journalled as `memory.admin_read`, and `oml admin read`; `oml doctor` names a user with no
+session key. A user name held by the user's own root is no longer `name.taken`. Demotion waits
+for its verb (v0.6.0).
+
+- **Pages:** the ADR-0045 markers on the [HTTP API](api/http-api.md), [errors](api/errors.md),
+  [roles and keys](architecture/roles-and-keys.md), [security](architecture/security.md), the
+  [architecture overview](architecture/overview.md), [configuration](operations/configuration.md),
+  [observability](operations/observability.md), the [CLI reference](cli/reference.md),
+  [administering](guides/administering.md), the [roadmap](product/roadmap.md),
+  [releases](product/releases.md), the register and [llms.txt](llms.txt) read "since v0.5.0";
+  the [event catalog](data/event-catalog.md) and [Postgres schema](data/postgres-schema.md) carry
+  `memory.admin_read`, `session_user` and `added_by`.
+
 ### 2026-11-04 — Sign-in with Google or GitHub, sessions and the email allowlist are built on the web-console branch (ADR-0045 W1, W2, implementation)
 
 The first two steps of [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),

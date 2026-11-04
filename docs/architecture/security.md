@@ -429,7 +429,7 @@ reserved provider tenant and hold no tenant content
 
 ## Web pages: sign-in and sessions
 
-*Planned for v0.5.0 in part, not built ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed).* A user page and an admin
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed).* A user page and an admin
 page on the lead's own origin, signed in through Google or GitHub against a per-tenant email
 allowlist ([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). They add
 what [ADR-0015](../adr/ADR-0015-cli-administration.md) declined to carry: a session cookie, and
@@ -437,7 +437,7 @@ pages that act with a person's authority. The origin policy, the CSP and the fra
 connect page's, already built. Every act runs as a **session key** the server holds for the
 person — credential `session`, no value, one key per capacity — so the role matrix, the grants and
 the journal are the same as for every key. The threats below are the delta; every control is a
-design commitment, none is built, penetration-tested or measured ([FR-76](../product/roadmap.md)).
+built since v0.5.0; none is penetration-tested or measured, and no sign-in has reached a live provider ([FR-76](../product/roadmap.md)).
 
 | Threat | Controls | Residual |
 |---|---|---|

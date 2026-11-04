@@ -117,7 +117,7 @@ A tenant's workareas form one tree under `universe`. A grant on a workarea cover
 
 A new workarea starts in `development`; the ladder to `committed` and `validated` is planned for
 v0.5.2. An admin key reads the structure of every workarea in its tenant and never a memory in it;
-the [admin read](../api/http-api.md#admin-read), planned for v0.5.0, adds two routes on which it
+the [admin read](../api/http-api.md#admin-read), since v0.5.0, adds two routes on which it
 reads every memory's text and attribution, each read journalled.
 
 Workareas, crews, keys and tenants each carry a **name**: unique in the tenant, given at creation,

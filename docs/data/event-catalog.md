@@ -566,7 +566,10 @@ for a connector key, which has no value at all; its connect code follows in
 [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). `user` is the id of the
 key's [user root](../architecture/roles-and-keys.md#user-keys), fixed for the key's life, or null
 for a tenant key; an event signed before v0.5.0 carries no `user` and folds as null ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2,
-d12).
+d12). Since v0.5.0 `credential` may be `session`, a key the server holds for a person and acts
+with only from their web session, which has no value; such an event also carries
+`session_user`, the allowlist user it serves, absent on every other key
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d6).
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
@@ -746,7 +749,7 @@ its connections with no event of this type
 
 ## Web family
 
-*Built for v0.5.0 on the `feat/web-console` branch, not released · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
 
 ### web.email_allowed
 
@@ -767,6 +770,17 @@ entry.
 
 The same payload, naming the entry as it stood. The commit removes the entry and ends its
 sessions; the user's agent keys are untouched (ADR-0045 d13).
+
+### memory.admin_read
+
+```json
+{ "artifact_ids": ["…"], "query_digest": "sha256:…" }
+```
+
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed.* An admin key read
+memories' text and attribution through the admin read: the ids served, and for a search the
+SHA-256 of its query, null for a read of one memory. Never the text and never the query. The
+envelope names the admin key; nothing but the journal changes.
 
 ## Simulation family
 

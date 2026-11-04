@@ -561,8 +561,8 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/settings` · `POST /v2/settings/validate` · `POST /v2/settings/apply` | admin (key role) | designed |
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
-| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *built for v0.5.0, not released* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
-| `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *planned for v0.5.0, not built* ([admin read](#admin-read)) | designed |
+| `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
+| `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -580,7 +580,7 @@ rings, and routed only where the deployment sets `oauth.issuer`
 | `GET /oauth/authorize` · `POST /oauth/authorize` | none; the person proves authority with the connect code | served |
 | `POST /oauth/token` · `POST /oauth/register` | none; public clients only | served |
 
-*Planned for v0.5.0, not built ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed):* the web pages are unversioned, outside both
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed):* the web pages are unversioned, outside both
 rings, routed only by the lead and only where the deployment sets `oauth.issuer` and a sign-in
 provider, and authenticated by a session cookie alone, never by a key
 ([Web pages](#web-pages-the-user-page-and-the-admin-page)):
@@ -1363,19 +1363,16 @@ This is the MCP request forwarded to the same endpoint, not a token passed to a 
 
 ## Web pages: the user page and the admin page
 
-*Planned for v0.5.0 in part, not built; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
+*Since v0.5.0; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
 
 Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
 page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
 codes, reads the setup steps, browses their memories and `universe`'s, creates workareas in
 their root, and reviews their own agents' held writes; and the **admin page**, where an admin
 keeps the email allowlist, grants review and curation, sees the review queue's depth and age,
-reads every memory's text and attribution, and reviews, curates and supersedes. *Built for v0.5.0
-on the `feat/web-console` branch, not released:* the routes, sign-in, sessions, sign-out, the
-headers and checks below, and a user page and admin page that show who is signed in. Every other
-action rests on the person's session keys, which rest on user roots
-([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
-and answers `request.validation` with `details.reason: not_built` until they are.
+reads every memory's text and attribution, and reviews, curates and supersedes. Every act runs as one of the person's session keys:
+the first sign-in issues `<user>-web` and `<user>-review` under the admin key that added the
+entry, and `<user>-admin` for an admin entry.
 
 **Routes.** Six, a closed set the router serves exactly: `GET /web`, `POST /web`,
 `POST /web/sign-in`, `GET /web/callback/{provider}`, `GET /web/admin` and `POST /web/admin`.
@@ -1383,7 +1380,8 @@ Each page is one `GET`, whose views are chosen by the query (`view`, `q`, `memor
 `workarea`), and one `POST`, whose form names one `action` from the page's closed set: on the
 user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea`,
 `review_next`, `verdict` and `sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
-`grant_curation`, `review_next`, `verdict`, `curate`, `supersede` and, in v0.6.0, `demote`. A
+`grant_curation`, `review_next`, `verdict`, `curate`, `supersede`, `cut_off` and, in v0.6.0,
+`demote`. A
 follower routes none; without `oauth.issuer` and a provider every one is an unknown path.
 
 **Sign-in.** `POST /web/sign-in` (`provider=google|github`) passes the same-origin check of
@@ -1432,7 +1430,7 @@ issued on the user page is shown once, in the answering page, never in a redirec
 
 ### Admin read
 
-*Planned for v0.5.0, not built · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
 
 An admin key reads every memory of its tenant, with its text and its attribution, on two lab
 routes and nowhere else; every other route keeps the rule that an admin key reads structure and

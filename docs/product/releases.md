@@ -113,10 +113,10 @@ many memories in one request. A web console beyond the two pages of ADR-0045 is 
 | Request metrics for Prometheus on a separate address | introduced in v0.4.1 |
 | Trace export to an OpenTelemetry collector, off by default | introduced in v0.4.1 |
 | A workarea of one's own for each person, and a curated shared area above them | built for v0.5.0 |
-| Sign-in with Google or GitHub to a user page and an admin page | planned for v0.5.0 |
-| Reviewing your own agents' work on the user page | planned for v0.5.0 |
-| Review, curation and replacing memories from the admin page | planned for v0.5.0 |
-| Reading any memory, with who wrote, derived and reviewed it, on the admin page | planned for v0.5.0 |
+| Sign-in with Google or GitHub to a user page and an admin page | built for v0.5.0 |
+| Reviewing your own agents' work on the user page | built for v0.5.0 |
+| Review, curation and replacing memories from the admin page | built for v0.5.0 |
+| Reading any memory, with who wrote, derived and reviewed it, on the admin page | built for v0.5.0 |
 | Guardrails | planned for v0.5.1 |
 | Workarea lifecycle: development, committed, validated | planned for v0.5.2 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | planned for v0.5.2 |
@@ -179,4 +179,4 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | proposed | Built for v0.5.0; accepted at that release. |
-| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | proposed | Planned for v0.5.0 in part: sign-in, sessions, the email list, the user page with review of one's own agents' work, and on the admin page review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. Decided, not built. |
+| [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | proposed | Built for v0.5.0 but demotion: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |

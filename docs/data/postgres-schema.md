@@ -757,7 +757,7 @@ stands.
 
 ## web (ADR-0045)
 
-*Built for v0.5.0 on the `feat/web-console` branch, not released (migration `0015_web`) ·
+*Since v0.5.0 (migration `0015_web`) ·
 [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, d4, d5, proposed*
 
 ```sql
@@ -770,6 +770,7 @@ CREATE TABLE web_emails (
     google_subject text,                       -- pinned at the first Google sign-in
     github_subject text,                       -- pinned at the first GitHub sign-in
     created_at     timestamptz NOT NULL,
+    added_by       uuid        NOT NULL,       -- the admin key that added it; issues the session keys
     PRIMARY KEY (tenant_id, email_hash),
     CONSTRAINT web_emails_email_hash UNIQUE (email_hash)   -- one entry per email, deployment-wide
 );
@@ -797,6 +798,10 @@ under `key_resolution` policies of 0001's form; every other statement runs under
 deleted at sign-out, at the read that finds it expired, by the hourly sweep once expired, and with
 its entry. The serving role holds `SELECT, INSERT, UPDATE, DELETE` on `web_emails` and
 `SELECT, INSERT, DELETE` on `web_sessions`.
+
+The same migration lets `api_keys.credential` be `session` and adds `api_keys.session_for`
+(`oml_name`), the allowlist user a session key serves, set exactly on a session key
+(`api_keys_session_user`); a session key, like a connector key, has no hash.
 
 ## vocabularies (ADR-0021)
 

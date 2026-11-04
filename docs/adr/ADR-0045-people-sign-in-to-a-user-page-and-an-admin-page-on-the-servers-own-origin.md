@@ -9,7 +9,7 @@ answers: why OML now serves a web console after ADR-0015 declined one, and how e
 
 **Status:** proposed · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20)
 
-**Release:** planned for v0.5.0 in part — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
+**Release:** built for v0.5.0 but demotion — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0015 (the decline of a web console in its context, its consequences and its rejected alternatives; d2 gains a second human surface), ADR-0010 (d1, d7), ADR-0025 (d3), ADR-0026 (d15: the admin key reads content through the admin read, d21), ADR-0031 (d7), ADR-0042 (d2), ADR-0044 (d6, d9 for the admin read, d11)
 
@@ -76,7 +76,7 @@ The constitution holds over all of it ([ADR-0001](ADR-0001-the-constitution.md))
 not a surface an agent can call (R1), the reviewer key is never in the row's lineage (R2), review
 changes visibility and not ranking (R3), and nothing is deleted (R4).
 
-Decided, not built.
+Decided; built for v0.5.0 but demotion (d12), which waits for its verb.
 
 ## Decision
 
@@ -221,7 +221,8 @@ Decided, not built.
   refused, `oauth.connect_refused` with `details.reason: session_key`. The server reaches a
   session key only from a live session whose entry names that key's user, re-checked on every
   request, so removing the entry, or its admin flag, makes the key unreachable at once with no
-  revocation, which is not built. Each person holds at most four, named from their user, each
+  revocation, which is not built. The admin key that added the entry is recorded on it
+  (`added_by`), and the session keys are issued under it. Each person holds at most four, named from their user, each
   created by the act that first needs it and journalled as `key.issued` with the creating key as
   actor; the first sign-in creates two, so a person can review their own agents' work without
   any admin step (d20 e):
@@ -338,7 +339,7 @@ Decided, not built.
   whose entry has `admin: true`; any other session gets `access.not_found`, so the page's
   existence confirms nothing to a non-admin.
     - **The allowlist**, through `<user>-admin`: list, `allow_email` (`{email, user, admin}`),
-      `remove_email`, `set_admin`. Removing or un-flagging the tenant's last admin entry from the
+      `remove_email`, `set_admin`, and `cut_off` (`{key}`), the removal confirmation's act (d13). Removing or un-flagging the tenant's last admin entry from the
       page is refused, `request.validation` with `details.field: admin`, since the page cannot
       then be reopened; the CLI under an admin key can still do it. The removal confirmation
       lists the user's keys (d13).
@@ -391,7 +392,9 @@ Decided, not built.
 - **d12 — Curation, supersession and demotion run as ordinary acts of the person's own keys, and
   none of them deletes.**
     - **Curation** (`curate`, `{source, text, claim_key?}`), through `<user>-curate`, is
-      ADR-0044 d7's held write into `universe` with `derives_from` naming the source, the text
+      ADR-0044 d7's held write into `universe` with `derives_from` naming the source, a memory
+      someone other than its author has approved, since a held row is readable by its author
+      alone, the text
       prefilled from the source with a line that a curated memory whose text or name repeats its
       source's can be linked to it (FR-73). The second approval is an ordinary review of the held
       universe version by a dreamer key with dreamer access on `universe` whose key and principal

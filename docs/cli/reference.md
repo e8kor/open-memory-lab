@@ -13,9 +13,9 @@ answers: every administrative CLI verb, its flags and refusals; oml write, oml r
 
 `oml` is the administration surface of Open Memory Lab. There is no web UI today: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
-ADR-0015. A user page and an admin page for people signed in with Google or GitHub are planned for
-v0.5.0 and not built ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed); every ceremony keeps its verb here, and
-`oml web allow`, `oml web list` and `oml web remove` will keep the email allowlist that lets the
+ADR-0015. Since v0.5.0 a user page and an admin page serve people signed in with Google or GitHub
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed); every ceremony keeps its verb here, and
+`oml web allow`, `oml web list` and `oml web remove` keep the email allowlist that lets the
 first admin in. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
 agent — every ceremony rides the lab ring (`/v2`,
 [ADR-0022](../adr/ADR-0022-two-ring-api.md)); the CLI holds no verb the API lacks — authenticated
@@ -428,7 +428,7 @@ throughout; no agent role reaches these verbs.
 
 ## `oml web` — the email allowlist
 
-*Built on the `feat/web-console` branch for v0.5.0, not released · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
 
 Who may sign in to the [web pages](../api/http-api.md#web-pages-the-user-page-and-the-admin-page):
 an email address, the user it signs in as, and whether it opens the admin page. The first admin
@@ -441,6 +441,19 @@ digest, never the address.
 | `oml web allow <email> --user <user> [--admin]` | Add the address (`web.email_allowed`), or change its user or admin flag (`web.email_changed`), which ends its sessions. An address another organisation's list holds is `name.taken` (kind `email`); a user a workarea or another key's name already holds is `name.taken`; a user longer than 56 characters is `request.validation`. |
 | `oml web remove <email>` | Remove the address (`web.email_removed`) and end its sessions. The user's agent keys keep working; cut one off with `oml deny set <key> universe`. |
 | `oml web list` | The organisation's list: email, user, admin. Reads every page; `--json` prints their items as one page. |
+
+## `oml admin read` — every memory, with its attribution
+
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
+
+An administrator reads every memory of the organisation — every state, every workarea, every
+person's root — with its text and who wrote, derived and reviewed it. Admin key role alone; each
+answer is recorded in the history as `memory.admin_read` with the ids served and a digest of the
+query, never the text. The admin key still recalls nothing and records no verdict.
+
+| Verb | Does |
+|---|---|
+| `oml admin read [<memory>] [--query <text>] [--workarea <workarea>] [--state <state>]` | With a memory id, that memory's text, author key, principal and user, `derives_from`, `replaces` and verdicts. Without one, a search over every memory, newest first, `--state` one of `held`, `promoted`, `rejected`, `superseded` or `demoted`; reads every page, and `--json` prints their items as one page. |
 
 ## `oml write`, `oml read`, `oml events` — memories and the journal
 

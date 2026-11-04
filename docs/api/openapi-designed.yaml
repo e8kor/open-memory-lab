@@ -1502,83 +1502,6 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/admin/memories/search:
-    post:
-      tags: [admin]
-      operationId: adminSearchMemories
-      summary: Search every memory of the tenant, in every state, workarea and user root, with its text and attribution.
-      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Planned for v0.5.0, not built.'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              query: deploy window
-              state: held
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                query: { type: string, maxLength: 512 }
-                workarea: { type: string }
-                state: { type: string, enum: [held, promoted, rejected, superseded] }
-                limit: { type: integer, minimum: 1, maximum: 100 }
-                cursor: { type: string }
-      responses:
-        '200':
-          description: A page of memories with text and attribution.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items, next_cursor]
-                properties:
-                  items:
-                    type: array
-                    items: { $ref: '#/components/schemas/AdminMemory' }
-                  next_cursor: { type: [string, 'null'] }
-        '403': { $ref: 'openapi.yaml#/components/responses/Forbidden' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/admin/memories/{artifact_id}:
-    get:
-      tags: [admin]
-      operationId: adminReadMemory
-      summary: One memory of the tenant with its text and full attribution, a universe claim with its source.
-      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Planned for v0.5.0, not built.'
-      parameters:
-        - { name: artifact_id, in: path, required: true, schema: { type: string } }
-      responses:
-        '200':
-          description: The memory with its attribution.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - { $ref: '#/components/schemas/AdminMemory' }
-                  - type: object
-                    properties:
-                      derives_from: { type: array, items: { type: string } }
-                      replaces: { type: [string, 'null'] }
-                      plaintext_digest: { type: string }
-                      verdicts:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            verdict: { type: string }
-                            key: { type: string }
-                            principal: { type: [string, 'null'] }
-                            reason: { type: [string, 'null'] }
-                            at: { type: string, format: date-time }
-        '403': { $ref: 'openapi.yaml#/components/responses/Forbidden' }
-        '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
 components:
   securitySchemes:
     bearerAuth:
@@ -1664,21 +1587,6 @@ components:
         to_version: { type: integer }
         reason: { type: string }
 
-    AdminMemory:
-      type: object
-      description: 'A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state.'
-      required: [artifact_id, claim_key, version, state, workarea_path, text, key, created_at]
-      properties:
-        artifact_id: { type: string }
-        claim_key: { type: string }
-        version: { type: integer }
-        state: { type: string, enum: [held, promoted, rejected, superseded] }
-        workarea_path: { type: string }
-        text: { type: string }
-        key: { type: string, description: The authoring key's name. }
-        principal: { type: [string, 'null'] }
-        user: { type: [string, 'null'] }
-        created_at: { type: string, format: date-time }
     ActResult:
       type: object
       description: Outcome of a journalled act, or a dry-run preview when dry_run was true.

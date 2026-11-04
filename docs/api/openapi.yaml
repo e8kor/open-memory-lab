@@ -73,6 +73,7 @@ tags:
   - name: keys
   - name: oauth
   - name: web
+  - name: admin
   - name: health
 
 paths:
@@ -1399,7 +1400,7 @@ paths:
       tags: [web]
       operationId: listWebEmails
       summary: The tenant's email allowlist — who may sign in to the user and admin pages, as which user, and whether as an admin.
-      description: 'Requires: admin key role (ADR-0045 d2). Each entry is {email, user, admin}, in the order of the email''s digest; the provider subjects pinned at first sign-in are not served. Built for v0.5.0, not released.'
+      description: 'Requires: admin key role (ADR-0045 d2). Each entry is {email, user, admin}, in the order of the email''s digest; the provider subjects pinned at first sign-in are not served. Since v0.5.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1434,7 +1435,7 @@ paths:
       tags: [web]
       operationId: allowWebEmail
       summary: Add an email to the allowlist, or change the user or admin flag of one already there.
-      description: 'Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as web.email_allowed or web.email_changed with an email digest, never the address. A change ends the entry''s sessions. Built for v0.5.0, not released.'
+      description: 'Requires: admin key role (ADR-0045 d2). The email is unique in the deployment and compared ASCII case-insensitively (409 name.taken, details.kind email); user is a name under the creation grammar of at most 56 characters, refused 409 name.taken when a shared workarea holds it or when a key holds one of the names <user>-web, <user>-review, <user>-curate, <user>-admin. Journalled as web.email_allowed or web.email_changed with an email digest, never the address. A change ends the entry''s sessions. Since v0.5.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1468,7 +1469,7 @@ paths:
       tags: [web]
       operationId: removeWebEmail
       summary: Remove an email from the allowlist, ending its sessions; the user's agent keys keep working.
-      description: 'Requires: admin key role (ADR-0045 d2, d13). The email is in the body, never the path, so no proxy log records it. Journalled as web.email_removed with an email digest. An email not on the list answers access.not_found. Built for v0.5.0, not released.'
+      description: 'Requires: admin key role (ADR-0045 d2, d13). The email is in the body, never the path, so no proxy log records it. Journalled as web.email_removed with an email digest. An email not on the list answers access.not_found. Since v0.5.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1510,7 +1511,7 @@ paths:
       tags: [web]
       operationId: userPage
       summary: The sign-in page without a session; the user page with one.
-      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, workarea, review), q, memory, workarea. Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Built for v0.5.0, not released.'
+      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, workarea, review), q, memory, workarea. Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.'
       security: []
       parameters:
         - { name: view, in: query, required: false, schema: { type: string, enum: [keys, setup, memories, workarea, review] } }
@@ -1526,7 +1527,7 @@ paths:
       tags: [web]
       operationId: userPageAct
       summary: One act of the user page, named by action.
-      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session''s <user>-review key, which holds dreamer and reader on the person''s own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). An issued key''s value or connect code is shown once on the answering page, never in a redirect. Built for v0.5.0, not released.'
+      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session''s <user>-review key, which holds dreamer and reader on the person''s own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). An issued key''s value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.'
       security: []
       requestBody:
         required: true
@@ -1552,7 +1553,7 @@ paths:
       tags: [web]
       operationId: webSignIn
       summary: Start a provider's sign-in — the code flow with S256 PKCE, state and, for Google, a nonce.
-      description: 'The same-origin check of POST /oauth/authorize, then a 303 to the provider with the sealed __Host-oml_signin cookie set (SameSite=Lax, ten minutes). Writes no row (ADR-0045 d3). Built for v0.5.0, not released.'
+      description: 'The same-origin check of POST /oauth/authorize, then a 303 to the provider with the sealed __Host-oml_signin cookie set (SameSite=Lax, ten minutes). Writes no row (ADR-0045 d3). Since v0.5.0.'
       security: []
       requestBody:
         required: true
@@ -1578,7 +1579,7 @@ paths:
       tags: [web]
       operationId: webCallback
       summary: The provider's redirect; admits a listed, verified email and starts a session.
-      description: 'Refused before any outbound call unless the sealed cookie opens, is under ten minutes old, names this provider and carries the query''s state. Google: the ID token from the token endpoint over TLS, iss, aud, exp, nonce and email_verified checked. GitHub: the primary verified address of /user/emails. The provider subject is pinned per entry at first sign-in. Refusals are pages, auth.invalid with details.reason not_allowed, email_unverified, state_mismatch, identity_changed or provider_refused; limit.rate past the provider-call cap. The query is never logged (ADR-0045 d3, d4, d5, d14). Built for v0.5.0, not released.'
+      description: 'Refused before any outbound call unless the sealed cookie opens, is under ten minutes old, names this provider and carries the query''s state. Google: the ID token from the token endpoint over TLS, iss, aud, exp, nonce and email_verified checked. GitHub: the primary verified address of /user/emails. The provider subject is pinned per entry at first sign-in. Refusals are pages, auth.invalid with details.reason not_allowed, email_unverified, state_mismatch, identity_changed or provider_refused; limit.rate past the provider-call cap. The query is never logged (ADR-0045 d3, d4, d5, d14). Since v0.5.0.'
       security: []
       parameters:
         - { name: provider, in: path, required: true, schema: { type: string, enum: [google, github] } }
@@ -1603,10 +1604,10 @@ paths:
       tags: [web]
       operationId: adminPage
       summary: The admin page, for a session whose allowlist entry is an admin's.
-      description: 'Any other session answers access.not_found. Views by query: view (allowlist, queue, review, curate, memories), q, memory. The memories view and one memory''s attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory''s text and attribution, each read journalled (ADR-0045 d10, d21). Built for v0.5.0, not released.'
+      description: 'Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory. The memories view and one memory''s attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory''s text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.'
       security: []
       parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [allowlist, queue, review, curate, memories] } }
+        - { name: view, in: query, required: false, schema: { type: string, enum: [people, queue, review, curate, memories] } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
         - { name: memory, in: query, required: false, schema: { type: string } }
       responses:
@@ -1624,7 +1625,7 @@ paths:
       tags: [web]
       operationId: adminPageAct
       summary: One act of the admin page, named by action, run as the capacity it needs.
-      description: 'Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator''s own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Until session keys are built (ADR-0044) every action answers request.validation with details.reason not_built. Built for v0.5.0, not released: the page shows who is signed in until session keys are built (ADR-0044).'
+      description: 'Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator''s own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.'
       security: []
       requestBody:
         required: true
@@ -1634,7 +1635,7 @@ paths:
               type: object
               required: [action, csrf_token]
               properties:
-                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, curate, supersede ] }
+                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, curate, supersede, cut_off] }
                 csrf_token: { type: string }
       responses:
         '200':
@@ -1642,6 +1643,92 @@ paths:
           content:
             text/html:
               schema: { type: string }
+
+  /v2/admin/memories/search:
+    post:
+      tags: [admin]
+      operationId: adminSearchMemories
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      summary: Search every memory of the tenant, in every state, workarea and user root, with its text and attribution.
+      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workarea narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              query: deploy window
+              state: held
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                query: { type: string, maxLength: 512 }
+                workarea: { type: string }
+                state: { type: string, enum: [held, promoted, rejected, superseded, demoted] }
+                limit: { type: integer, minimum: 1, maximum: 100 }
+                cursor: { type: string }
+      responses:
+        '200':
+          description: A page of memories with text and attribution.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminMemory' }
+                  next_cursor: { type: [string, 'null'], description: 'The last item''s created_at and id; send it back as cursor.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/memories/{artifact_id}:
+    get:
+      tags: [admin]
+      operationId: adminReadMemory
+      summary: One memory of the tenant with its text and full attribution, a universe claim with its source.
+      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Since v0.5.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: artifact_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The memory with its attribution.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/AdminMemory' }
+                  - type: object
+                    properties:
+                      derives_from: { type: array, items: { type: string } }
+                      replaces: { type: [string, 'null'] }
+                      plaintext_digest: { type: string }
+                      verdicts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            verdict: { type: string }
+                            key: { type: string }
+                            principal: { type: [string, 'null'] }
+                            reason: { type: [string, 'null'] }
+                            at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
 
 components:
   securitySchemes:
@@ -1841,6 +1928,22 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
+    AdminMemory:
+      type: object
+      description: 'A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state.'
+      required: [artifact_id, claim_key, version, state, workarea_path, text, key, created_at]
+      properties:
+        artifact_id: { type: string }
+        claim_key: { type: string }
+        version: { type: integer }
+        state: { type: string, enum: [held, promoted, rejected, superseded, demoted] }
+        workarea_path: { type: string }
+        text: { type: string }
+        key: { type: string, description: The authoring key's name. }
+        principal: { type: [string, 'null'] }
+        user: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
     WebEmail:
       type: object
       additionalProperties: false
@@ -2477,7 +2580,7 @@ components:
         grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
         denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
         epoch: { type: integer }
-        credential: { type: string, enum: [bearer, connection], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7)." }
+        credential: { type: string, enum: [bearer, connection, session], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6)." }
         connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11)." }
 
     WhoamiRef:

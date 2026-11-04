@@ -571,9 +571,9 @@ key**; a key without it is a **tenant key**, which every key issued before the b
   served nothing: `auth.invalid` with `details.reason: user_root`, which `oml doctor` under the key
   reports (ADR-0044 d14).
 
-## Session keys (planned)
+## Session keys
 
-*Planned for v0.5.0, not built · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed) · [releases](../product/releases.md)*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed) · [releases](../product/releases.md)*
 
 A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
 `held_by: human` with no value and no connection, held by the server for one person and acted
@@ -585,7 +585,7 @@ session_key`). A person holds at most four, one per capacity, under the two-key 
 
 | Key | Role and grants |
 |---|---|
-| `<user>-web` | a [user key](#user-keys-planned): writer and reader on `universe.<user>`, and the node read on `universe` |
+| `<user>-web` | a [user key](#user-keys): writer and reader on `universe.<user>`, and the node read on `universe` |
 | `<user>-review` | a tenant dreamer key with dreamer and reader on `universe.<user>` from the first sign-in, and any further grants an admin gives it |
 | `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and reader on the user roots an admin chooses |
 | `<user>-admin` | a tenant admin key, no grants |
