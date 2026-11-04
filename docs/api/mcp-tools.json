@@ -175,7 +175,7 @@
     },
     {
       "name": "oml_workarea",
-      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, and the verbs this key's effective access carries there, with the permission epoch. A node, not claim items. Rides GET /v2/workareas/{workarea}, one call.",
+      "description": "One workarea as the calling key is allowed to see it: identity, derived path, status, crew record, readable immediate children, the verbs this key's effective access carries there with the permission epoch, the review policy in force, the status proposals waiting for a second identity, and the workarea's brief: the claims its reviewers agreed an agent entering it reads first, as claim items with their text, within the brief's token budget. Rides GET /v2/workareas/{workarea}, one call.",
       "annotations": {
         "readOnlyHint": true,
         "idempotentHint": true,
