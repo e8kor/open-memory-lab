@@ -364,8 +364,10 @@ CREATE TABLE workarea_edges (
 );
 
 -- Decided, not built: status-ladder proposals (ADR-0009 d3), the build's reading on
--- architecture/workareas.md. Several pending rows may share a workarea; ratification
--- re-checks from_status against workareas.status and refuses a stale row.
+-- architecture/workareas.md. Several pending rows may share a workarea; ratification,
+-- under the chain lock, re-checks from_status against workareas.status (a stale row is
+-- refused) and, for a step to validated, that every child is validated. A stale row stays
+-- 'pending'; the status read lists only pending rows whose from_status is the node's status.
 CREATE TABLE workarea_transitions (
     id                 uuid   PRIMARY KEY,           -- the events' transition_id
     tenant_id          uuid   NOT NULL,
@@ -390,6 +392,8 @@ CREATE TABLE workarea_transitions (
     CHECK ((state = 'ratified') = (ratified_seq IS NOT NULL)),
     CHECK (ratifier_key_id IS NULL OR ratifier_key_id <> proposer_key_id)
 );
+CREATE INDEX workarea_transitions_by_state                  -- the status read's pending list
+    ON workarea_transitions (tenant_id, workarea_id, state);
 
 CREATE TABLE claim_edges (
     id              uuid PRIMARY KEY,
