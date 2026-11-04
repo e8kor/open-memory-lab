@@ -1,0 +1,32 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "similar-check",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 100000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": null,
+  "index_build_s": null,
+  "write_overhead_ms": 39.7819,
+  "mean_candidates": 5.9967,
+  "writes": 300
+ },
+ "latency_ms": {
+  "p50": 39.7819,
+  "p95": 152.1214,
+  "p99": 421.7337
+ },
+ "per_category": {},
+ "extrapolated": false,
+ "notes": "Synthetic templated text from the recall eval's 200 seeds (and synthetic clustered vectors), one client on a shared 8-vCPU host, queried as the serving role under row security. ADR-0050 d1: served-tip plus own-held any-word recall, k 3, the new text as query.",
+ "source": "bench/scale/results/s100k.json"
+}

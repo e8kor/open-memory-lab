@@ -1,0 +1,83 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "pgvector-hnsw-halfvec",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 1000000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 1116.0859,
+  "index_build_s": 100.8492,
+  "write_overhead_ms": 5.7685,
+  "cold_p50_ms": 14.0882,
+  "cold_p95_ms": 3541.0671,
+  "cold_p99_ms": 5000.0,
+  "timeouts": 0,
+  "empty_results": 0,
+  "queries": 330,
+  "write_total_p50_ms_today": 1.9218,
+  "no_rls_p95_ms": null
+ },
+ "latency_ms": {
+  "p50": 9.1919,
+  "p95": 15.3817,
+  "p99": 21.2663
+ },
+ "per_category": {
+  "exact": {
+   "p50": 9.6002,
+   "p95": 22.9462
+  },
+  "paraphrase": {
+   "p50": 9.6958,
+   "p95": 14.4956
+  },
+  "inflection": {
+   "p50": 9.4024,
+   "p95": 15.223
+  },
+  "partial": {
+   "p50": 9.0683,
+   "p95": 16.9877
+  },
+  "typo": {
+   "p50": 9.1919,
+   "p95": 12.9509
+  },
+  "identifier": {
+   "p50": 8.8722,
+   "p95": 15.1439
+  },
+  "question": {
+   "p50": 8.378,
+   "p95": 16.1396
+  },
+  "long": {
+   "p50": 9.4563,
+   "p95": 16.3554
+  },
+  "negation": {
+   "p50": 8.9974,
+   "p95": 14.4087
+  },
+  "temporal": {
+   "p50": 9.4332,
+   "p95": 14.0809
+  },
+  "multihop": {
+   "p50": 8.9222,
+   "p95": 14.7194
+  }
+ },
+ "extrapolated": false,
+ "notes": "Synthetic templated text from the recall eval's 200 seeds (and synthetic clustered vectors), one client on a shared 8-vCPU host, queried as the serving role under row security. halfvec(384) at this scale.",
+ "source": "bench/scale/results/s1m_vector.json"
+}

@@ -1,0 +1,75 @@
+{
+ "case": "sparse",
+ "scale": 200000,
+ "tenants": 1,
+ "k": 10,
+ "vocab": 30522,
+ "nnz_per_doc": 60,
+ "query_tokens": 10,
+ "started": "2026-11-04T23:06:42",
+ "load_s": 20.885431958013214,
+ "postings": 10883870,
+ "heap_bytes": 919601152,
+ "index_build_s": 11.925980827887543,
+ "index_bytes": 76644352,
+ "cold": {
+  "n": 330,
+  "p50_ms": 454.0716999908909,
+  "p95_ms": 771.189323044382,
+  "p99_ms": 939.0194970183074,
+  "mean_ms": 489.29472584489054
+ },
+ "warm": {
+  "n": 330,
+  "p50_ms": 443.3580080512911,
+  "p95_ms": 734.5206750323996,
+  "p99_ms": 912.1380409924313,
+  "mean_ms": 456.3534135436357,
+  "by_scope": {
+   "universe": {
+    "p50_ms": 625.6475750124082,
+    "p95_ms": 912.1380409924313
+   },
+   "project": {
+    "p50_ms": 430.18617492634803,
+    "p95_ms": 590.3909780317917
+   },
+   "leaf": {
+    "p50_ms": 379.6209149295464,
+    "p95_ms": 564.4768229685724
+   }
+  }
+ },
+ "warm_pruned_top100": {
+  "n": 330,
+  "p50_ms": 12.454342097043991,
+  "p95_ms": 29.569326085038483,
+  "p99_ms": 39.67647789977491,
+  "mean_ms": 13.548576243038317,
+  "by_scope": {
+   "universe": {
+    "p50_ms": 14.50816192664206,
+    "p95_ms": 30.370326014235616
+   },
+   "project": {
+    "p50_ms": 12.454342097043991,
+    "p95_ms": 31.825285986997187
+   },
+   "leaf": {
+    "p50_ms": 12.02058291528374,
+    "p95_ms": 23.98546494077891
+   }
+  }
+ },
+ "explain_universe": "Limit (actual time=557.303..557.308 rows=10.00 loops=1)\n  Buffers: shared hit=374209\n  ->  Sort (actual time=557.301..557.304 rows=10.00 loops=1)\n        Sort Key: (sum((p.weight * q.w))) DESC, p.memory_id\n        Sort Method: top-N heapsort  Memory: 25kB\n        Buffers: shared hit=374209\n        ->  HashAggregate (actual time=528.175..548.092 rows=128693.00 loops=1)\n              Group Key: p.memory_id\n              Batches: 1  Memory Usage: 9265kB\n              Buffers: shared hit=374203\n              ->  Result (actual time=0.095..436.575 rows=322851.00 loops=1)\n                    One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'e32f44d5-b2bf-4ca4-a332-605b40b33875'::uuid)\n                    Buffers: shared hit=374203\n                    ->  Nested Loop (actual time=0.088..410.816 rows=322851.00 loops=1)\n                          Buffers: shared hit=374203\n                          ->  Function Scan on q (actual time=0.028..0.040 rows=10.00 loops=1)\n                          ->  Index Scan using sparse_postings_t_e32f44d5b2bf4ca4a332605b40b33875_token on sparse_postings_t_e32f44d5b2bf4ca4a332605b40b33875 p (actual time=0.018..38.448 rows=32285.10 loops=10)\n                                Index Cond: ((token_id = q.token_id) AND (token_id = ANY ('{3,9,12,32,36,105,124,150,201,792}'::integer[])))\n                                Filter: (served AND (tenant_id = 'e32f44d5-b2bf-4ca4-a332-605b40b33875'::uuid) AND (workarea_id = ANY ('{fd17f823-4c4d-4db8-b8a0-a34644773470,c20d112e-8a25-4735-95a4-78fa7e8d46b7,73395450-6699-42af-9558-4997453cd10e,fca04fe9-cf4e-4188-82e9-737a9ef65e64,92dccc1f-35f0-4c5c-9b96-532659613a08,811069d7-22c8-4d3f-9e26-b07b44835ded,31b91981-abf9-497c-ae3f-8b6d2abc5711,3b420ba7-3da6-4025-bd23-da8b6b991a1b,a0d7acd9-aa05-4958-8e7a-cd6f95582032,cb602caf-3b8c-458c-9e4f-633ef359bf9d,aa24ed11-4815-4123-93f8-ab04ffeb3de6,a807c5d8-db97-4937-bce8-9c40aa108687,e72e363b-9232-41f8-88be-c15d375a7179,ecb2801c-df08-4f3b-9771-5ce359fc6c6f,4bafc299-d5e6-433b-840a-86310e6adb90,5948122a-069d-4abf-8344-57abb4da6eeb,5a49b464-68bf-45ff-8982-1c192cc50a0f,e3a36874-0c6a-4dae-8d9d-b058d16d27fc,a83abeb7-3794-4a72-9b71-79964ea40e3f,103bc189-a5c4-4b1a-98ee-02054d372d28,f75a736d-9ade-46d2-831b-ea821214e89c,901b3d0b-b197-41cf-a32e-777e9b9a07f8,6f53bbdf-10af-4a2c-a92e-00f2694a9217,cfefb2ab-c51f-499c-b773-66a5c378e2da,66b548a4-d2f8-432e-b870-d00f7e24815a,709e4ab7-c384-413b-8da8-a9e949da9292,710b8f57-df27-4426-a8d5-3fbc036dcb89,5b0e1d9a-4019-44d5-b95c-caac60f797f8,317e427b-b6c2-441b-ac83-0fd73272eeb5,e91ffa80-6d3e-49b1-8030-32833dea017e,2e94e02f-7718-4b92-9c86-51418dad7851,c5c1fd0d-0869-49f4-99de-8731894bb7bf,ddfdef16-bfe4-4c78-bd1a-71f91165dd97,24859ea1-80aa-463c-ac4a-3ce1b296a073,9c9c6069-eeb6-469c-b7d6-817f87601ac8,c154ac00-02f7-46e9-9ccf-849932194fba,c8530926-7982-44e8-b09f-2ff70562fa2e,869095f4-95a1-48f3-916a-c441e7f7056d,b32f25f8-2f6f-4869-a950-80b923c029c2,6851b564-01b3-4d06-93a3-8fae679ea171,ef94ded1-4e95-4d16-96dc-b03399b61a3e,351e7f65-38d8-4187-b69b-e301c654c2fe,8f1480cf-0e10-4e78-9094-11da1c358d5c,57773d68-19d3-4adc-be0c-85a583cbda2a,024f31ee-4d39-491c-a008-36d82ae0b4b6,8b8a3530-fab6-4698-8fe1-1b833157dcac,90fc49c7-82ba-4a0a-883e-75cda0f47957,5016a0b1-00c8-49e3-9d36-603a5ef3ee39,28303e9d-c966-43bb-9e97-e6560b26e1b3,d73f36ab-a449-405a-ba47-eaf57178f47b,f45bfb10-8982-4800-87b2-692242120cfb,69c881f3-55b9-4766-82f9-02348200fc6a,bfaed803-804f-403a-b6ba-4c93add7595e,62b66197-93cd-407d-a25f-5fa10d7c3040,89dc9fd4-d04a-4ad3-aaa4-0b20a180ae40,0a17bda2-a181-48f4-97a2-3922b3ce5928,64e3fe0d-bdf5-45c9-ac85-7f02cfb8ff29,c733ea32-28f9-4726-a9fc-6a55d80db8c4,034471cd-e129-49d0-8e5d-2c240f9031be,0e8c1bd7-dc3c-4ee9-bf4b-38e3784809a0,11e7c634-6655-4a18-b0e0-3f924802c13d,5f484e2b-2eb2-4623-96ca-69894993839f,7ca4c38c-d4dc-4d41-966e-907d755636af,f7432cb7-279c-46a8-9b3e-88d59d288f8a,36cc6447-ebfa-4a50-8322-631fcbf5c0dc,1f3ed2ea-2388-4196-8092-34e0be7b3a61,6443fdaf-ac0a-476d-a719-7c24d744ce16,2d5d517c-c191-41a8-bbc8-e43eac5eebf8,7a5abe02-27c6-4abd-a4f1-70a4da337c35,d5c2fb10-b63d-4e0f-bfe4-d9eb69df473b,3c62cc5c-7d85-4f97-84f2-43b58796ea88,523d8abd-88a3-4aa8-b368-7c4c95121cf5,1286114a-f752-4e38-a22c-68189b2bae93,cfd730c6-eb9e-4554-a189-8f78e746c0af,fec3de95-ad2a-49ee-9460-5212983f49dd,be649eb8-e5b1-4d0f-b356-90e87b23624a,77fb698d-493b-4ebb-8a0e-a3439dd936cf,df1b64cf-bd04-4d0d-a090-ecdb31a0c490,9de7172c-58c1-4f77-92a2-4c751bdd8150,73223c67-f61a-4e04-9b41-e6b51dad2d81,1ae4fb84-343f-46e7-8232-4e17c2973cab,2b45c26b-3092-4c98-a097-61958625ec6a,9f734f4b-cbd7-4d62-a7b8-ad28f1ba5e3d,43fc89a2-f98a-4fce-9293-6e1b4a78b576,af66dd3c-a88f-469a-aade-ef9ba69f5ce7,057ede3a-2548-41c5-b19c-e5e9249b27d4,3e3611df-26e2-4726-b9a7-c4389559c204,8f399703-fac4-4ab3-ba38-ea91159c28db,abb043ba-d1db-4194-8aec-1fa0ad9a03e6,b1c65e9b-58e6-47c7-b4a5-4cf233ac6e52,a6112ec1-afed-4ea6-9edb-71daa90335a0}'::uuid[])))\n                                Rows Removed by Filter: 17231\n                                Index Searches: 10\n                                Buffers: shared hit=374203\nPlanning:\n  Buffers: shared hit=348\nPlanning Time: 1.739 ms\nExecution Time: 558.194 ms",
+ "postings_touched_p50": 698964,
+ "postings_touched_p95": 1078804,
+ "write_60_postings": {
+  "n": 300,
+  "p50_ms": 5.805452005006373,
+  "p95_ms": 23.79127498716116,
+  "p99_ms": 33.72135595418513,
+  "mean_ms": 8.09133826289326
+ },
+ "finished": "2026-11-04T23:13:07"
+}

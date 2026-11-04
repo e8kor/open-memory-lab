@@ -1,0 +1,30 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "learned-sparse-sql",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 1000000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 346.7303,
+  "index_build_s": 120.2798,
+  "write_overhead_ms": null
+ },
+ "latency_ms": {
+  "p50": 2443.1307,
+  "p95": 3958.8619,
+  "p99": 5455.3841
+ },
+ "per_category": {},
+ "extrapolated": true,
+ "notes": "Log-log extrapolation from the measured 30k, 100k and 200k points; not measured.",
+ "source": "bench/scale/results/x_sparse_*.json"
+}

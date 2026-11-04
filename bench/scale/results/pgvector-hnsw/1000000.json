@@ -1,0 +1,30 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "pgvector-hnsw",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 1000000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 1952.5003,
+  "index_build_s": 22.2251,
+  "write_overhead_ms": null
+ },
+ "latency_ms": {
+  "p50": 2.3827,
+  "p95": 32.6191,
+  "p99": 44.945
+ },
+ "per_category": {},
+ "extrapolated": true,
+ "notes": "Log-log extrapolation from the measured 10k and 100k float vector(384) points; 1M was measured as halfvec (pgvector-hnsw-halfvec/1000000.json).",
+ "source": "bench/scale/results/s10k.json, s100k.json"
+}

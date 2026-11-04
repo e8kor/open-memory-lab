@@ -1,0 +1,51 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "vector-exact-scan",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 10000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 0.0,
+  "index_build_s": 0.0,
+  "write_overhead_ms": null,
+  "recall_at_10_at_10pct": null,
+  "readable_share_of_latency_ms": "10pct"
+ },
+ "latency_ms": {
+  "p50": 1.7323,
+  "p95": 3.4938,
+  "p99": 4.7615
+ },
+ "per_category": {
+  "100pct": {
+   "p50": 3.4502,
+   "p95": 7.2766,
+   "recall_at_10": null,
+   "short_results": null
+  },
+  "10pct": {
+   "p50": 1.7323,
+   "p95": 3.4938,
+   "recall_at_10": null,
+   "short_results": null
+  },
+  "1pct": {
+   "p50": 1.3905,
+   "p95": 3.4317,
+   "recall_at_10": null,
+   "short_results": null
+  }
+ },
+ "extrapolated": false,
+ "notes": "Synthetic templated text from the recall eval's 200 seeds (and synthetic clustered vectors), one client on a shared 8-vCPU host, queried as the serving role under row security. halfvec(384); latency_ms is the 10% readable-share scope, per_category holds each share.",
+ "source": "bench/scale/results/x_exact_10k.json"
+}

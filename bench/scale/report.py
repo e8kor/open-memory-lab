@@ -17,7 +17,7 @@ RES = HERE / "results"
 BUDGET = 50.0
 
 RUNS = [("10k", "s10k.json"), ("100k", "s100k.json"), ("1M", "s1m_text.json")]
-VEC_RUNS = [("10k", "s10k.json"), ("100k", "s100k.json"), ("1M", "s1m_vector.json")]
+VEC_RUNS = [("10k", "s10k.json"), ("100k", "s100k.json"), ("1M", "s1m_vector.json")]  # 1M: halfvec
 MT = "mt10x100k.json"
 EXTRA = {"10k": ["s10k_stored.json"], "100k": ["s100k_stored.json", "s100k_halfvec.json"], "1M": []}
 NS = {"10k": 1e4, "100k": 1e5, "1M": 1e6}
@@ -34,21 +34,41 @@ LABEL = {
     "a_stored_and": "a') AND over a stored simple tsvector",
     "b_stored_or": "b') OR over a stored simple tsvector",
     "d_bm25_stored": "d') BM25 maintained, stored tsvector",
-    "f_hnsw": "f) pgvector HNSW 384-d",
+    "f_hnsw": "f) pgvector HNSW 384-d (1M: halfvec)",
     "a_simple_and@flat": "a) on one unpartitioned table",
     "b_simple_or_rank@flat": "b) on one unpartitioned table",
 }
 ORDER = list(LABEL)
 
 
+CONTINUES = {"s1m_text.json": "s1m_text2.json"}  # a run resumed after a stop
+
+
 def load(name):
     p = RES / name
-    return json.loads(p.read_text()) if p.exists() else None
+    if not p.exists():
+        return None
+    d = json.loads(p.read_text())
+    cont = CONTINUES.get(name)
+    if cont and (RES / cont).exists():
+        d2 = json.loads((RES / cont).read_text())
+        for k in ("latency", "latency_no_rls", "explain"):
+            d[k] = {**d2.get(k, {}), **d.get(k, {})}
+        d["stages"] = {**d.get("stages", {}), **d2.get("stages", {})}
+        d["write"] = {**d2.get("write", {}), **d.get("write", {})}
+        for k in ("bm25_rls_check", "db_bytes"):
+            if k in d2:
+                d[k] = d2[k]
+        d.setdefault("adr0050", d2.get("adr0050"))
+        d["resumed_from"] = cont
+    return d
 
 
 def f(x, nd=1):
     if x is None:
         return "–"
+    if x in (5000.0, 10000.0):  # a statement timeout, counted as the timeout
+        return f"≥{x:,.0f}†"
     if x >= 1000:
         return f"{x:,.0f}"
     if x >= 100:
@@ -334,13 +354,9 @@ def main():
         if r and "bm25_rls_check" in r:
             v = r["bm25_rls_check"]
             md.append(f"| {s} | {v['terms']} | {v['maintained_equals_querytime']} | {v['tenant_wide_differs']} |")
-    md.append("\n| scale | queries | HNSW recall@10 vs exact (same filter) | queries returning < k rows |")
-    md.append("|---|---:|---:|---:|")
-    for s in ("10k", "100k", "1M"):
-        r = vruns.get(s)
-        if r and "vector_recall" in r:
-            v = r["vector_recall"]
-            md.append(f"| {s} | {v['queries']} | {f(v['recall_at_k_mean'], 3)} | {v['short_results']} |")
+    md.append("\nThe main runs' HNSW recall check is not reported: its exact side reused the HNSW plan "
+              "(PostgreSQL 18 kept the disabled index scan), so it compared the index with itself. "
+              "Added case 1 below measures recall against a forced exact scan.")
 
     # 8. data shape
     md.append("\n## Data shape\n")
@@ -351,6 +367,7 @@ def main():
         if r:
             md.append(f"| {lab} | {r['scale']:,} | {r['tenants']} | {r.get('workareas')} | {r.get('served_rows'):,} | {mb(r.get('db_bytes'))} |")
 
+    md += extra_tables()
     (RES / "tables.md").write_text("\n".join(md) + "\n")
 
     # EXPLAIN excerpts
@@ -368,6 +385,75 @@ def main():
                     ex.append(f"\n### {appr} — {cat} query\n\n```\n{trim_plan(plans[cat])}\n```")
     (RES / "explain.md").write_text("\n".join(ex) + "\n")
     print((RES / "tables.md").read_text())
+
+
+def fit_at(points, n):
+    """log-log fit through measured (N, y) points, evaluated at n."""
+    pts = [(math.log(a), math.log(b)) for a, b in points if b and b > 0]
+    if len(pts) < 2:
+        return None
+    mx = sum(p[0] for p in pts) / len(pts)
+    my = sum(p[1] for p in pts) / len(pts)
+    b = sum((p[0] - mx) * (p[1] - my) for p in pts) / sum((p[0] - mx) ** 2 for p in pts)
+    return math.exp(my + b * (math.log(n) - mx))
+
+
+SPARSE = [("30k", 3e4, "x_sparse_30k.json"), ("100k", 1e5, "x_sparse_100k.json"), ("200k", 2e5, "x_sparse_200k.json")]
+
+
+def extra_tables():
+    md = []
+    ex = [(lab, load(n)) for lab, n in (("10k", "x_exact_10k.json"), ("100k", "x_exact_100k.json"))]
+    hv = [(lab, load(n)) for lab, n in (("100k", "s100k_halfvec.json"), ("1M", "s1m_vector.json"))]
+    if any(r for _, r in ex):
+        md.append("\n## Added case 1: exact halfvec scan vs HNSW under selective scopes (warm, ms; recall@10 vs exact)\n")
+        md.append("The same statement (`ORDER BY embedding <=> q LIMIT 10` with the scope filter) as the serving role "
+                  "under row security, on halfvec(384); exact = `ORDER BY (embedding <=> q) + 0`, which no index can serve: a scan of the tenant's partition; "
+                  "HNSW ef_search 40. The readable share is of the tenant's served rows.\n")
+        md.append("| scale | readable share | exact p50 / p95 | HNSW, no iterative scan: p50 / p95 / recall@10 / short | "
+                  "HNSW, relaxed_order: p50 / p95 / recall@10 / short |")
+        md.append("|---|---:|---:|---:|---:|")
+        for lab, r in ex:
+            if not r:
+                continue
+            for share, v in r["results"].items():
+                e, h0, h1 = v["exact_scan"], v["hnsw_no_iterative"], v["hnsw_relaxed_order"]
+                md.append(f"| {lab} | {share.replace('pct', '%')} | {f(e['p50_ms'])} / {f(e['p95_ms'])} | "
+                          f"{f(h0['p50_ms'])} / {f(h0['p95_ms'])} / {f(h0['recall_at_10'], 3)} / {h0['short_results']} | "
+                          f"{f(h1['p50_ms'])} / {f(h1['p95_ms'])} / {f(h1['recall_at_10'], 3)} / {h1['short_results']} |")
+        md.append("\nHNSW on halfvec(384) in the main workload (leaf / project / universe scopes):\n")
+        md.append("| scale | warm p50 | warm p95 | cold p95 | first query (cold) | HNSW MiB | build s |")
+        md.append("|---|---:|---:|---:|---:|---:|---:|")
+        for lab, r in hv:
+            if r and "f_hnsw" in r["latency"]:
+                v, st = r["latency"]["f_hnsw"], r["stages"]["vector"]
+                md.append(f"| {lab} | {f(v['warm']['p50_ms'])} | {f(v['warm']['p95_ms'])} | {f(v['cold']['p95_ms'])} | "
+                          f"{f(v['cold']['first_ms'])} | {mb(st['hnsw_bytes'])} | {f(st['hnsw_build_s'], 1)} |")
+    sp = [(lab, n, load(f)) for lab, n, f in SPARSE]
+    if any(r for *_, r in sp):
+        md.append("\n## Added case 2: learned-sparse inverted table, SUM(weight) GROUP BY memory (ms)\n")
+        md.append("60 non-zero Zipf-distributed tokens per memory over a 30,522-token vocabulary, 10 query tokens, "
+                  "btree on token_id, the serving role under row security (token_id = ANY(int[]) is a leakproof "
+                  "operator, so the index is usable under the policy). Pruned = the same queries without the 100 "
+                  "most frequent token ids. The 1M row is a log-log extrapolation from the measured scales (60M "
+                  "postings did not fit on the shared build filesystem).\n")
+        md.append("| scale | postings | heap MiB | token btree MiB | warm p50 | warm p95 | pruned p50 | pruned p95 | "
+                  "cold p95 | postings touched p50 | write 60 postings p50 |")
+        md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        meas = [(lab, n, r) for lab, n, r in sp if r]
+        for lab, n, r in meas:
+            md.append(f"| {lab} | {r['postings']:,} | {mb(r['heap_bytes'])} | {mb(r['index_bytes'])} | "
+                      f"{f(r['warm']['p50_ms'])} | {f(r['warm']['p95_ms'])} | {f(r['warm_pruned_top100']['p50_ms'])} | "
+                      f"{f(r['warm_pruned_top100']['p95_ms'])} | {f(r['cold']['p95_ms'])} | "
+                      f"{r['postings_touched_p50']:,} | {f(r['write_60_postings']['p50_ms'], 2)} |")
+        if len(meas) >= 2:
+            def ex1m(get):
+                return fit_at([(n, get(r)) for _, n, r in meas], 1e6)
+            md.append(f"| 1M (extrapolated) | ~{60_000_000:,} | {mb(ex1m(lambda r: r['heap_bytes']))} | "
+                      f"{mb(ex1m(lambda r: r['index_bytes']))} | {f(ex1m(lambda r: r['warm']['p50_ms']))} | "
+                      f"{f(ex1m(lambda r: r['warm']['p95_ms']))} | {f(ex1m(lambda r: r['warm_pruned_top100']['p50_ms']))} | "
+                      f"{f(ex1m(lambda r: r['warm_pruned_top100']['p95_ms']))} | {f(ex1m(lambda r: r['cold']['p95_ms']))} | – | – |")
+    return md
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +517,12 @@ def index_cost(run: dict, appr: str):
 
 
 def export_common():
-    files = [(n, load(n)) for n in sorted(p.name for p in RES.glob("*.json"))]
+    # supplements first, so a main run's measurement of the same approach
+    # and scale is the one a reader sees
+    def rank(n):
+        return 0 if ("_stored" in n or "_halfvec" in n) else 1 if "vector" in n else 2
+    files = [(n, load(n)) for n in sorted((p.name for p in RES.glob("*.json")), key=lambda n: (rank(n), n))
+             if n not in CONTINUES.values()]
     written = 0
     for name, run in files:
         if not run or "latency" not in run:
@@ -488,7 +579,87 @@ def export_common():
             out.parent.mkdir(exist_ok=True)
             out.write_text(json.dumps(doc, indent=1) + "\n")
             written += 1
+    written += export_extra()
     return written
+
+
+def _doc(method, n, date, lat, metrics, per_cat, extrapolated, notes, source, cache="warm"):
+    return {"schema": "oml-bench/1", "suite": "scale", "suite_version": SUITE_VERSION, "kind": "scale",
+            "method": method, "date": date, "commit": COMMIT,
+            "environment": {"host": "8 vCPU / 15 GB", "postgres": "PostgreSQL 18.6", "cache": cache},
+            "n_docs": int(n), "tenants": 1, "metrics": metrics,
+            "latency_ms": {"p50": r4(lat.get("p50_ms")), "p95": r4(lat.get("p95_ms")), "p99": r4(lat.get("p99_ms"))},
+            "per_category": per_cat, "extrapolated": extrapolated, "notes": notes, "source": source}
+
+
+def _write(doc, rows):
+    out = RES / doc["method"] / f"{rows}.json"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(json.dumps(doc, indent=1) + "\n")
+
+
+def export_extra():
+    n = 0
+    for name in ("x_exact_10k.json", "x_exact_100k.json"):
+        r = load(name)
+        if not r:
+            continue
+        st = r.get("vector", {})
+        for key, method in (("exact_scan", "vector-exact-scan"), ("hnsw_no_iterative", "pgvector-hnsw-no-iterative"),
+                            ("hnsw_relaxed_order", "pgvector-hnsw-relaxed-order")):
+            per = {share: {"p50": r4(v[key]["p50_ms"]), "p95": r4(v[key]["p95_ms"]),
+                           "recall_at_10": r4(v[key].get("recall_at_10")), "short_results": v[key].get("short_results")}
+                   for share, v in r["results"].items()}
+            ten = r["results"]["10pct"][key]
+            metrics = {"index_mb": r4(int(st["hnsw_bytes"]) / 2**20) if key != "exact_scan" else 0.0,
+                       "index_build_s": r4(st["hnsw_build_s"]) if key != "exact_scan" else 0.0,
+                       "write_overhead_ms": None, "recall_at_10_at_10pct": r4(ten.get("recall_at_10")),
+                       "readable_share_of_latency_ms": "10pct"}
+            _write(_doc(method, r["scale"], r["started"][:10], ten, metrics, per, False,
+                        NOTE + " halfvec(384); latency_ms is the 10% readable-share scope, per_category holds each share.",
+                        f"bench/scale/results/{name}"), r["scale"])
+            n += 1
+    meas = []
+    for _, sc, name in SPARSE:
+        r = load(name)
+        if not r:
+            continue
+        meas.append((sc, r))
+        for key, method in (("warm", "learned-sparse-sql"), ("warm_pruned_top100", "learned-sparse-sql-pruned")):
+            metrics = {"index_mb": r4(r["index_bytes"] / 2**20), "index_build_s": r4(r["index_build_s"]),
+                       "write_overhead_ms": r4(r["write_60_postings"]["p50_ms"]), "postings": r["postings"],
+                       "heap_mb": r4(r["heap_bytes"] / 2**20), "postings_touched_p50": r["postings_touched_p50"],
+                       "cold_p95_ms": r4(r["cold"]["p95_ms"]) if key == "warm" else None}
+            per = {k: {"p50": r4(v["p50_ms"]), "p95": r4(v["p95_ms"])} for k, v in r[key]["by_scope"].items()}
+            _write(_doc(method, sc, r["started"][:10], r[key], metrics, per, False,
+                        NOTE + " Random Zipf token weights: cost, not quality.", f"bench/scale/results/{name}"), int(sc))
+            n += 1
+    if len(meas) >= 2:
+        for key, method in (("warm", "learned-sparse-sql"), ("warm_pruned_top100", "learned-sparse-sql-pruned")):
+            lat = {k: fit_at([(sc, r[key][k]) for sc, r in meas], 1e6) for k in ("p50_ms", "p95_ms", "p99_ms")}
+            metrics = {"index_mb": r4(fit_at([(sc, r["index_bytes"] / 2**20) for sc, r in meas], 1e6)),
+                       "index_build_s": r4(fit_at([(sc, r["index_build_s"]) for sc, r in meas], 1e6)),
+                       "write_overhead_ms": None}
+            _write(_doc(method, 1e6, meas[-1][1]["started"][:10], lat, metrics, {}, True,
+                        "Log-log extrapolation from the measured 30k, 100k and 200k points; not measured.",
+                        "bench/scale/results/x_sparse_*.json"), 1000000)
+            n += 1
+    # float vector(384) HNSW at 1M did not fit beside the other builds on the
+    # shared filesystem; extrapolated from 10k and 100k, marked as such
+    pts = [(sc, load(nm)) for sc, nm in ((1e4, "s10k.json"), (1e5, "s100k.json"))]
+    pts = [(sc, r) for sc, r in pts if r and "f_hnsw" in r["latency"]]
+    if len(pts) == 2:
+        lat = {k: fit_at([(sc, r["latency"]["f_hnsw"]["warm"][k]) for sc, r in pts], 1e6)
+               for k in ("p50_ms", "p95_ms", "p99_ms")}
+        metrics = {"index_mb": r4(fit_at([(sc, int(r["stages"]["vector"]["hnsw_bytes"]) / 2**20) for sc, r in pts], 1e6)),
+                   "index_build_s": r4(fit_at([(sc, r["stages"]["vector"]["hnsw_build_s"]) for sc, r in pts], 1e6)),
+                   "write_overhead_ms": None}
+        _write(_doc("pgvector-hnsw", 1e6, pts[-1][1]["started"][:10], lat, metrics, {}, True,
+                    "Log-log extrapolation from the measured 10k and 100k float vector(384) points; 1M was measured "
+                    "as halfvec (pgvector-hnsw-halfvec/1000000.json).", "bench/scale/results/s10k.json, s100k.json"),
+               1000000)
+        n += 1
+    return n
 
 
 if __name__ == "__main__":

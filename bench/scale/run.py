@@ -619,7 +619,9 @@ def vector_recall(db: str, tenant, workload: list[dict], n: int = 60) -> dict:
                 a = [r[0] for r in c.execute(sqltext, params).fetchall()]
                 c.execute("SET LOCAL enable_indexscan = off")
                 c.execute("SET LOCAL enable_bitmapscan = off")
-                b = [r[0] for r in c.execute(sqltext, params).fetchall()]
+                # its own statement text, so the prepared plan is not the HNSW one
+                exact = sqltext.replace("ORDER BY v.embedding <=> %(vec)s", "ORDER BY (v.embedding <=> %(vec)s) + 0")
+                b = [r[0] for r in c.execute(exact + " -- exact", params).fetchall()]
             if len(a) < min(K, len(b)):
                 short += 1
             if b:
@@ -916,6 +918,8 @@ def bm25_rls_check(db: str, tenant, tree, work: list[dict]) -> dict:
     a tenant-wide count (every workarea, the form that would leak)."""
     agree = differs_tenant_wide = terms = 0
     with serving(db) as c:
+        c.execute("SET statement_timeout = 0")  # a correctness check, not a latency
+        c.commit()
         for w in work:
             with c.transaction():
                 c.execute("SELECT set_config('oml.tenant_id', %s, true)", (str(tenant),))

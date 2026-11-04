@@ -1,0 +1,75 @@
+{
+ "case": "sparse",
+ "scale": 30000,
+ "tenants": 1,
+ "k": 10,
+ "vocab": 30522,
+ "nnz_per_doc": 60,
+ "query_tokens": 10,
+ "started": "2026-11-04T23:02:50",
+ "load_s": 3.238610304077156,
+ "postings": 1633056,
+ "heap_bytes": 138412032,
+ "index_build_s": 0.37737029406707734,
+ "index_bytes": 12140544,
+ "cold": {
+  "n": 330,
+  "p50_ms": 64.11500298418105,
+  "p95_ms": 100.70183908101171,
+  "p99_ms": 119.39706292469054,
+  "mean_ms": 68.92072327935955
+ },
+ "warm": {
+  "n": 330,
+  "p50_ms": 59.920722036622465,
+  "p95_ms": 96.63375897798687,
+  "p99_ms": 107.97254100907594,
+  "mean_ms": 61.372910324611105,
+  "by_scope": {
+   "leaf": {
+    "p50_ms": 54.609191021882,
+    "p95_ms": 77.27733603678644
+   },
+   "universe": {
+    "p50_ms": 74.29156394209713,
+    "p95_ms": 107.97254100907594
+   },
+   "project": {
+    "p50_ms": 59.58197102881968,
+    "p95_ms": 89.7562870522961
+   }
+  }
+ },
+ "warm_pruned_top100": {
+  "n": 330,
+  "p50_ms": 1.9426899962127209,
+  "p95_ms": 4.872711026109755,
+  "p99_ms": 7.1205319836735725,
+  "mean_ms": 2.2344524728726936,
+  "by_scope": {
+   "leaf": {
+    "p50_ms": 1.8955699633806944,
+    "p95_ms": 3.9561910089105368
+   },
+   "universe": {
+    "p50_ms": 2.4283200036734343,
+    "p95_ms": 7.1205319836735725
+   },
+   "project": {
+    "p50_ms": 1.7363500082865357,
+    "p95_ms": 4.2056499514728785
+   }
+  }
+ },
+ "explain_universe": "Limit (actual time=93.059..93.063 rows=10.00 loops=1)\n  Buffers: shared hit=48807\n  ->  Sort (actual time=93.058..93.060 rows=10.00 loops=1)\n        Sort Key: (sum((p.weight * q.w))) DESC, p.memory_id\n        Sort Method: top-N heapsort  Memory: 25kB\n        Buffers: shared hit=48807\n        ->  HashAggregate (actual time=89.782..91.710 rows=19438.00 loops=1)\n              Group Key: p.memory_id\n              Batches: 1  Memory Usage: 1585kB\n              Buffers: shared hit=48801\n              ->  Result (actual time=0.101..74.692 rows=47272.00 loops=1)\n                    One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '8c2851e3-6b54-4305-ab82-cfd93247f463'::uuid)\n                    Buffers: shared hit=48801\n                    ->  Nested Loop (actual time=0.093..69.820 rows=47272.00 loops=1)\n                          Buffers: shared hit=48801\n                          ->  Function Scan on q (actual time=0.044..0.053 rows=10.00 loops=1)\n                          ->  Index Scan using sparse_postings_t_8c2851e36b544305ab82cfd93247f463_token on sparse_postings_t_8c2851e36b544305ab82cfd93247f463 p (actual time=0.018..6.488 rows=4727.20 loops=10)\n                                Index Cond: ((token_id = q.token_id) AND (token_id = ANY ('{0,3,37,51,83,117,126,141,749,1014}'::integer[])))\n                                Filter: (served AND (tenant_id = '8c2851e3-6b54-4305-ab82-cfd93247f463'::uuid) AND (workarea_id = ANY ('{55830898-db73-4260-9a94-d808861c4756,7d6ee7bc-6385-4ebe-a3f0-dad1aa484b79,6ffc8c79-7531-40aa-8bbc-c7c8c758f284,41da02e7-a2d8-4f78-9857-b01166f0de80,5af4c15c-d86b-423b-885f-5171fcda1473,da360799-5ca1-4726-89c1-e47419d6ee8b,f5bdd731-18db-42ca-90c8-b7ee91543461,562ff14e-a9ea-40a3-b58b-7e94dc4d2459,9614a63d-0296-4527-ae82-dca5068a8932,274e2057-7848-4fa5-842b-34d9de02585f,6b7e856b-e2d5-4617-b3ff-05557fa2dc7d,aa6033d5-4582-44b2-afab-2aaf9945b3e7,e974d493-35db-4224-b480-49f770865772,be96a641-9999-4ae6-aced-489360626b76,509a3d62-4a9a-4e86-a418-f316c0ab5c86,2665c8fb-d8bb-47b7-a341-91d3d47580bf,7fa1781a-4dcb-43c0-8fef-d466fa7c35c0}'::uuid[])))\n                                Rows Removed by Filter: 2573\n                                Index Searches: 10\n                                Buffers: shared hit=48801\nPlanning:\n  Buffers: shared hit=348\nPlanning Time: 1.720 ms\nExecution Time: 93.541 ms",
+ "postings_touched_p50": 110170,
+ "postings_touched_p95": 165272,
+ "write_60_postings": {
+  "n": 300,
+  "p50_ms": 1.8040400464087725,
+  "p95_ms": 7.797050988301635,
+  "p99_ms": 24.105446063913405,
+  "mean_ms": 2.710123012851303
+ },
+ "finished": "2026-11-04T23:03:45"
+}
