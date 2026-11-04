@@ -9,9 +9,9 @@ use oml_domain::oauth::{
 };
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
-    ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
-    Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError, WorkareaStatus,
-    FrozenOp, LadderRefusal,
+    ChainError, EventTime, FrozenOp, HeldBy, JcsError, LadderRefusal, LineageClosure, MemoryKind,
+    MemoryStatus, Role, Sha256Hash, SignedEnvelope, TransitionError, VerdictError, VerifyError,
+    WorkareaStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -46,9 +46,9 @@ use oml_domain::oauth::{
 };
 use oml_domain::{
     ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, HeldBy, KeySet,
-    MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus, canonical_bytes, check_reviewer,
-    derive_claim_key, event_types, next_envelope, nfc, sha256_digest_string, transition,
-    propose_check,
+    LadderRefusal, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
+    canonical_bytes, check_reviewer, derive_claim_key, event_types, next_envelope, nfc,
+    propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -77,6 +77,15 @@ use crate::types::{
 };
 
 const EVENTS_PAGE: usize = 512;
+
+/// The review policy in force: the one PoC constant `{k: 1,
+/// required_roles: ["dreamer"]}`. A verdict's ratification and a status
+/// transition's `policy_snapshot` both read it here, so the two cannot
+/// disagree (admission.md review and ratification; workareas.md, the policy
+/// snapshot is the policy in force plus the precondition; ADR-0009 d3).
+fn review_policy() -> Value {
+    json!({ "k": 1, "required_roles": ["dreamer"] })
+}
 
 /// The fixed reason a failed issuance's `key.revoked` digests
 /// (roles-and-keys.md issuance order; ADR-0025 d2).
@@ -2945,6 +2954,133 @@ where
         Ok(proposal)
     }
 
+    /// Ratifies the pending proposal `transition_id` on the node, by id or
+    /// name, as a second identity: the node's status becomes the proposal's
+    /// `to`, journalled as one `workarea.status_transition` signed by the
+    /// ratifier's principal and key, with the policy snapshot (ADR-0009 d3,
+    /// d4). The refusal order: (1) the key role, before any lookup, an admin
+    /// key passing on its role and any other key needing dreamer among its
+    /// admissible grant roles, `access.verb_ceiling`; (2) a `held_by:
+    /// service` key, also `access.verb_ceiling` before any lookup
+    /// (roles-and-keys.md; ADR-0010); (3) the node resolves; (4) a dreamer
+    /// key needs dreamer effective access on it; (5) the transition: one
+    /// this tenant does not hold, or one on another workarea, is
+    /// `access.not_found`; (6) R2, a ratifier holding the proposer's key or
+    /// principal, `review.ratifier_is_proposer`; (7) the ladder against the
+    /// node and its children as read now, a proposal already ratified or
+    /// whose `from` is no longer the node's status being
+    /// `workarea.transition_refused` with reason `stale`. Every read happens
+    /// after the chain head is read and before a commit that compare-and-sets
+    /// it, so a child created between the check and the commit fails the
+    /// commit with `PrevHashConflict`, retryable, and is never journalled
+    /// over a stale check; the store re-checks under the chain lock besides
+    /// (workareas.md, ratification re-checks).
+    pub async fn ratify_transition(
+        &self,
+        api_key: &str,
+        workarea: Reference,
+        transition_id: Uuid,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "ratify_transition";
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        refuse_service(key, VERB)?;
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        if key.role != Role::Admin {
+            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let proposal = self
+            .journal
+            .transition(key.tenant_id, transition_id)
+            .await?
+            .filter(|t| t.workarea_id == workarea_id)
+            .ok_or(AppError::NotFound)?;
+        if ratifier_is_proposer(
+            proposal.proposer_key_id,
+            &proposal.proposer_principal,
+            key.key_id,
+            &key.principal,
+        ) {
+            return Err(AppError::RatifierIsProposer);
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        let refused = |reason| AppError::TransitionRefused {
+            workarea_id,
+            from: proposal.from,
+            to: proposal.to,
+            reason,
+        };
+        if proposal.state == TransitionState::Ratified {
+            return Err(refused(LadderRefusal::Stale));
+        }
+        // ADR-0030 d12 (proposed) joins its held_remaining test, no
+        // unreviewed memory left in the subtree, to transition_preconditions
+        // on the commit step, which ratify_check runs. "No simulation is
+        // fenced on the subtree" would sit there too and holds vacuously
+        // while simulations are unbuilt (workareas.md, readings the build
+        // takes).
+        ratify_check(
+            proposal.from,
+            node.parent_id.is_none(),
+            node.status,
+            proposal.to,
+            &children,
+        )
+        .map_err(refused)?;
+        let mut policy_snapshot = review_policy();
+        if proposal.to == WorkareaStatus::Validated {
+            // A false one was refused above and is never journalled.
+            policy_snapshot["children_all_validated"] = Value::Bool(true);
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_TRANSITION,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+                "ratified_by_key_id": key.key_id.to_string(),
+                "policy_snapshot": policy_snapshot,
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to: proposal.to,
+                ratifier_key_id: key.key_id,
+            },
+            None,
+        )
+        .await?;
+        Ok(WorkareaRecord {
+            status: proposal.to,
+            ..node
+        })
+    }
+
     /// The lead's start on the names schema, before it serves: each chain of
     /// `tenants` that holds rows with no name gets one `system.names_assigned`
     /// naming them under rules 1–4 of http-api.md "Rows created before
@@ -3620,7 +3756,7 @@ where
                 // the approving verdict is the ratifying act, so
                 // ratification_event_id names it. Nothing is self-signed in
                 // the PoC (ADR-0025 d17).
-                let policy = json!({ "k": 1, "required_roles": ["dreamer"] });
+                let policy = review_policy();
                 let (event_type, payload, fold) = match replaced {
                     None => (
                         event_types::LIFECYCLE_PROMOTE,
