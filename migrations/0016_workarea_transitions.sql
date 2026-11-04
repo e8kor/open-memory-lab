@@ -14,6 +14,13 @@
 -- ratifying transaction re-checks from_status against workareas.status under
 -- the chain lock, so a stale row is refused and stays 'pending'.
 --
+-- The universe root is permanently 'committed' (ADR-0009 d1). Now that the
+-- lead writes the status the record carries rather than one derived from
+-- parent_id, the schema holds that rung itself: workareas_universe_committed
+-- refuses a root stored on any other rung, so no create and no later
+-- ratification can move it. Every root written before this file was stored
+-- 'committed', so the constraint validates against the rows already held.
+--
 -- The references name the tenant with the id, because PostgreSQL runs a
 -- foreign-key check without row-level security (0004_grants.sql): a
 -- reference on id alone would accept another tenant's node or key. The
@@ -25,6 +32,9 @@
 -- oml.serving_role, as 0007 grants every table's (postgres-schema.md
 -- "Privileges"); a run without the setting fails at current_setting with
 -- 42704 and grants nothing.
+
+ALTER TABLE workareas ADD CONSTRAINT workareas_universe_committed
+    CHECK (parent_id IS NOT NULL OR status = 'committed');
 
 CREATE TABLE workarea_transitions (
     id                 uuid   PRIMARY KEY,           -- the events' transition_id
