@@ -34,6 +34,18 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — A verdict without `serve_id` applies to the reviewer key's one claimed item (ADR-0039 d10, implementation)
+
+`POST /v2/review/verdicts` takes `serve_id` as optional. Omitted, the verdict applies to the one
+item the key has claimed through `POST /v2/review/next`, so a reviewer holding one item need not
+copy what `review next` printed; while the key holds none or several it is `request.validation`
+with `details.field` `/serve_id`, and nothing is journalled. The default rests on the claimed
+queue row, as the explicit `serve_id` does, and the serve binding stays FR-66. A request that
+sends `serve_id` is unchanged.
+
+- **Pages touched:** [http-api.md](api/http-api.md#review), [openapi.yaml](api/openapi.yaml)
+  and the SDKs' generated layers.
+
 ### 2026-11-04 — The eight v0.3.0 tool names answer as hidden aliases with their v0.3.0 shapes until v0.5.0 (ADR-0039 d12, implementation)
 
 `oml_remember`, `oml_learn`, `oml_recall`, `oml_get`, `oml_supersede`, `oml_my_work`,

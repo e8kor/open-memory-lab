@@ -485,6 +485,16 @@ pub trait JournalStore: Send + Sync {
         workareas: &[Uuid],
     ) -> impl Future<Output = Result<Option<MemoryRecord>, StoreError>> + Send;
 
+    /// The memory ids of the queue entries this reviewer key has claimed,
+    /// oldest first and at most two, enough to tell one open item from
+    /// several: the default of a verdict sent without `serve_id`
+    /// (ADR-0039 d10).
+    fn review_claimed(
+        &self,
+        tenant_id: Uuid,
+        reviewer_key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
     /// One equality lookup on the key-value hash (roles-and-keys.md); a
     /// revoked key resolves to nothing.
     fn key_by_hash(

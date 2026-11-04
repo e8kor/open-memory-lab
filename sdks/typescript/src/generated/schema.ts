@@ -283,7 +283,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected.
+         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10).
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -772,7 +772,8 @@ export interface components {
             served_digests: components["schemas"]["ServedDigests"];
         };
         VerdictRequest: {
-            serve_id: string;
+            /** @description The serve review next answered. Omitted, the one item this key has claimed; refused naming serve_id when it holds none or several (ADR-0039 d10). */
+            serve_id?: string;
             /** @enum {string} */
             verdict: "approve" | "reject";
             /** @description Required to reject. */

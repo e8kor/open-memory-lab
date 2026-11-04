@@ -1355,6 +1355,24 @@ impl JournalStore for MemStore {
         Ok(None)
     }
 
+    async fn review_claimed(
+        &self,
+        tenant_id: Uuid,
+        reviewer_key_id: Uuid,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .queue
+            .iter()
+            .filter(|e| e.claimed_by == Some(reviewer_key_id))
+            .map(|e| e.memory_id)
+            .take(2)
+            .collect())
+    }
+
     async fn key_by_hash(&self, key_hash: &str) -> Result<Option<KeyRecord>, StoreError> {
         let tenants: Vec<_> = self
             .tenants

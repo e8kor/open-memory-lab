@@ -1462,3 +1462,218 @@ async fn a_memory_response_carries_text_and_no_body() {
         "{bare}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A verdict without serve_id applies to the reviewer's one open item
+// (ADR-0039 d10). These run over the in-memory doubles, as above.
+// ---------------------------------------------------------------------------
+
+/// A dreamer key on the crew workarea with dreamer and reader grants, so
+/// it may propose an edit as well as review (ADR-0025 d10).
+async fn reviewer(router: &Router, crew: &Crew, name: &str, principal: &str) -> String {
+    let grants: Vec<Value> = ["dreamer", "reader"]
+        .into_iter()
+        .map(|role| json!({"workarea": crew.workarea, "role": role}))
+        .collect();
+    let (status, key) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Some(&crew.admin),
+        Some(name),
+        Some(&json!({"role": "dreamer", "name": name, "principal": principal, "grants": grants})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    key["value"].as_str().expect("show-once value").to_owned()
+}
+
+/// One `POST /v2/review/next` under `token`: the served item's artifact id.
+async fn claim_next(router: &Router, token: &str, idem: &str) -> String {
+    let (status, served) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Some(token),
+        Some(idem),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    id(&served["item"])
+}
+
+/// One `POST /v2/review/verdicts` under `token`.
+async fn verdict(router: &Router, token: &str, idem: &str, body: &Value) -> (StatusCode, Value) {
+    send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(token),
+        Some(idem),
+        Some(body),
+    )
+    .await
+}
+
+/// The refusal of a verdict that names no serve where the reviewer holds
+/// none or several: `request.validation` naming `/serve_id`.
+fn assert_serve_id_named(status: StatusCode, body: &Value) {
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "request.validation", "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/serve_id", "{body}");
+}
+
+/// The state the author reads its row in.
+async fn state(router: &Router, author: &McpKey, artifact: &str) -> String {
+    let (status, row) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{artifact}"),
+        Some(&author.token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    row["state"].as_str().expect("state").to_owned()
+}
+
+#[tokio::test]
+async fn a_verdict_without_serve_id_applies_to_the_reviewers_one_open_item_and_is_refused_with_two()
+{
+    one_open_item_then_two(&doubles_router()).await;
+    // The store's claimed-row query, where this run can mint the role pair.
+    if let Some((router, db)) = fresh_router().await {
+        one_open_item_then_two(&router).await;
+        drop_db(&db).await;
+    }
+}
+
+/// A verdict without serve_id applies to the one item `router`'s reviewer
+/// claimed, and is refused naming serve_id once it claims two (ADR-0039 d10).
+async fn one_open_item_then_two(router: &Router) {
+    let crew = crew(router).await;
+    let rev = reviewer(router, &crew, "issue-rev", "crew/reviewer-5").await;
+
+    // A promoted tip, a held successor of it by the agent, and the
+    // reviewer's own edit proposal of it: the rival makes the agent's
+    // successor one the reviewer is not served (ADR-0025 d10).
+    let (status, tip) = submit(router, &crew.agent, "two-0", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{tip}");
+    let tip = id(&tip);
+    approve(router, &crew.dreamer, &[tip.as_str()], "two-tip").await;
+    let (status, successor) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{tip}/supersede"),
+        Some(&crew.agent.token),
+        Some("two-1"),
+        Some(&json!({ "body": QUOTE_REVISED })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
+    let successor = id(&successor);
+    let (status, proposal) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{tip}/supersede"),
+        Some(&rev),
+        Some("two-2"),
+        Some(&json!({ "body": "Accra Metals quote AM-7741 is 410 USD/t.", "reason": "the quote moved" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    let proposal = id(&proposal);
+    let (status, first) = submit(router, &crew.agent, "two-3", &json!({ "body": ALLOY })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    let first = id(&first);
+    let (status, second) = submit(router, &crew.agent, "two-4", &json!({ "body": FOREIGN })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{second}");
+    let second = id(&second);
+
+    // One open item: the verdict without serve_id applies to it.
+    assert_eq!(claim_next(router, &rev, "two-next-1").await, first);
+    let (status, applied) = verdict(router, &rev, "two-v-1", &json!({"verdict": "approve"})).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["artifact_id"], first.as_str(), "{applied}");
+    assert_eq!(applied["state"], "promoted", "{applied}");
+
+    // The reviewer claims the next item; once its proposal is rejected the
+    // agent's older successor is servable, so it holds two.
+    assert_eq!(claim_next(router, &rev, "two-next-2").await, second);
+    let (status, rejected) = verdict(
+        router,
+        &crew.dreamer,
+        "two-v-2",
+        &json!({
+            "serve_id": format!("srv_{}", proposal.replace('-', "")),
+            "verdict": "reject",
+            "reason": "the agent's successor carries the revision",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rejected}");
+    assert_eq!(claim_next(router, &rev, "two-next-3").await, successor);
+
+    // Two open items: refused naming serve_id, and neither moves.
+    let (status, refused) = verdict(router, &rev, "two-v-3", &json!({"verdict": "approve"})).await;
+    assert_serve_id_named(status, &refused);
+    assert_eq!(state(router, &crew.agent, &second).await, "held");
+    assert_eq!(state(router, &crew.agent, &successor).await, "held");
+}
+
+#[tokio::test]
+async fn a_verdict_without_serve_id_is_refused_naming_serve_id_when_the_reviewer_holds_none() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let (status, written) = submit(&router, &crew.agent, "none-0", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let written = id(&written);
+
+    // A held row waits, but the reviewer claimed nothing.
+    let (status, refused) = verdict(
+        &router,
+        &crew.dreamer,
+        "none-v-1",
+        &json!({"verdict": "approve"}),
+    )
+    .await;
+    assert_serve_id_named(status, &refused);
+    assert_eq!(state(&router, &crew.agent, &written).await, "held");
+
+    // The row is still served whole to the next claim.
+    assert_eq!(
+        claim_next(&router, &crew.dreamer, "none-next").await,
+        written
+    );
+}
+
+#[tokio::test]
+async fn a_verdict_never_applies_to_an_item_another_reviewer_claimed() {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let rev = reviewer(&router, &crew, "issue-rev", "crew/reviewer-5").await;
+    let (status, written) =
+        submit(&router, &crew.agent, "other-0", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let written = id(&written);
+    assert_eq!(claim_next(&router, &rev, "other-next").await, written);
+
+    // The claim is rev's: crew.dreamer holds none, so its default is none.
+    let (status, refused) = verdict(
+        &router,
+        &crew.dreamer,
+        "other-v-1",
+        &json!({"verdict": "approve"}),
+    )
+    .await;
+    assert_serve_id_named(status, &refused);
+    assert_eq!(state(&router, &crew.agent, &written).await, "held");
+
+    // The claimant's own default applies to it.
+    let (status, applied) =
+        verdict(&router, &rev, "other-v-2", &json!({"verdict": "approve"})).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["artifact_id"], written.as_str(), "{applied}");
+}

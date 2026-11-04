@@ -2369,15 +2369,57 @@ where
         reason: Option<&str>,
     ) -> Result<VerdictOutcome, AppError> {
         let caller = self.authenticate(api_key).await?;
+        require_admissible(&caller.key, Role::Dreamer, "verdict")?;
+        refuse_service(&caller.key, "verdict")?;
+        self.verdict_on(&caller, memory_id, verdict, reason).await
+    }
+
+    /// Record a verdict sent without `serve_id`: it applies to the one
+    /// queue entry this reviewer key has claimed, and with none or several
+    /// it is [`AppError::ServeIdUnresolved`], nothing journalled (ADR-0039
+    /// d10). Everything else is [`App::post_verdict`]'s.
+    pub async fn post_verdict_on_claimed(
+        &self,
+        api_key: &str,
+        verdict: Verdict,
+        reason: Option<&str>,
+    ) -> Result<VerdictOutcome, AppError> {
+        let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "verdict")?;
         refuse_service(key, "verdict")?;
+        // The default rests on the claimed queue row (review_queue's
+        // held_by_key), not on a serve record: the serve binding stays
+        // FR-66 (ADR-0039 Consequences, "The serve binding is not fixed
+        // here").
+        let claimed = self
+            .journal
+            .review_claimed(key.tenant_id, key.key_id)
+            .await?;
+        let [memory_id] = claimed[..] else {
+            return Err(AppError::ServeIdUnresolved {
+                several: !claimed.is_empty(),
+            });
+        };
+        self.verdict_on(&caller, memory_id, verdict, reason).await
+    }
+
+    /// [`App::post_verdict`] after the verb ceiling, for an authenticated
+    /// caller.
+    async fn verdict_on(
+        &self,
+        caller: &Caller,
+        memory_id: Uuid,
+        verdict: Verdict,
+        reason: Option<&str>,
+    ) -> Result<VerdictOutcome, AppError> {
+        let key = &caller.key;
         let memory = self
             .journal
             .memory(key.tenant_id, memory_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        self.require_access(&caller, memory.workarea_id, Role::Dreamer, "verdict")
+        self.require_access(caller, memory.workarea_id, Role::Dreamer, "verdict")
             .await?;
         let mut exclusion = memory.lineage_closure();
         if let Some(target) = memory.replaces
@@ -2422,7 +2464,7 @@ where
                     _ => {
                         return Err(AppError::TipConflict {
                             current_tip: self
-                                .readable_tip(&caller, memory.workarea_id, &memory.claim_key)
+                                .readable_tip(caller, memory.workarea_id, &memory.claim_key)
                                 .await?,
                         });
                     }
@@ -2530,7 +2572,7 @@ where
                     Err(AppError::Store(StoreError::TipMoved { .. })) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
-                                .readable_tip(&caller, memory.workarea_id, &memory.claim_key)
+                                .readable_tip(caller, memory.workarea_id, &memory.claim_key)
                                 .await?,
                         });
                     }

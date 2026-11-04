@@ -16,20 +16,21 @@ T = TypeVar("T", bound="VerdictRequest")
 class VerdictRequest:
     """
     Attributes:
-        serve_id (str):
         verdict (VerdictRequestVerdict):
+        serve_id (str | Unset): The serve review next answered. Omitted, the one item this key has claimed; refused
+            naming serve_id when it holds none or several (ADR-0039 d10).
         reason (str | Unset): Required to reject.
     """
 
-    serve_id: str
     verdict: VerdictRequestVerdict
+    serve_id: str | Unset = UNSET
     reason: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        serve_id = self.serve_id
-
         verdict = self.verdict.value
+
+        serve_id = self.serve_id
 
         reason = self.reason
 
@@ -37,10 +38,11 @@ class VerdictRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "serve_id": serve_id,
                 "verdict": verdict,
             }
         )
+        if serve_id is not UNSET:
+            field_dict["serve_id"] = serve_id
         if reason is not UNSET:
             field_dict["reason"] = reason
 
@@ -49,15 +51,15 @@ class VerdictRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        serve_id = d.pop("serve_id")
-
         verdict = VerdictRequestVerdict(d.pop("verdict"))
+
+        serve_id = d.pop("serve_id", UNSET)
 
         reason = d.pop("reason", UNSET)
 
         verdict_request = cls(
-            serve_id=serve_id,
             verdict=verdict,
+            serve_id=serve_id,
             reason=reason,
         )
 

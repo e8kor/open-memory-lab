@@ -784,16 +784,19 @@ where
         if verdict == Verdict::Reject && req.reason.as_deref().unwrap_or("").is_empty() {
             return Err(ApiError::validation("reason is required to reject"));
         }
-        let memory_id = req
-            .serve_id
-            .strip_prefix("srv_")
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| ApiError::serve_invalid("unknown"))?;
-        let outcome = retry_chain(|| {
-            st.app
-                .post_verdict(&token, memory_id, verdict, req.reason.as_deref())
-        })
-        .await
+        let reason = req.reason.as_deref();
+        let outcome = match req.serve_id.as_deref() {
+            // Omitted, it is the reviewer key's one claimed item (ADR-0039
+            // d10).
+            None => retry_chain(|| st.app.post_verdict_on_claimed(&token, verdict, reason)).await,
+            Some(serve_id) => {
+                let memory_id = serve_id
+                    .strip_prefix("srv_")
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| ApiError::serve_invalid("unknown"))?;
+                retry_chain(|| st.app.post_verdict(&token, memory_id, verdict, reason)).await
+            }
+        }
         .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         Ok(json_response(
             StatusCode::OK,
@@ -1523,7 +1526,8 @@ struct ReviewNextBody {
 
 #[derive(Deserialize)]
 struct VerdictBody {
-    serve_id: String,
+    /// Omitted, the reviewer key's one claimed item (ADR-0039 d10).
+    serve_id: Option<String>,
     verdict: String,
     reason: Option<String>,
 }

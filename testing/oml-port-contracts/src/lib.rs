@@ -1409,6 +1409,23 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
         .expect("claim")
         .expect("m3 waits");
     assert_eq!(served.memory_id, m3);
+    // Each key's claimed rows are its own: the default of a verdict sent
+    // without serve_id (ADR-0039 d10).
+    for (key, claimed) in [
+        (alice_key, vec![m2]),
+        (Uuid::from_u128(0xE2), vec![m1]),
+        (Uuid::from_u128(0xE3), vec![m3]),
+        (Uuid::from_u128(0xE4), vec![]),
+    ] {
+        assert_eq!(
+            store
+                .review_claimed(rig.tenant_id, key)
+                .await
+                .expect("claimed"),
+            claimed,
+            "the rows key {key} claimed"
+        );
+    }
 }
 
 /// Key rows fold in with their event and resolve by value hash — one

@@ -940,6 +940,14 @@ pub enum AppError {
     IdempotencyDigestMismatch,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
+    /// A verdict sent without `serve_id` while the reviewer key holds no
+    /// claimed review item, or `several`; nothing was journalled
+    /// (http-api.md review; ADR-0039 d10).
+    #[error(
+        "a verdict without serve_id applies to the reviewer key's one claimed item, and it holds {}: send serve_id (ADR-0039 d10, request.validation, field serve_id)",
+        if *.several { "several" } else { "none" }
+    )]
+    ServeIdUnresolved { several: bool },
     /// A creation's name its kind already holds in the namespace, a revoked
     /// key's included; nothing was journalled. Only admin and operator keys
     /// hold a creating verb, and the bootstrap claim checks its token first,

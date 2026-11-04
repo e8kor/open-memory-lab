@@ -2224,6 +2224,30 @@ impl JournalStore for PgStore {
         Ok(Some(memory))
     }
 
+    async fn review_claimed(
+        &self,
+        tenant_id: Uuid,
+        reviewer_key_id: Uuid,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The rows this key claimed, in the order review next serves them;
+        // two tell one open item from several (ADR-0039 d10).
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT memory_id FROM review_queue \
+             WHERE tenant_id = $1 AND held_by_key = $2 \
+             ORDER BY held_since ASC, memory_id ASC \
+             LIMIT 2",
+        )
+        .bind(tenant_id)
+        .bind(reviewer_key_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(ids)
+    }
+
     async fn key_by_hash(&self, key_hash: &str) -> Result<Option<KeyRecord>, StoreError> {
         let Some(hash) = key_hash_bytes(key_hash) else {
             return Ok(None); // cannot name any stored row — fail closed

@@ -5845,3 +5845,84 @@ async fn a_submission_with_derives_from_and_no_verb_journals_learn_and_an_explic
         assert_eq!(capture.event_type, expected, "{idem}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// The default serve: a verdict without serve_id (ADR-0039 d10)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, dana) = crew_keys(&app, admin, crew).await;
+    let dora = issue(&app, admin, Role::Dreamer, "dora", crew).await;
+    let idle = issue(&app, admin, Role::Dreamer, "ida", crew).await;
+    let first = held(
+        &app,
+        &writer.value,
+        &submit_req("d1", "the first held claim"),
+    )
+    .await;
+    let second = held(
+        &app,
+        &writer.value,
+        &submit_req("d2", "the second held claim"),
+    )
+    .await;
+
+    // Each reviewer claims one item: dana the oldest, dora the next, since
+    // a row another key claimed is skipped (admission.md review).
+    let served = app
+        .review_next(&dana.value)
+        .await
+        .expect("next")
+        .expect("item");
+    assert_eq!(served.memory.memory_id, first);
+    let served = app
+        .review_next(&dora.value)
+        .await
+        .expect("next")
+        .expect("item");
+    assert_eq!(served.memory.memory_id, second);
+
+    // dora's default is dora's claim, never dana's older one.
+    let outcome = app
+        .post_verdict_on_claimed(&dora.value, Verdict::Approve, None)
+        .await
+        .expect("verdict");
+    assert_eq!(outcome.memory_id, second);
+    assert_eq!(outcome.state, MemoryStatus::Promoted);
+    let first_row = app
+        .get_memory(&writer.value, first)
+        .await
+        .expect("own read");
+    assert_eq!(first_row.memory.status, MemoryStatus::Held);
+
+    // A key holding no claim is refused, naming serve_id, and nothing moves.
+    let err = app
+        .post_verdict_on_claimed(&idle.value, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::ServeIdUnresolved { several: false }),
+        "{err:?}"
+    );
+    let first_row = app
+        .get_memory(&writer.value, first)
+        .await
+        .expect("own read");
+    assert_eq!(first_row.memory.status, MemoryStatus::Held);
+
+    // dana's default is dana's own claim.
+    let outcome = app
+        .post_verdict_on_claimed(
+            &dana.value,
+            Verdict::Reject,
+            Some("superseded by the second"),
+        )
+        .await
+        .expect("verdict");
+    assert_eq!(outcome.memory_id, first);
+    assert_eq!(outcome.state, MemoryStatus::Rejected);
+}
