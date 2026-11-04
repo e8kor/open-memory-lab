@@ -40,7 +40,8 @@ helm upgrade with --set ingress.enabled=false until you have.
 4. Only then expose the API, if it needs to leave the cluster:
 
      helm upgrade {{ .Release.Name }} <this chart> --namespace {{ $ns }} --reuse-values \
-       --set ingress.enabled=true --set 'ingress.hosts[0].host=<your host>'
+       --set ingress.enabled=true --set 'ingress.hosts[0].host=<your host>' \
+       --set 'ingress.hosts[0].paths[0].path=/' --set 'ingress.hosts[0].paths[0].pathType=Prefix'
 
 The volume claim {{ include "oml.keyringClaim" . }} holds the deployment signing key. helm uninstall
 leaves it in place, and a reinstall under the same release name takes it back.

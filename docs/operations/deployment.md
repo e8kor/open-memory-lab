@@ -252,7 +252,9 @@ from the running pod, not from `--previous`.
 
 Only then expose the API, if it needs to leave the cluster:
 `helm upgrade oml deploy/helm/oml --namespace oml --reuse-values --set ingress.enabled=true
---set 'ingress.hosts[0].host=<host>'`. The install notes warn when an install enables the
+--set 'ingress.hosts[0].host=<host>' --set 'ingress.hosts[0].paths[0].path=/'
+--set 'ingress.hosts[0].paths[0].pathType=Prefix'`. Setting the host replaces the whole `hosts`
+list, so the path goes with it or the Ingress routes nothing. The install notes warn when an install enables the
 Ingress; the chart does not refuse one, because it cannot see whether the claim happened. The
 default Ingress path `/` also routes `/readyz`, whose body names the build
 ([HTTP API](../api/http-api.md#health)); narrow `ingress.hosts[].paths` to keep it off the
