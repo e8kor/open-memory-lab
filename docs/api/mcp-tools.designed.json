@@ -2,7 +2,7 @@
   "_meta": {
     "comment": "Status: designed, never served (ADR-0039 d2). The designed annex of the MCP catalog: the tools and the served tools' arguments that mcp-plugin.md decides and the server does not serve. tools/list never serves this file; mcp-tools.json holds exactly the served catalog, and the two name no tool in common (scripts/check_contract_sync.py). An entry moves to mcp-tools.json in the change that serves it. A designed tool called by name is a JSON-RPC -32602 naming this file; a designed argument sent to a served tool is refused with request.validation: oml_read names lineage and depth in details.field, and oml_write refuses attachments, simulation_id and simulated_time as outside its input schema. A fourth served tool needs a record saying why no parameter of the three, no resource and no hook carries it (ADR-0039 d8).",
     "catalog_page": "mcp-plugin.md",
-    "design_spec_version": "0.5.0-design"
+    "design_spec_version": "0.5.1-design"
   },
   "tools": [
     {

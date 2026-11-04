@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design and 0.5.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design and 0.5.1-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.1-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,10 +27,40 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Guardrails, planned for v0.5.1 (proposed ADR-0037)
+## 0.5.1-design
 
-Entries for the guardrails record and its build, kept apart from the released revisions until
-the release that carries them, newest first.
+Opened for release v0.5.1, which carries this revision: guardrails, reviewed rules every agent
+session loads and each matching tool call is checked against
+([ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)),
+and the removal of the hidden v0.3.0 names ([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d12). `info.version` moved to `0.5.1-design` once, at the release, one step past v0.5.0's, as
+ADR-0037 d18 Q9 decided: the provider ring gained `GET /v1/guardrails` and the guardrail fields of
+`POST /v1/memories`. The entries below were kept apart until this release, newest first.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.1, and the spec is 0.5.1-design
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.1; every reader page fetches the
+installer at `v0.5.1`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.1-design`.
+
+### 2026-11-04 — The hidden v0.3.0 names are removed (ADR-0039 d12)
+
+The eight v0.3.0 MCP tool names answer as unknown tools, the old CLI verbs and the `--server` and
+`--key` flags as unknown subcommands and arguments, and a v0.3.0 credentials file's `server` and
+`key` are no longer read. The `mcp_alias_called` log line and the request line's `alias_of` field
+are gone. The facade's end-to-end tests drive MCP through `oml_write`, `oml_read` and
+`oml_workarea` alone. Pages: [mcp-plugin](api/mcp-plugin.md), [upgrading](guides/upgrading.md),
+the [CLI reference](cli/reference.md), [upgrades](operations/upgrades.md) and
+[observability](operations/observability.md).
+
+### 2026-11-04 — Guardrails under user roots and on the pages (implementation, ADR-0037 S6)
+
+`ancestors` reaches `universe` through ADR-0044's node grant, and no other root; a user key cannot
+write a guardrail into `universe`; a `universe` guardrail is served with its verdicts and no
+source. The user page shows the set in force at the person's root, read-only; review shows a held
+guardrail's load warning; a page-issued key takes the default scope; and a page supersede or
+retirement of a guardrail is refused.
 
 ### 2026-11-04 — Guardrails S3, S4 and S5: the hooks, the export and the prompt (implementation, ADR-0037, proposed)
 
