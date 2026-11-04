@@ -1,4 +1,4 @@
--- 0016_workarea_transitions — the status ladder's pending transitions
+-- 0017_workarea_transitions — the status ladder's pending transitions
 -- (ADR-0009 d1, d3). Forward-only (docs/data/postgres-schema.md
 -- "Migrations"): 0001–0009 are never edited, a correction is the next
 -- numbered file. Normative shape: docs/data/postgres-schema.md "workareas,

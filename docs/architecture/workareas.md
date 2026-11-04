@@ -313,7 +313,7 @@ refusal below covers acquiring new children in any form). Lake rows keep
 *Planned for v0.5.2 · [releases](../product/releases.md)*
 
 **Status:** built for v0.5.2, not released, in `oml-domain`, `oml-app` and `oml-pg` with
-`migrations/0016_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
+`migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
 second identity, the status read) and the freeze checks on submit, supersede, approval and child
 create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · no HTTP route, CLI verb or
 MCP tool serves the transitions yet; the routes, the `oml workareas status` verbs and the workarea
