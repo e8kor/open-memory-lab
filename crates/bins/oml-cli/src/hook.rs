@@ -1538,8 +1538,8 @@ mod tests {
     }
 
     /// The session-start line and the server's instructions ask for recall
-    /// through `oml_read`, the v0.4.0 tool, and never name `oml_recall`
-    /// (ADR-0038 d3, ADR-0039 d2).
+    /// through `oml_read`, the v0.4.0 tool, and never name `oml_recall`,
+    /// the v0.3.0 name removed in v0.5.1 (ADR-0038 d3, ADR-0039 d2, d12).
     #[test]
     fn the_session_start_recall_line_names_oml_read() {
         assert!(

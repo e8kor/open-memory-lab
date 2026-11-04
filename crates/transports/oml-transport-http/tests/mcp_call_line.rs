@@ -134,7 +134,7 @@ async fn a_tool_call_logs_its_tool_and_mode_and_never_its_arguments() {
     assert_eq!(line["tool"], "oml_read");
     assert_eq!(line["mode"], "recall");
     assert_eq!(line["outcome"], "result");
-    assert!(line.get("alias_of").is_none() && line.get("client_name").is_none());
+    assert!(line.get("client_name").is_none());
     let text = text_of(&lines);
     assert!(
         !text.contains("zanzibarword") && !text.contains("424242"),
@@ -160,7 +160,7 @@ async fn a_refused_tool_call_logs_tool_error_and_the_envelope_code() {
 }
 
 #[tokio::test]
-async fn an_unrecognized_tool_name_logs_unknown_and_an_alias_logs_its_successor() {
+async fn an_unrecognized_tool_name_logs_unknown_and_so_does_a_removed_v0_3_0_name() {
     let (router, key) = agent().await;
     let lines = call(
         &router,
@@ -181,9 +181,10 @@ async fn an_unrecognized_tool_name_logs_unknown_and_an_alias_logs_its_successor(
                 "params": {"name": "oml_recall", "arguments": {"query": "x"}}}),
     )
     .await;
-    assert_eq!(lines[0]["tool"], "oml_recall");
-    assert_eq!(lines[0]["alias_of"], "oml_read");
-    assert!(lines[0].get("mode").is_none());
+    assert_eq!(lines[0]["tool"], "unknown");
+    assert_eq!(lines[0]["outcome"], "rpc_error");
+    assert_eq!(lines[0]["error_code"], "-32602");
+    assert!(lines[0].get("alias_of").is_none() && lines[0].get("mode").is_none());
 
     let lines = call(
         &router,

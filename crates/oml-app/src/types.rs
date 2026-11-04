@@ -1578,9 +1578,10 @@ pub struct SupersedeRequest {
     /// The body's `workarea`, by id or name: when sent, it must be the
     /// target's workarea (ADR-0039 d7).
     pub workarea: Option<Reference>,
-    /// Set by `oml_supersede`, which carries no vocabulary fields: a target
-    /// of a vocabulary kind is refused, and superseded on the HTTP API
-    /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12). A guardrail
+    /// Set by `oml_write` with `replaces`, which carries no vocabulary
+    /// fields: a target of a vocabulary kind is refused, and superseded on
+    /// the HTTP API instead (mcp-plugin.md `oml_write`; ADR-0025 d12,
+    /// ADR-0039 d3). A guardrail
     /// target is refused the same way: a guardrail is written and
     /// superseded on the HTTP API only (proposed ADR-0037 d10).
     pub refuse_vocabulary_target: bool,
@@ -1792,7 +1793,7 @@ pub enum AppError {
     )]
     TermRetirement,
     #[error(
-        "oml_supersede carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_supersede; ADR-0025 d12, request.validation)"
+        "oml_write carries no vocabulary fields, so a {0:?} target is superseded on the HTTP API (mcp-plugin.md oml_write; ADR-0025 d12, request.validation)"
     )]
     VocabularyTarget(MemoryKind),
     #[error(
@@ -1815,7 +1816,7 @@ pub enum AppError {
     )]
     GuardrailFieldRefused { field: &'static str },
     #[error(
-        "oml_supersede does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
+        "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
     )]
     GuardrailTarget,
     #[error(

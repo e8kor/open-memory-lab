@@ -16,7 +16,6 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use oml_cli::client::{CallOpts, CliError, Client, encode, new_idempotency_key, segment};
 use oml_cli::creds::{self, Credentials};
@@ -49,12 +48,6 @@ struct Cli {
         hide_env_values = true
     )]
     api_key: Option<String>,
-    /// The v0.3.0 spelling of --url, read through v0.5.0 (ADR-0039 d12).
-    #[arg(long, global = true, hide = true)]
-    server: Option<String>,
-    /// The v0.3.0 spelling of --api-key, read through v0.5.0 (ADR-0039 d12).
-    #[arg(long, global = true, hide = true)]
-    key: Option<String>,
     /// Emit the server's typed response as one JSON document on stdout.
     #[arg(long, global = true)]
     json: bool,
@@ -77,9 +70,7 @@ struct Start {
 }
 
 impl Start {
-    /// Splits `cli`'s `--url` and `--api-key` by where clap took each from;
-    /// the hidden `--server` and `--key` count as the flags they were
-    /// renamed to.
+    /// Splits `cli`'s `--url` and `--api-key` by where clap took each from.
     fn of(cli: &Cli, matches: &clap::ArgMatches) -> Self {
         use clap::parser::ValueSource;
         let set = |v: &Option<String>| v.clone().filter(|s| !s.is_empty());
@@ -88,9 +79,8 @@ impl Start {
             if from(id, source) { set(v) } else { None }
         };
         Self {
-            flag_url: pick("url", &cli.url, ValueSource::CommandLine).or_else(|| set(&cli.server)),
-            flag_key: pick("api_key", &cli.api_key, ValueSource::CommandLine)
-                .or_else(|| set(&cli.key)),
+            flag_url: pick("url", &cli.url, ValueSource::CommandLine),
+            flag_key: pick("api_key", &cli.api_key, ValueSource::CommandLine),
             env_url: pick("url", &cli.url, ValueSource::EnvVariable),
             env_key: pick("api_key", &cli.api_key, ValueSource::EnvVariable),
         }
@@ -161,17 +151,6 @@ enum Command {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// The v0.3.0 name of `oml write`, hidden until v0.5.1 (ADR-0039 d12).
-    #[command(hide = true)]
-    Submit(SubmitArgs),
-    /// The v0.3.0 name of `oml read --query`, hidden until v0.5.1
-    /// (ADR-0039 d12).
-    #[command(hide = true)]
-    Recall(RecallArgs),
-    /// The v0.3.0 name of `oml write --replaces`, hidden until v0.5.1
-    /// (ADR-0039 d12).
-    #[command(hide = true)]
-    Supersede(SupersedeArgs),
     /// Evidence verbs.
     Audit {
         #[command(subcommand)]
@@ -724,61 +703,6 @@ enum ReviewCommand {
         #[arg(long)]
         reason: String,
     },
-    /// The v0.3.0 verdict, hidden until v0.5.1 (ADR-0039 d12).
-    #[command(hide = true)]
-    Verdict(VerdictArgs),
-}
-
-/// `oml submit`, read as `oml write` (ADR-0039 d12).
-#[derive(Args)]
-struct SubmitArgs {
-    #[arg(long)]
-    claim: String,
-    #[arg(long)]
-    claim_key: Option<String>,
-    #[arg(long)]
-    kind: Option<String>,
-    /// v0.3.0's explicit verb, which the HTTP API still honours.
-    #[arg(long)]
-    verb: Option<String>,
-    #[arg(long = "derives-from")]
-    derives_from: Vec<String>,
-    #[arg(long)]
-    workarea: Option<String>,
-}
-
-/// `oml review verdict`, read as `oml review approve` or `reject` with the
-/// serve the v0.3.0 verb derived from the memory (ADR-0039 d12).
-#[derive(Args)]
-struct VerdictArgs {
-    #[arg(long)]
-    memory: Uuid,
-    #[arg(long, conflicts_with = "reject")]
-    approve: bool,
-    #[arg(long)]
-    reject: bool,
-    #[arg(long)]
-    reason: Option<String>,
-}
-
-/// `oml recall`, read as `oml read --query` (ADR-0039 d12).
-#[derive(Args)]
-struct RecallArgs {
-    #[arg(long)]
-    query: String,
-    #[arg(long)]
-    k: Option<u32>,
-    #[arg(long)]
-    workarea: Option<String>,
-}
-
-/// `oml supersede`, read as `oml write --replaces` (ADR-0039 d12).
-#[derive(Args)]
-struct SupersedeArgs {
-    #[arg(long)]
-    target: Uuid,
-    #[arg(long)]
-    claim: String,
 }
 
 #[derive(Subcommand)]
@@ -960,17 +884,6 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     cli.start = Start::of(&cli, &matches);
-    // The hook reads neither flag, so it names neither (ADR-0029 d4).
-    if !matches!(cli.command, Command::Hook { .. }) {
-        for (old, new, used) in [
-            ("--server", "--url", cli.server.is_some()),
-            ("--key", "--api-key", cli.key.is_some()),
-        ] {
-            if used {
-                eprintln!("warning: {old} is renamed {new}; v0.5.1 removes {old} (ADR-0039 d12)");
-            }
-        }
-    }
     match run(&cli) {
         Ok(code) => code,
         Err(CliError::Refused {
@@ -1437,59 +1350,6 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Events(args) => run_events(cli, &stored, args),
         Command::Review { command } => run_review(cli, &stored, command),
 
-        // The v0.3.0 verbs run their successors, each naming it on one
-        // stderr line, until v0.5.1 removes them (ADR-0039 d12).
-        Command::Submit(args) => {
-            renamed("oml submit", "oml write");
-            run_write(
-                cli,
-                &stored,
-                &Write {
-                    claim_key: args.claim_key.as_deref(),
-                    kind: args.kind.as_deref(),
-                    verb: args.verb.as_deref(),
-                    derives_from: &args.derives_from,
-                    workarea: args.workarea.as_deref(),
-                    ..Write::submission(&args.claim)
-                },
-            )
-        }
-        Command::Recall(args) => {
-            renamed("oml recall", "oml read --query");
-            run_read(
-                cli,
-                &stored,
-                &ReadArgs {
-                    artifact_id: None,
-                    query: Some(args.query.clone()),
-                    k: args.k,
-                    kinds: Vec::new(),
-                    include_unreviewed: false,
-                    workarea: args.workarea.clone(),
-                    own: false,
-                    all: false,
-                    state: None,
-                    kind: None,
-                    since: None,
-                    until: None,
-                    limit: None,
-                    cursor: None,
-                },
-            )
-        }
-        Command::Supersede(args) => {
-            renamed("oml supersede", "oml write --replaces");
-            let target = args.target.to_string();
-            run_write(
-                cli,
-                &stored,
-                &Write {
-                    replaces: Some(&target),
-                    ..Write::submission(&args.claim)
-                },
-            )
-        }
-
         Command::Audit {
             command: AuditCommand::VerifyChain(args),
         } => run_verify_chain(cli, &stored, args),
@@ -1644,19 +1504,11 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 // oml write, oml read, oml events, oml review (ADR-0039 d10)
 // ---------------------------------------------------------------------------
 
-/// The one stderr line a v0.3.0 verb prints before it runs its successor
-/// (ADR-0039 d12).
-fn renamed(old: &str, new: &str) {
-    eprintln!("warning: `{old}` is renamed `{new}`; v0.5.1 removes `{old}` (ADR-0039 d12)");
-}
-
-/// One write, from `oml write`'s flags or a v0.3.0 verb's.
+/// One write, from `oml write`'s flags.
 struct Write<'a> {
     text: &'a str,
     claim_key: Option<&'a str>,
     kind: Option<&'a str>,
-    /// v0.3.0's explicit verb: only `oml submit` sends one (ADR-0039 d12).
-    verb: Option<&'a str>,
     derives_from: &'a [String],
     workarea: Option<&'a str>,
     replaces: Option<&'a str>,
@@ -1673,7 +1525,6 @@ impl<'a> Write<'a> {
             text: &args.text,
             claim_key: args.claim_key.as_deref(),
             kind: args.kind.as_deref(),
-            verb: None,
             derives_from: &args.derives_from,
             workarea: args.workarea.as_deref(),
             replaces: args.replaces.as_deref(),
@@ -1682,24 +1533,6 @@ impl<'a> Write<'a> {
             idempotency_key: args.idempotency_key.as_deref(),
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
-        }
-    }
-
-    /// A submission of `text` and nothing else.
-    fn submission(text: &'a str) -> Self {
-        Self {
-            text,
-            claim_key: None,
-            kind: None,
-            verb: None,
-            derives_from: &[],
-            workarea: None,
-            replaces: None,
-            retirement: false,
-            reason: None,
-            idempotency_key: None,
-            severity: None,
-            rule: None,
         }
     }
 }
@@ -1727,7 +1560,6 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     for (name, value) in [
         ("claim_key", write.claim_key),
         ("kind", write.kind),
-        ("verb", write.verb),
         ("workarea", write.workarea),
         ("reason", write.reason),
         ("severity", write.severity),
@@ -1952,23 +1784,6 @@ fn run_review(
         }
         ReviewCommand::Reject { serve_id, reason } => {
             run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason))
-        }
-        ReviewCommand::Verdict(args) => {
-            if !args.approve && !args.reject {
-                return Err(CliError::local("a verdict is one of --approve or --reject"));
-            }
-            // The v0.3.0 verb named the memory, and the PoC serve binding
-            // round-trips its id (serve_id = "srv_" + simple uuid).
-            let serve_id = format!("srv_{}", args.memory.simple());
-            let verdict = if args.approve { "approve" } else { "reject" };
-            renamed("oml review verdict", &format!("oml review {verdict}"));
-            run_verdict(
-                cli,
-                stored,
-                verdict,
-                Some(&serve_id),
-                args.reason.as_deref(),
-            )
         }
     }
 }

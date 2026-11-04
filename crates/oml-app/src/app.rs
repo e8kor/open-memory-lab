@@ -2358,7 +2358,7 @@ where
     /// footnote 6; ADR-0026 d15). The node, by id or name, or else the key's
     /// journalled default, is resolved only after step 1 of the refusal
     /// order, as recall resolves it (roles-and-keys.md refusal order;
-    /// mcp-plugin.md `oml_workarea_info`; ADR-0026 d4).
+    /// mcp-plugin.md `oml_workarea`; ADR-0026 d4).
     pub async fn workarea_info(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -4034,7 +4034,7 @@ where
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
-    /// and from `oml_supersede` the vocabulary-kind check (step 5); then the
+    /// and from `oml_write` the vocabulary-kind check (step 5); then the
     /// checks every submit runs. The successor takes the next ordinal of the
     /// claim_key and journals `submission.remember` (`submission.learn` for
     /// a `derived_fact`) naming what it replaces, with the idempotency record
@@ -4111,7 +4111,7 @@ where
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
-        // on oml_supersede the target is of no vocabulary kind (ADR-0025 d12).
+        // on oml_write the target is of no vocabulary kind (ADR-0025 d12).
         if let (Some(workarea_id), Some(sent)) = (header, &req.workarea)
             && workarea_id != target.workarea_id
         {

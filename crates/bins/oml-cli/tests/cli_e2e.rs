@@ -3713,31 +3713,6 @@ async fn oml_cli_server_is_not_read_and_a_missing_url_names_it_for_renaming() {
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_hidden_server_and_key_flags_answer_and_each_prints_one_line_naming_its_successor() {
-    let (url, seen, task) = bearer_stub().await;
-    let (code, stderr) = start_run(&["--server", &url, "--key", "oml_old_flag"], &[]);
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(bearers(&seen), vec![bearer("oml_old_flag")]);
-    let lines: Vec<&str> = stderr.lines().collect();
-    assert_eq!(lines.len(), 2, "{stderr}");
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("--server") && l.contains("--url"))
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("--key") && l.contains("--api-key"))
-    );
-    assert!(
-        !stderr.contains("oml_old_flag"),
-        "no key on stderr: {stderr}"
-    );
-    task.abort();
-}
-
 // ---------------------------------------------------------------------------
 // oml doctor checks the pair alone (ADR-0039 d15)
 // ---------------------------------------------------------------------------
@@ -4559,22 +4534,6 @@ fn taken(seen: &Recorder) -> Vec<Seen> {
     std::mem::take(&mut *seen.lock().expect("recorder lock"))
 }
 
-/// A request as two runs of one verb must agree on it: method, path, query
-/// and body; the idempotency key, minted per run, only by its presence.
-fn sent_as(seen: &[Seen]) -> Vec<(String, String, String, bool, Value)> {
-    seen.iter()
-        .map(|s| {
-            (
-                s.method.clone(),
-                s.path.clone(),
-                s.query.clone(),
-                s.idempotency_key.is_some(),
-                s.body.clone(),
-            )
-        })
-        .collect()
-}
-
 /// `oml --url <stub> --api-key <key> <args>` with a credentials path that
 /// holds nothing; returns (exit code, stdout, stderr).
 fn stub_text(server: &str, dir: &Path, args: &[&str]) -> (i32, String, String) {
@@ -4626,8 +4585,8 @@ fn the_cli_reference_lists_every_built_verb() {
             "{v040} is built: {verbs:?}"
         );
     }
-    for hidden in ["submit", "recall", "supersede", "review verdict"] {
-        assert!(!verbs.iter().any(|v| v == hidden), "{hidden} is hidden");
+    for removed in ["submit", "recall", "supersede", "review verdict"] {
+        assert!(!verbs.iter().any(|v| v == removed), "{removed} is removed");
     }
     let missing: Vec<&String> = verbs
         .iter()
@@ -4642,126 +4601,6 @@ fn the_cli_reference_lists_every_built_verb() {
         missing.is_empty(),
         "built verbs with no row in docs/cli/reference.md: {missing:?}"
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn each_old_cli_verb_runs_its_new_verb_and_names_it_on_stderr() {
-    let (server, seen, task) = canned_stub().await;
-    let (dir, _) = stub_paths("aliases");
-    let serve = format!("srv_{}", STUB_ARTIFACT.replace('-', ""));
-    let pairs: [(&[&str], Vec<&str>, &str); 6] = [
-        (
-            &[
-                "submit",
-                "--claim",
-                "Accra Metals quoted 412 USD/t.",
-                "--claim-key",
-                "quote-am",
-                "--kind",
-                "derived_fact",
-                "--derives-from",
-                STUB_ARTIFACT,
-                "--workarea",
-                "metals",
-            ],
-            vec![
-                "write",
-                "Accra Metals quoted 412 USD/t.",
-                "--claim-key",
-                "quote-am",
-                "--kind",
-                "derived_fact",
-                "--derives-from",
-                STUB_ARTIFACT,
-                "--workarea",
-                "metals",
-            ],
-            "oml write",
-        ),
-        (
-            &[
-                "recall",
-                "--query",
-                "Accra Metals",
-                "--k",
-                "3",
-                "--workarea",
-                "metals",
-            ],
-            vec![
-                "read",
-                "--query",
-                "Accra Metals",
-                "--k",
-                "3",
-                "--workarea",
-                "metals",
-            ],
-            "oml read --query",
-        ),
-        (
-            &[
-                "supersede",
-                "--target",
-                STUB_ARTIFACT,
-                "--claim",
-                "Now 399 USD/t.",
-            ],
-            vec!["write", "Now 399 USD/t.", "--replaces", STUB_ARTIFACT],
-            "oml write --replaces",
-        ),
-        (
-            &["review", "verdict", "--memory", STUB_ARTIFACT, "--approve"],
-            vec!["review", "approve", &serve],
-            "oml review approve",
-        ),
-        (
-            &[
-                "review",
-                "verdict",
-                "--memory",
-                STUB_ARTIFACT,
-                "--approve",
-                "--reason",
-                "checked",
-            ],
-            vec!["review", "approve", &serve, "--note", "checked"],
-            "oml review approve",
-        ),
-        (
-            &[
-                "review",
-                "verdict",
-                "--memory",
-                STUB_ARTIFACT,
-                "--reject",
-                "--reason",
-                "stale quote",
-            ],
-            vec!["review", "reject", &serve, "--reason", "stale quote"],
-            "oml review reject",
-        ),
-    ];
-    for (old, new, successor) in pairs {
-        let (code, old_out, old_err) = stub_text(&server, &dir, old);
-        assert_eq!(code, 0, "{old:?}: {old_err}");
-        let old_sent = sent_as(&taken(&seen));
-        let (code, new_out, new_err) = stub_text(&server, &dir, &new);
-        assert_eq!(code, 0, "{new:?}: {new_err}");
-        let new_sent = sent_as(&taken(&seen));
-        assert_eq!(old_sent.len(), 1, "{old:?} sends one request: {old_sent:?}");
-        assert_eq!(old_sent, new_sent, "{old:?} sends what {new:?} sends");
-        assert_eq!(old_out, new_out, "{old:?} prints what {new:?} prints");
-        assert_eq!(new_err, "", "{new:?} prints nothing on stderr");
-        let lines: Vec<&str> = old_err.lines().collect();
-        assert_eq!(lines.len(), 1, "{old:?}: one stderr line: {old_err}");
-        assert!(
-            lines[0].contains(&format!("`{successor}`")) && lines[0].contains("v0.5.1"),
-            "{old:?} names {successor} and the release that removes it: {old_err}"
-        );
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-    task.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

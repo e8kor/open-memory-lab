@@ -12,13 +12,10 @@
 //! declaration site: the three tools `oml_write`, `oml_read` and
 //! `oml_workarea` (ADR-0039 d2). The designed tools and arguments live in
 //! docs/api/mcp-tools.designed.json, which is never served. The eight v0.3.0
-//! tool names are not listed and still answer with their v0.3.0 shapes,
-//! through v0.5.0, as ADR-0039 d12 reads its alias window: see [`ALIASES`].
+//! tool names were removed in v0.5.1 and answer as any unknown tool does
+//! (ADR-0039 d12).
 
-mod alias;
 mod call;
-
-pub use alias::ALIASES;
 
 use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::State;
@@ -272,7 +269,7 @@ where
             oml.mcp.tool = tracing::field::Empty,
             oml.mcp.mode = tracing::field::Empty,
         );
-        let response = Self::answer(&st, presented, &key, &rid, &body, &mut call)
+        let response = Self::answer(&st, presented, &rid, &body, &mut call)
             .instrument(span.clone())
             .await;
         if let Some(tool) = call.tool {
@@ -296,7 +293,6 @@ where
     async fn answer(
         st: &Self,
         presented: Presented<'_>,
-        key: &KeyRecord,
         rid: &str,
         body: &Bytes,
         call: &mut McpCall,
@@ -369,7 +365,7 @@ where
                     call.rpc_error(INVALID_PARAMS);
                     rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}")
                 }
-                Ok(tool) => Self::call_tool(st, presented, key, &id, rid, tool, call).await,
+                Ok(tool) => Self::call_tool(st, presented, &id, rid, tool, call).await,
             },
             other => {
                 call.rpc_error(METHOD_NOT_FOUND);
@@ -438,12 +434,11 @@ where
 
     /// One `tools/call`. A tool that is not served is a protocol fault,
     /// JSON-RPC -32602; a served tool's refusal is a tool result (ADR-0039
-    /// d11). The eight v0.3.0 names answer as the alias module translates them,
-    /// though `tools/list` names none of them (ADR-0039 d12).
+    /// d11). The eight v0.3.0 names, removed in v0.5.1, are unknown tools
+    /// (ADR-0039 d12).
     async fn call_tool(
         st: &Self,
         presented: Presented<'_>,
-        key: &KeyRecord,
         id: &Value,
         request_id: &str,
         tool: ToolCall,
@@ -452,20 +447,10 @@ where
         let name = tool.name.as_str();
         let args = Value::Object(tool.arguments);
         call.tool_call(name, Some(&args));
-        if let Some(successor) = alias::successor(name) {
-            let caller = alias::Caller {
-                key_id: key.key_id,
-                tenant_id: key.tenant_id,
-                request_id,
-            };
-            let outcome = Self::call_alias(st, presented, &caller, name, successor, args).await;
-            call.tool_result(outcome.as_ref().err());
-            return rpc_result(id, &tool_result(outcome, request_id));
-        }
         let outcome = match name {
             "oml_write" => Self::tool_write(st, presented, args).await,
             "oml_read" => Self::tool_read(st, presented, args).await,
-            "oml_workarea" => Self::tool_workarea_info(st, presented, args).await,
+            "oml_workarea" => Self::tool_workarea(st, presented, args).await,
             _ if DESIGNED_TOOLS.contains(&name) => {
                 call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
@@ -740,7 +725,7 @@ where
                 .await,
             )
             .await?;
-            listing_output(&page, true)
+            listing_output(&page)
         };
         if let Some(obj) = out.as_object_mut() {
             obj.insert("mode".to_owned(), Value::from(mode));
@@ -748,8 +733,7 @@ where
         Ok(out)
     }
 
-    /// `oml_workarea_info`, and `oml_workarea`, its v0.4.0 name (ADR-0039
-    /// d2, d10): one `GET /v2/workareas/{workarea}`, so the tool answers
+    /// `oml_workarea` (ADR-0039 d2, d10): one `GET /v2/workareas/{workarea}`, so the tool answers
     /// exactly what the ring answers; `workarea` is the node's id or name,
     /// which the ring classifies and the app resolves (ADR-0026 d4). An
     /// omitted workarea is the key's journalled default, which the app
@@ -759,7 +743,7 @@ where
     /// answers with structure by its key role, reads its default the same
     /// way (mcp-plugin.md; roles-and-keys.md refusal order; ADR-0025 d14;
     /// ADR-0026 d15).
-    async fn tool_workarea_info(
+    async fn tool_workarea(
         st: &Self,
         presented: Presented<'_>,
         args: Value,
@@ -776,7 +760,7 @@ where
         )
         .await?;
         // The plugin's output names the parent `parent`; `crew` is null when
-        // the workarea names none (mcp-plugin.md `oml_workarea_info`;
+        // the workarea names none (mcp-plugin.md `oml_workarea`;
         // ADR-0026 d1, d8).
         let mut out = Map::new();
         for (from, to) in [
@@ -833,10 +817,10 @@ fn claim_item(m: &Value) -> Map<String, Value> {
     .collect()
 }
 
-/// A ring `Memory` as an `oml_get` item: the claim item with `text`,
+/// A ring `Memory` as `oml_read`'s get item: the claim item with `text`,
 /// `derives_from` and `attachments`, whose `derives_from` and `replaces`
 /// the ring has already limited to what the key can read (mcp-plugin.md
-/// `oml_get`; ADR-0025 d3, d12).
+/// `oml_read`; ADR-0025 d3, d12).
 fn get_item(memory: &Value) -> Value {
     let mut item = claim_item(memory);
     for field in ["text", "derives_from", "attachments"] {
@@ -871,10 +855,9 @@ fn recall_output(result: &Value) -> Value {
 }
 
 /// A ring listing page as `{items, next_cursor}`, each item the claim item
-/// plus `held_expires_at`, and its `text` when `with_text`, as `oml_read`
-/// returns it (mcp-plugin.md `oml_my_work`; ADR-0025 d12, d13; ADR-0039
-/// d4).
-fn listing_output(page: &Value, with_text: bool) -> Value {
+/// plus `held_expires_at` and its `text`, as `oml_read` returns it
+/// (mcp-plugin.md `oml_read`; ADR-0025 d12, d13; ADR-0039 d4).
+fn listing_output(page: &Value) -> Value {
     let items: Vec<Value> = page["items"]
         .as_array()
         .map(|items| {
@@ -883,9 +866,7 @@ fn listing_output(page: &Value, with_text: bool) -> Value {
                 .map(|m| {
                     let mut item = claim_item(m);
                     item.insert("held_expires_at".to_owned(), m["held_expires_at"].clone());
-                    if with_text {
-                        item.insert("text".to_owned(), m["text"].clone());
-                    }
+                    item.insert("text".to_owned(), m["text"].clone());
                     Value::Object(item)
                 })
                 .collect()
@@ -894,7 +875,7 @@ fn listing_output(page: &Value, with_text: bool) -> Value {
     json!({ "items": items, "next_cursor": page["next_cursor"] })
 }
 
-/// A ring `Memory` as an `oml_recall` item: the claim item plus its
+/// A ring `Memory` as an `oml_read` recall item: the claim item plus its
 /// `text`, and a hit's `score`; a steering item has none (mcp-plugin.md,
 /// the claim item; ADR-0025 d12).
 fn recall_item(m: &Value, score: Option<&Value>) -> Value {
@@ -1014,9 +995,8 @@ fn field_refusal(field: &str, message: &str) -> Value {
 
 /// A plugin write of kind `guardrail`, refused naming `kind`: a guardrail is
 /// written and superseded on the HTTP API only, so no tool carries its
-/// `severity` or `rule` (proposed ADR-0037 d10, amending ADR-0039 d3). The
-/// hidden aliases refuse it the same way.
-pub(crate) fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
+/// `severity` or `rule` (proposed ADR-0037 d10, amending ADR-0039 d3).
+fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
     if kind == Some("guardrail") {
         return Err(field_refusal(
             "/kind",

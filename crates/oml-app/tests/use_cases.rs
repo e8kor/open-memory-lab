@@ -9022,7 +9022,7 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
 }
 
 #[tokio::test]
-async fn oml_supersede_refuses_a_guardrail_target() {
+async fn oml_write_supersession_refuses_a_guardrail_target() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;

@@ -777,7 +777,7 @@ where
     /// names what it replaces; the target stays the tip until ratification
     /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
     /// field the server does not serve is refused, never dropped (d16).
-    /// `refuse_vocabulary_target` is set by `oml_supersede` and `oml_write`, whose input
+    /// `refuse_vocabulary_target` is set by `oml_write`, whose input
     /// carries no vocabulary fields (d12).
     async fn supersede_inner(
         st: &Self,
@@ -1228,7 +1228,7 @@ where
     /// (http-api.md workareas; ADR-0025 d14; ADR-0026 d15). `None` is
     /// the MCP facade's omitted workarea: the key's default, which the app
     /// resolves after step 1 of the refusal order (mcp-plugin.md
-    /// `oml_workarea_info`).
+    /// `oml_workarea`).
     async fn get_workarea_inner(
         st: &Self,
         workarea_id: Option<&str>,
@@ -1302,19 +1302,15 @@ where
         Query(params): Query<HashMap<String, String>>,
         headers: HeaderMap,
     ) -> Response {
-        finish(
-            &rid,
-            Self::events_tail_inner(&st, &params, &headers, None).await,
-        )
+        finish(&rid, Self::events_tail_inner(&st, &params, &headers).await)
     }
 
     async fn events_tail_inner(
         st: &Self,
         params: &HashMap<String, String>,
         headers: &HeaderMap,
-        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
-        let acting = acting(headers, connection)?;
+        let acting = acting(headers, None)?;
         refuse_workarea_header(headers, "workarea")?;
         if params.contains_key("workarea_id") {
             return Err(ApiError::renamed("workarea_id", "workarea"));
