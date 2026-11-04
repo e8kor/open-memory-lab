@@ -33,7 +33,8 @@ use oml_app::types::{
     ConfirmOutcome, ConfirmationView, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential,
     CrewCreateRequest, CrewUpdate, ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey,
     KeyRecord, ListRequest, MintedToken, NamingRefusal, RecallRequest, RecallResult, RefreshForm,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, Verdict, VerdictRequest, VersionRef,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, TransitionState, TransitionView,
+    Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9818,6 +9819,19 @@ async fn freezing_changes_no_grant_and_no_permission_epoch() {
 // -- the status read, and status events on the tail (ADR-0009 d3; ADR-0025
 // d15) --------------------------------------------------------------------
 
+/// A stored proposal as the status read serves it to a key outside the
+/// proposer's own key set: the proposing key withheld (ADR-0025 d15).
+fn seen_by_another(t: &oml_app::types::TransitionRecord) -> TransitionView {
+    TransitionView {
+        transition_id: t.transition_id,
+        workarea_id: t.workarea_id,
+        from: t.from,
+        to: t.to,
+        state: t.state,
+        proposed_by_key_id: None,
+    }
+}
+
 /// The status read serves the node's stored status, the review policy in
 /// force and its live proposals in proposal order; a ratification makes
 /// every other proposal from the old rung stale, and the read drops them
@@ -9857,7 +9871,7 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
     );
     assert_eq!(
         view.pending,
-        vec![first.clone(), second.clone(), third.clone()]
+        [&first, &second, &third].map(seen_by_another).to_vec()
     );
 
     app.ratify_transition(&dora.value, crew.into(), first.transition_id)
@@ -9883,7 +9897,7 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
         .workarea_status(&rita.value, crew.into())
         .await
         .expect("a reader reads the status");
-    assert_eq!(view.pending, vec![next]);
+    assert_eq!(view.pending, vec![seen_by_another(&next)]);
 }
 
 /// An admin key reads a node's pending transitions as structure, on its key
@@ -9909,7 +9923,11 @@ async fn an_admin_reads_a_nodes_pending_transitions_without_any_grant() {
         .expect("an admin reads structure");
     assert_eq!(
         (view.workarea_id, view.status, view.pending),
-        (quarter, WorkareaStatus::Development, vec![proposal])
+        (
+            quarter,
+            WorkareaStatus::Development,
+            vec![seen_by_another(&proposal)]
+        )
     );
     let err = app
         .workarea_status(&bob.value, Uuid::from_u128(0xDEAD).into())
@@ -9939,6 +9957,61 @@ async fn a_key_without_read_access_gets_not_found_from_the_status_read() {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+}
+
+/// A status read serves each live proposal as the served `Transition` shape
+/// (transition id, node, step, state, proposing key) and never the
+/// proposer's principal or the tenant, and it names the proposing key only
+/// to a key in the proposer's own key set, as the tail does: a reader of
+/// the node, an admin among them, learns that a proposal waits, never which
+/// key made it (workareas.md, the status read names the proposing key only
+/// to its own key set; http-api.md#events-tail; ADR-0025 d15).
+#[tokio::test]
+async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposing_key_only_to_that_key()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = issue_with(
+        &app,
+        admin,
+        Role::Dreamer,
+        "dora-the-proposer",
+        vec![grant(crew, Role::Dreamer), grant(crew, Role::Reader)],
+    )
+    .await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a dreamer proposes");
+    let served = |proposed_by_key_id| TransitionView {
+        transition_id: proposal.transition_id,
+        workarea_id: crew,
+        from: WorkareaStatus::Development,
+        to: WorkareaStatus::Committed,
+        state: TransitionState::Pending,
+        proposed_by_key_id,
+    };
+
+    let own = app
+        .workarea_status(&dora.value, crew.into())
+        .await
+        .expect("the proposer reads the node");
+    assert_eq!(own.pending, vec![served(Some(dora.key_id))]);
+
+    for reader in [&rita.value, admin] {
+        let view = app
+            .workarea_status(reader, crew.into())
+            .await
+            .expect("a reader of the node");
+        assert_eq!(view.pending, vec![served(None)]);
+        let shown = format!("{view:?}");
+        assert!(!shown.contains("dora-the-proposer"), "{shown}");
+        assert!(!shown.contains(&boot.tenant_id.to_string()), "{shown}");
+        assert!(!shown.contains(&dora.key_id.to_string()), "{shown}");
     }
 }
 
