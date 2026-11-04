@@ -486,8 +486,9 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
 /// sorted and deduplicated: principals in byte order, as the application
 /// sorts them, and key ids in uuid order. Every scan of `memories` names
 /// `m.tenant_id = $1`, so the plan keeps the tenant's partition alone
-/// (ADR-0034 d11, d13); row security stays the fence. Exported so the
-/// suite plans the statement the adapter runs.
+/// (ADR-0034 d11, d13); row security stays the fence. The fold runs it
+/// under a custom plan, which prunes the UPDATE's targets too. Exported so
+/// the suite plans the statement the adapter runs.
 pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
      edge_adjacent(a, b) AS ( \
          SELECT e.src_artifact_id, e.dst_artifact_id FROM claim_edges e \
@@ -1430,10 +1431,23 @@ async fn propose_claim_edge(
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
+    // A custom plan prunes the UPDATE's targets to the tenant's partition
+    // at planning on every PostgreSQL version; a generic one, which the
+    // pool's prepared statement turns to after five runs, still names every
+    // partition as a target on PostgreSQL 17, opening them though it scans
+    // none (ADR-0034 d11).
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
     sqlx::query(WIDEN_LINEAGE)
         .bind(tenant_id)
         .bind(edge.src_artifact_id)
         .bind(edge.dst_artifact_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    sqlx::query("SET LOCAL plan_cache_mode = DEFAULT")
         .execute(&mut **tx)
         .await
         .map_err(backend)?;

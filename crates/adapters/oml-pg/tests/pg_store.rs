@@ -3839,6 +3839,35 @@ fn plan_memories_partitions(plan: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The `memories` partitions an `EXPLAIN (FORMAT JSON)` plan scans: every
+/// plan node's relation, the UPDATE's "Target Tables" left out.
+fn plan_memories_scanned(plan: &Value) -> Vec<String> {
+    fn walk(plan: &Value, found: &mut std::collections::BTreeSet<String>) {
+        match plan {
+            Value::Object(node) => {
+                if node.get("Node Type").and_then(Value::as_str) != Some("ModifyTable")
+                    && let Some(Value::String(relation)) = node.get("Relation Name")
+                {
+                    found.insert(relation.clone());
+                }
+                for (key, value) in node {
+                    if key != "Target Tables" {
+                        walk(value, found);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|i| walk(i, found)),
+            _ => {}
+        }
+    }
+    let mut found = std::collections::BTreeSet::new();
+    walk(plan, &mut found);
+    found
+        .into_iter()
+        .filter(|r| r.starts_with("memories_t_"))
+        .collect()
+}
+
 /// Each scan of a `memories` partition in an `EXPLAIN (FORMAT JSON)`
 /// plan, as its alias and the conditions it carries ("Index Cond",
 /// "Recheck Cond" and "Filter", joined).
@@ -3872,9 +3901,11 @@ fn plan_memories_scans(plan: &Value, found: &mut Vec<(String, String)>) {
 
 /// A claim edge's lineage widening names its tenant on every statement on
 /// `memories`: planned under tenant A over the serving login, the
-/// adapter's statement scans and updates tenant A's partition alone under
-/// a custom plan and a generic one, and each scan of it under the custom
-/// plan carries the bound tenant, not row security's alone; run through the proposal fold, it widens tenant A's rows
+/// adapter's statement scans tenant A's partition alone under a custom plan
+/// and a generic one, planned and executed, and its custom plan, the one
+/// the adapter runs it under, targets that partition alone; each scan of it
+/// under the custom plan carries the bound tenant, not row security's
+/// alone; run through the proposal fold, it widens tenant A's rows
 /// and leaves tenant B's rows with the same ids, the same authors and the
 /// same derivation exactly as they were held (ADR-0034 d11, d13; ADR-0001
 /// d2).
@@ -3957,15 +3988,46 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
         .fetch_one(&mut *tx)
         .await
         .expect("explain");
+        let analyzed: Value = sqlx::query_scalar(&format!(
+            "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE oml_widen_probe ('{a}', '{x}', '{y}')"
+        ))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain analyze");
+        let version: i32 = sqlx::query_scalar("SELECT current_setting('server_version_num')::int")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("server version");
         tx.execute("DEALLOCATE oml_widen_probe")
             .await
             .expect("deallocate");
         tx.rollback().await.expect("rollback");
+        // Every scan of `memories`, planned and executed, is tenant A's
+        // partition: under a generic plan by executor-start pruning, each
+        // Append's other subplans removed.
         assert_eq!(
-            plan_memories_partitions(&plan),
+            plan_memories_scanned(&plan),
             vec![partition_of(a)],
             "{mode}: {plan}"
         );
+        assert_eq!(
+            plan_memories_scanned(&analyzed),
+            vec![partition_of(a)],
+            "{mode}, executed: {analyzed}"
+        );
+        // The UPDATE's target list: the custom plan, which the adapter runs
+        // the statement under, names tenant A's partition alone on every
+        // version. A generic plan names it alone from PostgreSQL 18, which
+        // prunes result relations at executor start; PostgreSQL 17 lists
+        // every partition as a target there, opened and never scanned, which
+        // the executed plan above shows.
+        if mode == "force_custom_plan" || version >= 180_000 {
+            assert_eq!(
+                plan_memories_partitions(&plan),
+                vec![partition_of(a)],
+                "{mode} on {version}: {plan}"
+            );
+        }
         // Row security alone would prune the same way, so the custom plan's
         // scans must each carry the bound tenant itself: the statement's own
         // `m.tenant_id = $1`, not the policy's `current_setting` (ADR-0034
