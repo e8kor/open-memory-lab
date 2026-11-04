@@ -62,6 +62,9 @@ pub struct Config {
     /// request line reads the client address from; empty, none
     /// (ADR-0042 d7).
     pub trusted_proxies: TrustedProxies,
+    /// `server.metrics_listen`: the address of the listener that serves
+    /// `GET /metrics` alone; unset, none binds (ADR-0042 d11).
+    pub metrics_listen: Option<std::net::SocketAddr>,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -82,6 +85,7 @@ const KEY_KMS_ADAPTER: &str = "kms.adapter";
 const KEY_KEYRING_PATH: &str = "kms.keyring_path";
 const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
+const KEY_METRICS_LISTEN: &str = "server.metrics_listen";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -183,6 +187,25 @@ impl Config {
             },
         };
         let trusted_proxies = TrustedProxies::parse(&proxies).map_err(ConfigError::Invalid)?;
+        // A second listener, never the API's: a value equal to
+        // server.listen, or one that is not an address, stops the start
+        // (configuration.md, server.metrics_listen; ADR-0042 d11).
+        let metrics_listen = match lookup(KEY_METRICS_LISTEN) {
+            None => None,
+            Some(value) => {
+                let addr: std::net::SocketAddr = value.parse().map_err(|_| {
+                    ConfigError::Invalid(format!(
+                        "{KEY_METRICS_LISTEN} {value:?} is not an address and port (configuration.md)"
+                    ))
+                })?;
+                if value == listen || listen.parse::<std::net::SocketAddr>() == Ok(addr) {
+                    return Err(ConfigError::Invalid(format!(
+                        "{KEY_METRICS_LISTEN} equals {KEY_LISTEN}: /metrics is never served on the API listener (ADR-0042 d11)"
+                    )));
+                }
+                Some(addr)
+            }
+        };
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -190,6 +213,7 @@ impl Config {
             keyring_path,
             oauth_issuer,
             trusted_proxies,
+            metrics_listen,
         })
     }
 
@@ -1007,6 +1031,34 @@ mod tests {
         let err = Config::from_sources(None, &|k| env.get(k).cloned())
             .expect_err("an entry that does not parse");
         assert!(err.to_string().contains("server.trusted_proxies"), "{err}");
+    }
+
+    #[test]
+    fn metrics_listen_is_unset_by_default_and_a_value_equal_to_listen_or_no_address_stops_the_start()
+     {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("no metrics listener loads");
+        assert_eq!(cfg.metrics_listen, None);
+        let file = "[server]\nmetrics_listen = \"127.0.0.1:9464\"\n";
+        let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
+            .expect("an address loads");
+        assert_eq!(
+            cfg.metrics_listen,
+            Some("127.0.0.1:9464".parse().expect("an address"))
+        );
+        for bad in ["127.0.0.1:8080", "localhost:9464", "9464"] {
+            let mut env = env_of(&base);
+            env.insert("OML_SERVER__METRICS_LISTEN".to_owned(), bad.to_owned());
+            let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("refused");
+            assert!(
+                err.to_string().contains("server.metrics_listen"),
+                "{bad}: {err}"
+            );
+        }
     }
 
     /// Every line is one JSON object: `timestamp`, `level`, `target`, then

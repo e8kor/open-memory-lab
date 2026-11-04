@@ -44,7 +44,8 @@ use oml_app::types::{
 };
 
 use crate::error::{ApiError, ErrorContext, OAuthError, map_app_error, map_oauth_error};
-use crate::traffic::Rid;
+use crate::traffic::metrics::grant_type_label;
+use crate::traffic::{Resolved, Rid};
 use crate::{ApiState, OAUTH_ROUTES, finish, finish_coded, json_response, retry_chain};
 use page::{CodeForm, page_response, secure};
 
@@ -141,7 +142,17 @@ where
     /// pair and each refusal, carries `Cache-Control: no-store`.
     async fn token(State(st): State<Self>, rid: Rid, headers: HeaderMap, body: Bytes) -> Response {
         let result = Self::token_inner(&st, &headers, &body).await;
-        oauth_finish(&rid, result)
+        let mut response = oauth_finish(&rid, result);
+        // The token metric's grant_type, from the closed set (ADR-0042 d12).
+        let sent = form_pairs(&body).ok().and_then(|pairs| {
+            pairs
+                .into_iter()
+                .find_map(|(name, value)| (name == "grant_type").then_some(value))
+        });
+        if let Some(resolved) = response.extensions_mut().get_mut::<Resolved>() {
+            resolved.grant_type = Some(grant_type_label(sent.as_deref()));
+        }
+        response
     }
 
     /// The form is parsed here, once, so that a repeated parameter is seen;

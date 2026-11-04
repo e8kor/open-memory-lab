@@ -7,6 +7,7 @@
 //! (d1–d3, d7, d9).
 
 pub mod ids;
+pub mod metrics;
 pub mod proxies;
 
 use std::net::{IpAddr, SocketAddr};
@@ -28,6 +29,7 @@ use oml_app::ports::RequestObserver;
 use oml_app::types::KeyRecord;
 
 pub use ids::{CORRELATION_ID, REQUEST_ID, RequestIds, Rid};
+pub use metrics::Metrics;
 pub use proxies::{ClientIpSource, TrustedProxies};
 
 use crate::PROBES;
@@ -181,6 +183,8 @@ pub struct Resolved {
     pub workarea_id: Option<Uuid>,
     /// The envelope's `error.code`, or the RFC `error` on an OAuth endpoint.
     pub error_code: Option<String>,
+    /// `POST /oauth/token`'s `grant_type`, as the token metric labels it.
+    pub grant_type: Option<&'static str>,
 }
 
 impl Resolved {
@@ -191,6 +195,7 @@ impl Resolved {
             identity: observed.identity,
             workarea_id: observed.workarea_id,
             error_code: error_code.map(ToOwned::to_owned),
+            grant_type: None,
         }
     }
 }
@@ -199,6 +204,7 @@ impl Resolved {
 #[derive(Debug, Clone, Default)]
 pub struct Traffic {
     trusted: Arc<TrustedProxies>,
+    metrics: Arc<Metrics>,
 }
 
 impl Traffic {
@@ -207,7 +213,15 @@ impl Traffic {
     pub fn new(trusted: TrustedProxies) -> Self {
         Self {
             trusted: Arc::new(trusted),
+            metrics: Arc::default(),
         }
+    }
+
+    /// The metrics the layer and the MCP facade record, which the
+    /// composition serves on `server.metrics_listen` (ADR-0042 d11).
+    #[must_use]
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.metrics
     }
 }
 
@@ -349,6 +363,14 @@ pub(crate) async fn layer(
     } else {
         line.write_info();
     }
+    traffic.metrics.request(
+        &route,
+        status.as_u16(),
+        duration,
+        replay,
+        resolved.error_code.as_deref(),
+        resolved.grant_type,
+    );
     response
 }
 

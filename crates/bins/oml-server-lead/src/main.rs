@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_fetch::PinnedFetcher;
@@ -131,6 +132,24 @@ async fn run() -> Result<(), BootError> {
     );
 
     let traffic = Traffic::new(config.trusted_proxies.clone());
+    // /metrics on its own listener, off unless server.metrics_listen names
+    // an address; the API listener never routes it (ADR-0042 d11).
+    let _metrics = match config.metrics_listen {
+        None => None,
+        Some(addr) => {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| format!("bind {addr} (server.metrics_listen): {e}"))?;
+            tracing::info!(event = "metrics_listening", addr = %addr, "serving /metrics");
+            let router =
+                oml_transport_http::traffic::metrics::router(Arc::clone(traffic.metrics()));
+            Some(tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, router).await {
+                    tracing::error!(event = "metrics_listener_failed", reason = %e, "the metrics listener stopped");
+                }
+            }))
+        }
+    };
     let start = start_lead_with(
         &store,
         signing_key,

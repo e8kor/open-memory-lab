@@ -253,6 +253,12 @@ where
         let mut call = McpCall::new(started);
         let response = Self::answer(&st, presented, &key, &rid, &body, &mut call).await;
         call.log(&rid.0, key.tenant_id, key.key_id);
+        st.traffic.metrics().mcp_call(
+            call.tool.unwrap_or(""),
+            call.mode.unwrap_or(""),
+            call.outcome.as_str(),
+            call.seconds(),
+        );
         finish(&rid, Ok(response))
     }
 

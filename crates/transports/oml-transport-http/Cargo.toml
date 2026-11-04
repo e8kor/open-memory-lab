@@ -12,6 +12,7 @@ axum.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 http-body.workspace = true
+prometheus-client.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
