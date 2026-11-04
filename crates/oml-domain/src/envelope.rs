@@ -58,6 +58,8 @@ pub mod event_types {
     /// A dreamer(propose) key proposes a labelled claim↔claim edge; pending,
     /// it confers nothing (event-catalog.md, claim-edge family).
     pub const CLAIM_EDGE_PROPOSED: &str = "claim_edge.proposed";
+    /// A claim proposed into a workarea's brief (ADR-0046 d7).
+    pub const BRIEF_EDGE_PROPOSED: &str = "brief_edge.proposed";
     /// Ratified content becomes readable by others.
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
     /// A promoted supersession takes the tip from the version it replaces.

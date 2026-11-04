@@ -865,6 +865,15 @@ pub struct WorkareaInfo {
     /// The key's permission epoch as its access was read for this request
     /// (workareas.md permission epoch).
     pub permission_epoch: u64,
+    /// The review policy in force, the one a transition's `policy_snapshot`
+    /// records (ADR-0039 d9; ADR-0046 d3).
+    pub policy: serde_json::Value,
+    /// The node's live proposals in proposal order, as the status read lists
+    /// them (workareas.md, the status read lists only live proposals).
+    pub pending_transitions: Vec<TransitionView>,
+    /// The node's brief as this key may read it; empty for an admin key,
+    /// which reads no claim content (ADR-0046 d9).
+    pub brief: Brief,
 }
 
 /// One node of a workarea tree read, with its derived path and the crew
@@ -1617,6 +1626,105 @@ pub struct ProposeClaimEdge {
     pub label: String,
 }
 
+/// A brief edge as the store holds it: one claim joined to one workarea's
+/// brief, pending until a key that is not its proposer ratifies it
+/// (postgres-schema.md `brief_edges`; ADR-0046 d7, d8). Nothing deletes one,
+/// and it widens no lineage closure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgeRecord {
+    pub edge_id: Uuid,
+    pub tenant_id: Uuid,
+    /// The member claim's version (`from_artifact_id` on the proposal).
+    pub artifact_id: Uuid,
+    /// The workarea whose brief the claim joins (`to_workarea_id`).
+    pub workarea_id: Uuid,
+    /// `pending` or `ratified`.
+    pub state: EdgeState,
+    pub proposer_key_id: Uuid,
+    /// The proposer key's principal, which R2 at ratification compares.
+    pub proposer_principal: String,
+    pub ratifier_key_id: Option<Uuid>,
+    /// The `at` of its `brief_edge.proposed` event: the listing's order key.
+    pub created_at: EventTime,
+    /// The seq of the `review.ratify` that ratified it, the brief's order
+    /// key; `None` while pending.
+    pub ratified_seq: Option<u64>,
+}
+
+/// `POST /v2/edges` with `kind: brief` as the use case takes it.
+#[derive(Debug, Clone)]
+pub struct ProposeBriefEdge {
+    pub artifact_id: Uuid,
+    /// The workarea by id or name, as sent.
+    pub workarea: Reference,
+}
+
+/// A brief edge as openapi.yaml's `Edge` serves it with `kind: brief`, and
+/// the stored idempotent response of its proposal and ratification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BriefEdgeView {
+    pub edge_id: Uuid,
+    pub from_artifact_id: Uuid,
+    pub to_workarea_id: Uuid,
+    pub label: String,
+    pub state: String,
+    pub proposer_key_id: Uuid,
+    pub ratifier_key_id: Option<Uuid>,
+}
+
+impl From<&BriefEdgeRecord> for BriefEdgeView {
+    fn from(edge: &BriefEdgeRecord) -> Self {
+        Self {
+            edge_id: edge.edge_id,
+            from_artifact_id: edge.artifact_id,
+            to_workarea_id: edge.workarea_id,
+            label: oml_domain::brief::BRIEF_LABEL.to_owned(),
+            state: edge.state.as_str().to_owned(),
+            proposer_key_id: edge.proposer_key_id,
+            ratifier_key_id: edge.ratifier_key_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BriefEdgeProposalOutcome {
+    pub proposal: BriefEdgeView,
+    pub replayed: bool,
+}
+
+/// A brief edge's ratification: the ratified edge, and the seq of the
+/// `review.ratify` it committed, `None` on a replay.
+#[derive(Debug, Clone)]
+pub struct BriefEdgeRatification {
+    pub edge: BriefEdgeView,
+    pub journal_seq: Option<u64>,
+    pub replayed: bool,
+}
+
+/// `POST /v2/edges/{edge_id}/ratify` answered for either kind: the edge's
+/// kind follows from its id (ADR-0039 d9).
+#[derive(Debug, Clone)]
+pub enum EdgeRatification {
+    Claim(ClaimEdgeRatification),
+    Brief(BriefEdgeRatification),
+}
+
+/// One page of a workarea's brief edges, pending and ratified, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgePage {
+    pub items: Vec<BriefEdgeView>,
+    pub next_cursor: Option<String>,
+}
+
+/// A workarea's brief as the workarea read and the session-start hook
+/// serve it: the ratified members the key reads that are still served
+/// tips, in ratification order, cut by `brief.max_tokens` (ADR-0046 d8, d9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Brief {
+    pub items: Vec<ServedMemory>,
+    pub budget: oml_domain::budget::Budget,
+}
+
 /// The stored idempotent response of a claim-edge proposal, the committed
 /// edge as openapi.yaml's `ClaimEdge` serves it: a replay returns this byte
 /// for byte, naming only the caller's own edge (http-api.md idempotency,
@@ -1928,6 +2036,10 @@ pub enum AppError {
         "the ratifier is the proposer: proposal and ratification are two identities (errors.md review.ratifier_is_proposer)"
     )]
     RatifierIsProposer,
+    /// A brief edge proposed for a claim that is not a promoted served tip:
+    /// a brief serves only what review promoted (ADR-0046 d8).
+    #[error("artifact {artifact_id} is not a promoted served tip, so it cannot join a brief")]
+    BriefMemberNotServed { artifact_id: Uuid },
     /// A listing cursor this server will not resume from (http-api.md
     /// pagination, request.validation).
     #[error(transparent)]

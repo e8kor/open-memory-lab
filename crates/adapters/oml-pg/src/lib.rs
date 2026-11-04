@@ -27,12 +27,12 @@ use oml_app::ports::{
     JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState,
-    ClientDescription, ClientKind, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, Credential, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
-    HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectCodeRecord, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, Credential, CrewRecord, DenialRecord, DocumentCaching,
+    GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate,
+    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
     TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
@@ -1034,6 +1034,40 @@ fn claim_edge_from_row(row: &PgRow) -> Result<ClaimEdgeRecord, StoreError> {
     })
 }
 
+const BRIEF_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.artifact_id, e.workarea_id, e.state, \
+     e.proposer_key_id, k.principal AS proposer_principal, e.ratifier_key_id, e.ratified_seq, \
+     to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS created_at_signed";
+
+/// A brief-edge row as the port's record.
+fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
+    let state: String = row.try_get("state").map_err(backend)?;
+    let created: String = row.try_get("created_at_signed").map_err(backend)?;
+    let ratified_seq: Option<i64> = row.try_get("ratified_seq").map_err(backend)?;
+    Ok(BriefEdgeRecord {
+        edge_id: row.try_get("id").map_err(backend)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        artifact_id: row.try_get("artifact_id").map_err(backend)?,
+        workarea_id: row.try_get("workarea_id").map_err(backend)?,
+        state: match state.as_str() {
+            "pending" => EdgeState::Pending,
+            "ratified" => EdgeState::Ratified,
+            other => {
+                return Err(StoreError::Backend(format!(
+                    "unknown brief edge state {other:?}"
+                )));
+            }
+        },
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+        created_at: EventTime::parse(&created).map_err(backend)?,
+        ratified_seq: ratified_seq
+            .map(|s| u64::try_from(s).map_err(backend))
+            .transpose()?,
+    })
+}
+
 /// A key row as the port's record. A provider-level row names no tenant
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
 /// its refusals are the use-cases' own, never a storage failure (ADR-0025
@@ -1401,6 +1435,69 @@ async fn ratify_claim_edge(
     .bind(tenant_id)
     .bind(edge_id)
     .bind(ratifier_key_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if ratified.rows_affected() != 1 {
+        return Err(StoreError::EdgeNotPending { edge_id });
+    }
+    Ok(())
+}
+
+/// The fold of `brief_edge.proposed`: the pending row, created at its
+/// event's `at`; the keys refuse a claim, workarea or proposer of another
+/// tenant (postgres-schema.md `brief_edges`; ADR-0046 d7).
+async fn propose_brief_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge: &BriefEdgeRecord,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    if edge.state != EdgeState::Pending
+        || edge.ratifier_key_id.is_some()
+        || edge.ratified_seq.is_some()
+        || edge.created_at != *at
+    {
+        return Err(StoreError::Backend(format!(
+            "brief edge {} is proposed pending at its event's at",
+            edge.edge_id
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO brief_edges (id, tenant_id, artifact_id, workarea_id, state, \
+         proposer_key_id, ratifier_key_id, ratified_seq, created_at) \
+         VALUES ($1, $2, $3, $4, 'pending', $5, NULL, NULL, ($6)::timestamptz)",
+    )
+    .bind(edge.edge_id)
+    .bind(tenant_id)
+    .bind(edge.artifact_id)
+    .bind(edge.workarea_id)
+    .bind(edge.proposer_key_id)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// The fold of a brief edge's `review.ratify`: the compare-and-set turns a
+/// pending edge of this tenant ratified at `seq`; a zero row count refuses
+/// the commit with [`StoreError::EdgeNotPending`] (ADR-0046 d8).
+async fn ratify_brief_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge_id: Uuid,
+    ratifier_key_id: Uuid,
+    seq: i64,
+) -> Result<(), StoreError> {
+    let ratified = sqlx::query(
+        "UPDATE brief_edges SET state = 'ratified', ratifier_key_id = $3, ratified_seq = $4 \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+    )
+    .bind(tenant_id)
+    .bind(edge_id)
+    .bind(ratifier_key_id)
+    .bind(seq)
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
@@ -1895,6 +1992,15 @@ async fn apply_fold(
             ratifier_key_id,
         } => {
             ratify_claim_edge(tx, tenant_id, edge_id, ratifier_key_id).await?;
+        }
+        MetadataFold::BriefEdgeProposed(edge) => {
+            propose_brief_edge(tx, tenant_id, &edge, at).await?;
+        }
+        MetadataFold::BriefEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            ratify_brief_edge(tx, tenant_id, edge_id, ratifier_key_id, seq).await?;
         }
     }
     Ok(())
@@ -3409,6 +3515,49 @@ impl JournalStore for PgStore {
             request_digest: String::from_utf8(digest_bytes).map_err(backend)?,
             response: response.unwrap_or(Value::Null),
         }))
+    }
+
+    async fn brief_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<BriefEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(edge_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(brief_edge_from_row).transpose()
+    }
+
+    async fn brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.workarea_id = $2 \
+             ORDER BY e.created_at DESC, e.id DESC"
+        ))
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(brief_edge_from_row).collect()
     }
 
     async fn claim_edge(

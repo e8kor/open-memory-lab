@@ -35,11 +35,11 @@ use oml_app::types::{
     AppError, AuthorizationRecord, AuthorizeOutcome, AuthorizeParams, BootstrapRequest,
     BootstrapResult, ClaimEdgePage, ClaimEdgeQuery, ClaimEdgeRecord, ClientAuthentication,
     ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationView, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, ExchangeForm,
-    GrantRequest, IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken, NamingRefusal,
-    ProposeClaimEdge, RecallRequest, RecallResult, RefreshForm, SubmitRequest, SubmitVerb,
-    SupersedeRequest, TokenPair, TransitionState, TransitionView, Verdict, VerdictRequest,
-    VersionRef,
+    ConnectOutcome, ConnectionRecord, Credential, CrewCreateRequest, CrewUpdate, EdgeRatification,
+    ExchangeForm, GrantRequest, IssueKeyRequest, IssuedKey, KeyRecord, ListRequest, MintedToken,
+    NamingRefusal, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, RecallResult, RefreshForm,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TokenPair, TransitionState, TransitionView,
+    Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11909,4 +11909,347 @@ async fn a_workarea_named_by_its_name_reads_as_by_its_id() {
         .await
         .expect("resumes by id");
     assert_eq!(edge_ids(&rest), vec![f.edge_id]);
+}
+
+/// The workarea read carries the status read's fields, so the removed
+/// status route has one successor and the two can never disagree
+/// (ADR-0039 d9; ADR-0046 d3).
+#[tokio::test]
+async fn the_workarea_read_serves_the_policy_in_force_and_the_nodes_live_proposals_as_the_status_read_does()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = curator(&app, admin, "dora", crew).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let proposal = app
+        .propose_transition(&dora.value, crew.into(), WorkareaStatus::Committed)
+        .await
+        .expect("a proposal");
+
+    let info = app
+        .workarea_info(rita.value.as_str(), Some(crew.into()))
+        .await
+        .expect("the workarea read");
+    let status = app
+        .workarea_status(&rita.value, crew.into())
+        .await
+        .expect("the status read");
+    assert_eq!(
+        info.policy,
+        json!({ "k": 1, "required_roles": ["dreamer"] })
+    );
+    assert_eq!(info.policy, status.policy);
+    assert_eq!(info.pending_transitions, vec![seen_by_another(&proposal)]);
+    assert_eq!(info.pending_transitions, status.pending);
+
+    // The proposer's own key sees its key id, as on the status read.
+    let own = app
+        .workarea_info(dora.value.as_str(), Some(crew.into()))
+        .await
+        .expect("the workarea read");
+    assert_eq!(
+        own.pending_transitions[0].proposed_by_key_id,
+        Some(dora.key_id)
+    );
+}
+
+// -- the workarea brief: brief edges, their ratification and the brief the
+// workarea read serves (ADR-0046 d7, d8, d9) -------------------------------
+
+struct BriefRig {
+    app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
+    crew: Uuid,
+    writer: IssuedKey,
+    dora: IssuedKey,
+    dan: IssuedKey,
+    rita: IssuedKey,
+}
+
+async fn brief_rig() -> BriefRig {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.clone();
+    let writer = agent(&app, &admin, "crew/writer", crew).await;
+    let dora = curator(&app, &admin, "dora", crew).await;
+    let dan = curator(&app, &admin, "dan", crew).await;
+    let rita = issue(&app, &admin, Role::Reader, "rita", crew).await;
+    BriefRig {
+        app,
+        store,
+        boot,
+        crew,
+        writer,
+        dora,
+        dan,
+        rita,
+    }
+}
+
+fn brief_req(artifact_id: Uuid, workarea: Uuid) -> ProposeBriefEdge {
+    ProposeBriefEdge {
+        artifact_id,
+        workarea: workarea.into(),
+    }
+}
+
+/// Proposes `artifact` into the crew's brief under dora and ratifies it
+/// under dan.
+async fn into_brief(r: &BriefRig, artifact: Uuid) -> Uuid {
+    let edge = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(artifact, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    r.app
+        .ratify_brief_edge(&r.dan.value, edge, None)
+        .await
+        .expect("a ratification");
+    edge
+}
+
+#[tokio::test]
+async fn a_dreamer_proposes_a_promoted_claim_into_a_workarea_brief_and_it_stays_pending_as_one_brief_edge_proposed()
+ {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("b1", "the canary drains first", r.crew),
+    )
+    .await;
+    let before = journal(&r.store, r.boot.tenant_id).await.len();
+    let outcome = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal");
+    assert_eq!(outcome.proposal.state, "pending");
+    assert_eq!(outcome.proposal.label, "brief");
+    assert_eq!(outcome.proposal.to_workarea_id, r.crew);
+    let events = journal(&r.store, r.boot.tenant_id).await;
+    assert_eq!(events.len(), before + 1);
+    assert_eq!(
+        events.last().expect("the event").envelope.event_type,
+        event_types::BRIEF_EDGE_PROPOSED
+    );
+    // Pending is not a member: the brief is empty until a second identity
+    // ratifies.
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    assert!(info.brief.items.is_empty());
+}
+
+#[tokio::test]
+async fn a_held_claim_cannot_join_a_brief_and_a_reader_key_cannot_propose_one() {
+    let r = brief_rig().await;
+    let held = r
+        .app
+        .submit_memory(&r.writer.value, &submit_into("b2", "still held", r.crew))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let err = r
+        .app
+        .propose_brief_edge(&r.writer.value, &brief_req(held, r.crew), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let err = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(held, r.crew), None)
+        .await
+        .unwrap_err();
+    // A dreamer reads no other author's held row: absent, not described.
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_second_dreamer_ratifies_a_brief_edge_and_its_proposer_never_does() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("b3", "deploys go out on tuesdays", r.crew),
+    )
+    .await;
+    let edge = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    let err = r
+        .app
+        .ratify_brief_edge(&r.dora.value, edge, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::RatifierIsProposer), "{err:?}");
+    let ratified = r
+        .app
+        .ratify_edge(&r.dan.value, edge, None)
+        .await
+        .expect("a second identity ratifies");
+    let EdgeRatification::Brief(ratified) = ratified else {
+        panic!("a brief edge's id ratifies a brief edge");
+    };
+    assert_eq!(ratified.edge.state, "ratified");
+    assert_eq!(ratified.edge.ratifier_key_id, Some(r.dan.key_id));
+    let last = journal(&r.store, r.boot.tenant_id).await;
+    let last = &last.last().expect("the ratification").envelope;
+    assert_eq!(last.event_type, event_types::REVIEW_RATIFY);
+    assert_eq!(last.payload["subject_kind"], "brief_edge");
+    assert_eq!(last.payload["same_user"], false);
+    let err = r
+        .app
+        .ratify_brief_edge(&r.dan.value, edge, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::EdgeConsumed { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn the_workarea_read_serves_the_ratified_brief_in_ratification_order_cut_by_brief_max_tokens()
+{
+    let store = MemStore::new();
+    // 12 budget tokens: room for the first two 20-byte members, not a third.
+    let app = app_over(store.clone()).with_brief_max_tokens(12);
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.clone();
+    let r = BriefRig {
+        writer: agent(&app, &admin, "crew/writer", crew).await,
+        dora: curator(&app, &admin, "dora", crew).await,
+        dan: curator(&app, &admin, "dan", crew).await,
+        rita: issue(&app, &admin, Role::Reader, "rita", crew).await,
+        app,
+        store,
+        boot,
+        crew,
+    };
+    let mut claims = Vec::new();
+    for (idem, text) in [
+        ("o1", "first agreed member."),
+        ("o2", "second agreed membr."),
+        ("o3", "third agreed member."),
+    ] {
+        claims.push(
+            promoted(
+                &r.app,
+                &r.writer.value,
+                &r.dora.value,
+                &submit_into(idem, text, r.crew),
+            )
+            .await,
+        );
+    }
+    // Ratified out of creation order: the brief follows ratification.
+    into_brief(&r, claims[1]).await;
+    into_brief(&r, claims[0]).await;
+    into_brief(&r, claims[2]).await;
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    let ids: Vec<Uuid> = info
+        .brief
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect();
+    assert_eq!(ids, vec![claims[1], claims[0]]);
+    assert!(info.brief.budget.truncated);
+    assert_eq!(info.brief.budget.max_tokens, 12);
+    // An admin key reads structure and never claim content.
+    let admin_view = r
+        .app
+        .workarea_info(admin.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the admin's structure read");
+    assert!(admin_view.brief.items.is_empty());
+}
+
+#[tokio::test]
+async fn a_superseded_brief_member_drops_out_of_the_brief_by_itself() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("s1", "the old rule", r.crew),
+    )
+    .await;
+    into_brief(&r, claim).await;
+    let successor = r
+        .app
+        .supersede(&r.writer.value, &supersede_req("s2", claim, "the new rule"))
+        .await
+        .expect("a successor")
+        .receipt
+        .memory_id;
+    r.app
+        .post_verdict(&r.dora.value, successor, Verdict::Approve, None)
+        .await
+        .expect("approve the successor");
+    let info = r
+        .app
+        .workarea_info(r.rita.value.as_str(), Some(r.crew.into()))
+        .await
+        .expect("the workarea read");
+    assert!(info.brief.items.is_empty(), "only served tips are members");
+}
+
+#[tokio::test]
+async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_reader() {
+    let r = brief_rig().await;
+    let a = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("l1", "one", r.crew),
+    )
+    .await;
+    let b = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("l2", "two", r.crew),
+    )
+    .await;
+    let first = into_brief(&r, a).await;
+    let second = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(b, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal
+        .edge_id;
+    let page = r
+        .app
+        .brief_edges(&r.rita.value, r.crew.into(), None, 1)
+        .await
+        .expect("a page");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].edge_id, second);
+    let next = r
+        .app
+        .brief_edges(&r.rita.value, r.crew.into(), page.next_cursor.as_deref(), 1)
+        .await
+        .expect("the next page");
+    assert_eq!(next.items[0].edge_id, first);
+    assert_eq!(next.items[0].state, "ratified");
+    assert!(next.next_cursor.is_none());
 }
