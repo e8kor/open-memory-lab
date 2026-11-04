@@ -34,6 +34,23 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml setup claude-code` runs again over a marketplace already added, and each quickstart is a compose project of its own (ADR-0041 d7, d9, implementation)
+
+`oml setup claude-code` now reads `claude plugin marketplace list --json` before it adds the
+marketplace. Claude Code 2.1.312 refuses an add whose source differs from the one it holds, so a
+v0.3.x user whose marketplace is pinned at `#v0.3.1` got a failure partway, or the 0.3 plugin.
+At the CLI's tag it adds nothing. From the same repository at another tag it removes the
+marketplace, adds it at the CLI's tag and installs again each plugin the remove uninstalled.
+From another source it refuses as `setup.marketplace`. `oml quickstart` names its compose
+project from the directory's absolute path, so two stacks in two `oml` directories no longer
+share containers and volumes. ADR-0041's d9 row no longer reads as if the compose file had run:
+it has not run under Docker yet.
+
+- **Pages touched:** [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (d7 step
+  4, d9 step 2, and both status rows),
+  [CLI reference](cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start)
+  and this page.
+
 ### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.4.0 (ADR-0041 d3, implementation)
 
 The installers install the release they are cut with (d3), and `check_release.py`,

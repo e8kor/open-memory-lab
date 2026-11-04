@@ -8,6 +8,11 @@
 # oml_owner and serves as oml_server, which owns nothing (ADR-0034 d2, d4).
 # The stack is one trust domain; TLS and exposure beyond 127.0.0.1 are the
 # deployment guide's, not this file's.
+#
+# The project name is derived from this directory's absolute path, so a
+# second quickstart in another directory of the same name is a project, and
+# volumes, of its own.
+name: @@PROJECT@@
 
 services:
   postgres:

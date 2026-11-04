@@ -257,8 +257,19 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
         "each role its own password"
     );
 
+    // The project is named after the directory's whole path, never its
+    // basename alone, in the file and in every compose call.
+    let name = compose
+        .lines()
+        .find_map(|l| l.strip_prefix("name: "))
+        .expect("compose.yaml names its project")
+        .to_owned();
+    assert!(name.starts_with("oml-") && name.len() == 16, "{name}");
     let log = docker_log(&dir);
-    let project = format!("compose --project-directory {}", stack.display());
+    let project = format!(
+        "compose --project-name {name} --project-directory {}",
+        stack.display()
+    );
     assert!(
         log.lines()
             .any(|l| l == format!("{project} up --detach --wait")),

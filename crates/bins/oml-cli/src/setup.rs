@@ -1,10 +1,12 @@
 //! `oml setup claude-code`'s local half (ADR-0041 d7): the roles it refuses,
-//! the Claude Code version it requires, the three `claude` commands it runs,
+//! the Claude Code version it requires, how it reads the marketplace Claude
+//! Code already holds under the name `open-memory-lab`, the `claude` commands
+//! it runs,
 //! the values it writes to `claude plugin configure --values-stdin`, and the
 //! lines it prints in their place with `--print` or with no `claude` on
 //! `PATH`. The key travels on stdin alone, never in argv (ADR-0040 d4).
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::issue::{configure_line, sh_quote};
 
@@ -45,20 +47,115 @@ pub fn dotted((major, minor, patch): (u32, u32, u32)) -> String {
     format!("{major}.{minor}.{patch}")
 }
 
-/// The arguments of the two `claude` commands that install the plugin: the
-/// marketplace pinned to the CLI's own tag, so the plugin matches the CLI's
-/// release, then the plugin (ADR-0041 d7 step 4).
+/// The name the marketplace declares for itself in `marketplace.json`.
+pub const MARKETPLACE_NAME: &str = "open-memory-lab";
+
+/// The `claude` arguments that list the declared marketplaces as JSON.
+#[must_use]
+pub fn marketplace_list_command() -> Vec<String> {
+    ["plugin", "marketplace", "list", "--json"]
+        .map(ToOwned::to_owned)
+        .to_vec()
+}
+
+/// The `claude` arguments that list the installed plugins as JSON.
+#[must_use]
+pub fn plugin_list_command() -> Vec<String> {
+    ["plugin", "list", "--json"].map(ToOwned::to_owned).to_vec()
+}
+
+/// The `claude` arguments that remove the marketplace, which also
+/// uninstalls each plugin installed from it.
+#[must_use]
+pub fn remove_command() -> Vec<String> {
+    ["plugin", "marketplace", "remove", MARKETPLACE_NAME]
+        .map(ToOwned::to_owned)
+        .to_vec()
+}
+
+/// The `claude` arguments that add the marketplace pinned to the CLI's own
+/// tag, so the plugin matches the CLI's release (ADR-0041 d7 step 4).
+#[must_use]
+pub fn add_command(version: &str) -> Vec<String> {
+    vec![
+        "plugin".to_owned(),
+        "marketplace".to_owned(),
+        "add".to_owned(),
+        format!("{MARKETPLACE}#v{version}"),
+    ]
+}
+
+/// The `claude` arguments that install `plugin`.
+#[must_use]
+pub fn install_command(plugin: &str) -> Vec<String> {
+    vec!["plugin".to_owned(), "install".to_owned(), plugin.to_owned()]
+}
+
+/// The arguments of the two `claude` commands that install the plugin into
+/// a Claude Code without the marketplace: the add at the CLI's own tag,
+/// then the plugin.
 #[must_use]
 pub fn install_commands(version: &str) -> [Vec<String>; 2] {
-    [
-        vec![
-            "plugin".to_owned(),
-            "marketplace".to_owned(),
-            "add".to_owned(),
-            format!("{MARKETPLACE}#v{version}"),
-        ],
-        vec!["plugin".to_owned(), "install".to_owned(), PLUGIN.to_owned()],
-    ]
+    [add_command(version), install_command(PLUGIN)]
+}
+
+/// What Claude Code holds under [`MARKETPLACE_NAME`], read from `claude
+/// plugin marketplace list --json`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Marketplace {
+    /// None: the verb adds it.
+    Absent,
+    /// [`MARKETPLACE`] at the CLI's own tag: the verb adds nothing.
+    Pinned,
+    /// [`MARKETPLACE`] at another tag, or at none, named: Claude Code 2.1.312
+    /// refuses an add whose source differs from the declared one, so the
+    /// verb removes it and adds it again.
+    Repin(String),
+    /// Another source under the same name, described: the verb refuses it
+    /// as `setup.marketplace` rather than remove what someone else set up.
+    Foreign(String),
+}
+
+/// Reads `list`, the output of `claude plugin marketplace list --json`, for
+/// the marketplace the verb installs from at `version`; `None` when it is
+/// not a JSON array of objects.
+#[must_use]
+pub fn marketplace(list: &str, version: &str) -> Option<Marketplace> {
+    let entries: Vec<Value> = serde_json::from_str(list.trim()).ok()?;
+    let Some(entry) = entries
+        .iter()
+        .find(|e| e["name"].as_str() == Some(MARKETPLACE_NAME))
+    else {
+        return Some(Marketplace::Absent);
+    };
+    if entry["source"].as_str() != Some("github") || entry["repo"].as_str() != Some(MARKETPLACE) {
+        let mut shown = entry.as_object()?.clone();
+        shown.remove("installLocation");
+        return Some(Marketplace::Foreign(Value::Object(shown).to_string()));
+    }
+    Some(match entry["ref"].as_str() {
+        Some(tag) if tag == format!("v{version}") => Marketplace::Pinned,
+        Some(tag) => Marketplace::Repin(format!("{MARKETPLACE}#{tag}")),
+        None => Marketplace::Repin(format!("{MARKETPLACE} at its default branch")),
+    })
+}
+
+/// The plugins other than [`PLUGIN`] installed from [`MARKETPLACE_NAME`],
+/// read from `claude plugin list --json`, in its order: removing the
+/// marketplace uninstalls them, so the verb installs them again; `None`
+/// when it is not a JSON array.
+#[must_use]
+pub fn other_plugins(list: &str) -> Option<Vec<String>> {
+    let entries: Vec<Value> = serde_json::from_str(list.trim()).ok()?;
+    let suffix = format!("@{MARKETPLACE_NAME}");
+    Some(
+        entries
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .filter(|id| id.ends_with(&suffix) && *id != PLUGIN)
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
 }
 
 /// The arguments of the command that saves the options from stdin
@@ -127,6 +224,58 @@ mod tests {
         for role in ["reader", "writer", "dreamer"] {
             assert!(!refuses_role(role));
         }
+    }
+
+    #[test]
+    fn the_marketplace_is_pinned_only_at_the_clis_own_tag_of_its_own_repository() {
+        let list = |entry: Value| json!([{"name": "omc", "source": "git"}, entry]).to_string();
+        let ours = |tag: Option<&str>| {
+            let mut e = json!({"name": "open-memory-lab", "source": "github",
+                               "repo": "e8kor/open-memory-lab", "installLocation": "/x"});
+            if let Some(tag) = tag {
+                e["ref"] = json!(tag);
+            }
+            list(e)
+        };
+        assert_eq!(
+            marketplace(&ours(Some("v0.4.0")), "0.4.0"),
+            Some(Marketplace::Pinned)
+        );
+        assert_eq!(
+            marketplace(&ours(Some("v0.3.1")), "0.4.0"),
+            Some(Marketplace::Repin(
+                "e8kor/open-memory-lab#v0.3.1".to_owned()
+            ))
+        );
+        assert!(matches!(
+            marketplace(&ours(None), "0.4.0"),
+            Some(Marketplace::Repin(_))
+        ));
+        let foreign = list(json!({"name": "open-memory-lab", "source": "directory",
+                                  "path": "/src/oml", "installLocation": "/x"}));
+        match marketplace(&foreign, "0.4.0") {
+            Some(Marketplace::Foreign(shown)) => {
+                assert!(shown.contains("/src/oml") && !shown.contains("installLocation"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            marketplace(&json!([]).to_string(), "0.4.0"),
+            Some(Marketplace::Absent)
+        );
+        assert_eq!(marketplace("not json", "0.4.0"), None);
+    }
+
+    #[test]
+    fn the_plugins_reinstalled_are_the_marketplaces_own_other_than_oml() {
+        let list = json!([{"id": "oml@open-memory-lab"}, {"id": "omc@omc"},
+                          {"id": "oml-admin@open-memory-lab"}])
+        .to_string();
+        assert_eq!(
+            other_plugins(&list),
+            Some(vec!["oml-admin@open-memory-lab".to_owned()])
+        );
+        assert_eq!(other_plugins("{}"), None);
     }
 
     #[test]

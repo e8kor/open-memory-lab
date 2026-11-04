@@ -56,16 +56,35 @@ async fn whoami(State(role): State<String>, headers: HeaderMap) -> (StatusCode, 
 
 /// A fake `claude` in `dir/bin`: `--version` prints `version`, and every
 /// other call appends `ARGV <args>` and `STDIN <stdin>` to `dir/claude.log`.
+/// `plugin marketplace list --json` prints `dir/marketplaces.json` (none:
+/// `[]`) and `plugin list --json` prints `dir/plugins.json` (none: `[]`).
+/// While `dir/marketplaces.json` declares a marketplace, `plugin marketplace
+/// add` fails as Claude Code 2.1.312 does for a source that differs from the
+/// declared one, and `plugin marketplace remove open-memory-lab` deletes it.
 fn fake_claude(dir: &Path, version: &str) -> PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("the fake's directory");
     let script = bin.join("claude");
+    let (log, marketplaces, plugins) = (
+        dir.join("claude.log"),
+        dir.join("marketplaces.json"),
+        dir.join("plugins.json"),
+    );
     std::fs::write(
         &script,
         format!(
             "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{version} (Claude Code)'; exit 0; fi\n\
-             stdin=$(cat)\nprintf 'ARGV %s\\nSTDIN %s\\n' \"$*\" \"$stdin\" >> '{}'\n",
-            dir.join("claude.log").display()
+             stdin=$(cat)\nprintf 'ARGV %s\\nSTDIN %s\\n' \"$*\" \"$stdin\" >> '{log}'\n\
+             case \"$*\" in\n\
+             'plugin marketplace list --json') cat '{marketplaces}' 2>/dev/null || echo '[]' ;;\n\
+             'plugin list --json') cat '{plugins}' 2>/dev/null || echo '[]' ;;\n\
+             'plugin marketplace add '*) if [ -e '{marketplaces}' ]; then \
+             echo 'Cannot add marketplace: its source does not match its declared entry' >&2; exit 1; fi ;;\n\
+             'plugin marketplace remove open-memory-lab') rm -f '{marketplaces}' ;;\n\
+             esac\n",
+            log = log.display(),
+            marketplaces = marketplaces.display(),
+            plugins = plugins.display(),
         ),
     )
     .expect("the fake claude");
@@ -146,16 +165,17 @@ fn setup_claude_code_installs_the_plugin_at_the_clis_own_tag_and_hands_the_key_t
     assert_eq!(
         argv,
         [
+            "plugin marketplace list --json",
             format!("plugin marketplace add e8kor/open-memory-lab#v{version}").as_str(),
             "plugin install oml@open-memory-lab",
             "plugin configure oml@open-memory-lab --values-stdin",
         ],
-        "the three claude commands, in order: {log}"
+        "the claude commands, in order: {log}"
     );
     let configure_stdin = log
         .lines()
         .filter_map(|l| l.strip_prefix("STDIN "))
-        .nth(2)
+        .next_back()
         .expect("the configure call's stdin");
     let values: Value = serde_json::from_str(configure_stdin).expect("a JSON object on stdin");
     let url = values["url"].as_str().expect("url").to_owned();
@@ -292,5 +312,134 @@ fn setup_claude_code_refuses_key_file_beside_api_key_and_key_file_without_url_be
         );
         assert_eq!(log(&dir), "", "{args:?}: no claude command ran");
     }
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// The arguments of each `claude` call the fake recorded, in order.
+fn argv(dir: &Path) -> Vec<String> {
+    log(dir)
+        .lines()
+        .filter_map(|l| l.strip_prefix("ARGV "))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn setup_with_key_file(dir: &Path, bin: &Path) -> Output {
+    let file = key_file(dir);
+    run(
+        dir,
+        "writer",
+        Some(bin),
+        &[
+            "--url",
+            "{url}",
+            "setup",
+            "claude-code",
+            "--key-file",
+            &file,
+        ],
+    )
+}
+
+#[test]
+fn setup_claude_code_run_again_over_the_marketplace_at_the_clis_own_tag_adds_nothing_and_configures_the_plugin_anew()
+ {
+    let dir = scratch("rerun");
+    let bin = fake_claude(&dir, "2.1.312");
+    let version = env!("CARGO_PKG_VERSION");
+    std::fs::write(
+        dir.join("marketplaces.json"),
+        json!([{"name": "open-memory-lab", "source": "github",
+                "repo": "e8kor/open-memory-lab", "ref": format!("v{version}"),
+                "installLocation": "/home/u/.claude/plugins/marketplaces/open-memory-lab"}])
+        .to_string(),
+    )
+    .expect("the declared marketplace");
+    let out = setup_with_key_file(&dir, &bin);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(
+        argv(&dir),
+        [
+            "plugin marketplace list --json",
+            "plugin install oml@open-memory-lab",
+            "plugin configure oml@open-memory-lab --values-stdin",
+        ],
+        "{stderr}"
+    );
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[test]
+fn setup_claude_code_over_the_marketplace_pinned_at_v0_3_1_removes_it_adds_it_at_the_clis_own_tag_and_reinstalls_each_of_its_plugins()
+ {
+    let dir = scratch("upgrade");
+    let bin = fake_claude(&dir, "2.1.312");
+    let version = env!("CARGO_PKG_VERSION");
+    std::fs::write(
+        dir.join("marketplaces.json"),
+        json!([
+            {"name": "omc", "source": "git", "url": "https://example.com/omc.git"},
+            {"name": "open-memory-lab", "source": "github",
+             "repo": "e8kor/open-memory-lab", "ref": "v0.3.1"},
+        ])
+        .to_string(),
+    )
+    .expect("the declared marketplace");
+    std::fs::write(
+        dir.join("plugins.json"),
+        json!([
+            {"id": "oml@open-memory-lab", "version": "0.3.1"},
+            {"id": "omc@omc", "version": "5.0.0"},
+            {"id": "oml-admin@open-memory-lab", "version": "0.3.1"},
+        ])
+        .to_string(),
+    )
+    .expect("the installed plugins");
+    let out = setup_with_key_file(&dir, &bin);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(
+        argv(&dir),
+        [
+            "plugin marketplace list --json",
+            "plugin list --json",
+            "plugin marketplace remove open-memory-lab",
+            format!("plugin marketplace add e8kor/open-memory-lab#v{version}").as_str(),
+            "plugin install oml@open-memory-lab",
+            "plugin install oml-admin@open-memory-lab",
+            "plugin configure oml@open-memory-lab --values-stdin",
+        ],
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("v0.3.1"),
+        "names the tag it moved from: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[test]
+fn setup_claude_code_refuses_a_marketplace_named_open_memory_lab_from_another_source_as_setup_marketplace_and_changes_nothing()
+ {
+    let dir = scratch("foreign");
+    let bin = fake_claude(&dir, "2.1.312");
+    std::fs::write(
+        dir.join("marketplaces.json"),
+        json!([{"name": "open-memory-lab", "source": "directory",
+                "path": "/home/u/src/open-memory-lab"}])
+        .to_string(),
+    )
+    .expect("the declared marketplace");
+    let out = setup_with_key_file(&dir, &bin);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("setup.marketplace")
+            && stderr.contains("/home/u/src/open-memory-lab")
+            && stderr.contains("claude plugin marketplace remove open-memory-lab"),
+        "{stderr}"
+    );
+    assert_eq!(argv(&dir), ["plugin marketplace list --json"], "{stderr}");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }

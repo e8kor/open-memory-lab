@@ -7,7 +7,8 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-/// The compose file, with `@@VERSION@@` and `@@PORT@@` to fill.
+/// The compose file, with `@@PROJECT@@`, `@@VERSION@@` and `@@PORT@@` to
+/// fill.
 const COMPOSE: &str = include_str!("quickstart-compose.yaml");
 
 /// The image's repository; the tag is the CLI's own version.
@@ -26,10 +27,24 @@ pub const PASSWORDS: [&str; 3] = [
 /// refuses a second run as `quickstart.exists`.
 pub const WRITTEN: [&str; 4] = ["compose.yaml", ".env", "keys", "credentials"];
 
-/// The compose file for `version`, its lead published on `127.0.0.1:port`.
+/// The compose project name for the stack in `dir`, an absolute path:
+/// `oml-` and the first 12 hex digits of the path's SHA-256. Compose would
+/// otherwise name the project after the directory's basename, so two stacks
+/// in two `oml` directories would share one project, its containers and
+/// its volumes.
 #[must_use]
-pub fn compose(version: &str, port: u16) -> String {
+pub fn project_name(dir: &Path) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(dir.as_os_str().as_encoded_bytes());
+    format!("oml-{}", &hex::encode(digest)[..12])
+}
+
+/// The compose file of project `project` for `version`, its lead published
+/// on `127.0.0.1:port`.
+#[must_use]
+pub fn compose(project: &str, version: &str, port: u16) -> String {
     COMPOSE
+        .replace("@@PROJECT@@", project)
         .replace("@@VERSION@@", version)
         .replace("@@PORT@@", &port.to_string())
 }
@@ -89,7 +104,8 @@ mod tests {
 
     #[test]
     fn the_compose_file_pins_the_image_to_the_given_version_and_publishes_on_loopback_alone() {
-        let text = compose("0.4.0", 18080);
+        let text = compose("oml-0123456789ab", "0.4.0", 18080);
+        assert!(text.contains("\nname: oml-0123456789ab\n"), "{text}");
         assert!(text.contains(&format!("image: {IMAGE}:0.4.0\n")), "{text}");
         assert!(text.contains("\"127.0.0.1:18080:8080\""), "{text}");
         assert!(!text.contains("@@"), "every placeholder is filled");
@@ -98,6 +114,22 @@ mod tests {
             assert!(
                 text.contains(&format!("${{{name}")),
                 "{name} is read from .env"
+            );
+        }
+    }
+
+    #[test]
+    fn two_directories_with_the_same_basename_get_distinct_compose_project_names() {
+        let a = project_name(Path::new("/home/u/a/oml"));
+        let b = project_name(Path::new("/home/u/b/oml"));
+        assert_ne!(a, b);
+        assert_eq!(a, project_name(Path::new("/home/u/a/oml")), "stable");
+        for name in [&a, &b] {
+            assert_eq!(name.len(), 16, "{name}");
+            assert!(
+                name.strip_prefix("oml-")
+                    .is_some_and(|h| h.bytes().all(|c| c.is_ascii_hexdigit())),
+                "{name}"
             );
         }
     }

@@ -106,7 +106,14 @@ through them. Where each item stands is under [Consequences](#consequences).
        content); this refusal is the check, added here;
     3. requires Claude Code 2.1.285 or later (ADR-0040 d5), read from `claude --version`;
     4. runs `claude plugin marketplace add e8kor/open-memory-lab#v<its own version>` and
-       `claude plugin install oml@open-memory-lab`, so the plugin matches the CLI's release;
+       `claude plugin install oml@open-memory-lab`, so the plugin matches the CLI's release.
+       It first reads `claude plugin marketplace list --json`. A marketplace named
+       `open-memory-lab` already at that tag is not added again, so a second run only
+       reconfigures. One from the same repository at another tag, or at none, is removed and
+       added at the CLI's tag, and each plugin installed from it is installed again: Claude
+       Code refuses an add whose source differs from the one it holds, and the remove
+       uninstalls the marketplace's plugins. One from another source, such as a local
+       checkout, is refused as `setup.marketplace`, naming it, and nothing is changed;
     5. writes `{"url": …, "api_key": …}` to the stdin of `claude plugin configure
        oml@open-memory-lab --values-stdin` (ADR-0040 d4), so the key reaches neither argv nor a
        transcript;
@@ -135,7 +142,11 @@ through them. Where each item stands is under [Consequences](#consequences).
        version and never `latest`. It also writes an owner-only `.env` with generated passwords
        for the cluster's superuser and ADR-0034's owner and serving roles, replacing
        `oml_dev_only`. Both go into `--dir`, by default `./oml`;
-    2. runs `docker compose up --detach --wait`, listening on `127.0.0.1` only;
+    2. runs `docker compose up --detach --wait`, listening on `127.0.0.1` only. The compose
+       project is named `oml-` and 12 hex digits of the SHA-256 of `--dir`'s absolute path,
+       in the file's `name:` and in `--project-name`. Compose otherwise names a project after
+       the directory's basename, and two stacks in two `oml` directories would share their
+       containers and volumes, so a `down -v` for one would delete the other's data;
     3. reads the enrollment token from the server's log, as today, until the designed
        `oml-bootstrap` one-shot service ([deployment](../operations/deployment.md#the-docker-profile))
        exists, and then from its file;
@@ -177,9 +188,9 @@ through them. Where each item stands is under [Consequences](#consequences).
     | d4 | Decided, not built: the redirect is set up at the v0.4.0 tag. |
     | d5 | Decided, not built: the install page is in the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md). |
     | d6 | Built with ADR-0039's `oml login` and `oml doctor`; nothing was added to them. |
-    | d7 | Built: `oml setup claude-code`, with `--key-file` and `--print`, and its `setup.admin_key` and `setup.claude_code_version` refusals. `oml-cli`'s `setup_claude_code` suite runs it against a fake `claude` that records each call; no test has run it against a real Claude Code. |
+    | d7 | Built: `oml setup claude-code`, with `--key-file` and `--print`, its `setup.admin_key`, `setup.claude_code_version` and `setup.marketplace` refusals, and step 4's reading of the marketplace already held. `oml-cli`'s `setup_claude_code` suite runs it against a fake `claude` that records each call and, like Claude Code, refuses an add over a marketplace declared from another source. On 2026-11-04 the `claude` commands were run by hand on Claude Code 2.1.312 against a scratch configuration directory, with tags v0.3.1 and v0.3.0, since v0.4.0 is not tagged: a repeated add at the same tag and a repeated install exit 0; an add at another tag over a held one fails, naming the declared source; `marketplace remove` uninstalls the marketplace's plugins and deletes their options, after which the add and install at the other tag succeed. The verb itself has not run against a real Claude Code, and FR-67's recorded session is still open. |
     | d8 | Built. |
-    | d9 | Built in part: `oml quickstart` with `--dir` and `--port` and steps 1 to 7, the token read from the lead's log, and `quickstart.exists`, with `quickstart.docker` for a machine without compose. Its compose file has run only in CI's `compose` job; `oml-cli`'s `quickstart` suite runs the verb against a fake `docker` and the real lead. Not built: `install.sh --quickstart`. `scripts/quickstart.sh` stays, because the `e2e` and `chart` jobs run it where there is no compose stack, so the script is not deleted yet. |
+    | d9 | Built in part: `oml quickstart` with `--dir` and `--port` and steps 1 to 7, the token read from the lead's log, and `quickstart.exists`, with `quickstart.docker` for a machine without compose. Its compose file has not run under Docker yet: CI's `compose` job runs it once the branch is pushed, and this row is restated after a green run, citing it. `oml-cli`'s `quickstart` suite runs the verb against a fake `docker` and the real lead, and asserts the compose project named in the file and in every `docker compose` call. Not built: `install.sh --quickstart`. `scripts/quickstart.sh` stays, because the `e2e` and `chart` jobs run it where there is no compose stack, so the script is not deleted yet. |
     | d10 | Unmeasured, tracked as FR-68. |
 
 - **Build order for the rest:** `install.sh --quickstart` and moving the `e2e` and `chart` jobs

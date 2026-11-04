@@ -2222,10 +2222,13 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
              data, or pass another --dir; nothing was changed (ADR-0041 d9)"
         )));
     }
+    let project = quickstart::project_name(&dir);
     let compose = |rest: &[&str]| {
         let mut command = std::process::Command::new("docker");
         command
             .arg("compose")
+            .arg("--project-name")
+            .arg(&project)
             .arg("--project-directory")
             .arg(&dir)
             .args(rest)
@@ -2251,7 +2254,7 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let version = env!("CARGO_PKG_VERSION");
     std::fs::write(
         dir.join("compose.yaml"),
-        quickstart::compose(version, args.port),
+        quickstart::compose(&project, version, args.port),
     )
     .map_err(|e| CliError::local(format!("cannot write {shown}/compose.yaml: {e}")))?;
     write_owner_only(&dir.join(".env"), &quickstart::env_file())?;
@@ -2637,6 +2640,13 @@ fn run_setup_claude_code(
         if shown.is_none() {
             println!("with OML_API_KEY set to the key in the shell that runs the last line");
         }
+        println!(
+            "if `claude plugin marketplace list` already shows {} at another tag, run \
+             `claude plugin marketplace remove {}` first: Claude Code refuses an add whose \
+             source differs, and the remove uninstalls its plugins",
+            setup::MARKETPLACE_NAME,
+            setup::MARKETPLACE_NAME,
+        );
         Ok(ExitCode::SUCCESS)
     };
     if args.print {
@@ -2669,8 +2679,44 @@ fn run_setup_claude_code(
             )));
         }
     }
-    for command in setup::install_commands(version) {
-        run_claude(&command, None)?;
+    let refused = |why: String| {
+        CliError::local(format!(
+            "refused: setup.marketplace — {why}; nothing was changed (ADR-0041 d7)"
+        ))
+    };
+    let listed = claude_output(&setup::marketplace_list_command())?;
+    let mut plugins = vec![setup::PLUGIN.to_owned()];
+    match setup::marketplace(&listed, version).ok_or_else(|| {
+        refused("`claude plugin marketplace list --json` printed no JSON array".to_owned())
+    })? {
+        setup::Marketplace::Pinned => {}
+        setup::Marketplace::Absent => run_claude(&setup::add_command(version), None)?,
+        setup::Marketplace::Foreign(source) => {
+            return Err(refused(format!(
+                "Claude Code already holds a marketplace named {} from {source}, not {};                  `claude plugin marketplace remove {}` removes it and the plugins installed                  from it",
+                setup::MARKETPLACE_NAME,
+                setup::MARKETPLACE,
+                setup::MARKETPLACE_NAME,
+            )));
+        }
+        setup::Marketplace::Repin(from) => {
+            let installed = claude_output(&setup::plugin_list_command())?;
+            plugins.extend(setup::other_plugins(&installed).ok_or_else(|| {
+                refused("`claude plugin list --json` printed no JSON array".to_owned())
+            })?);
+            eprintln!(
+                "moving marketplace {} from {from} to {}#v{version}: removing it uninstalls \
+                 {}, which are installed again",
+                setup::MARKETPLACE_NAME,
+                setup::MARKETPLACE,
+                plugins.join(", "),
+            );
+            run_claude(&setup::remove_command(), None)?;
+            run_claude(&setup::add_command(version), None)?;
+        }
+    }
+    for plugin in &plugins {
+        run_claude(&setup::install_command(plugin), None)?;
     }
     run_claude(&setup::configure_command(), Some(&setup::values(url, &key)))?;
     if cli.json {
@@ -2691,6 +2737,26 @@ fn run_setup_claude_code(
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Runs `claude <args>` with no stdin and returns its stdout; a failure
+/// names the command.
+fn claude_output(args: &[String]) -> Result<String, CliError> {
+    let shown = format!("claude {}", args.join(" "));
+    let out = std::process::Command::new("claude")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| CliError::local(format!("cannot run `{shown}`: {e}")))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(CliError::local(format!(
+            "`{shown}` failed ({}); nothing was changed",
+            out.status
+        )))
+    }
 }
 
 /// Runs `claude <args>`, writing `stdin` to it when given, else none; a
