@@ -111,6 +111,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - "Plan: documentation for v0.4.0": engineering/docs-upgrade-v0.4.0.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
@@ -148,3 +149,4 @@ nav:
       - ADR-0038: adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md
       - ADR-0039: adr/ADR-0039-the-api-rewritten-for-v0-4-0.md
       - ADR-0040: adr/ADR-0040-plugin-setup-in-claude-code.md
+      - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md

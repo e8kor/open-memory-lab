@@ -34,6 +34,32 @@ Each release carries the CLI alone as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on
 targets listed under [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance),
 each with a CycloneDX SBOM and a cosign signature bundle. Verify the archive, then extract it.
 
+**The installer.** One line does the steps below for this user, without sudo
+([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d3, proposed; the
+scripts are built, and v0.4.0 is the first tag to carry them):
+
+```sh
+curl -fsSL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/e8kor/open-memory-lab/vX.Y.Z/scripts/install/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/e8kor/open-memory-lab/vX.Y.Z/scripts/install/install.ps1 | iex
+```
+
+It installs the version it was released with, or `--version X.Y.Z` / `--version latest` (`-Version`
+in PowerShell), into `~/.local/bin` or `%LOCALAPPDATA%\Programs\oml\bin` (`--dir`, `-Dir`). It checks
+the archive against the release's `SHA256SUMS`. When `cosign` is on `PATH` it also verifies
+`SHA256SUMS`'s signature under the identity below, pinned to the tag. Without cosign it checks the
+checksum only, which catches a damaged download but not a tampered release, and it says so
+(FR-69). `--require-signature` refuses to install without cosign. It edits no shell profile and no
+`PATH`; it prints the line that would. To read the script before running it, download it, read
+it, then run `sh install.sh`. A piped install takes its flags after `sh -s --`, as in
+`… | sh -s -- --version latest`; `irm … | iex` takes none, so set `$env:OML_VERSION`,
+`$env:OML_INSTALL_DIR` or `$env:OML_REQUIRE_SIGNATURE = '1'` first.
+
+The manual steps:
+
 Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static, so it runs on
 any distribution:
 

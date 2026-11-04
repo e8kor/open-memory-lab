@@ -39,7 +39,7 @@ Nothing in this section is built. Each row is the plan of 2026-11-03.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.4.0** | planned | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the current eight, and one server address and one key to start. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent recalls for itself during a session, and a failed command recalls only when the user opts in. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key. A librarian subagent. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. A documentation upgrade. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), ADR-0041 (all proposed); the librarian is ADR-0038's d10 |
+| **v0.4.0** | planned | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the current eight, and one server address and one key to start. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent recalls for itself during a session, and a failed command recalls only when the user opts in. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key. A librarian subagent. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. A documentation upgrade. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (all proposed); the librarian is ADR-0038's d10 |
 | **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
@@ -52,8 +52,8 @@ ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0037
 ([#20](https://github.com/e8kor/open-memory-lab/pull/20)), ADR-0038
 ([#24](https://github.com/e8kor/open-memory-lab/pull/24)), ADR-0039 and ADR-0040
-([#28](https://github.com/e8kor/open-memory-lab/pull/28)), and ADR-0041 (the `feat/quick-install`
-branch, no pull request yet). The number ADR-0032 is not used by any record.
+([#28](https://github.com/e8kor/open-memory-lab/pull/28)), and ADR-0041
+([#29](https://github.com/e8kor/open-memory-lab/pull/29)). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -165,4 +165,4 @@ which part is still decided, not built.
 | [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) turn context | proposed | Planned for v0.4.0. |
 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) the API rewrite | proposed | Planned for v0.4.0. |
 | [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) plugin setup | proposed | Planned for v0.4.0. |
-| ADR-0041 quick start per role | proposed | Planned for v0.4.0. |
+| [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | proposed | Planned for v0.4.0. |
