@@ -1,0 +1,75 @@
+name: Recall benchmark
+
+# The recall benchmark (eval/bench/README.md): the synthetic set and BEIR
+# SciFact through the served oml_read, once per search pipeline. Weekly and on
+# demand, never on a pull request: it downloads a third-party dataset (2.7 MB,
+# CC BY-NC 2.0, cached between runs and never committed) and takes about ten
+# minutes beyond the build. It reports and does not gate; the merge gate for
+# recall stays the recall-eval job in ci.yml (ADR-0049 d9).
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: "datasets, space-separated (eval/bench/adapters.py ADAPTERS)"
+        default: "synthetic scifact"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: recall benchmark per search pipeline (served)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r eval/bench/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/bench-data
+          key: bench-data-${{ hashFiles('eval/bench/adapters.py') }}
+      - name: Run
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: oml
+          PGPASSWORD: oml_dev_only
+          BENCH_CACHE: ${{ runner.temp }}/bench-data
+          BENCH_PYTHON: python
+          DATASETS: ${{ inputs.datasets || 'synthetic scifact' }}
+        # shellcheck disable=SC2086 # one dataset per word
+        run: bash eval/bench/run.sh "$RUNNER_TEMP/bench" $DATASETS
+      - name: Export (oml-bench/1)
+        env:
+          BENCH_CACHE: ${{ runner.temp }}/bench-data
+        run: >-
+          python eval/bench/export.py --raw "$RUNNER_TEMP/bench" --commit "${GITHUB_SHA::7}"
+          --date "$(date -u +%F)" --postgres 17 --host "GitHub ubuntu-latest"
+          --cache "$BENCH_CACHE" --out "$RUNNER_TEMP/bench/oml-bench"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recall-bench-results
+          path: |
+            ${{ runner.temp }}/bench/*.json
+            ${{ runner.temp }}/bench/tables.md
+            ${{ runner.temp }}/bench/oml-bench/

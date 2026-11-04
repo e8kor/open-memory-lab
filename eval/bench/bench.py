@@ -334,7 +334,7 @@ def main():
     ld.add_argument("dataset")
     r = sub.add_parser("run")
     r.add_argument("--state", required=True)
-    r.add_argument("--out", default=str(HERE / "results"))
+    r.add_argument("--out", required=True, help="raw results; export.py writes the committed ones")
     r.add_argument("--search", action="append", choices=PIPELINES)
     r.add_argument("--limit", type=int, default=None, help="at most this many queries, seeded")
     r.add_argument("--workers", type=int, default=1,
