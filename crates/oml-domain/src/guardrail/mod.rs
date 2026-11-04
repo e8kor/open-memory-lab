@@ -1,20 +1,8 @@
-//! Guardrails — the pure core of proposed ADR-0037: the kind's fields and
-//! their admission caps (d2, d7, d10), the rule grammar `oml-gr/1` and its
-//! tool classes (d8), the linear-time glob (d8), the set's order and its
-//! conflicts (d4), the check before a tool call (d8, d9) and the rule
-//! cache's codec (d9).
-//!
-//! The record is proposed, not accepted; this module mirrors it and adds
-//! nothing the record does not state, except where a reading had to be
-//! taken, which each item's documentation names. Serving, the hooks, the
-//! file system and the clock are not here.
-
-mod argument;
-mod cache;
-mod check;
-mod glob;
-mod rule;
-mod shell;
+//! Guardrails in the domain — proposed ADR-0037's server side: the key's
+//! guardrail scope (d4), admission and its caps (d7, d10), the set's order,
+//! conflicts and digest (d4, d5) and the held guardrail's load warning
+//! (d10). The rule grammar, the matcher, the check and the rule cache live
+//! in the leaf crate `oml-guardrail`, re-exported here whole (d18 Q10).
 
 use std::collections::BTreeSet;
 
@@ -24,41 +12,7 @@ use uuid::Uuid;
 use crate::envelope::{EventTime, sha256_digest_string};
 use crate::jcs::canonical_bytes;
 
-pub use argument::{normalise_path, url_host};
-pub use cache::{
-    CacheRefusal, CacheState, CachedRule, SessionIdRefusal, cache_file_name, decode_cache,
-    encode_cache,
-};
-pub use check::{Cause, Decision, NO_CACHE_WARNING, ToolCall, Uncheckable, Verdict, check, decide};
-pub use glob::Glob;
-pub use rule::{HostPattern, Matcher, Rule, RuleDefect, ToolClass};
-pub use shell::{ShellRefusal, ShellSegment, shell_command, shell_segments};
-
-/// The one rule grammar (ADR-0037 d8). A cache naming another denies every
-/// call (d9).
-pub const GRAMMAR: &str = "oml-gr/1";
-
-/// Admission caps a guardrail's body at 300 UTF-8 bytes (ADR-0037 d7).
-pub const BODY_MAX_BYTES: usize = 300;
-
-/// Admission caps a rule at 160 bytes, measured on its RFC 8785 canonical
-/// form (ADR-0037 d7; the form is this module's reading).
-pub const RULE_MAX_BYTES: usize = 160;
-
-/// The hook caps a line's provenance at 200 characters (ADR-0037 d7).
-pub const PROVENANCE_MAX_CHARS: usize = 200;
-
-/// The read lists at most five of the caller's own held guardrails
-/// (ADR-0037 d3, d7).
-pub const OWN_HELD_MAX_LINES: usize = 5;
-
-/// At most 12 guardrails apply at a node; over it no partial set is printed
-/// (ADR-0037 d7).
-pub const SET_CAP: usize = 12;
-
-/// Cache files older than 30 days are removed at a session start
-/// (ADR-0037 d9).
-pub const CACHE_MAX_AGE_DAYS: u32 = 30;
+pub use oml_guardrail::*;
 
 /// What the serve of a held guardrail adds, to its author and to its
 /// reviewers alike (ADR-0037 d10, amending ADR-0012 d5).
@@ -128,77 +82,6 @@ pub fn set_digest(served: &[(Uuid, u32)]) -> String {
     // An array of strings and small integers always has a canonical form.
     let bytes = canonical_bytes(&Value::Array(pairs)).unwrap_or_default();
     sha256_digest_string(&bytes)
-}
-
-/// How binding a guardrail is (ADR-0037 d2): `never` and `must` are
-/// binding, after RFC 2119's MUST NOT and MUST, and `should` is the
-/// reviewed default. The declaration order is the set's first order key,
-/// strictest first: `never`, `must`, `should` (d4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Severity {
-    Never,
-    Must,
-    Should,
-}
-
-impl Severity {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Severity::Never => "never",
-            Severity::Must => "must",
-            Severity::Should => "should",
-        }
-    }
-
-    /// The severity an exact word spells; `None` for any other string,
-    /// which a caller refuses rather than coerces.
-    #[must_use]
-    pub fn parse(word: &str) -> Option<Self> {
-        match word {
-            "never" => Some(Severity::Never),
-            "must" => Some(Severity::Must),
-            "should" => Some(Severity::Should),
-            _ => None,
-        }
-    }
-
-    /// Whether a rule of this severity may take `effect`: `never` and
-    /// `must` deny or ask, and `should` takes `ask` only (ADR-0037 d8).
-    #[must_use]
-    pub fn admits(self, effect: Effect) -> bool {
-        !(self == Severity::Should && effect == Effect::Deny)
-    }
-}
-
-/// A rule's effect, `deny` or `ask`; there is no `allow` (ADR-0037 d8). The
-/// stricter effect is the greater, so the effect of several matching rules
-/// is their maximum: deny wins over ask.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Effect {
-    Ask,
-    Deny,
-}
-
-impl Effect {
-    /// The `permissionDecision` value.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Effect::Ask => "ask",
-            Effect::Deny => "deny",
-        }
-    }
-
-    /// `deny` or `ask`; `None` for `allow` and every other string.
-    #[must_use]
-    pub fn parse(word: &str) -> Option<Self> {
-        match word {
-            "ask" => Some(Effect::Ask),
-            "deny" => Some(Effect::Deny),
-            _ => None,
-        }
-    }
 }
 
 /// Which capped field was over its cap.

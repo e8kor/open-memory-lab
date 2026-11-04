@@ -3,6 +3,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/oml-guardrail",
     "crates/oml-domain",
     "crates/oml-app",
     "crates/adapters/oml-pg",
@@ -23,6 +24,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }
+oml-guardrail = { path = "crates/oml-guardrail" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.

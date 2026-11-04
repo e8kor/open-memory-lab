@@ -11,9 +11,9 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::GRAMMAR;
-use super::rule::Rule;
-use crate::jcs::canonical_bytes;
+use crate::GRAMMAR;
+use crate::canonical::canonical_line;
+use crate::rule::Rule;
 
 /// One cached rule: the rule, with its guardrail's `artifact_id` and body
 /// for the reason a decision prints.
@@ -63,9 +63,8 @@ pub fn encode_cache(rules: &[CachedRule]) -> String {
             })
         })
         .collect();
-    let bytes = canonical_bytes(&json!({ "rules": rules }))
+    let line = canonical_line(&json!({ "rules": rules }))
         .expect("the cache holds strings and arrays, never a number");
-    let line = String::from_utf8(bytes).expect("canonical JSON is UTF-8");
     let digest = hex::encode(Sha256::digest(line.as_bytes()));
     format!("{line}\n{digest}\n")
 }
