@@ -43,7 +43,10 @@ pub fn project_name(dir: &Path) -> String {
 /// on `127.0.0.1:port`.
 #[must_use]
 pub fn compose(project: &str, version: &str, port: u16) -> String {
+    // A Windows checkout may hold the template with CRLF endings; the file
+    // written is LF on every platform.
     COMPOSE
+        .replace("\r\n", "\n")
         .replace("@@PROJECT@@", project)
         .replace("@@VERSION@@", version)
         .replace("@@PORT@@", &port.to_string())

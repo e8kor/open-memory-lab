@@ -1814,12 +1814,22 @@ mod tests {
 
     #[test]
     fn a_session_id_that_is_not_a_plain_file_name_has_no_cache() {
-        let var = |name: &str| (name == "HOME").then(|| "/home/op".to_owned());
+        // An absolute home on this platform: a Unix path is not absolute on Windows.
+        let home = if cfg!(windows) {
+            r"C:\Users\op"
+        } else {
+            "/home/op"
+        };
+        let var = |name: &str| (name == "HOME").then(|| home.to_owned());
         assert_eq!(
             cache_path(&var, "4b1d0c2e-session"),
-            Some(PathBuf::from(
-                "/home/op/.cache/oml/sessions/4b1d0c2e-session.json"
-            ))
+            Some(
+                PathBuf::from(home)
+                    .join(".cache")
+                    .join("oml")
+                    .join("sessions")
+                    .join("4b1d0c2e-session.json")
+            )
         );
         for id in ["", "../x", "a/b", "a.b", "a b"] {
             assert_eq!(cache_path(&var, id), None, "{id:?}");
