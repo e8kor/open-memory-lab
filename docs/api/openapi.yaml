@@ -2655,10 +2655,11 @@ components:
     GuardrailSet:
       type: object
       description: The guardrails in force at the scope node under the key's reader access and guardrail scope (proposed ADR-0037 d3, d4, d5, d7).
-      required: [scope_node, guardrail_scope, set_digest, over_cap, guardrails, own_held]
+      required: [scope_node, scope_path, guardrail_scope, set_digest, over_cap, guardrails, own_held]
       additionalProperties: false
       properties:
         scope_node: { type: string }
+        scope_path: { type: string, description: "The scope node's derived path, root first; the hook's header names it." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         set_digest: { type: string, description: "Opaque; a client only compares it." }
         over_cap: { type: boolean, description: "More than twelve apply; the set is still served whole." }

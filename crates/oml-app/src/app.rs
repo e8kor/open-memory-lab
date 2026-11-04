@@ -3841,6 +3841,7 @@ where
             .await?
             .unwrap_or_default();
         let ids: Vec<Uuid> = chain.iter().map(|w| w.workarea_id).collect();
+        let scope_path = derived_path(&chain);
         let bound = match guardrail_scope {
             GuardrailScope::Workarea => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
@@ -3932,6 +3933,7 @@ where
             .collect();
         Ok(GuardrailSet {
             scope_node,
+            scope_path,
             guardrail_scope,
             set_digest: set_digest(&versions),
             over_cap,

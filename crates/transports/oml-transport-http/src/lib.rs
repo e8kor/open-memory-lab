@@ -2784,6 +2784,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
 fn guardrail_set_json(set: &GuardrailSet) -> Value {
     json!({
         "scope_node": set.scope_node,
+        "scope_path": set.scope_path,
         "guardrail_scope": set.guardrail_scope.as_str(),
         "set_digest": set.set_digest,
         "over_cap": set.over_cap,

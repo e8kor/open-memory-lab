@@ -921,6 +921,7 @@ serves kind `guardrail`, and a recall whose `kinds` names it is `request.validat
 ```json
 {
   "scope_node": "fbbb41c5-…",
+  "scope_path": "universe.eng.api",
   "guardrail_scope": "ancestors",
   "set_digest": "sha256:4b1f…",
   "over_cap": false,
