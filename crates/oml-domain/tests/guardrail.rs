@@ -1376,3 +1376,58 @@ fn a_session_id_outside_letters_digits_and_hyphens_names_no_cache_file() {
         assert!(cache_file_name(id).is_err(), "{id:?}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// The key's guardrail scope and the served set's digest (d4, d5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_journalled_issuance_without_guardrail_scope_folds_as_the_issuance_default() {
+    use oml_domain::guardrail::GuardrailScope;
+    assert_eq!(
+        GuardrailScope::of_issuance(None),
+        Some(GuardrailScope::Ancestors)
+    );
+    assert_eq!(
+        GuardrailScope::of_issuance(Some(&Value::Null)),
+        Some(GuardrailScope::Ancestors)
+    );
+    assert_eq!(
+        GuardrailScope::of_issuance(Some(&json!("workarea"))),
+        Some(GuardrailScope::Workarea)
+    );
+    assert_eq!(
+        GuardrailScope::of_issuance(Some(&json!("ancestors"))),
+        Some(GuardrailScope::Ancestors)
+    );
+    for refused in [
+        json!("off"),
+        json!("Workarea"),
+        json!(1),
+        json!(["workarea"]),
+    ] {
+        assert_eq!(
+            GuardrailScope::of_issuance(Some(&refused)),
+            None,
+            "{refused} is no scope: a caller fails closed on it"
+        );
+    }
+}
+
+#[test]
+fn the_set_digest_names_the_served_ids_and_versions_in_order() {
+    use oml_domain::guardrail::set_digest;
+    let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let canonical = format!("[[\"{a}\",1],[\"{b}\",3]]");
+    let expected = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+    assert_eq!(set_digest(&[(a, 1), (b, 3)]), expected);
+    assert_ne!(set_digest(&[(a, 1), (b, 3)]), set_digest(&[(b, 3), (a, 1)]));
+    assert_ne!(set_digest(&[(a, 1), (b, 3)]), set_digest(&[(a, 1), (b, 4)]));
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}

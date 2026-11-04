@@ -29,6 +29,36 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-04 — Guardrails: the kind, its admission and its read (implementation, ADR-0037, proposed)
+
+An implementation milestone; no decision changes. The code builds steps S1 and S2 of the
+proposed [ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+in the domain, the store and the use cases, with the readings the record leaves to the
+maintainer as it states them: `guardrail_scope` defaults to `ancestors`, a guardrail is never
+self-signed, and only a rotation would change a key's scope. The record stays proposed and binds
+nothing; `info.version` stays `0.3.0-design`.
+
+- **The kind** (d1, d2, d10). Kind `guardrail` takes a required `severity` and an optional
+  `rule`, both refused on any other kind and on a retirement (`request.validation`); a guardrail
+  target admits only kind `guardrail` and no other target admits it; the scan's two classes,
+  `guardrail.rule_unparsable` and `guardrail.too_long`, veto as `submission.scan_veto`. The
+  submission journals the severity and the rule's digest. R2 holds and nothing self-signs. The
+  serve of a held guardrail carries d10's load warning, and a supersession sent through
+  `oml_supersede` refuses a guardrail target.
+- **The key's scope** (d4). Issuance takes `guardrail_scope`, journals it in `key.issued` and
+  stores it in `api_keys`; an issuance without it folds as `ancestors`.
+- **The read** (d3, d4, d5, d7). One use case serves the set at the key's scope node under its
+  reader access and its scope: promoted tips only, ordered by severity, depth, `promoted_at` and
+  `artifact_id`, each row naming its conflicts and its verdicts' `held_by` and `at`, served
+  whole with `over_cap` past twelve, with the caller's own held guardrails listed by key and
+  version; recall never serves the kind.
+- **The store.** Migration `0014_guardrails.sql` adds `memories.severity` and `memories.rule`
+  and `api_keys.guardrail_scope` ([postgres-schema](data/postgres-schema.md#guardrail-columns)).
+- **Not built:** no route or MCP tool changes, which wait for ADR-0039: `POST /v1/memories`
+  refuses kind `guardrail` by name, `POST /v2/keys` takes no `guardrail_scope`, and no route
+  serves the read. The hooks (S3, S4), the export and the prompt (S5), rotation and simulation
+  writes are not built.
+
 ### 2026-11-03 — The lead serves as a role that owns nothing (implementation)
 
 An implementation milestone; no decision changes. The code now builds d10's steps 2 to 4 of the

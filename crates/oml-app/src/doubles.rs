@@ -361,6 +361,10 @@ fn fold_poc_event(
                     name: None,
                     crew_id: None,
                     revoked_at: None,
+                    // Migration 0014's column default: every key issued
+                    // before guardrails holds the issuance default
+                    // (proposed ADR-0037 d4).
+                    guardrail_scope: oml_domain::guardrail::GuardrailScope::ISSUANCE_DEFAULT,
                 },
             );
         }
@@ -1177,6 +1181,28 @@ impl JournalStore for MemStore {
             .collect();
         steering_order(&mut rows, |(depth, at, m)| (*depth, at, m.memory_id));
         Ok(rows.into_iter().map(|(_, _, m)| m).collect())
+    }
+
+    async fn guardrail_rows(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        author_key_id: Uuid,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.kind == MemoryKind::Guardrail && nodes.contains(&m.workarea_id))
+            .filter(|m| {
+                served_tip(m)
+                    || (m.status == MemoryStatus::Held && m.author_key_id == author_key_id)
+            })
+            .cloned()
+            .collect())
     }
 
     async fn list_memories(

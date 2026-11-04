@@ -2,12 +2,14 @@
 
 use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::budget::Budget;
+use oml_domain::guardrail::{GuardrailScope, Severity};
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::{
     ChainError, EventTime, HeldBy, JcsError, LineageClosure, MemoryKind, MemoryStatus, Role,
     SignedEnvelope, TransitionError, VerdictError, VerifyError,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::cursor::CursorError;
@@ -50,6 +52,11 @@ pub struct KeyRecord {
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
     /// ADR-0026 d10).
     pub revoked_at: Option<EventTime>,
+    /// The guardrail scope the key's issuance set, fixed for its life; a
+    /// key issued before the build holds the issuance default,
+    /// `ancestors` (postgres-schema.md `api_keys.guardrail_scope`; proposed
+    /// ADR-0037 d4).
+    pub guardrail_scope: GuardrailScope,
 }
 
 /// A stored grant row: the domain grant and its epoch, the journal seq of
@@ -311,6 +318,20 @@ pub struct MemoryRecord {
     pub lineage_key_ids: Vec<Uuid>,
     pub scan_finding: Option<String>,
     pub created_at: EventTime,
+    /// A guardrail version's own fields; `None` for every other kind and for
+    /// a guardrail's retirement version, which carries neither (proposed
+    /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
+    /// record.
+    pub guardrail: Option<Box<GuardrailFields>>,
+}
+
+/// A guardrail version's severity and its optional `oml-gr/1` rule, the
+/// rule as admitted (proposed ADR-0037 d2, d8, d10). The PoC stores the rule
+/// inline beside the body, as it stores the body, and journals its digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardrailFields {
+    pub severity: Severity,
+    pub rule: Option<Value>,
 }
 
 /// What a capture reads of one `claim_key` in one workarea before it commits
@@ -345,6 +366,9 @@ pub struct ServedMemory {
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,
+    /// [`oml_domain::guardrail::LOAD_WARNING`] on a held guardrail, else
+    /// `None` (proposed ADR-0037 d10, amending ADR-0012 d5).
+    pub load_warning: Option<&'static str>,
 }
 
 impl MemoryRecord {
@@ -396,6 +420,8 @@ pub struct IssuedKey {
     /// The crew record named at issuance, fixed for the key's life
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The guardrail scope as journalled (proposed ADR-0037 d4).
+    pub guardrail_scope: GuardrailScope,
     pub access: KeyAccess,
 }
 
@@ -430,6 +456,9 @@ pub struct IssueKeyRequest {
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
+    /// The key's guardrail scope; `None` takes the issuance default,
+    /// `ancestors`, and journals it (proposed ADR-0037 d4).
+    pub guardrail_scope: Option<GuardrailScope>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -471,6 +500,12 @@ pub struct SubmitRequest {
     /// default workarea (http-api.md, ADR-0022 d4; ADR-0026 d4).
     pub workarea_id: Option<Reference>,
     pub derives_from: Vec<Uuid>,
+    /// Required on kind `guardrail` and refused on every other kind
+    /// (proposed ADR-0037 d10).
+    pub severity: Option<Severity>,
+    /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
+    /// (proposed ADR-0037 d8, d10).
+    pub rule: Option<Value>,
 }
 
 /// The stored idempotent response: a replayed submit returns this byte for
@@ -592,6 +627,74 @@ pub struct RecallResult {
     pub query_digest: String,
 }
 
+/// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
+/// default workarea or `X-OML-Workarea`, within the key's grants; nothing in
+/// the request names a scope, which the key's issuance alone sets (d4).
+#[derive(Debug, Clone, Default)]
+pub struct GuardrailRequest {
+    pub workarea_id: Option<Reference>,
+}
+
+/// One approving verdict on a served guardrail: the reviewing key's
+/// attestation and the verdict's `at`, never the reviewer's key name
+/// (proposed ADR-0037 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardrailVerdict {
+    pub held_by: HeldBy,
+    pub at: EventTime,
+}
+
+/// One applicable guardrail as the read serves it (proposed ADR-0037 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedGuardrail {
+    pub artifact_id: Uuid,
+    pub claim_key: String,
+    pub version: u32,
+    pub workarea_id: Uuid,
+    pub workarea_path: Option<String>,
+    /// The node's depth from the tenant's root, the root at 0.
+    pub depth: u32,
+    pub severity: Severity,
+    pub body: String,
+    pub rule: Option<Value>,
+    /// The budget token count of the body (retrieval.md token budgets).
+    pub tokens: u64,
+    pub promoted_at: EventTime,
+    pub verdicts: Vec<GuardrailVerdict>,
+    /// The `artifact_id`s of the served rows sharing this row's `claim_key`
+    /// with another severity, in the served order; empty when none
+    /// (proposed ADR-0037 d4).
+    pub conflict: Vec<Uuid>,
+}
+
+/// One of the caller's own held guardrails in the scope node's chain,
+/// listed by key and version, never by body (proposed ADR-0037 d3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnHeldGuardrail {
+    pub claim_key: String,
+    pub version: u32,
+}
+
+/// The applicable guardrail set at one scope node (proposed ADR-0037 d4,
+/// d5, d7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardrailSet {
+    pub scope_node: Uuid,
+    /// The scope the server applied: the key's, as its issuance journalled
+    /// it.
+    pub guardrail_scope: GuardrailScope,
+    pub set_digest: String,
+    /// More than [`oml_domain::guardrail::SET_CAP`] apply; the set is still
+    /// served whole (d7).
+    pub over_cap: bool,
+    pub guardrails: Vec<ServedGuardrail>,
+    /// At most [`oml_domain::guardrail::OWN_HELD_MAX_LINES`].
+    pub own_held: Vec<OwnHeldGuardrail>,
+    /// The artifact ids served, in the served order: what the read log
+    /// records, as recall's does (ADR-0025 d9; proposed ADR-0037 d5).
+    pub served_ids: Vec<Uuid>,
+}
+
 /// Whose rows a listing reads: the store's own predicate, so no page
 /// reaches a row outside it (http-api.md search; ADR-0025 d13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -686,6 +789,9 @@ pub struct CrewPage {
 pub struct KeyDetail {
     pub key: KeyRecord,
     pub held_by: Option<HeldBy>,
+    /// The guardrail scope as the key's `key.issued` journalled it, an
+    /// issuance without one folding as `ancestors` (proposed ADR-0037 d4).
+    pub guardrail_scope: GuardrailScope,
     pub access: KeyAccess,
 }
 
@@ -712,8 +818,16 @@ pub struct SupersedeRequest {
     pub workarea_id: Option<Reference>,
     /// Set by `oml_supersede`, which carries no vocabulary fields: a target
     /// of a vocabulary kind is refused, and superseded on the HTTP API
-    /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12).
+    /// instead (mcp-plugin.md `oml_supersede`; ADR-0025 d12). A guardrail
+    /// target is refused the same way: a guardrail is written and
+    /// superseded on the HTTP API only (proposed ADR-0037 d10).
     pub refuse_vocabulary_target: bool,
+    /// A guardrail successor re-sends its severity, required unless it
+    /// retires and refused on every other kind (proposed ADR-0037 d10).
+    pub severity: Option<Severity>,
+    /// A guardrail successor's optional rule, refused on every other kind and
+    /// on a retirement (proposed ADR-0037 d10).
+    pub rule: Option<Value>,
 }
 
 /// The stored idempotent response of a supersession: a replay returns this
@@ -862,6 +976,19 @@ pub enum AppError {
     ClaimKeyConflict,
     #[error("deterministic scan veto: {0} (admission.md — a refusal that journals nothing)")]
     ScanVeto(String),
+    #[error(
+        "a guardrail carries a severity, never, must or should, unless it retires (proposed ADR-0037 d10, request.validation)"
+    )]
+    GuardrailSeverityRequired,
+    /// `field` is `severity` or `rule`.
+    #[error(
+        "{field} is a guardrail's field, refused on any other kind and on a retirement (proposed ADR-0037 d10, request.validation)"
+    )]
+    GuardrailFieldRefused { field: &'static str },
+    #[error(
+        "oml_supersede does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
+    )]
+    GuardrailTarget,
     #[error(
         "derives_from names {0}, which the key cannot read or no row is (fail closed, access.not_found)"
     )]

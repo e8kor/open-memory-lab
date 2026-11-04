@@ -328,6 +328,15 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TermRetirement => ApiError::validation(
             "a term is never retired: terms deprecate, through a supersession with term_status deprecated",
         ),
+        AppError::GuardrailSeverityRequired => ApiError::validation(
+            "a guardrail carries a severity, never, must or should, unless it retires",
+        ),
+        AppError::GuardrailFieldRefused { field } => ApiError::validation(format!(
+            "{field} is a guardrail's field, refused on any other kind and on a retirement"
+        )),
+        AppError::GuardrailTarget => ApiError::validation(
+            "a guardrail is superseded on the HTTP API: oml_supersede does not supersede a guardrail",
+        ),
         AppError::VocabularyTarget(kind) => ApiError::validation(format!(
             "a {} target is superseded on the HTTP API: oml_supersede carries no vocabulary fields",
             kind.as_str()

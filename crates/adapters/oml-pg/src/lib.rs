@@ -11,6 +11,7 @@
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
 use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
@@ -22,9 +23,9 @@ use oml_app::ports::{
     StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT, RecallCandidate,
-    UnnamedRows, WorkareaRecord,
+    ClaimKeyState, CrewRecord, DenialRecord, GrantRecord, GuardrailFields, HIT_KINDS, KeyAccess,
+    KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord, PROVIDER_TENANT,
+    RecallCandidate, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -782,7 +783,7 @@ fn held_by_from_str(s: &str) -> Result<HeldBy, StoreError> {
 const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.version, \
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
-     m.lineage_principals, m.lineage_key_ids, m.scan_finding, \
+     m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.severity, m.rule, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -794,6 +795,15 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     let claim_digest: Vec<u8> = row.try_get("claim_digest").map_err(backend)?;
     let created: String = row.try_get("created_at_signed").map_err(backend)?;
     let promoted: Option<String> = row.try_get("promoted_at_signed").map_err(backend)?;
+    let severity: Option<String> = row.try_get("severity").map_err(backend)?;
+    let guardrail = severity
+        .map(|word| {
+            let severity = Severity::parse(&word)
+                .ok_or_else(|| StoreError::Backend(format!("unknown severity {word:?}")))?;
+            let rule: Option<Value> = row.try_get("rule").map_err(backend)?;
+            Ok::<_, StoreError>(Box::new(GuardrailFields { severity, rule }))
+        })
+        .transpose()?;
     Ok(MemoryRecord {
         memory_id: row.try_get("id").map_err(backend)?,
         tenant_id: row.try_get("tenant_id").map_err(backend)?,
@@ -821,6 +831,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         lineage_key_ids: row.try_get("lineage_key_ids").map_err(backend)?,
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
+        guardrail,
     })
 }
 
@@ -878,7 +889,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// through `to_char` in the fixed-width signed form, as a memory's
 /// `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
-     issued_by, hash, name, crew_id, \
+     issued_by, hash, name, crew_id, guardrail_scope, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
@@ -892,6 +903,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let held_by: String = row.try_get("held_by").map_err(backend)?;
     let stored_hash: Vec<u8> = row.try_get("hash").map_err(backend)?;
     let revoked: Option<String> = row.try_get("revoked_at_signed").map_err(backend)?;
+    let scope: String = row.try_get("guardrail_scope").map_err(backend)?;
     Ok(KeyRecord {
         key_id: row.try_get("id").map_err(backend)?,
         tenant_id: tenant_id.unwrap_or(PROVIDER_TENANT),
@@ -908,6 +920,8 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
             .map(EventTime::parse)
             .transpose()
             .map_err(backend)?,
+        guardrail_scope: GuardrailScope::parse(&scope)
+            .ok_or_else(|| StoreError::Backend(format!("unknown guardrail_scope {scope:?}")))?,
     })
 }
 
@@ -1040,9 +1054,10 @@ async fn insert_memory(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
-         version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id) \
+         version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
+         severity, rule) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22)",
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24)",
     )
     .bind(m.memory_id)
     .bind(m.tenant_id)
@@ -1066,6 +1081,8 @@ async fn insert_memory(
     .bind(promoted_at)
     .bind(m.retirement)
     .bind(m.replaces)
+    .bind(m.guardrail.as_ref().map(|g| g.severity.as_str()))
+    .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()))
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
@@ -1418,8 +1435,8 @@ async fn apply_fold(
             })?;
             sqlx::query(
                 "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, \
-                 default_workarea_id, issued_by, issued_seq, name, crew_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                 default_workarea_id, issued_by, issued_seq, name, crew_id, guardrail_scope) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -1432,6 +1449,7 @@ async fn apply_fold(
             .bind(seq)
             .bind(k.name.as_ref().map(Name::as_str))
             .bind(k.crew_id)
+            .bind(k.guardrail_scope.as_str())
             .execute(&mut **tx)
             .await
             .map_err(|e| match &k.name {
@@ -2004,6 +2022,36 @@ impl JournalStore for PgStore {
         let rows = sqlx::query(&sql)
             .bind(tenant_id)
             .bind(nodes)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn guardrail_rows(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        author_key_id: Uuid,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The promoted served tips of kind guardrail on the named nodes,
+        // never a retirement version, and the held versions the calling key
+        // authored there: the state and author predicates are this
+        // statement's own (proposed ADR-0037 d3, d4).
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND m.kind = 'guardrail' \
+               AND m.workarea_id = ANY($2::uuid[]) \
+               AND ((m.status = 'promoted' AND m.is_tip AND NOT m.retirement) \
+                    OR (m.status = 'held' AND m.author_key_id = $3))"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(nodes)
+            .bind(author_key_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
