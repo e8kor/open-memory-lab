@@ -62,8 +62,12 @@ nav:
       - Claude Code: guides/claude-code.md
       - claude.ai and mobile: guides/claude-ai-and-mobile.md
       - Other agent tools: guides/other-harnesses.md
+      - Reviewing memories: guides/reviewing.md
+      - Administering a server: guides/administering.md
       - Self-hosting: guides/self-hosting.md
+      - Kubernetes: guides/kubernetes.md
       - Upgrading from v0.3: guides/upgrading.md
+      - Troubleshooting: guides/troubleshooting.md
   - Concepts: concepts.md
   - Review guide: review-guide.md
   - Spec changelog: changelog.md

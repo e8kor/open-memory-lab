@@ -81,8 +81,12 @@
 - [Claude Code](https://e8kor.github.io/open-memory-lab/guides/claude-code/): install, `oml login`, `oml setup claude-code`, the first held write and read, the session-start hook and its permission rule, the librarian, removal
 - [claude.ai and mobile](https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/): a connector key and its one-time connect code, OAuth on the server's own origin, what chat and mobile get, and the open question of claude.ai's request headers
 - [Other agent tools](https://e8kor.github.io/open-memory-lab/guides/other-harnesses/): Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop from the agent kit with `OML_URL` and `OML_API_KEY`, and Claude Code without the plugin
+- [Reviewing memories](https://e8kor.github.io/open-memory-lab/guides/reviewing/): what held means, a reviewer key, the queue, approving and rejecting with a reason, what a review checks, and what a reviewer can never do
+- [Administering a server](https://e8kor.github.io/open-memory-lab/guides/administering/): claiming a new server, workareas and crews, keys by role, connect codes, grants, revocation, and the rules no admin can bypass
 - [Self-hosting](https://e8kor.github.io/open-memory-lab/guides/self-hosting/): `oml quickstart` on a laptop, then one host with TLS, then Kubernetes with the interim chart
+- [Kubernetes](https://e8kor.github.io/open-memory-lab/guides/kubernetes/): the release chart verified and installed, the role split, claiming the first admin key, the OAuth issuer, upgrades and uninstall
 - [Upgrading from v0.3](https://e8kor.github.io/open-memory-lab/guides/upgrading/): the old-to-new tool, verb and setting table, the alias window, and the steps for a user and an operator
+- [Troubleshooting](https://e8kor.github.io/open-memory-lab/guides/troubleshooting/): symptom, cause and fix for the plugin, `oml doctor`, login, the hooks, the installer, connections and the server, and a short FAQ
 
 ## Product
 
