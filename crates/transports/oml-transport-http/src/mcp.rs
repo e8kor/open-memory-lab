@@ -28,7 +28,7 @@ use serde_json::{Map, Value, json};
 
 use oml_app::domain::sha256_digest_string;
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer};
-use oml_app::types::AppError;
+use oml_app::types::{AppError, KeyRecord};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::{ApiState, bearer, finish, json_response, new_request_id};
@@ -180,8 +180,8 @@ where
         let rid = new_request_id();
         // No anonymous call, `tools/list` included: the key is resolved
         // before any message is read (mcp-plugin.md "Authentication").
-        let token = match Self::mcp_key(&st, &headers).await {
-            Ok(token) => token,
+        let (token, key) = match Self::mcp_key(&st, &headers).await {
+            Ok(resolved) => resolved,
             Err(e) => return finish(&rid, Err(e)),
         };
         // A revision the facade does not speak is a 400; an absent header
@@ -251,22 +251,24 @@ where
             "tools/list" => rpc_result(&id, &json!({ "tools": served_catalog() })),
             "tools/call" => match serde_json::from_value::<ToolCall>(request.params) {
                 Err(_) => rpc_error(&id, INVALID_PARAMS, "tools/call takes {name, arguments}"),
-                Ok(call) => Self::call_tool(&st, &token, &id, &rid, call).await,
+                Ok(call) => Self::call_tool(&st, &token, &key, &id, &rid, call).await,
             },
             other => rpc_error(&id, METHOD_NOT_FOUND, &format!("method not found: {other}")),
         };
         finish(&rid, Ok(response))
     }
 
-    /// The bearer key, resolved against the journal's key fold.
-    async fn mcp_key(st: &Self, headers: &HeaderMap) -> Result<String, ApiError> {
+    /// The bearer key, resolved against the journal's key fold, and its
+    /// record.
+    async fn mcp_key(st: &Self, headers: &HeaderMap) -> Result<(String, KeyRecord), ApiError> {
         let token = bearer(headers)?;
-        st.store
+        let key = st
+            .store
             .key_by_hash(&sha256_digest_string(token.as_bytes()))
             .await
             .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
             .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
-        Ok(token)
+        Ok((token, key))
     }
 
     /// One `tools/call`. A tool that is not served is a protocol fault,
@@ -276,6 +278,7 @@ where
     async fn call_tool(
         st: &Self,
         token: &str,
+        key: &KeyRecord,
         id: &Value,
         request_id: &str,
         call: ToolCall,
@@ -283,7 +286,12 @@ where
         let name = call.name.as_str();
         let args = Value::Object(call.arguments);
         if let Some(successor) = alias::successor(name) {
-            let outcome = Self::call_alias(st, token, name, successor, args).await;
+            let caller = alias::Caller {
+                key_id: key.key_id,
+                tenant_id: key.tenant_id,
+                request_id,
+            };
+            let outcome = Self::call_alias(st, token, &caller, name, successor, args).await;
             return rpc_result(id, &tool_result(outcome, request_id));
         }
         let outcome = match name {

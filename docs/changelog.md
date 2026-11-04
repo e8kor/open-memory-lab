@@ -40,8 +40,9 @@ this section rather than a second one.
 `oml_workarea_info` and `oml_events_tail` answer only through `tools/call`, never in
 `tools/list`. Each takes its v0.3.0 input, `scope` as the ring's `workarea`, `include_own_held`
 as its `include_unreviewed` and `claim_key` still required, and answers its v0.3.0 output
-shape and refusal codes; `oml_events_tail` rides `GET /v2/events`. Every call logs
-`mcp_alias_called` naming the tool and its successor. The window is v0.4.x, and v0.5.0 removes
+shape and refusal codes; `oml_events_tail` rides `GET /v2/events`. Every call logs the event
+`mcp_alias_called` naming the tool, its successor, the calling key's `key_id` and `tenant_id`
+and the call's `request_id`, so an operator sees which keys still call an old name. The window is v0.4.x, and v0.5.0 removes
 the eight, as d12 reads it; the maintainer has not decided that reading.
 [mcp-plugin.md](api/mcp-plugin.md) states the window and the removal release, and the facade
 tests hold each name to a fixture of its v0.3.0 shape.

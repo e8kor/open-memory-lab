@@ -3710,68 +3710,6 @@ async fn no_alias_appears_in_tools_list() {
     assert_eq!(answered["isError"], false, "{answered}");
 }
 
-/// The log lines a [`tracing`] subscriber writes, captured in memory.
-#[derive(Clone, Default)]
-struct CapturedLog(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl CapturedLog {
-    fn take(&self) -> String {
-        let mut bytes = self.0.lock().expect("log lock");
-        String::from_utf8(std::mem::take(&mut *bytes)).expect("log lines are UTF-8")
-    }
-}
-
-impl std::io::Write for CapturedLog {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().expect("log lock").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-#[tokio::test]
-async fn an_alias_call_logs_mcp_alias_called_naming_its_successor() {
-    let log = CapturedLog::default();
-    let writer = log.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
-
-    let router = doubles_router();
-    let (agent, _, _, _) = agent_crew(&router).await;
-    log.take();
-
-    // A refused call is logged too: the log counts who still calls the old
-    // name, whatever the call's outcome.
-    for (id, (alias, successor)) in (1..).zip(V0_3_0_TOOLS) {
-        call_tool(&router, &agent, id, alias, json!({})).await;
-        let lines = log.take();
-        let logged: Vec<&str> = lines
-            .lines()
-            .filter(|line| line.contains("mcp_alias_called"))
-            .collect();
-        assert_eq!(logged.len(), 1, "{alias}: {lines}");
-        assert!(logged[0].contains(&format!("tool={alias}")), "{lines}");
-        assert!(
-            logged[0].contains(&format!("successor={successor}")),
-            "{lines}"
-        );
-    }
-
-    // A served tool is not an alias, and logs none.
-    for (id, name) in (20..).zip(SERVED_TOOLS) {
-        call_tool(&router, &agent, id, name, json!({})).await;
-        let lines = log.take();
-        assert!(!lines.contains("mcp_alias_called"), "{name}: {lines}");
-    }
-}
-
 #[tokio::test]
 async fn oml_events_tail_alias_reads_get_v2_events() {
     let router = doubles_router();

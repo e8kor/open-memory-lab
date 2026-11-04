@@ -7,10 +7,15 @@
 //! shape and refusal codes, translated at the facade onto the handlers its
 //! successor rides: `scope` is the ring's `workarea`, `include_own_held` its
 //! `include_unreviewed`, and the caller still sends `claim_key`. Each call
-//! logs `mcp_alias_called` naming the tool and its successor, so an operator
-//! can see who still calls an old name before v0.5.0 removes it.
+//! logs the event `mcp_alias_called` naming the tool, its successor, the
+//! calling key's `key_id` and `tenant_id` and the call's `request_id`, ids
+//! only and never the key's value (observability.md, structured logging), so
+//! an operator can see whose clients still call an old name before v0.5.0
+//! removes it.
 
 use std::collections::HashMap;
+
+use uuid::Uuid;
 
 use axum::body::Bytes;
 use serde::Deserialize;
@@ -107,6 +112,18 @@ struct UploadRef {
     upload_session: String,
 }
 
+/// The stable `event` of the line each alias call logs (observability.md,
+/// structured logging; ADR-0039 d12).
+const EVENT_MCP_ALIAS_CALLED: &str = "mcp_alias_called";
+
+/// Who made an alias call, as its log line names them: the resolved key's
+/// ids and the call's request id, never the key's value.
+pub(super) struct Caller<'a> {
+    pub(super) key_id: Uuid,
+    pub(super) tenant_id: Uuid,
+    pub(super) request_id: &'a str,
+}
+
 /// The successor of `name` when it is a v0.3.0 tool name, and `None` for
 /// any other name.
 pub(super) fn successor(name: &str) -> Option<&'static str> {
@@ -124,15 +141,24 @@ where
     Sc: Scanner + 'static,
 {
     /// One call to `name`, a v0.3.0 tool name, logged as `mcp_alias_called`
-    /// naming `successor` whatever its outcome (ADR-0039 d12).
+    /// naming `successor` and `caller` whatever its outcome (ADR-0039 d12).
     pub(super) async fn call_alias(
         st: &Self,
         token: &str,
+        caller: &Caller<'_>,
         name: &str,
         successor: &str,
         args: Value,
     ) -> Result<Value, Value> {
-        tracing::info!(tool = %name, successor = %successor, "mcp_alias_called");
+        tracing::info!(
+            event = EVENT_MCP_ALIAS_CALLED,
+            tool = %name,
+            successor = %successor,
+            key_id = %caller.key_id,
+            tenant_id = %caller.tenant_id,
+            request_id = %caller.request_id,
+            "mcp_alias_called: {name} is a v0.3.0 tool name, which v0.5.0 removes; its successor is {successor}"
+        );
         match name {
             "oml_remember" => Self::tool_submit(st, token, "remember", args).await,
             "oml_learn" => Self::tool_submit(st, token, "learn", args).await,

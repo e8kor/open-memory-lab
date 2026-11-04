@@ -628,10 +628,14 @@ takes the v0.3.0 input below, `scope` and `include_own_held` included and
 refusal codes: the facade translates `scope` to the ring's `workarea` and
 `include_own_held` to its `include_unreviewed`, and a v0.4.0 spelling such
 as `include_unreviewed` is outside the old input schema, so it is
-`request.validation`. `oml_events_tail` rides `GET /v2/events`. Every call
-logs one `mcp_alias_called` line naming the tool and its successor
-(`oml_write`, `oml_read`, `oml_workarea`, or `GET /v2/events` for the
-tail), so the operator sees who still calls an old name. **v0.5.0 removes
+`request.validation`. `oml_events_tail` rides `GET /v2/events`. Every call,
+refused or not, logs one line with `event` `mcp_alias_called` naming the
+tool, its successor (`oml_write`, `oml_read`, `oml_workarea`, or
+`GET /v2/events` for the tail), the calling key's `key_id` and `tenant_id`,
+and the call's `request_id`: ids only, never the key's value
+([observability](../operations/observability.md), structured logging). The
+operator sees which keys still call an old name, so whose clients to move
+before the removal. **v0.5.0 removes
 the eight**, and a call to one is then -32602 like any tool not served
 (d12).
 
