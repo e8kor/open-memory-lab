@@ -204,7 +204,7 @@ enum SetupCommand {
     /// Install the oml plugin at this CLI's own release through the claude
     /// CLI and hand it the URL and key on stdin, refusing an admin or
     /// operator key; a key given without a URL goes to the default server,
-    /// https://memory.doublegate.io; with --print, or with no claude on
+    /// `https://memory.doublegate.io`; with --print, or with no claude on
     /// PATH, print the commands instead (ADR-0041 d7, ADR-0043 d4).
     ClaudeCode(SetupClaudeCodeArgs),
 }
@@ -213,7 +213,7 @@ enum SetupCommand {
 struct SetupClaudeCodeArgs {
     /// The key file `oml keys issue-agent --out` wrote, read in place of
     /// --api-key and paired with --url; without --url, with the default
-    /// server https://memory.doublegate.io (ADR-0043 d4).
+    /// server `https://memory.doublegate.io` (ADR-0043 d4).
     #[arg(long)]
     key_file: Option<PathBuf>,
     /// Run nothing: print the claude commands, whose configure line reads
