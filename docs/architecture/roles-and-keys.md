@@ -567,6 +567,31 @@ key**; a key without it is a **tenant key**, which every key issued before the b
 - **Review.** The [reviewer-exclusion set](#the-dreamer-split) also holds the user of every user
   key in a row's lineage closure, so a user's own dreamer key never judges its user's work.
 
+## Session keys (planned)
+
+*Planned for v0.5.0, not built · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed) · [releases](../product/releases.md)*
+
+A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
+`held_by: human` with no value and no connection, held by the server for one person and acted
+with only from that person's web session, which the server re-checks on every request
+([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). It cannot be sent as
+a bearer key and never gets a connect code (`oauth.connect_refused`, `details.reason:
+session_key`). A person holds at most four, one per capacity, under the two-key rule
+([admin verbs](#admin-verbs)):
+
+| Key | Role and grants |
+|---|---|
+| `<user>-web` | a [user key](#user-keys-planned): writer and reader on `universe.<user>`, and the node read on `universe` |
+| `<user>-review` | a tenant dreamer key, with the dreamer and reader grants an admin gives it |
+| `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and reader on the user roots an admin chooses |
+| `<user>-admin` | a tenant admin key, no grants |
+
+`<user>-web`, and no bearer key, may issue reader, writer and connector keys naming its own user
+with grants inside its root, mint their connect codes and deny them on `universe`; for it, own
+means every key naming its user. The admin page reviews only as `<user>-review`, R2 checked on
+that key and the row's lineage closure, and reads content only through the reviewer or curator
+key's grants.
+
 ## Key format
 
 This section is normative for the key value itself: what crosses the wire, what is stored, and
