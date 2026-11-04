@@ -2297,10 +2297,7 @@ async fn the_session_start_hook_reads_the_plugin_options_before_oml_url_and_oml_
     );
     assert_eq!(code, 0, "{stderr}");
     let seen = crew.lab.take_requests();
-    assert_eq!(
-        routes(&seen),
-        ["GET /v1/memories", "POST /v1/memories/recall"]
-    );
+    assert_eq!(routes(&seen), session_start_routes(&crew));
     let bearer = format!("Bearer {}", crew.agent);
     assert!(
         seen.iter()
@@ -2377,10 +2374,7 @@ async fn the_session_start_hook_injects_the_steering_and_the_agents_own_recent_w
 
     // Exactly the two provider-ring reads, both under the agent's own key.
     let seen = crew.lab.take_requests();
-    assert_eq!(
-        routes(&seen),
-        ["GET /v1/memories", "POST /v1/memories/recall"]
-    );
+    assert_eq!(routes(&seen), session_start_routes(&crew));
     assert_eq!(seen[0].query, "own=true&limit=10");
     assert_eq!(
         seen[1].body,
@@ -2913,7 +2907,7 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
     assert_eq!(code, 0, "{stderr}");
     assert!(context_of(&stdout).contains(FRAMING), "{stdout}");
     let seen = crew.lab.take_requests();
-    assert_eq!(seen.len(), 2, "{:?}", routes(&seen));
+    assert_eq!(seen.len(), 4, "{:?}", routes(&seen));
     let bearer = format!("Bearer {}", crew.agent);
     for s in &seen {
         assert_eq!(
@@ -3386,10 +3380,7 @@ async fn the_hook_redacts_the_key_from_the_working_directory_before_it_takes_the
     assert_eq!(code, 0, "{stderr}");
     let context = context_of(&stdout);
     let seen = crew.lab.take_requests();
-    assert_eq!(
-        routes(&seen),
-        ["GET /v1/memories", "POST /v1/memories/recall"]
-    );
+    assert_eq!(routes(&seen), session_start_routes(&crew));
     let query = seen[1].body["query"]
         .as_str()
         .expect("the recall query")
@@ -5902,4 +5893,228 @@ async fn the_session_cache_never_holds_a_memory_body_and_is_deleted_at_session_e
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
     assert!(!file.exists(), "session end deletes the cache");
     crew.lab.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// The lifecycle, edges and the brief on the CLI (ADR-0046 d3, d4, d7, d9)
+// ---------------------------------------------------------------------------
+
+impl Crew {
+    /// A dreamer key on the crew workarea that also reads it, named after
+    /// its principal: it proposes, ratifies and reads the claims it links.
+    fn curator(&self, principal: &str) -> String {
+        self.lab.issue(
+            principal,
+            &[
+                "--role",
+                "dreamer",
+                "--held-by",
+                "human",
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{}:dreamer", self.wa),
+                "--grant",
+                &format!("{}:reader", self.wa),
+            ],
+        )["value"]
+            .as_str()
+            .expect("curator value")
+            .to_owned()
+    }
+
+    /// The artifact id of the agent's promoted claim `claim_key`.
+    fn promoted(&self, claim_key: &str, body: &str) -> String {
+        self.submit(&self.agent, "memory", claim_key, body);
+        self.approve_next(claim_key);
+        let (code, page, log) = self.lab.json(Some(&self.agent), &["read", "--own"]);
+        assert_eq!(code, 0, "read: {log}");
+        page["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|m| m["claim_key"] == claim_key)
+            .and_then(|m| m["artifact_id"].as_str())
+            .expect("the claim in the own listing")
+            .to_owned()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workareas_status_propose_pending_and_ratify_drive_the_transition_routes() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    let dora = crew.curator("dora");
+    let dan = crew.curator("dan");
+    crew.lab.take_requests();
+
+    let (code, proposal, log) = crew.lab.json(
+        Some(&dora),
+        &[
+            "workareas",
+            "status",
+            "propose",
+            "metals",
+            "--to",
+            "committed",
+        ],
+    );
+    assert_eq!(code, 0, "propose: {log}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/workareas/metals/transitions"]);
+    assert_eq!(seen[0].body, json!({ "to": "committed" }));
+    assert_eq!(proposal["state"], "pending", "{log}");
+    let transition = proposal["transition_id"].as_str().expect("id").to_owned();
+
+    let (code, pending, log) = crew
+        .lab
+        .json(Some(&dan), &["workareas", "status", "pending", "metals"]);
+    assert_eq!(code, 0, "pending: {log}");
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        ["GET /v2/workareas/metals"]
+    );
+    assert_eq!(
+        pending["pending_transitions"][0]["transition_id"],
+        transition.as_str()
+    );
+
+    let (code, ratified, log) = crew.lab.json(
+        Some(&dan),
+        &["workareas", "status", "ratify", "metals", &transition],
+    );
+    assert_eq!(code, 0, "ratify: {log}");
+    assert_eq!(
+        routes(&crew.lab.take_requests()),
+        [format!(
+            "POST /v2/workareas/metals/transitions/{transition}/ratify"
+        )]
+    );
+    assert_eq!(ratified["to"], "committed", "{log}");
+    crew.lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edges_propose_list_and_ratify_send_the_v2_edges_family_for_kind_claim_and_kind_brief() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    let dora = crew.curator("dora");
+    let dan = crew.curator("dan");
+    let a = crew.promoted("quote-a", "Accra Metals quoted 412 USD/t.");
+    let b = crew.promoted("quote-b", "Accra Metals confirmed 412 USD/t in writing.");
+    crew.lab.take_requests();
+
+    let (code, claim_edge, log) = crew.lab.json(
+        Some(&dora),
+        &["edges", "propose", "claim", &b, &a, "--label", "supports"],
+    );
+    assert_eq!(code, 0, "propose claim: {log}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/edges"]);
+    assert_eq!(
+        seen[0].body,
+        json!({ "kind": "claim", "from_artifact_id": b, "to_artifact_id": a, "label": "supports" })
+    );
+
+    let (code, brief_edge, log) = crew
+        .lab
+        .json(Some(&dora), &["edges", "propose", "brief", &a, "metals"]);
+    assert_eq!(code, 0, "propose brief: {log}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(
+        seen[0].body,
+        json!({ "kind": "brief", "from_artifact_id": a, "to_workarea_id": "metals" })
+    );
+
+    for edge in [&claim_edge, &brief_edge] {
+        let id = edge["edge_id"].as_str().expect("edge id");
+        let (code, ratified, log) = crew.lab.json(Some(&dan), &["edges", "ratify", id]);
+        assert_eq!(code, 0, "ratify: {log}");
+        assert_eq!(
+            routes(&crew.lab.take_requests()),
+            [format!("POST /v2/edges/{id}/ratify")]
+        );
+        assert_eq!(ratified["state"], "ratified", "{log}");
+    }
+
+    let (code, page, log) = crew.lab.json(
+        Some(&dan),
+        &["edges", "list", "--kind", "brief", "--workarea", "metals"],
+    );
+    assert_eq!(code, 0, "list: {log}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(routes(&seen), ["GET /v2/edges"]);
+    assert_eq!(seen[0].query, "kind=brief&workarea_id=metals");
+    assert_eq!(page["items"][0]["edge_id"], brief_edge["edge_id"]);
+    crew.lab.stop().await;
+}
+
+/// The hook reads the key's default workarea through whoami and prints its
+/// ratified brief, each member on one line, before the steering; a
+/// workarea with no brief adds no section (ADR-0046 d9; ADR-0029 d2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_start_hook_prints_the_default_workareas_brief_before_the_steering() {
+    let Some(crew) = Crew::start().await else {
+        return;
+    };
+    let (code, stdout, stderr) = crew.hook(&[], &session("startup", "/home/op/src/accra"));
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !context_of(&stdout).contains("Brief of"),
+        "no brief, no section"
+    );
+
+    let dora = crew.curator("dora");
+    let dan = crew.curator("dan");
+    let a = crew.promoted(
+        "sourcing-rule",
+        "Quote every supplier price with its source.",
+    );
+    let (code, edge, log) = crew
+        .lab
+        .json(Some(&dora), &["edges", "propose", "brief", &a, "metals"]);
+    assert_eq!(code, 0, "{log}");
+    let id = edge["edge_id"].as_str().expect("edge id");
+    let (code, _, log) = crew.lab.json(Some(&dan), &["edges", "ratify", id]);
+    assert_eq!(code, 0, "{log}");
+    crew.lab.take_requests();
+
+    let (code, stdout, stderr) = crew.hook(&[], &session("startup", "/home/op/src/accra"));
+    assert_eq!(code, 0, "{stderr}");
+    let seen = crew.lab.take_requests();
+    assert_eq!(
+        routes(&seen),
+        [
+            "GET /v1/memories".to_owned(),
+            "POST /v1/memories/recall".to_owned(),
+            "GET /v2/whoami".to_owned(),
+            format!("GET /v2/workareas/{}", crew.wa),
+        ]
+    );
+    let context = context_of(&stdout);
+    let brief = section(&context, "Brief of this workarea, agreed by its reviewers:");
+    assert_eq!(
+        brief,
+        ["- sourcing-rule: Quote every supplier price with its source."]
+    );
+    let (at_brief, at_steering) = (
+        context.find("Brief of this workarea").expect("the brief"),
+        context.find("Steering in force:").expect("steering"),
+    );
+    assert!(at_brief < at_steering, "the brief comes first");
+    crew.lab.stop().await;
+}
+
+/// The requests one session start sends under the crew's agent key: the
+/// own listing, the recall, then whoami and the default workarea's read for
+/// its brief (ADR-0029 d2; ADR-0046 d9).
+fn session_start_routes(crew: &Crew) -> Vec<String> {
+    vec![
+        "GET /v1/memories".to_owned(),
+        "POST /v1/memories/recall".to_owned(),
+        "GET /v2/whoami".to_owned(),
+        format!("GET /v2/workareas/{}", crew.wa),
+    ]
 }

@@ -124,6 +124,13 @@ enum Command {
         #[command(subcommand)]
         command: WorkareasCommand,
     },
+    /// Edges: claim-to-claim links and a claim's place in a workarea's
+    /// brief, each proposed by one key and ratified by another (ADR-0046
+    /// d4, d7).
+    Edges {
+        #[command(subcommand)]
+        command: EdgesCommand,
+    },
     /// Crew records: named, recorded, not operated (admin key role).
     Crews {
         #[command(subcommand)]
@@ -440,6 +447,91 @@ enum WorkareasCommand {
     Crew {
         #[command(subcommand)]
         command: WorkareaCrewCommand,
+    },
+    /// The status ladder: development, committed, validated, each step
+    /// proposed by one key and ratified by another (ADR-0009 d3; ADR-0046
+    /// d3).
+    Status {
+        #[command(subcommand)]
+        command: WorkareaStatusCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkareaStatusCommand {
+    /// Propose the next forward rung; it waits for a second identity.
+    Propose {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// The rung proposed: committed or validated.
+        #[arg(long)]
+        to: String,
+    },
+    /// Ratify a pending proposal under a key that did not propose it.
+    Ratify {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// The proposal's transition id.
+        transition_id: String,
+    },
+    /// The workarea's live proposals and the review policy in force.
+    Pending {
+        /// The workarea, by id or name.
+        workarea: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum EdgesCommand {
+    /// Propose an edge; it stays pending until another key ratifies it.
+    Propose {
+        #[command(subcommand)]
+        kind: EdgeProposeCommand,
+    },
+    /// Ratify a pending edge of either kind under a key that did not
+    /// propose it.
+    Ratify {
+        /// The edge's id.
+        edge_id: String,
+    },
+    /// One page of one kind's edges, pending and ratified, newest first.
+    List {
+        /// claim or brief.
+        #[arg(long)]
+        kind: String,
+        /// kind claim: a subtree filter; kind brief: the workarea, required.
+        #[arg(long)]
+        workarea: Option<String>,
+        /// kind claim: only the edges touching this artifact.
+        #[arg(long)]
+        artifact: Option<String>,
+        /// The page size.
+        #[arg(long)]
+        limit: Option<u32>,
+        /// The next_cursor of the previous page.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EdgeProposeCommand {
+    /// A labelled link from one claim to another: supports, contradicts,
+    /// relates_to and continues are the recommended labels (ADR-0046 d6).
+    Claim {
+        /// The source claim's artifact id.
+        from: String,
+        /// The target claim's artifact id.
+        to: String,
+        #[arg(long)]
+        label: String,
+    },
+    /// A promoted claim proposed into a workarea's brief (ADR-0046 d7).
+    Brief {
+        /// The claim's artifact id.
+        artifact: String,
+        /// The workarea, by id or name.
+        workarea: String,
     },
 }
 
@@ -1264,6 +1356,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workareas {
+            command: WorkareasCommand::Status { command },
+        } => run_workarea_status(cli, &stored, command),
+
+        Command::Edges { command } => run_edges(cli, &stored, command),
+
+        Command::Workareas {
             command: WorkareasCommand::Tree { root },
         } => run_workareas_tree(cli, &stored, root),
 
@@ -1764,6 +1862,164 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
             "head seq {}; next --after-seq {}",
             page["head_seq"], page["next_after_seq"]
         );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml workareas status`: propose, ratify and the pending list over the
+/// transition routes and the workarea read (ADR-0046 d3).
+fn run_workarea_status(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &WorkareaStatusCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    match command {
+        WorkareaStatusCommand::Propose { workarea, to } => {
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/transitions", segment(workarea)?),
+                &json!({ "to": to }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "proposed {} -> {} on {workarea}: transition {} waits for a second identity",
+                    field(&response, "from"),
+                    field(&response, "to"),
+                    field(&response, "transition_id")
+                );
+            }
+        }
+        WorkareaStatusCommand::Ratify {
+            workarea,
+            transition_id,
+        } => {
+            let (_, response) = client.post(
+                &format!(
+                    "/v2/workareas/{}/transitions/{}/ratify",
+                    segment(workarea)?,
+                    segment(transition_id)?
+                ),
+                &json!({}),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!("ratified: {workarea} is now {}", field(&response, "to"));
+            }
+        }
+        WorkareaStatusCommand::Pending { workarea } => {
+            let (_, node) = client.get(&format!("/v2/workareas/{}", segment(workarea)?))?;
+            let pending = json!({
+                "workarea_id": node["id"],
+                "status": node["status"],
+                "policy": node["policy"],
+                "pending_transitions": node["pending_transitions"],
+            });
+            if cli.json {
+                print_json(&pending);
+            } else {
+                println!("{workarea} is {}", field(&node, "status"));
+                let rows = node["pending_transitions"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if rows.is_empty() {
+                    println!("    no proposal waits");
+                }
+                for t in &rows {
+                    println!(
+                        "    {}  {} -> {}",
+                        field(t, "transition_id"),
+                        field(t, "from"),
+                        field(t, "to")
+                    );
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml edges`: the `/v2/edges` family for kind claim and kind brief
+/// (ADR-0046 d4, d7).
+fn run_edges(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &EdgesCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let response = match command {
+        EdgesCommand::Propose { kind } => {
+            let body = match kind {
+                EdgeProposeCommand::Claim { from, to, label } => json!({
+                    "kind": "claim", "from_artifact_id": from, "to_artifact_id": to, "label": label,
+                }),
+                EdgeProposeCommand::Brief { artifact, workarea } => json!({
+                    "kind": "brief", "from_artifact_id": artifact, "to_workarea_id": workarea,
+                }),
+            };
+            client.post("/v2/edges", &body, &write_opts())?.1
+        }
+        EdgesCommand::Ratify { edge_id } => {
+            client
+                .post(
+                    &format!("/v2/edges/{}/ratify", segment(edge_id)?),
+                    &json!({}),
+                    &write_opts(),
+                )?
+                .1
+        }
+        EdgesCommand::List {
+            kind,
+            workarea,
+            artifact,
+            limit,
+            cursor,
+        } => {
+            let mut params = vec![("kind", kind.clone())];
+            if let Some(workarea) = workarea {
+                params.push(("workarea_id", workarea.clone()));
+            }
+            if let Some(artifact) = artifact {
+                params.push(("artifact_id", artifact.clone()));
+            }
+            if let Some(limit) = limit {
+                params.push(("limit", limit.to_string()));
+            }
+            if let Some(cursor) = cursor {
+                params.push(("cursor", cursor.clone()));
+            }
+            client
+                .get(&format!("/v2/edges?{}", query_string(&params)))?
+                .1
+        }
+    };
+    if cli.json {
+        print_json(&response);
+    } else {
+        let rows = match response["items"].as_array() {
+            Some(items) => items.clone(),
+            None => vec![response.clone()],
+        };
+        for e in &rows {
+            let to = e["to_artifact_id"]
+                .as_str()
+                .or_else(|| e["to_workarea_id"].as_str())
+                .unwrap_or("?");
+            println!(
+                "{}  {}  {} -[{}]-> {}  {}",
+                field(e, "edge_id"),
+                field(e, "kind"),
+                field(e, "from_artifact_id"),
+                field(e, "label"),
+                to,
+                field(e, "state")
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
