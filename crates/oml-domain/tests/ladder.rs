@@ -14,7 +14,7 @@ use WorkareaStatus::{Committed, Development, Validated};
 
 const ALL: [WorkareaStatus; 3] = [Development, Committed, Validated];
 
-const OPS: [FrozenOp; 10] = [
+const OPS: [FrozenOp; 9] = [
     FrozenOp::Write,
     FrozenOp::Promote,
     FrozenOp::ReassignIn,
@@ -24,7 +24,6 @@ const OPS: [FrozenOp; 10] = [
     FrozenOp::Demote,
     FrozenOp::Erase,
     FrozenOp::CrewUpdate,
-    FrozenOp::Transition,
 ];
 
 #[test]
@@ -193,6 +192,45 @@ fn a_validated_area_admits_exactly_demote_erasure_and_crew_update() {
         admitted,
         [FrozenOp::Demote, FrozenOp::Erase, FrozenOp::CrewUpdate]
     );
+}
+
+#[test]
+fn a_transition_on_a_validated_area_is_refused_by_the_ladder_as_backward_or_same_not_by_freeze() {
+    for to in [Development, Committed] {
+        assert_eq!(
+            propose_check(false, Validated, to, &[]),
+            Err(LadderRefusal::Backward)
+        );
+        assert_eq!(
+            ratify_check(Validated, false, Validated, to, &[]),
+            Err(LadderRefusal::Backward)
+        );
+    }
+    assert_eq!(
+        propose_check(false, Validated, Validated, &[]),
+        Err(LadderRefusal::Same)
+    );
+    assert_eq!(
+        ratify_check(Validated, false, Validated, Validated, &[]),
+        Err(LadderRefusal::Same)
+    );
+    // Freeze has no transition operation to refuse: the ladder alone decides,
+    // so a store or use case that runs the freeze gate first cannot answer
+    // `workarea.frozen` where errors.md documents `transition_refused`.
+    // The match is exhaustive, so a transition variant fails to compile.
+    for op in OPS {
+        match op {
+            FrozenOp::Write
+            | FrozenOp::Promote
+            | FrozenOp::ReassignIn
+            | FrozenOp::ReassignOut
+            | FrozenOp::CreateChild
+            | FrozenOp::Reparent
+            | FrozenOp::Demote
+            | FrozenOp::Erase
+            | FrozenOp::CrewUpdate => {}
+        }
+    }
 }
 
 #[test]
