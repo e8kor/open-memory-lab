@@ -27,10 +27,35 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Guardrails, planned after v0.5.0 (proposed ADR-0037)
+## Guardrails, planned for v0.5.1 (proposed ADR-0037)
 
 Entries for the guardrails record and its build, kept apart from the released revisions until
-the release that carries them.
+the release that carries them, newest first.
+
+### 2026-11-04 — ADR-0037 rebased onto the v0.4.0 API, user roots and the web pages, and planned for v0.5.1
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+stays proposed and gains a Release line, planned for v0.5.1, as ADR-0045 d20 (g) moved it. No
+decision of the maintainer's is reopened; the record now speaks the API it will ship on and the
+two records v0.5.0 builds first.
+
+- **The v0.4.0 API** ([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)): `oml_write`
+  refuses `kind: guardrail` and a `replaces` naming a guardrail (`request.validation`, amending
+  its d3); the read takes the `workarea` query field, not `X-OML-Workarea`; the item says `text`;
+  `GET /v2/whoami` serves `guardrail_scope` (its d15); the MCP prompt sits beside three tools.
+- **User roots, d16** (proposed [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):
+  `ancestors` walks from the scope node through `universe.<user>` to `universe` under the same
+  reader test, which ADR-0044 d3's node grant satisfies, and reaches no other root; a person's
+  agents propose guardrails only in their root, which `<user>-review` may ratify; `universe`'s
+  guardrails are written by curator keys alone and served under ADR-0044 d9.
+- **The web pages, d17** (proposed [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):
+  session keys load nothing; the user page may show the set in force at the person's root;
+  a held guardrail on review carries the load warning; no page writes one.
+- **Open, d18:** nine questions the maintainer's decisions do not settle, each with the reading
+  the build takes until answered. **The build, d15:** six steps; S6 waits for ADR-0044 and
+  ADR-0045 W3.
+- **Pages:** the record, its register row, this entry, and the two v0.5.0 mentions of guardrails
+  on [releases](product/releases.md#decisions) and [administering](guides/administering.md).
 
 ### 2026-10-31 — Guardrails: reviewed rules loaded at session start and checked at the tool call (ADR-0037, proposed)
 
