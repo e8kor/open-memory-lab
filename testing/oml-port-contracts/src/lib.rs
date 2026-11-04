@@ -38,8 +38,8 @@ use oml_app::types::{
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
     GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
     MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
-    TransitionRecord, TransitionState,
+    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;

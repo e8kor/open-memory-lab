@@ -22,9 +22,8 @@ use oml_domain::oauth::{
     connection_transition,
 };
 use oml_domain::{
-    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
-    event_types,
-    ratifier_is_proposer,
+    ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
+    WorkareaStatus, event_types, ratifier_is_proposer,
 };
 
 use crate::ports::{
