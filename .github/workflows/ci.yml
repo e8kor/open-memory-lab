@@ -462,7 +462,7 @@ jobs:
         run: |
           public_key() {
             kubectl --namespace oml logs deployment/oml-server-lead \
-              | sed 's/\x1b\[[0-9;]*m//g' | grep -o 'public_key=[0-9a-f]*' | tail -1
+              | sed 's/\x1b\[[0-9;]*m//g' | grep -oE 'public_key"?[=:]"?[0-9a-f]{64}' | tail -1 | grep -oE '[0-9a-f]{64}$'
           }
           before="$(public_key)"
           kubectl --namespace oml rollout restart deployment/oml-server-lead
@@ -492,7 +492,7 @@ jobs:
         run: |
           public_key() {
             kubectl --namespace oml logs deployment/oml-server-lead \
-              | sed 's/\x1b\[[0-9;]*m//g' | grep -o 'public_key=[0-9a-f]*' | tail -1
+              | sed 's/\x1b\[[0-9;]*m//g' | grep -oE 'public_key"?[=:]"?[0-9a-f]{64}' | tail -1 | grep -oE '[0-9a-f]{64}$'
           }
           before="$(public_key)"
           helm uninstall oml --namespace oml --wait --timeout 5m
