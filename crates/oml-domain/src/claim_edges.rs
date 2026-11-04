@@ -14,7 +14,7 @@
 //! | [`RatifyRefusal::RatifierIsProposer`] | `review.ratifier_is_proposer` |
 //! | [`RatifyRefusal::AuthorInLineage`] | `review.author_in_lineage` |
 //!
-//! A self-edge is not refused here: for `oml:is_a` and `oml:replaced_by`
+//! A self-edge is not refused here: for `oml:is_a`
 //! [`crate::vocab_edges::check_acyclic`] refuses it at ratification.
 // reading: the docs refuse no self-edge at proposal; the cycle invariant of
 // ADR-0021 d5 is a ratification check, so a self-edge of another label is
@@ -69,6 +69,15 @@ pub enum LabelRefusal {
     // the proposal fails closed until that lane lands.
     #[error("oml:about edges are not built (request.validation)")]
     AboutNotBuilt,
+    /// `oml:replaced_by` or `oml:consider` at a standalone proposal: a
+    /// successor pointer is declared in the deprecation submission it
+    /// belongs to, under that submission's one serve and one verdict, and
+    /// is never proposed or ratified apart from it (ADR-0021 d3;
+    /// ontologies.md).
+    #[error(
+        "oml:replaced_by and oml:consider are declared in a deprecation submission, never proposed apart from it (request.validation)"
+    )]
+    SuccessorOutsideDeprecation,
     /// The label is under the reserved `oml:` prefix but not in its
     /// register (ADR-0021 d2).
     // reading: the docs leave labels open beyond `oml:` but reserve the
@@ -105,10 +114,13 @@ impl LabelRefusal {
 }
 
 /// The label check at proposal, first failure answering: the label's form,
-/// then `oml:about`, then the `oml:` register, then the endpoint kinds. An
-/// `oml:` term relation joins two terms only; an edge between two terms
-/// carries one; every other label is open (ADR-0021 d5; http-api.md, claim
-/// edges). Authority, R2 and the endpoints' existence are the caller's.
+/// then `oml:about`, then the successor labels, then the `oml:` register,
+/// then the endpoint kinds. `oml:replaced_by` and `oml:consider` are
+/// refused here, as they travel only inside a deprecation (ADR-0021 d3);
+/// `oml:is_a` and `oml:part_of` join two terms only; an edge between two
+/// terms carries one of them; every other label is open (ADR-0021 d5;
+/// http-api.md, claim edges). Authority, R2 and the endpoints' existence
+/// are the caller's.
 // reading: the docs fix no length cap on a label, so none is checked here.
 pub fn check_label(
     label: &str,
@@ -124,6 +136,9 @@ pub fn check_label(
     let both_terms = src_kind == MemoryKind::Term && dst_kind == MemoryKind::Term;
     match OmlLabel::parse(label) {
         Some(OmlLabel::About) => Err(LabelRefusal::AboutNotBuilt),
+        Some(OmlLabel::ReplacedBy | OmlLabel::Consider) => {
+            Err(LabelRefusal::SuccessorOutsideDeprecation)
+        }
         Some(_) => {
             if src_kind != MemoryKind::Term {
                 Err(LabelRefusal::EndpointNotTerm {
