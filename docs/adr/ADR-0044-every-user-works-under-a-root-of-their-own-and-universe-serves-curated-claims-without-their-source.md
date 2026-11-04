@@ -11,7 +11,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 **Release:** planned for v0.5.0 ([releases](../product/releases.md#decisions))
 
-**Amends:** ADR-0001 (d2), ADR-0008 (d1, d3, d4), ADR-0010 (d1, d5), ADR-0018 (d4), ADR-0025 (d2, d3, d8), ADR-0026 (d1, d4, d5, d7), ADR-0028 (d1), ADR-0039 (d15)
+**Amends:** ADR-0008 (d1, d3, d4), ADR-0010 (d1), ADR-0018 (d4), ADR-0025 (d2, d3, d8), ADR-0026 (d1, d4, d5, d7), ADR-0028 (d1), ADR-0039 (d15)
 
 ## Context
 
@@ -219,8 +219,8 @@ Decided, not built.
     - **A second identity must ratify it, by the ordinary pipeline.** The held universe version
       is promoted only by a non-author verdict from a dreamer key with dreamer effective access
       on `universe` (a tenant key; d3 rules out user keys), under `universe`'s review policy.
-      R2 excludes every key, principal and, by d8, user in its lineage closure: the curator, the
-      source's author and that author's user, and everyone in the source's own closure. So the
+      R2 excludes every key and principal in its lineage closure: the curator, the source's
+      author and everyone in the source's own closure. So the
       reviewer is never the curator, never the source's author and never in its lineage, and
       the curator is never the reviewer of its own placement.
     - **R1 and R3 hold unchanged.** No verb is added: the curator writes, the reviewer judges,
@@ -234,21 +234,16 @@ Decided, not built.
     `universe` holds every curated claim forever, failing closed, which the review-availability
     signal reports (d14).
 
-- **d8 — The reviewer exclusion covers the user behind a key.** A row's reviewer-exclusion set
-  gains, beside each key and principal in its lineage closure, the user of every user key in it.
-  A verdict from a key whose `user` is in that set is refused with `review.author_in_lineage`,
-  review next never serves such a row to it, and the same holds for rival successors
-  ([the dreamer split](../architecture/roles-and-keys.md#the-dreamer-split)). Before user keys,
-  the server could not tell that two keys act for one person; with `user` it can, and R2's
-  "the reviewer is never the author" then means the person, not only the credential. This
-  amends ADR-0001 d2 and ADR-0010 d5, which name key and principal. The honest limit is the
-  same as for principals: a person holding a tenant key beside their user keys can review their
-  own user's work through it, and the journal shows that the reviewing key named no user. The
-  cost is that a user's own dreamer key never promotes that user's writes, and since d3 keeps
-  every other user's key out of the root, the reviewer of a user root is always a tenant dreamer
-  key an admin granted there. The
-  development exception of ADR-0001 d5 is untouched: it is the one place a person's own
-  verdict counts, marked `self_signed`.
+- **d8 — The reviewer exclusion stays per key and principal; it does not extend to the user.**
+  A user key's verdict is excluded exactly as any key's is: by the keys and principals in the
+  row's lineage closure and, for a held successor, its rivals' authors
+  ([the dreamer split](../architecture/roles-and-keys.md#the-dreamer-split)). `user` is not added
+  to that set, so a person may review their own agents' writes through a separate dreamer key of
+  their own, granted in their root, and a user working alone can promote their own agents' work.
+  The maintainer chose this on 2026-11-04 over widening R2 to the person. The cost is said
+  plainly: R2 holds per credential, not per person, inside a user root, and the journal shows
+  that both keys name the same user, so an audit can see a person approving their own agents'
+  work. ADR-0001 d2 and ADR-0010 d5 are unchanged.
 
 - **d9 — A universe claim is served without its source: origin `universe`, no author, no
   lineage below it.** To every key outside the claim's own authoring key set
@@ -371,7 +366,6 @@ Decided, not built.
     | a user key holds no reader on `universe` (an admin removed the node grant, when grant changes are built) | — | `oml doctor` under the key: `warn universe: this key does not read universe's claims` |
     | a key used by a person names no user (a grandfathered or mis-issued key) | — | `oml doctor` under the key: `user: none (tenant key: names resolve in the shared namespace)` |
     | curated claims wait with no eligible reviewer on `universe` | — (held, failing closed) | `oml doctor` review availability: `warn universe has no dreamer outside its writers' lineage` |
-    | a user root whose only dreamer keys are its own user's (d8) | — (held, failing closed) | `oml doctor` review availability: `warn universe.<user> has no eligible reviewer outside <user>` |
     | a key row naming a root that is not a user root | the lead refuses to serve that key, `auth.invalid` with `details.reason: user_root` | `oml doctor` under the key names the reason |
 
 - **d15 — The wire and the vocabulary are held here until built, and the build is one change set
@@ -393,7 +387,7 @@ Decided, not built.
     |---|---|---|
     | S1 | d4, d1, d2, d3, d12: `covers`, `user_root`, `user`, the issuance rules and the fold of old rows | `a_node_grant_covers_its_node_and_no_descendant`, `a_node_grant_with_a_deny_entry_is_refused`, `the_first_key_naming_a_user_creates_its_root_under_universe`, `a_second_key_naming_the_user_joins_its_root`, `a_user_named_like_a_shared_workarea_is_name_taken`, `user_on_an_admin_key_is_refused`, `a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling`, `issuance_adds_a_reader_node_grant_on_universe_to_every_user_key`, `a_key_issued_before_users_folds_as_a_tenant_key` |
     | S2 | d5, d6: namespaces, qualified names, user-key create | `two_users_each_create_a_workarea_named_project`, `a_user_keys_bare_name_resolves_in_its_own_root`, `a_qualified_name_resolves_for_an_admin`, `a_three_label_value_is_still_a_path_and_refused`, `a_user_key_creates_a_workarea_under_its_root_by_default`, `a_user_key_cannot_create_outside_its_root` |
-    | S3 | d7, d8: curation and the user exclusion | `a_user_keys_write_into_universe_is_universe_refused`, `a_curators_write_into_universe_is_held`, `a_curated_claim_is_never_promoted_by_the_sources_author_or_its_user`, `a_users_own_dreamer_key_never_reviews_its_users_writes` |
+    | S3 | d7, d8: curation, and the exclusion per key | `a_user_keys_write_into_universe_is_universe_refused`, `a_curators_write_into_universe_is_held`, `a_curated_claim_is_never_promoted_by_the_sources_author`, `a_users_own_dreamer_key_may_review_its_agents_writes` |
     | S4 | d9, d10, d14: the served view, the recall join, the doctor lines | `a_universe_claim_serves_no_principal_and_no_derives_from_to_a_reader`, `the_sources_author_is_served_the_same_universe_view`, `the_curator_reads_its_own_universe_row_in_full`, `recall_inside_a_user_root_ranks_universe_hits_with_its_own`, `universe_steering_applies_in_every_user_root`, `a_user_key_never_sees_another_users_root_in_the_tree`, `doctor_warns_when_a_user_key_does_not_read_universe` |
 
 ## Consequences
@@ -404,7 +398,7 @@ Decided, not built.
   [errors](../api/errors.md), [releases](../product/releases.md) and [llms.txt](../llms.txt) mark
   each part planned for v0.5.0 and not built. The event catalog, the Postgres schema and the
   OpenAPI documents change only with the build (d15).
-- ADR-0001 d2, ADR-0008 d1, d3 and d4, ADR-0010 d1 and d5, ADR-0018 d4, ADR-0025 d2, d3 and d8,
+- ADR-0008 d1, d3 and d4, ADR-0010 d1, ADR-0018 d4, ADR-0025 d2, d3 and d8,
   ADR-0026 d1, d4, d5 and d7, ADR-0028 d1 and ADR-0039 d15 keep their text; each Status line
   points here. The decision register's D7, D9, D13 and D14 rows cite this record.
 - The roadmap opens three rows: **FR-72**, moving existing shared workareas into a user root
@@ -436,7 +430,7 @@ Decided, not built.
 | **Curation as a new verb that publishes a promoted source directly** | A verb whose effect is visibility to the whole tenant is a promotion by fiat, against R1, and skips the second identity R2 asks for at the wider audience. An ordinary held write reviewed on `universe` needs no new verb. |
 | **Curation that moves (reassigns) the source into `universe`** | The source would leave its author's root and carry its attribution with it; d9's anonymous view would then have to rewrite the row it serves. A new version deriving from the source keeps both intact. |
 | **Users proposing their own claims for `universe`** | The maintainer ruled it out: users neither write nor propose to `universe`. |
-| **R2 by key and principal only, as now** | With `user` the server knows when two keys act for one person; leaving it out would let a person's two agents review each other's work as independent reviewers. |
+| **The user behind a key in the reviewer exclusion** | It would make R2 hold per person inside a user root, but a user's own dreamer key could then never promote their own agents' writes, so every user root would need a reviewer from outside it and a user could never work alone. The maintainer kept the exclusion per key and principal on 2026-11-04 (d8). |
 | **Showing the source's author a link to the curated copy** | It tells alice which of her claims a curator chose, through a field no other reader has, and adds a field for a fact the journal already holds. |
 | **Recall at a user scope without universe hits, the client naming `workarea: universe`** | The session-start brief and every agent that recalls at its default would never meet a curated claim; asking every client to recall twice contradicts the URL-and-key start. |
 | **A second default workarea on a user key, for reads** | Two defaults for one key, which ADR-0022 d4 and ADR-0039 d4 keep single; d10's join gives the same reach with one rule on the owning page. |

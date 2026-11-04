@@ -171,8 +171,8 @@ against — so every access answer is reproducible from journalled records.
 
 *Planned for v0.5.0, not built:* a key may name the **user** it acts for, making it a user key
 confined to that user's root, and a grant may cover its node alone (`covers: node`), which is how
-every user key reads `universe` without reading anyone else's root; the reviewer exclusion then
-also covers the user behind a key ([user keys](architecture/roles-and-keys.md#user-keys-planned),
+every user key reads `universe` without reading anyone else's root; the reviewer exclusion stays
+per key, so a person may review their own agents' work through a separate key ([user keys](architecture/roles-and-keys.md#user-keys-planned),
 [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
 
 Keys are shown once at issuance, expire, and rotate by minting a journalled **successor key**

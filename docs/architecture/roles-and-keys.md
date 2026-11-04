@@ -382,11 +382,9 @@ pending edges, a dreamer cannot launder authorship by proposing an edit and revi
 before the edit is ratified. A dreamer's own proposals always need another reviewer.
 
 *Planned for v0.5.0, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8, proposed):* the
-exclusion also covers the user behind a key. A verdict from a key whose `user` is the user of any
-[user key](#user-keys-planned) in the row's lineage closure, or of a rival held successor's
-author, is refused with `review.author_in_lineage`, and review next never serves such a row to it.
-The limit is the principal's: a person reviewing through a tenant key that names no user is not
-caught, and the journal shows that the reviewing key named none.
+exclusion stays per key and principal for [user keys](#user-keys-planned) too: `user` is not in
+it, so a person may review their own agents' writes through a separate dreamer key in their root,
+and the journal shows that both keys name the same user.
 
 **Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
 successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
