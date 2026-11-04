@@ -47,9 +47,11 @@ header { border-bottom: 1px solid var(--rule-soft); }
 .brand:hover { text-decoration: none; }
 .brand svg { width: 30px; height: 30px; flex: none; }
 .brand small { font-family: var(--mono); font-weight: 400; font-size: 11px; color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
-nav { display: flex; gap: 22px; font-size: 14px; white-space: nowrap; }
+nav { display: flex; align-items: center; gap: 22px; font-size: 14px; white-space: nowrap; }
 nav a { color: var(--ink-dim); }
 nav a:hover { color: var(--ink); }
+nav a.signin { color: var(--ink); border: 1px solid var(--rule); border-radius: 7px; padding: 5px 12px; margin-left: 4px; }
+nav a.signin:hover { border-color: var(--star); color: var(--star); text-decoration: none; }
 
 /* hero */
 .hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; padding: 72px 0 56px; }
@@ -165,9 +167,10 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
     <nav aria-label="Main">
       <a class="sm-hide" href="#how">How it works</a>
       <a class="opt" href="#today">What works today</a>
-      <a href="#start">Get started</a>
+      <a class="sm-hide" href="#start">Get started</a>
       <a href="https://e8kor.github.io/open-memory-lab/">Docs</a>
       <a class="opt" href="https://github.com/e8kor/open-memory-lab">GitHub</a>
+      <a class="signin" href="/web">Sign in</a>
     </nav>
   </div>
 </header>
@@ -312,7 +315,7 @@ footer .tag { font-family: var(--mono); font-size: 12px; }
 <footer>
   <div class="wrap row">
     <span>Open Memory Lab · open source · <a href="https://github.com/e8kor/open-memory-lab">github.com/e8kor/open-memory-lab</a></span>
-    <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <span class="tag">memory.doublegate.io · v0.4.1</span></span>
+    <span><a href="/web">Your account</a> · <a href="/web/admin">Admin</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <span class="tag">memory.doublegate.io · v0.4.1</span></span>
   </div>
 </footer>
 
