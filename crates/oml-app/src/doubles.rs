@@ -749,9 +749,8 @@ fn ratify_transition_fold(
 /// The principal the tenant's key row `key_id` holds, revoked or not.
 fn key_principal(state: &TenantState, key_id: Uuid) -> Result<&str, StoreError> {
     state
-        .keys_by_hash
-        .values()
-        .find(|k| k.key_id == key_id)
+        .keys
+        .get(&key_id)
         .map(|k| k.principal.as_str())
         .ok_or_else(|| StoreError::Backend(format!("key {key_id} is not held by this tenant")))
 }
