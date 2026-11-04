@@ -7,12 +7,25 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.crew import Crew
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     crew: str,
+    *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -21,6 +34,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -57,6 +71,9 @@ def sync_detailed(
     crew: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Crew | ErrorEnvelope]:
     """One crew record, by id or name.
 
@@ -65,6 +82,9 @@ def sync_detailed(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -76,6 +96,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         crew=crew,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -89,6 +112,9 @@ def sync(
     crew: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Crew | ErrorEnvelope | None:
     """One crew record, by id or name.
 
@@ -97,6 +123,9 @@ def sync(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,6 +138,9 @@ def sync(
     return sync_detailed(
         crew=crew,
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -116,6 +148,9 @@ async def asyncio_detailed(
     crew: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[Crew | ErrorEnvelope]:
     """One crew record, by id or name.
 
@@ -124,6 +159,9 @@ async def asyncio_detailed(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,6 +173,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         crew=crew,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -146,6 +187,9 @@ async def asyncio(
     crew: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Crew | ErrorEnvelope | None:
     """One crew record, by id or name.
 
@@ -154,6 +198,9 @@ async def asyncio(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,5 +214,8 @@ async def asyncio(
         await asyncio_detailed(
             crew=crew,
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

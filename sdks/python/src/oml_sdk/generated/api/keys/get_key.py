@@ -7,12 +7,25 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.key import Key
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     key: str,
+    *,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -21,6 +34,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -57,6 +71,9 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Key]:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
@@ -65,6 +82,9 @@ def sync_detailed(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -76,6 +96,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -89,6 +112,9 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Key | None:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
@@ -97,6 +123,9 @@ def sync(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,6 +138,9 @@ def sync(
     return sync_detailed(
         key=key,
         client=client,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -116,6 +148,9 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Key]:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
@@ -124,6 +159,9 @@ async def asyncio_detailed(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,6 +173,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -146,6 +187,9 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Key | None:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
@@ -154,6 +198,9 @@ async def asyncio(
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
             revoked or expired key's name still resolves (ADR-0026 d4, d10).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,5 +214,8 @@ async def asyncio(
         await asyncio_detailed(
             key=key,
             client=client,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

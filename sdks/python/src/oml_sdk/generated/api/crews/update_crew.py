@@ -8,16 +8,28 @@ from ...client import AuthenticatedClient, Client
 from ...models.crew import Crew
 from ...models.crew_update import CrewUpdate
 from ...models.error_envelope import ErrorEnvelope
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     crew: str,
     *,
     body: CrewUpdate,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
+
     headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
@@ -74,6 +86,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Crew | ErrorEnvelope]:
     """Journalled crew-record update (crew.updated) — charter URI and external manager; the name never
@@ -85,6 +100,9 @@ def sync_detailed(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
 
@@ -99,6 +117,9 @@ def sync_detailed(
     kwargs = _get_kwargs(
         crew=crew,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -114,6 +135,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Crew | ErrorEnvelope | None:
     """Journalled crew-record update (crew.updated) — charter URI and external manager; the name never
@@ -125,6 +149,9 @@ def sync(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
 
@@ -140,6 +167,9 @@ def sync(
         crew=crew,
         client=client,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -149,6 +179,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[Crew | ErrorEnvelope]:
     """Journalled crew-record update (crew.updated) — charter URI and external manager; the name never
@@ -160,6 +193,9 @@ async def asyncio_detailed(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
 
@@ -174,6 +210,9 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         crew=crew,
         body=body,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
         idempotency_key=idempotency_key,
     )
 
@@ -187,6 +226,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CrewUpdate,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Crew | ErrorEnvelope | None:
     """Journalled crew-record update (crew.updated) — charter URI and external manager; the name never
@@ -198,6 +240,9 @@ async def asyncio(
     Args:
         crew (str): A crew record, by its id or its name, resolved server-side like every
             reference (ADR-0026 d4).
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
         idempotency_key (str):
         body (CrewUpdate): At least one field; the name is not updatable.
 
@@ -214,6 +259,9 @@ async def asyncio(
             crew=crew,
             client=client,
             body=body,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
             idempotency_key=idempotency_key,
         )
     ).parsed

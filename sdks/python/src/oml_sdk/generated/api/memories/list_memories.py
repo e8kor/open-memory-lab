@@ -23,7 +23,19 @@ def _get_kwargs(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_request_id, Unset):
+        headers["X-Request-Id"] = x_request_id
+
+    if not isinstance(x_correlation_id, Unset):
+        headers["X-Correlation-Id"] = x_correlation_id
+
+    if not isinstance(traceparent, Unset):
+        headers["traceparent"] = traceparent
 
     params: dict[str, Any] = {}
 
@@ -72,6 +84,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -116,6 +129,9 @@ def sync_detailed(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
     """Structured, paginated listing of memory summaries.
 
@@ -143,6 +159,9 @@ def sync_detailed(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,6 +181,9 @@ def sync_detailed(
         until=until,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = client.get_httpx_client().request(
@@ -183,6 +205,9 @@ def sync(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
     """Structured, paginated listing of memory summaries.
 
@@ -210,6 +235,9 @@ def sync(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,6 +258,9 @@ def sync(
         until=until,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     ).parsed
 
 
@@ -245,6 +276,9 @@ async def asyncio_detailed(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
     """Structured, paginated listing of memory summaries.
 
@@ -272,6 +306,9 @@ async def asyncio_detailed(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -291,6 +328,9 @@ async def asyncio_detailed(
         until=until,
         limit=limit,
         cursor=cursor,
+        x_request_id=x_request_id,
+        x_correlation_id=x_correlation_id,
+        traceparent=traceparent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -310,6 +350,9 @@ async def asyncio(
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    x_request_id: str | Unset = UNSET,
+    x_correlation_id: str | Unset = UNSET,
+    traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
     """Structured, paginated listing of memory summaries.
 
@@ -337,6 +380,9 @@ async def asyncio(
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        x_request_id (str | Unset):
+        x_correlation_id (str | Unset):
+        traceparent (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -358,5 +404,8 @@ async def asyncio(
             until=until,
             limit=limit,
             cursor=cursor,
+            x_request_id=x_request_id,
+            x_correlation_id=x_correlation_id,
+            traceparent=traceparent,
         )
     ).parsed

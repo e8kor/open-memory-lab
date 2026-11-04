@@ -84,12 +84,12 @@ the constitution.
 | Timestamps | RFC 3339, UTC, e.g. `2026-10-29T14:03:17Z`. |
 | Digests | `sha256:<64 hex>`. An attachment is named by the SHA-256 of its plaintext ([storage.md](../architecture/storage.md)). |
 | Identifiers | Opaque strings (`artifact_id`, `workarea_id`, `key_id`, `serve_id`, …). Clients never parse them. The ids of workareas, crews, keys and tenants are UUIDs in RFC 9562 hex-and-dash text, so that the server can tell an id from a [name](#names-and-ids). |
-| Request id | Every response carries `X-Request-Id`; error bodies repeat it as `request_id`. From v0.4.1, as planned, a valid inbound `X-Request-Id` is the id, and every response also carries `X-Correlation-Id` ([request ids](#request-ids-correlation-and-trace-context)). |
+| Request id | Every response carries `X-Request-Id` and `X-Correlation-Id`; error bodies repeat the request id as `request_id`. Since v0.4.1 a valid inbound `X-Request-Id` is the id ([request ids](#request-ids-correlation-and-trace-context)). |
 | Deletion | No endpoint is `DELETE`. Every removal is a journalled `POST` act — demote keeps bytes, erase is crypto-shredding (constitution R4; [audit-and-lineage.md](../architecture/audit-and-lineage.md)). |
 
 ## Request ids, correlation and trace context
 
-*Planned for v0.4.1 · [releases](../product/releases.md)*
+*Available since v0.4.1 · [releases](../product/releases.md)*
 
 Three request headers are read and two response headers returned on every route, the probes,
 `/mcp` and the OAuth endpoints included ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d4–d6, d13). None of them is refused:
@@ -105,8 +105,9 @@ A request id the client sends is a label it chose. Another client can send the s
 server never uses it as an idempotency key, which stays `Idempotency-Key` scoped to the
 authenticating key ([Idempotency](#idempotency)), nor for any authorization or rate decision, and
 never stores it. The server's log records whether each id was the caller's or minted
-([observability](../operations/observability.md#the-request-line)). The headers enter
-[openapi.yaml](openapi.yaml) in the change that serves them ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
+([observability](../operations/observability.md#the-request-line)). [openapi.yaml](openapi.yaml)
+declares the three request headers on every operation and the two response headers on every
+answer ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
 
 ## Versioning and deprecation
 
