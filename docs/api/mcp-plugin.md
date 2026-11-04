@@ -1628,7 +1628,10 @@ plugin settings and nothing from the environment
 
 `url` is the server without `/mcp` and `api_key` the agent's key, marked
 `sensitive`, so Claude Code keeps it in the system keychain and never in
-`settings.json`; neither has a default. `/plugin install` asks for both in a
+`settings.json`. Since v0.4.1 `url` defaults to the maintainer's public server,
+`https://memory.doublegate.io`, and is not required, and `api_key` has no default
+([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) d2).
+`/plugin install` asks for both in a
 masked dialog and `/plugin configure oml@open-memory-lab` changes them; from a
 shell, Claude Code 2.1.285 or later reads them from the key file through
 `claude plugin configure --values-stdin`, as the
@@ -1636,7 +1639,7 @@ shell, Claude Code 2.1.285 or later reads them from the key file through
 shows (ADR-0040 d4, d5). A v0.3.x install that only exported `OML_URL` and
 `OML_API_KEY` serves no tools until the plugin is configured once.
 `scripts/check_plugin.py` fails when the entry or the two options differ from
-this shape (ADR-0040 d6).
+this shape (ADR-0040 d6, ADR-0043 d8).
 
 ### Claude on the web, on the desktop and on a phone
 

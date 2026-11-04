@@ -34,6 +34,23 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
+
+[ADR-0043](adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), proposed:
+the plugins and agent kit OML releases default to `https://memory.doublegate.io`, the maintainer's
+server since its move from `oml.doublegate.io` that day, so an agent needs only its key. The
+plugin's `url` option gains that default and is no longer required, a plugin key set alone reaches
+it in every hook, `oml setup claude-code` pairs a key named without a URL with it, and every kit
+configuration names it; every other CLI verb still requires a URL. No `/v1` contract changes, so
+`info.version` stays `0.4.0-design`.
+
+- **Amended records:** ADR-0039 d15, ADR-0040 d1 and d3 and ADR-0041 d7 gain `amended by
+  ADR-0043 (proposed)`; the D14 row names it.
+- **Pages:** the plugin and kit READMEs, the README quick start, [get started](start/index.md),
+  the [Claude Code](guides/claude-code.md), [other tools](guides/other-harnesses.md) and
+  [troubleshooting](guides/troubleshooting.md) guides, [mcp-plugin.md](api/mcp-plugin.md), the
+  [CLI reference](cli/reference.md) and [releases](product/releases.md).
+
 ### 2026-11-04 — Release v0.4.0: ADR-0031, ADR-0038, ADR-0039, ADR-0040 and ADR-0041 accepted
 
 The maintainer accepted [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md),

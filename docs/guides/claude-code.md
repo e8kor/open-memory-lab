@@ -10,10 +10,14 @@ answers: how to connect Claude Code to an OML server from nothing: install the C
 **Status:** draft for review · describes v0.4.0
 
 **Release:** the plugin since v0.1.0; setup through Claude Code's plugin settings and `oml setup
-claude-code` since v0.4.0 ([releases](../product/releases.md))
+claude-code` since v0.4.0; the maintainer's public server as the default planned for v0.4.1
+([releases](../product/releases.md))
 
 From nothing to an agent that saves and finds shared memory in Claude Code. You need Claude Code
-2.1.285 or later, the server's address and an agent key from your administrator. The commands
+2.1.285 or later and an agent key from your administrator. The plugin connects to the maintainer's
+public server, `https://memory.doublegate.io`, unless you name another, so with a key from that
+server the key is the only setting; for any other server you also need its address
+([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)). The commands
 and their flags are declared in the [CLI reference](../cli/reference.md) and the plugin's
 behaviour in its [README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md);
 this page links them rather than restating them.
@@ -27,7 +31,9 @@ curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/op
 It writes one file, `~/.local/bin/oml`, and prints what it checked. On Windows and for the
 inspect-first form, see [install](../start/install.md).
 
-## 2. Log in
+## 2. Log in, for your own server
+
+With a key file for the public server, skip to step 3. For your own server:
 
 ```sh
 oml login https://oml.example.com
@@ -42,10 +48,13 @@ each value came from, never the key, and the key's role, tenant and default work
 ## 3. Set up the plugin
 
 ```sh
-oml setup claude-code
+oml setup claude-code --key-file "$HOME/.config/oml/keys/crew-agent-7"   # the public server
+oml setup claude-code                                                    # after step 2
 ```
 
-It refuses an `admin` or `operator` key (`setup.admin_key`), checks `claude --version`, adds the
+Given a key and no URL, it pairs the key with `https://memory.doublegate.io` and says so on
+stderr before it sends anything; when that server refuses the key, it says the key went there and
+names `--url`, and installs nothing. It refuses an `admin` or `operator` key (`setup.admin_key`), checks `claude --version`, adds the
 marketplace at the CLI's own tag, installs `oml@open-memory-lab` and hands the pair to `claude
 plugin configure --values-stdin`, so the key reaches neither a command line nor a transcript
 ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d7). With a key file from
@@ -110,7 +119,11 @@ Inside Claude Code:
 ```
 
 The install opens a dialog for `url` and `api_key`; the key field is masked and Claude Code keeps
-it in the system keychain ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)). Without
+it in the system keychain ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)). Paste the
+key; leave `url` empty or at its default, `https://memory.doublegate.io`, for the public server,
+or enter your own server's address. Left at the default, a key from another server is refused
+there with `401 auth.invalid`: the plugin serves no tools, and that server's operator has seen the
+key, so ask your administrator to replace it. Without
 the CLI the session-start hook does nothing. A connection with no plugin, and so with neither the
 skill nor the hooks, is under [other tools](other-harnesses.md#claude-code-without-the-plugin).
 
