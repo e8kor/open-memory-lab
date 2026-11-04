@@ -25,7 +25,8 @@ use oml_app::domain::oauth::{
 };
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
-    event_types, key_fingerprint, next_envelope, sha256_digest_string, sign, verify_chain,
+    WorkareaStatus, event_types, key_fingerprint, next_envelope, sha256_digest_string, sign,
+    verify_chain,
 };
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
@@ -468,7 +469,8 @@ pub fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name the creation grammar admits")
 }
 
-/// A fixture workarea node with no crew.
+/// A fixture workarea node with no crew, at the status `workarea.create`
+/// stores: `committed` for a root, `development` for every other node.
 #[must_use]
 pub fn workarea_record(
     tenant_id: Uuid,
@@ -481,6 +483,11 @@ pub fn workarea_record(
         tenant_id,
         parent_id,
         name: name(workarea_name),
+        status: if parent_id.is_none() {
+            WorkareaStatus::Committed
+        } else {
+            WorkareaStatus::Development
+        },
         crew: None,
         crew_id: None,
         user_root: false,
@@ -2344,6 +2351,101 @@ pub async fn workarea_children_are_immediate_and_ordered_by_name_bytes<S: Journa
             .expect("children")
             .is_empty(),
         "an unknown node has no children"
+    );
+}
+
+/// The status is one stored column, not a value derived from the node's
+/// place in the tree: every workarea read serves the status its row
+/// stores, a child stored `committed` or `validated` among them
+/// (ADR-0009 d1; postgres-schema.md `workareas.status`).
+pub async fn a_workarea_read_serves_the_status_its_row_stores<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(47);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0xB410), None, "universe");
+    let committed = WorkareaRecord {
+        status: WorkareaStatus::Committed,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0xB411),
+            Some(universe.workarea_id),
+            "procurement",
+        )
+    };
+    let validated = WorkareaRecord {
+        status: WorkareaStatus::Validated,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0xB412),
+            Some(committed.workarea_id),
+            "metals",
+        )
+    };
+    let development = workarea_record(
+        t,
+        Uuid::from_u128(0xB413),
+        Some(committed.workarea_id),
+        "redline",
+    );
+    for w in [&universe, &committed, &validated, &development] {
+        rig.create_workarea(store, w.clone()).await;
+    }
+    let statuses = |rows: Vec<WorkareaRecord>| -> Vec<(Uuid, WorkareaStatus)> {
+        rows.into_iter()
+            .map(|w| (w.workarea_id, w.status))
+            .collect()
+    };
+
+    for w in [&universe, &committed, &validated, &development] {
+        assert_eq!(
+            store
+                .workarea(t, w.workarea_id)
+                .await
+                .expect("read")
+                .as_ref(),
+            Some(w),
+            "the read serves {:?} as stored",
+            w.status
+        );
+    }
+    assert_eq!(
+        statuses(
+            store
+                .workarea_ancestry(t, validated.workarea_id)
+                .await
+                .expect("ancestry")
+                .expect("held")
+        ),
+        vec![
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (committed.workarea_id, WorkareaStatus::Committed),
+            (universe.workarea_id, WorkareaStatus::Committed),
+        ]
+    );
+    assert_eq!(
+        statuses(
+            store
+                .workarea_children(t, committed.workarea_id)
+                .await
+                .expect("children")
+        ),
+        vec![
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (development.workarea_id, WorkareaStatus::Development),
+        ]
+    );
+    assert_eq!(
+        statuses(
+            store
+                .workarea_subtree(t, committed.workarea_id)
+                .await
+                .expect("subtree")
+        ),
+        vec![
+            (committed.workarea_id, WorkareaStatus::Committed),
+            (validated.workarea_id, WorkareaStatus::Validated),
+            (development.workarea_id, WorkareaStatus::Development),
+        ]
     );
 }
 
@@ -4254,6 +4356,7 @@ where
     workarea_subtree_lists_every_descendant_once(&new_store().await).await;
     workarea_children_are_immediate_and_ordered_by_name_bytes(&new_store().await).await;
     crew_round_trips_through_workarea_created(&new_store().await).await;
+    a_workarea_read_serves_the_status_its_row_stores(&new_store().await).await;
     kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;
