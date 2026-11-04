@@ -36,10 +36,10 @@ use oml_domain::oauth::{
     validate_document, validate_registration,
 };
 use oml_domain::{
-    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, HeldBy, KeySet,
+    ChainHead, DERIVED_CLAIM_KEY_PREFIX, Envelope, EventDraft, EventTime, FrozenOp, HeldBy, KeySet,
     LadderRefusal, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope, WorkareaStatus,
-    canonical_bytes, check_reviewer, derive_claim_key, event_types, next_envelope, nfc,
-    propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string, transition,
+    canonical_bytes, check_reviewer, derive_claim_key, event_types, frozen_refuses, next_envelope,
+    nfc, propose_check, ratifier_is_proposer, ratify_check, sha256_digest_string, transition,
 };
 
 use crate::cursor::{ListingCursor, NameCursor, PathCursor};
@@ -935,6 +935,29 @@ where
             .map_err(|refusal| access_refusal(refusal, node, verb))
     }
 
+    /// Freeze as admission policy: `workarea.frozen` when the stored status
+    /// of `node` refuses `op` (ADR-0009 d5). It reads the node's status and
+    /// nothing else, never a grant, so freezing moves no permission epoch
+    /// (ADR-0009 d2). Every caller reads the chain head before calling it,
+    /// so a ratification that lands between this read and the commit moves
+    /// the head and the commit conflicts rather than writing into an area
+    /// validated since. Reassign, re-parent, demote and erasure are not
+    /// built; their checks join here when they are.
+    async fn refuse_frozen(
+        &self,
+        tenant_id: Uuid,
+        node: Uuid,
+        op: FrozenOp,
+    ) -> Result<(), AppError> {
+        match self.journal.workarea(tenant_id, node).await? {
+            Some(w) if frozen_refuses(w.status, op) => Err(AppError::WorkareaFrozen {
+                workarea_id: node,
+                op,
+            }),
+            _ => Ok(()),
+        }
+    }
+
     /// Whether the caller can read `memory`: its own row in any state,
     /// unless a global denial masks the row's workarea, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
@@ -1754,7 +1777,9 @@ where
     /// derived from the parent's stored ancestry, as the read derives it. A
     /// name the tenant already holds, `universe` included, is checked last,
     /// by the store's unique index: `name.taken`, and nothing is journalled
-    /// (ADR-0026 d5, d6).
+    /// (ADR-0026 d5, d6). A parent that is `validated` refuses the child as
+    /// `workarea.frozen` after both lookups and before the name, so a frozen
+    /// node never acquires an unfrozen descendant (ADR-0009 d4, d5).
     pub async fn create_workarea(
         &self,
         api_key: &str,
@@ -1770,6 +1795,9 @@ where
         let crew_id = self
             .resolve_opt(&key, NamedKind::Crew, crew.as_ref())
             .await?;
+        // The head before the parent's status: a ratification landing in
+        // between moves it, and this commit conflicts (ADR-0009 d4).
+        let prev = self.head_event(key.tenant_id).await?;
         let ancestors = match parent_id {
             Some(parent) => self
                 .journal
@@ -1787,6 +1815,14 @@ where
             ),
             None => None,
         };
+        if let Some(parent) = ancestors.first()
+            && frozen_refuses(parent.status, FrozenOp::CreateChild)
+        {
+            return Err(AppError::WorkareaFrozen {
+                workarea_id: parent.workarea_id,
+                op: FrozenOp::CreateChild,
+            });
+        }
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -1796,7 +1832,6 @@ where
             crew: None,
             crew_id,
         };
-        let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -2231,8 +2266,9 @@ where
     /// role: the journalled crew-metadata update `workarea.crew_updated`,
     /// carrying the record's `crew_id`. A workarea the tenant does not hold
     /// is absent, and so, checked after it, is a crew (http-api.md
-    /// workareas; ADR-0026 d8). No status transition is built, so no
-    /// workarea is `validated` and none refuses it.
+    /// workareas; ADR-0026 d8). A `validated` workarea admits it: the
+    /// crew-metadata update is one of the three mutations freeze allows
+    /// (ADR-0009 d5; workareas.md refusal matrix).
     pub async fn set_workarea_crew(
         &self,
         api_key: &str,
@@ -2726,7 +2762,10 @@ where
     /// d18), derived from the author and the text when omitted, and a
     /// verb defaulted from `derives_from` (ADR-0039 d3, d6); held on arrival
     /// as the claim's version 1, idempotency record honored (admission.md,
-    /// http-api.md).
+    /// http-api.md). A `validated` workarea refuses the write as
+    /// `workarea.frozen` after effective access, so a key without access gets
+    /// its access refusal first, and after the idempotency replay, before the
+    /// scan (ADR-0009 d5; workareas.md refusal matrix).
     pub async fn submit_memory(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -2781,6 +2820,14 @@ where
             });
         }
 
+        // The head first, then the node's status and the claim_key read: a
+        // ratification or a capture that commits in between moves the
+        // head, so this commit conflicts and its retry reads both again
+        // (ADR-0009 d5; ADR-0025 d10, ordinals; d18).
+        let prev = self.head_event(key.tenant_id).await?;
+        self.refuse_frozen(key.tenant_id, workarea_id, FrozenOp::Write)
+            .await?;
+
         // Capture normalizes first: the digest, the scan and the byte count
         // all see the NFC text (admission.md capture; ADR-0025 d6).
         let body = nfc(&req.body);
@@ -2816,10 +2863,6 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the claim_key read: a capture that commits
-        // in between moves the head, so this commit conflicts and its retry
-        // reads the key again (ADR-0025 d10, ordinals; d18).
-        let prev = self.head_event(key.tenant_id).await?;
         if self
             .journal
             .claim_key_state(key.tenant_id, workarea_id, &claim_key)
@@ -3086,6 +3129,15 @@ where
         // in between moves the head, so the verdict conflicts and its retry
         // reads the target again.
         let prev = self.head_event(key.tenant_id).await?;
+        // Nothing new promotes into a `validated` area: an approval is
+        // refused before its verdict is sealed, so nothing is journalled and
+        // the row stays held (ADR-0009 d5). Whether a reject is refused too,
+        // and whether review_next serves such a row, is open in workareas.md
+        // and waits on the operator.
+        if verdict == Verdict::Approve {
+            self.refuse_frozen(key.tenant_id, memory.workarea_id, FrozenOp::Promote)
+                .await?;
+        }
         let replaced = match (verdict, memory.replaces) {
             (Verdict::Approve, Some(target_id)) => {
                 let target = self.journal.memory(key.tenant_id, target_id).await?;
@@ -3449,11 +3501,12 @@ where
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
-    /// and from `oml_supersede` the vocabulary-kind check (step 5); then the
-    /// checks every submit runs. The successor takes the next ordinal of the
-    /// claim_key and journals `submission.remember` (`submission.learn` for
-    /// a `derived_fact`) naming what it replaces, with the idempotency record
-    /// in the same transaction; a commit that finds the record already
+    /// from `oml_supersede` the vocabulary-kind check, and last the
+    /// workarea not `validated`, else `workarea.frozen` (step 5; ADR-0009
+    /// d5); then the checks every submit runs. The successor takes the next
+    /// ordinal of the claim_key and journals `submission.remember`
+    /// (`submission.learn` for a `derived_fact`) naming what it replaces,
+    /// with the idempotency record in the same transaction; a commit that finds the record already
     /// written by a concurrent attempt under the same key writes nothing and
     /// answers that attempt's receipt as a replay ([`IdempotencyPut`] says
     /// what the slice does not claim).
@@ -3550,6 +3603,12 @@ where
         {
             return Err(AppError::VocabularyTarget(target.kind));
         }
+        // Step 5's last check, the head read before it: a ratification that
+        // validates the area in between moves the head and the commit
+        // conflicts (roles-and-keys.md supersede; ADR-0009 d5).
+        let prev = self.head_event(key.tenant_id).await?;
+        self.refuse_frozen(key.tenant_id, target.workarea_id, FrozenOp::Write)
+            .await?;
 
         // The checks every submit runs: NFC first, then the scan, whose veto
         // journals nothing, then every declared ancestor readable
@@ -3589,11 +3648,10 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        // The head first, then the ordinal: 1 + the greatest version of the
-        // claim_key in the workarea, whatever its state; a capture that
-        // commits in between moves the head, and the retry reads both again
-        // (ADR-0025 d10, ordinals).
-        let prev = self.head_event(key.tenant_id).await?;
+        // The head was read above, then the ordinal: 1 + the greatest
+        // version of the claim_key in the workarea, whatever its state; a
+        // capture that commits in between moves the head, and the retry
+        // reads both again (ADR-0025 d10, ordinals).
         let version = self
             .journal
             .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
