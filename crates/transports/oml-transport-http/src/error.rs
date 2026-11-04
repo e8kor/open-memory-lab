@@ -1104,3 +1104,71 @@ mod ladder_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oml_app::domain::claim_edges::{EdgeField, LabelRefusal};
+    use oml_app::domain::vocab::OmlLabel;
+    use oml_app::domain::vocab_edges::CycleRefused;
+    use uuid::Uuid;
+
+    const EDGE_ID: Uuid = Uuid::from_u128(7);
+
+    /// A refusal, and the status, code and details it answers on the wire.
+    type Case = (fn() -> AppError, StatusCode, &'static str, Option<Value>);
+
+    /// Each claim-edge refusal reaches the wire as its errors.md code and
+    /// status, in either context, with the details the code declares.
+    #[test]
+    fn the_transport_maps_every_claim_edge_app_error_to_its_errors_md_code() {
+        let cases: [Case; 5] = [
+            (
+                || AppError::ClaimEdgeLabel {
+                    field: EdgeField::Label,
+                    reason: LabelRefusal::Empty,
+                },
+                StatusCode::BAD_REQUEST,
+                "request.validation",
+                Some(json!({ "field": "label" })),
+            ),
+            (
+                || AppError::RatifierIsProposer,
+                StatusCode::FORBIDDEN,
+                "review.ratifier_is_proposer",
+                None,
+            ),
+            (
+                || AppError::AuthorInLineage,
+                StatusCode::FORBIDDEN,
+                "review.author_in_lineage",
+                None,
+            ),
+            (
+                || {
+                    AppError::CycleRefused(CycleRefused {
+                        label: OmlLabel::IsA,
+                    })
+                },
+                StatusCode::CONFLICT,
+                "vocab.cycle_refused",
+                Some(json!({ "label": OmlLabel::IsA.as_str() })),
+            ),
+            (
+                || AppError::EdgeConsumed { edge_id: EDGE_ID },
+                StatusCode::CONFLICT,
+                "review.serve_invalid",
+                Some(json!({ "reason": "consumed", "edge_id": EDGE_ID.to_string() })),
+            ),
+        ];
+        for (err, status, code, details) in cases {
+            let label = format!("{:?}", err());
+            for ctx in [ErrorContext::Review, ErrorContext::Write] {
+                let wire = map_app_error(err(), ctx);
+                assert_eq!((wire.status, wire.code), (status, code), "{label}");
+                assert!(!wire.retryable, "{label}: a refusal is not retryable");
+                assert_eq!(wire.details, details, "{label}");
+            }
+        }
+    }
+}
