@@ -674,19 +674,17 @@ successors. The sections below are the v0.3.0 contracts, kept as the
 historical mapping; where one names a sibling old tool, read its successor.
 
 **The alias window, closed in v0.5.1.** Through v0.5.0 a `tools/call` naming one of the eight
-takes the v0.3.0 input below, `scope` and `include_own_held` included and
-`claim_key` required, and answers the v0.3.0 output below with the v0.3.0
-refusal codes: the facade translates `scope` to the ring's `workarea` and
+took the v0.3.0 input below, `scope` and `include_own_held` included and
+`claim_key` required, and answered the v0.3.0 output below with the v0.3.0
+refusal codes: the facade translated `scope` to the ring's `workarea` and
 `include_own_held` to its `include_unreviewed`, and a v0.4.0 spelling such
-as `include_unreviewed` is outside the old input schema, so it is
-`request.validation`. `oml_events_tail` rides `GET /v2/events`. Every call,
-refused or not, logs one line with `event` `mcp_alias_called` naming the
+as `include_unreviewed` was outside the old input schema, so it was
+`request.validation`. `oml_events_tail` rode `GET /v2/events`. Every call,
+refused or not, logged one line with `event` `mcp_alias_called` naming the
 tool, its successor (`oml_write`, `oml_read`, `oml_workarea`, or
 `GET /v2/events` for the tail), the calling key's `key_id` and `tenant_id`,
-and the call's `request_id`: ids only, never the key's value
-([observability](../operations/observability.md), structured logging). The
-operator sees which keys still call an old name, so whose clients to move
-before the removal. **v0.5.1 removed the eight**: a call to one is -32602
+and the call's `request_id`: ids only, never the key's value. **v0.5.1
+removed the eight**: a call to one is -32602
 like any tool not served, and no call logs `mcp_alias_called` (d12).
 
 ### `oml_remember`
