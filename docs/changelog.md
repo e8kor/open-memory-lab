@@ -29,6 +29,22 @@ implementation milestone where it changes what the repository holds.
 
 ## 0.3.0-design
 
+### 2026-11-03 — Use cases and the use-case call map (documentation)
+
+A documentation change; no decision changes. The maintainer asked on 2026-11-03 for
+comprehensive use-case documentation and for a client API designed by Occam's razor. Two pages
+answer it. [Use cases](product/use-cases.md), on the client tier, gives every use case by journey
+and user, with its goal, its story, what its user sees and its status, and a day of an agent and
+a reviewer. The [use-case call map](engineering/use-case-call-map.md), on the engineering tier,
+declares the `UC-` ids, maps each use case to the calls it needs today, derives the minimal
+client call set, lists the cut, merge and default candidates, and states which decisions of the
+proposed ADR-0039, the v0.3.2 API rewrite, it supports or contradicts.
+
+- **Roadmap:** no row opens or closes.
+- **No surface change:** `info.version` stays `0.3.0-design`.
+- **Pages touched:** the two pages, `mkdocs.yml`, `llms.txt` and this page.
+- **Not built:** the candidates are inputs to ADR-0039 and to the proposed records each names.
+
 ### 2026-11-03 — Every record and feature page names the release that built it or is planned to
 
 A documentation change with no decision or surface change. [Releases](product/releases.md), a new

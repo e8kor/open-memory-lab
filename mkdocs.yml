@@ -61,6 +61,7 @@ nav:
   - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
   - Product:
       - Positioning: product/positioning.md
+      - Use cases: product/use-cases.md
       - Releases: product/releases.md
       - Roadmap: product/roadmap.md
       - Commitments: product/commitments.md
@@ -111,6 +112,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - Use-case call map: engineering/use-case-call-map.md
   - Decisions:
       - Index: adr/index.md
       - ADR template: adr/TEMPLATE.md
