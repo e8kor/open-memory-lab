@@ -888,7 +888,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod ladder_tests {
     use oml_app::domain::{FrozenOp, LadderRefusal, WorkareaStatus};
     use uuid::Uuid;
 

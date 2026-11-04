@@ -26,7 +26,7 @@ use oml_app::types::{
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord,
     KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
     RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WorkareaRecord,
+    TransitionRecord, UnnamedRows, WorkareaRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -62,6 +62,28 @@ fn timed<F: Future>(method: &'static str, call: F) -> impl Future<Output = F::Ou
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
+    fn transition(
+        &self,
+        tenant_id: Uuid,
+        transition_id: Uuid,
+    ) -> impl Future<Output = Result<Option<TransitionRecord>, StoreError>> + Send {
+        timed(
+            "transition",
+            self.inner.transition(tenant_id, transition_id),
+        )
+    }
+
+    fn pending_transitions(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<TransitionRecord>, StoreError>> + Send {
+        timed(
+            "pending_transitions",
+            self.inner.pending_transitions(tenant_id, workarea_id),
+        )
+    }
+
     fn commit(
         &self,
         req: CommitRequest,

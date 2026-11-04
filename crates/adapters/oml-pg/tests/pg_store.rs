@@ -5462,6 +5462,7 @@ async fn dreamer_pg(
             held_by: None,
             default_workarea: None,
             crew: None,
+            connect_code: false,
             grants: vec![oml_app::types::GrantRequest {
                 node: node.into(),
                 role: Role::Dreamer,
