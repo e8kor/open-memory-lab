@@ -824,6 +824,36 @@ command -v oml >/dev/null 2>&1 || exit 0; oml hook tool-failure || exit 0
 command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0
 ```
 
+## `oml hook guardrails` and `oml hook pre-tool-use`
+
+*Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d6–d9; built on its branch, not released · [releases](../product/releases.md)*
+
+`oml hook guardrails` is the agent plugin's second SessionStart hook and its SubagentStart hook.
+It reads the server and key as `oml hook session-start` does, sends one `GET /v1/guardrails`, and
+prints one hook document whose `additionalContext` is the set in its own frame: a header naming
+the server's origin, the scope node's path and the guardrail scope the server applied, then one
+line per guardrail, `- [<severity>] <text> (<workarea>, <claim_key> v<n>, ratified <date> by <n>
+reviewers (<n> human)[; checked: <effect> <tool> <match>])`, ending `conflicts with <ids>` where
+rows of one `claim_key` disagree on severity, and the caller's own held guardrails by key and
+version. Over twelve guardrails it prints none, says how many apply and tells the user in a
+`systemMessage`; a partial set would read as the whole. The key value is redacted in every line.
+At SessionStart alone it removes rule caches older than 30 days and writes this session's,
+`$XDG_STATE_HOME/oml/guardrails/<session_id>.json` (default `~/.local/state`; directory 0700,
+file 0600), by write and rename; a cache it cannot write leaves every line without "checked" and
+says why in the `systemMessage`. Every failure, an unreachable server included, exits 0 with a
+`systemMessage` the user sees: memory may fail silently, rules may not.
+
+`oml hook pre-tool-use` is the plugin's PreToolUse hook. It reads the call from stdin and the
+session's cache from disk and sends no request. A matching rule prints `permissionDecision`
+`deny` or `ask`, deny winning, with a reason naming the guardrail's id and text; no match prints
+nothing, and nothing ever prints `allow`. A cache that does not parse, whose digest line does
+not match or that names an unknown grammar denies every call and says to restart the session.
+With no cache it decides nothing and prints one `systemMessage`, `OML guardrails are not loaded
+for this session, so tool calls are not checked; restart the session to load them`. A
+`session_id` outside `[A-Za-z0-9-]` or a stdin that is not the hook's object exits 2, which
+blocks the call. The plugin's entry probes `oml hook pre-tool-use --help` first, so an `oml`
+older than the verb checks nothing rather than blocking every call.
+
 ## Verbs that do not exist
 
 Absences are design, not gaps. No `oml promote` — promotion is only an effect of ratification
