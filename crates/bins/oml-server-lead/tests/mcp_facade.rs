@@ -21,7 +21,7 @@ use oml_app::ports::IdGen as _;
 use oml_pg::PgStore;
 use oml_server_lead::{OsIds, lead_state, pg_ping};
 use oml_transport_http::mcp::{
-    ALIASES, ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION, SERVED_TOOLS, SERVER_INSTRUCTIONS,
+    ARGUMENTS_OUTSIDE_THE_SCHEMA, MCP_PROTOCOL_VERSION, SERVED_TOOLS, SERVER_INSTRUCTIONS,
 };
 
 const ENROLLMENT: &str = "enr_test_fixture_token";
@@ -455,7 +455,7 @@ async fn initialize_answers_with_instructions_under_4096_characters_that_name_om
         .expect("names oml_read");
     assert!(recall < 1024, "oml_read first named at {recall}");
     assert!(instructions.contains("oml_write"), "names oml_write");
-    for (old, _) in ALIASES {
+    for old in V0_3_0_TOOL_NAMES {
         assert!(!instructions.contains(old), "names the v0.3.0 tool {old}");
     }
     assert!(
@@ -512,20 +512,20 @@ async fn no_promote_sign_demote_delete_or_admin_verb_is_a_tool() {
 }
 
 #[tokio::test]
-async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_ratifies() {
+async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratifies() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (writer, dreamer, reader, crew) = crew(&router).await;
     let quote = "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.";
-    let remember = json!({
+    let write = json!({
         "claim_key": "supplier-quote-am-7741",
         "text": quote,
         "idempotency_key": "crew-procure/run-1/step-1",
     });
 
     // Held on arrival.
-    let held = call_tool(&router, &writer, 1, "oml_remember", remember.clone()).await;
+    let held = call_tool(&router, &writer, 1, "oml_write", write.clone()).await;
     assert_eq!(held["isError"], false, "{held}");
     let receipt = &held["structuredContent"];
     assert_eq!(receipt["state"], "held");
@@ -536,7 +536,7 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(&text, receipt, "the text content is the structured content");
 
     // A retry with the same idempotency key is the stored response.
-    let replay = call_tool(&router, &writer, 2, "oml_remember", remember).await;
+    let replay = call_tool(&router, &writer, 2, "oml_write", write).await;
     assert_eq!(replay["structuredContent"]["idempotent_replay"], true);
     assert_eq!(
         replay["structuredContent"]["artifact_id"],
@@ -545,13 +545,13 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
 
     // Not visible to a reader while held.
     let recall = json!({"query": "Accra Metals"});
-    let before = call_tool(&router, &reader, 3, "oml_recall", recall.clone()).await;
+    let before = call_tool(&router, &reader, 3, "oml_read", recall.clone()).await;
     assert_eq!(before["isError"], false, "{before}");
     assert_eq!(before["structuredContent"]["hits"], json!([]));
 
     // The writer's key carries no read grant, so its scope is not readable:
     // the ring's typed refusal, absence (ADR-0025 d1).
-    let refused = call_tool(&router, &writer, 4, "oml_recall", recall.clone()).await;
+    let refused = call_tool(&router, &writer, 4, "oml_read", recall.clone()).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["structuredContent"]["error"]["code"], "access.not_found",
@@ -582,7 +582,7 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
     assert_eq!(status, StatusCode::OK, "{verdict}");
     assert_eq!(verdict["state"], "promoted");
 
-    let after = call_tool(&router, &reader, 5, "oml_recall", recall).await;
+    let after = call_tool(&router, &reader, 5, "oml_read", recall).await;
     let hits = after["structuredContent"]["hits"].as_array().expect("hits");
     assert_eq!(hits.len(), 1, "{after}");
     assert_eq!(hits[0]["artifact_id"], receipt["artifact_id"]);
@@ -594,7 +594,11 @@ async fn an_agent_remembers_through_mcp_and_recalls_only_after_another_identity_
 }
 
 #[tokio::test]
-async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_seq_idle() {
+async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_promote() {
+    // The events tail left MCP; GET /v2/events keeps its scope, resume point
+    // and refusals (http_api.rs), and an agent learns that its write was
+    // ratified from oml_read with state over its own work (mcp-plugin.md,
+    // what left the catalog; ADR-0039 d2, d12).
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -603,7 +607,7 @@ async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_se
         &router,
         &writer,
         1,
-        "oml_remember",
+        "oml_write",
         json!({
             "claim_key": "supplier-quote-am-7741",
             "text": "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery.",
@@ -613,124 +617,48 @@ async fn oml_events_tail_accepts_scope_and_answers_events_head_seq_next_after_se
     .await;
     assert_eq!(held["isError"], false, "{held}");
     let artifact = held["structuredContent"]["artifact_id"].clone();
-    let (status, served) = send(
-        &router,
-        "POST",
-        "/v2/review/next",
-        Some(&dreamer),
-        Some("n-1"),
-        Some(&json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{served}");
-    let (status, verdict) = send(
-        &router,
-        "POST",
-        "/v2/review/verdicts",
-        Some(&dreamer),
-        Some("v-1"),
-        Some(&json!({"serve_id": served["serve_id"], "verdict": "approve"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{verdict}");
+    let promoted = json!({"state": "promoted"});
+    let before = call_tool(&router, &writer, 2, "oml_read", promoted.clone()).await;
+    assert_eq!(before["structuredContent"]["items"], json!([]), "{before}");
+    approve_as(&router, &dreamer, "v1").await;
 
-    // An omitted after_seq starts from the beginning, as on the ring, and an
-    // omitted scope is the key's default workarea (ADR-0025 d15).
-    let whole = call_tool(
-        &router,
-        &reader,
-        2,
-        "oml_events_tail",
-        json!({"limit": 200}),
-    )
-    .await;
-    assert_eq!(whole["isError"], false, "{whole}");
-    let page = &whole["structuredContent"];
-    let head = page["head_seq"].as_u64().expect("head_seq");
-    assert_eq!(page["next_after_seq"].as_u64(), Some(head), "{page}");
-    assert_eq!(page["idle"], true, "{page}");
-    let events = page["events"].as_array().expect("events");
-    for event in events {
-        let mut fields: Vec<&str> = event
-            .as_object()
-            .expect("an event")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        fields.sort_unstable();
-        assert_eq!(
-            fields,
-            ["at", "event_type", "seq", "subject", "workarea"],
-            "hashes, signatures, payloads and identities are dropped: {event}"
-        );
-    }
-    let promote = events
-        .iter()
-        .find(|e| e["event_type"] == "lifecycle.promote")
-        .expect("the promote");
-    assert_eq!(
-        promote["subject"],
-        json!({"artifact_id": artifact, "claim_key": "supplier-quote-am-7741", "version": 1})
-    );
-    assert_eq!(promote["workarea"], crew.to_string());
-    let created = events
-        .iter()
-        .find(|e| e["event_type"] == "workarea.create")
-        .expect("the crew's creation");
-    assert_eq!(created["subject"], json!({"workarea_id": crew.to_string()}));
-    assert_eq!(created["workarea"], crew.to_string());
-    assert!(
-        events
-            .iter()
-            .all(|e| e["event_type"] != "submission.remember"),
-        "another key's submission is not on this key's tail: {page}"
-    );
+    // The promoted version as the tail's promote named it: its id, claim key
+    // and version, in the crew's workarea.
+    let after = call_tool(&router, &writer, 3, "oml_read", promoted).await;
+    assert_eq!(after["isError"], false, "{after}");
+    let items = after["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{after}");
+    assert_eq!(items[0]["artifact_id"], artifact, "{after}");
+    assert_eq!(items[0]["claim_key"], "supplier-quote-am-7741", "{after}");
+    assert_eq!(items[0]["version"], 1, "{after}");
+    assert_eq!(items[0]["workarea"], crew.to_string(), "{after}");
 
-    // scope is the ring's workarea_id: naming the default answers the same.
-    let scoped = call_tool(
-        &router,
-        &reader,
-        3,
-        "oml_events_tail",
-        json!({"scope": crew, "limit": 200}),
-    )
-    .await;
-    assert_eq!(scoped["structuredContent"], *page, "{scoped}");
-
-    // A page short of the head is not idle and resumes where its scan ended.
-    let first = call_tool(
+    // Another key's own work holds none of it, and a workarea outside read
+    // access is absence, as the tail's scope was.
+    let theirs = call_tool(
         &router,
         &reader,
         4,
-        "oml_events_tail",
-        json!({"after_seq": 0, "limit": 1}),
+        "oml_read",
+        json!({"state": "promoted"}),
     )
     .await;
-    let first = &first["structuredContent"];
+    assert_eq!(theirs["structuredContent"]["items"], json!([]), "{theirs}");
+    let refused = call_tool(
+        &router,
+        &reader,
+        5,
+        "oml_read",
+        json!({"own": false, "workarea": Uuid::from_u128(0xBEEF)}),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
-        first["events"],
-        json!([]),
-        "the genesis is not on the content tail"
+        refused["structuredContent"]["error"]["code"], "access.not_found",
+        "{refused}"
     );
-    assert_eq!(first["next_after_seq"], 1, "{first}");
-    assert_eq!(first["idle"], false, "{first}");
-
-    // A scope outside read access and an after_seq past the head are the
-    // ring's refusals.
-    for (args, code) in [
-        (
-            json!({"scope": Uuid::from_u128(0xBEEF)}),
-            "access.not_found",
-        ),
-        (json!({"after_seq": head + 1}), "request.validation"),
-    ] {
-        let refused = call_tool(&router, &reader, 5, "oml_events_tail", args).await;
-        assert_eq!(refused["isError"], true, "{refused}");
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"], code,
-            "{refused}"
-        );
-    }
 
     drop_db(&db).await;
 }
@@ -742,19 +670,21 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
     };
     let (writer, _, reader, _) = crew(&router).await;
 
-    // learn without lineage: the ring's typed refusal, not a transport error.
+    // A learn naming an ancestor the key cannot read: the ring's typed
+    // refusal, absence, not a transport error.
     let learned = call_tool(
         &router,
         &writer,
         1,
-        "oml_learn",
-        json!({"claim_key": "k", "text": "t", "derives_from": [], "idempotency_key": "l-1"}),
+        "oml_write",
+        json!({"claim_key": "k", "text": "t", "derives_from": [Uuid::from_u128(0xBEEF)],
+               "idempotency_key": "l-1"}),
     )
     .await;
     assert_eq!(learned["isError"], true);
     assert_eq!(
         learned["structuredContent"]["error"]["code"],
-        "submission.lineage_required"
+        "access.not_found"
     );
 
     // A reader cannot remember (R1 on the ring).
@@ -762,7 +692,7 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
         &router,
         &reader,
         2,
-        "oml_remember",
+        "oml_write",
         json!({"claim_key": "k", "text": "t", "idempotency_key": "r-1"}),
     )
     .await;
@@ -777,7 +707,7 @@ async fn a_tool_refusal_is_the_ring_refusal_as_an_error_result() {
         &router,
         &writer,
         3,
-        "oml_remember",
+        "oml_write",
         json!({"claim_key": "k", "text": "t", "idempotency_key": "m-1", "tenant": "other"}),
     )
     .await;
@@ -853,14 +783,15 @@ async fn a_failing_tool_answers_is_error_with_the_envelope_in_structured_content
     };
     let (writer, _, _, _) = crew(&router).await;
 
-    // A refusal the ring answers (learn without lineage) and one the facade
+    // A refusal the ring answers (a learn naming an unknown ancestor) and one the facade
     // answers before any ring call (an argument outside the input schema)
     // are the one errors.md envelope, request_id included (ADR-0039 d11).
     for (id, args, code) in [
         (
             1,
-            json!({"claim_key": "k", "text": "t", "derives_from": [], "idempotency_key": "e-1"}),
-            "submission.lineage_required",
+            json!({"claim_key": "k", "text": "t", "derives_from": [Uuid::from_u128(0xBEEF)],
+                   "idempotency_key": "e-1"}),
+            "access.not_found",
         ),
         (
             2,
@@ -868,7 +799,7 @@ async fn a_failing_tool_answers_is_error_with_the_envelope_in_structured_content
             "request.validation",
         ),
     ] {
-        let (body, request_id) = call_tool_traced(&router, &writer, id, "oml_learn", args).await;
+        let (body, request_id) = call_tool_traced(&router, &writer, id, "oml_write", args).await;
         // A tool's refusal is a result, never a JSON-RPC error.
         assert!(body.get("error").is_none(), "{body}");
         let result = &body["result"];
@@ -1082,14 +1013,7 @@ const REVISED: &str =
 async fn ratified(router: &Router, writer: &str, dreamer: &str) -> String {
     remember_all(router, writer, &[(CLAIM, "memory", QUOTE)]).await;
     approve_as(router, dreamer, "v1").await;
-    let work = call_tool(
-        router,
-        writer,
-        90,
-        "oml_my_work",
-        json!({"claim_key": CLAIM}),
-    )
-    .await;
+    let work = call_tool(router, writer, 90, "oml_read", json!({"claim_key": CLAIM})).await;
     let items = work["structuredContent"]["items"]
         .as_array()
         .expect("items");
@@ -1100,7 +1024,7 @@ async fn ratified(router: &Router, writer: &str, dreamer: &str) -> String {
         .to_owned()
 }
 
-/// The artifact ids of an `oml_recall` result's hits, in rank order.
+/// The artifact ids of an `oml_read` recall result's hits, in rank order.
 fn hit_ids(result: &Value) -> Vec<&str> {
     result["structuredContent"]["hits"]
         .as_array()
@@ -1111,7 +1035,7 @@ fn hit_ids(result: &Value) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_everyone_else() {
+async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_to_everyone_else() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -1119,17 +1043,21 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
     // (roles-and-keys.md#own; ADR-0025 d3).
     let (writer, dreamer, reader, crew) = crew(&router).await;
     remember_all(&router, &writer, &[(CLAIM, "memory", QUOTE)]).await;
-    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
     let id = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
         .to_owned();
 
     // The author reads its held row back: the claim item with text,
-    // derives_from and attachments (mcp-plugin.md `oml_get`; ADR-0025 d12).
-    let got = call_tool(&router, &writer, 2, "oml_get", json!({"artifact_id": id})).await;
+    // derives_from and attachments, get's one item (mcp-plugin.md
+    // `oml_read`; ADR-0025 d12, ADR-0039 d4).
+    let got = call_tool(&router, &writer, 2, "oml_read", json!({"artifact_id": id})).await;
     assert_eq!(got["isError"], false, "{got}");
-    let item = &got["structuredContent"];
+    assert_eq!(got["structuredContent"]["mode"], "get", "{got}");
+    let items = got["structuredContent"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{got}");
+    let item = &items[0];
     assert_eq!(
         fields(item),
         vec![
@@ -1191,7 +1119,7 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
             &router,
             token,
             n,
-            "oml_get",
+            "oml_read",
             json!({"artifact_id": artifact_id}),
         )
         .await;
@@ -1204,17 +1132,18 @@ async fn oml_get_returns_the_authors_held_row_to_its_author_and_not_found_to_eve
 
     // Ratified, the row is any reader's to get, promoted and the tip.
     approve_as(&router, &dreamer, "v1").await;
-    let got = call_tool(&router, &reader, 7, "oml_get", json!({"artifact_id": id})).await;
+    let got = call_tool(&router, &reader, 7, "oml_read", json!({"artifact_id": id})).await;
     assert_eq!(got["isError"], false, "{got}");
-    assert_eq!(got["structuredContent"]["state"], "promoted");
-    assert_eq!(got["structuredContent"]["tip"], true);
-    assert_eq!(got["structuredContent"]["text"], QUOTE);
+    let item = &got["structuredContent"]["items"][0];
+    assert_eq!(item["state"], "promoted");
+    assert_eq!(item["tip"], true);
+    assert_eq!(item["text"], QUOTE);
 
     drop_db(&db).await;
 }
 
 #[tokio::test]
-async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified() {
+async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_ratified() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -1225,9 +1154,9 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
         &router,
         &writer,
         1,
-        "oml_supersede",
+        "oml_write",
         json!({
-            "artifact_id": v1,
+            "replaces": v1,
             "text": REVISED,
             "reason": "supplier issued a revised quote",
             "idempotency_key": "crew-procure/run-2/step-1",
@@ -1243,6 +1172,7 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
     assert_eq!(
         receipt,
         &json!({
+            "mode": "supersede",
             "artifact_id": v2,
             "claim_key": CLAIM,
             "version": 2,
@@ -1257,20 +1187,21 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
     // Held: every reader's recall still serves the target as the tip, and
     // the successor is its author's alone to read back.
     let recall = json!({"query": "aluminium price"});
-    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    let before = call_tool(&router, &reader, 2, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
-    let target = call_tool(&router, &reader, 3, "oml_get", json!({"artifact_id": v1})).await;
-    assert_eq!(target["structuredContent"]["tip"], true, "{target}");
-    let own = call_tool(&router, &writer, 4, "oml_get", json!({"artifact_id": v2})).await;
-    assert_eq!(own["structuredContent"]["state"], "held", "{own}");
-    assert_eq!(own["structuredContent"]["tip"], false, "{own}");
-    assert_eq!(own["structuredContent"]["text"], REVISED, "{own}");
+    let target = call_tool(&router, &reader, 3, "oml_read", json!({"artifact_id": v1})).await;
     assert_eq!(
-        own["structuredContent"]["replaces"],
-        json!({"artifact_id": v1, "version": 1})
+        target["structuredContent"]["items"][0]["tip"], true,
+        "{target}"
     );
-    assert_eq!(own["structuredContent"]["derives_from"], json!([v1]));
-    let hidden = call_tool(&router, &reader, 5, "oml_get", json!({"artifact_id": v2})).await;
+    let own = call_tool(&router, &writer, 4, "oml_read", json!({"artifact_id": v2})).await;
+    let item = &own["structuredContent"]["items"][0];
+    assert_eq!(item["state"], "held", "{own}");
+    assert_eq!(item["tip"], false, "{own}");
+    assert_eq!(item["text"], REVISED, "{own}");
+    assert_eq!(item["replaces"], json!({"artifact_id": v1, "version": 1}));
+    assert_eq!(item["derives_from"], json!([v1]));
+    let hidden = call_tool(&router, &reader, 5, "oml_read", json!({"artifact_id": v2})).await;
     assert_eq!(
         hidden["structuredContent"]["error"]["code"], "access.not_found",
         "{hidden}"
@@ -1279,14 +1210,20 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
     // A non-author ratifies: the tip moves, and the target stays readable
     // as history.
     approve_as(&router, &dreamer, "v2").await;
-    let after = call_tool(&router, &reader, 6, "oml_recall", recall).await;
+    let after = call_tool(&router, &reader, 6, "oml_read", recall).await;
     assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
-    let old = call_tool(&router, &reader, 7, "oml_get", json!({"artifact_id": v1})).await;
-    assert_eq!(old["structuredContent"]["state"], "promoted", "{old}");
-    assert_eq!(old["structuredContent"]["tip"], false, "{old}");
-    let new = call_tool(&router, &reader, 8, "oml_get", json!({"artifact_id": v2})).await;
-    assert_eq!(new["structuredContent"]["state"], "promoted", "{new}");
-    assert_eq!(new["structuredContent"]["tip"], true, "{new}");
+    let old = call_tool(&router, &reader, 7, "oml_read", json!({"artifact_id": v1})).await;
+    assert_eq!(
+        old["structuredContent"]["items"][0]["state"], "promoted",
+        "{old}"
+    );
+    assert_eq!(old["structuredContent"]["items"][0]["tip"], false, "{old}");
+    let new = call_tool(&router, &reader, 8, "oml_read", json!({"artifact_id": v2})).await;
+    assert_eq!(
+        new["structuredContent"]["items"][0]["state"], "promoted",
+        "{new}"
+    );
+    assert_eq!(new["structuredContent"]["items"][0]["tip"], true, "{new}");
 
     // The target is no longer the tip: the ring's refusal names the one to
     // propose against.
@@ -1294,8 +1231,8 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
         &router,
         &writer,
         9,
-        "oml_supersede",
-        json!({"artifact_id": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-1"}),
+        "oml_write",
+        json!({"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-1"}),
     )
     .await;
     assert_eq!(stale["isError"], true, "{stale}");
@@ -1311,8 +1248,8 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
         &router,
         &reader,
         10,
-        "oml_supersede",
-        json!({"artifact_id": v2, "text": REVISED, "idempotency_key": "reader-1"}),
+        "oml_write",
+        json!({"replaces": v2, "text": REVISED, "idempotency_key": "reader-1"}),
     )
     .await;
     assert_eq!(
@@ -1324,7 +1261,7 @@ async fn oml_supersede_enters_admission_held_and_leaves_the_tip_until_ratified()
 }
 
 #[tokio::test]
-async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
+async fn oml_write_with_retirement_retires_the_claim_once_ratified_and_get_answers_its_history() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -1336,9 +1273,9 @@ async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
         &router,
         &writer,
         1,
-        "oml_supersede",
+        "oml_write",
         json!({
-            "artifact_id": v1,
+            "replaces": v1,
             "text": why,
             "retirement": true,
             "idempotency_key": "crew-procure/run-2/step-1",
@@ -1362,20 +1299,23 @@ async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
     // Proposed, not in force: the claim is served until a non-author
     // ratifies the retirement.
     let recall = json!({"query": "aluminium price"});
-    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    let before = call_tool(&router, &reader, 2, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
 
     // Ratified, the claim is retired: recall serves nothing of it, and get
     // answers every version as history (audit-and-lineage.md; ADR-0025 d11).
     approve_as(&router, &dreamer, "v2").await;
-    let after = call_tool(&router, &reader, 3, "oml_recall", recall).await;
+    let after = call_tool(&router, &reader, 3, "oml_read", recall).await;
     assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
     assert_eq!(after["structuredContent"]["steering"], json!([]), "{after}");
-    let old = call_tool(&router, &reader, 4, "oml_get", json!({"artifact_id": v1})).await;
-    assert_eq!(old["structuredContent"]["state"], "promoted", "{old}");
-    assert_eq!(old["structuredContent"]["tip"], false, "{old}");
-    let retirement = call_tool(&router, &reader, 5, "oml_get", json!({"artifact_id": v2})).await;
-    let item = &retirement["structuredContent"];
+    let old = call_tool(&router, &reader, 4, "oml_read", json!({"artifact_id": v1})).await;
+    assert_eq!(
+        old["structuredContent"]["items"][0]["state"], "promoted",
+        "{old}"
+    );
+    assert_eq!(old["structuredContent"]["items"][0]["tip"], false, "{old}");
+    let retirement = call_tool(&router, &reader, 5, "oml_read", json!({"artifact_id": v2})).await;
+    let item = &retirement["structuredContent"]["items"][0];
     assert_eq!(item["state"], "promoted", "{retirement}");
     assert_eq!(item["tip"], true, "{retirement}");
     assert_eq!(item["retirement"], true, "{retirement}");
@@ -1385,19 +1325,19 @@ async fn oml_supersede_with_retirement_proposes_retiring_the_claim() {
 }
 
 #[tokio::test]
-async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
+async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (writer, dreamer, _, _) = crew(&router).await;
     let v1 = ratified(&router, &writer, &dreamer).await;
     let args = json!({
-        "artifact_id": v1,
+        "replaces": v1,
         "text": REVISED,
         "idempotency_key": "crew-procure/run-2/step-1",
     });
 
-    let first = call_tool(&router, &writer, 1, "oml_supersede", args.clone()).await;
+    let first = call_tool(&router, &writer, 1, "oml_write", args.clone()).await;
     assert_eq!(first["isError"], false, "{first}");
     assert_eq!(first["structuredContent"]["idempotent_replay"], false);
 
@@ -1405,21 +1345,14 @@ async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
     // second write — even once the target is no longer the tip (D13).
     let mut expected = first["structuredContent"].clone();
     expected["idempotent_replay"] = json!(true);
-    let replay = call_tool(&router, &writer, 2, "oml_supersede", args.clone()).await;
+    let replay = call_tool(&router, &writer, 2, "oml_write", args.clone()).await;
     assert_eq!(replay["isError"], false, "{replay}");
     assert_eq!(replay["structuredContent"], expected);
     approve_as(&router, &dreamer, "v2").await;
-    let late = call_tool(&router, &writer, 3, "oml_supersede", args.clone()).await;
+    let late = call_tool(&router, &writer, 3, "oml_write", args.clone()).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"], expected);
-    let work = call_tool(
-        &router,
-        &writer,
-        4,
-        "oml_my_work",
-        json!({"claim_key": CLAIM}),
-    )
-    .await;
+    let work = call_tool(&router, &writer, 4, "oml_read", json!({"claim_key": CLAIM})).await;
     assert_eq!(
         work["structuredContent"]["items"]
             .as_array()
@@ -1432,7 +1365,7 @@ async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
     // The same key with a different request is a typed refusal.
     let mut changed = args;
     changed["text"] = json!("Accra Metals revised its aluminium price to 405 USD/t.");
-    let mismatch = call_tool(&router, &writer, 5, "oml_supersede", changed).await;
+    let mismatch = call_tool(&router, &writer, 5, "oml_write", changed).await;
     assert_eq!(mismatch["isError"], true, "{mismatch}");
     assert_eq!(
         mismatch["structuredContent"]["error"]["code"], "idempotency.digest_mismatch",
@@ -1443,7 +1376,7 @@ async fn a_replayed_oml_supersede_is_an_idempotent_replay() {
 }
 
 #[tokio::test]
-async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes() {
+async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -1458,7 +1391,7 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
         )],
     )
     .await;
-    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
     let term = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
@@ -1466,8 +1399,8 @@ async fn oml_supersede_refuses_a_vocabulary_kind_target_that_the_http_api_supers
     let propose = |id: u64, idem: &str| {
         let (router, writer, term) = (&router, &writer, &term);
         let args =
-            json!({"artifact_id": term, "text": "aluminium: element 13.", "idempotency_key": idem});
-        async move { call_tool(router, writer, id, "oml_supersede", args).await }
+            json!({"replaces": term, "text": "aluminium: element 13.", "idempotency_key": idem});
+        async move { call_tool(router, writer, id, "oml_write", args).await }
     };
 
     // Held, the term is no tip: the tip check answers before the
@@ -1546,7 +1479,7 @@ async fn capture_events(router: &Router, token: &str, artifact_id: &str) -> Vec<
 
 /// The number of claim versions the key's own-work listing holds.
 async fn own_versions(router: &Router, token: &str) -> usize {
-    let work = call_tool(router, token, 99, "oml_my_work", json!({})).await;
+    let work = call_tool(router, token, 99, "oml_read", json!({})).await;
     work["structuredContent"]["items"]
         .as_array()
         .expect("items")
@@ -1600,11 +1533,14 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
         &router,
         &agent,
         2,
-        "oml_get",
+        "oml_read",
         json!({"artifact_id": ancestor}),
     )
     .await;
-    assert_eq!(got["structuredContent"]["kind"], "memory", "{got}");
+    assert_eq!(
+        got["structuredContent"]["items"][0]["kind"], "memory",
+        "{got}"
+    );
 
     // derives_from non-empty: the same endpoint journals learn.
     let derived = call_tool(
@@ -1635,11 +1571,14 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
         &router,
         &agent,
         4,
-        "oml_get",
+        "oml_read",
         json!({"artifact_id": artifact}),
     )
     .await;
-    assert_eq!(got["structuredContent"]["derives_from"], json!([ancestor]));
+    assert_eq!(
+        got["structuredContent"]["items"][0]["derives_from"],
+        json!([ancestor])
+    );
 
     drop_db(&db).await;
 }
@@ -1687,16 +1626,17 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "idempotent_replay": false,
         })
     );
-    let own = call_tool(&router, &writer, 2, "oml_get", json!({"artifact_id": v2})).await;
-    assert_eq!(own["structuredContent"]["text"], REVISED, "{own}");
-    assert_eq!(own["structuredContent"]["derives_from"], json!([v1]));
+    let own = call_tool(&router, &writer, 2, "oml_read", json!({"artifact_id": v2})).await;
+    let item = &own["structuredContent"]["items"][0];
+    assert_eq!(item["text"], REVISED, "{own}");
+    assert_eq!(item["derives_from"], json!([v1]));
 
     // Held, the target stays the tip until a non-author ratifies.
     let recall = json!({"query": "aluminium price"});
-    let before = call_tool(&router, &reader, 3, "oml_recall", recall.clone()).await;
+    let before = call_tool(&router, &reader, 3, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
     approve_as(&router, &dreamer, "v2").await;
-    let after = call_tool(&router, &reader, 4, "oml_recall", recall).await;
+    let after = call_tool(&router, &reader, 4, "oml_read", recall).await;
     assert_eq!(hit_ids(&after), [v2.as_str()], "{after}");
 
     drop_db(&db).await;
@@ -1737,10 +1677,10 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     // A proposal until a non-author ratifies; then recall serves none of
     // the claim (ADR-0025 d11).
     let recall = json!({"query": "aluminium price"});
-    let before = call_tool(&router, &reader, 2, "oml_recall", recall.clone()).await;
+    let before = call_tool(&router, &reader, 2, "oml_read", recall.clone()).await;
     assert_eq!(hit_ids(&before), [v1.as_str()], "{before}");
     approve_as(&router, &dreamer, "v2").await;
-    let after = call_tool(&router, &reader, 3, "oml_recall", recall).await;
+    let after = call_tool(&router, &reader, 3, "oml_read", recall).await;
     assert_eq!(after["structuredContent"]["hits"], json!([]), "{after}");
 
     drop_db(&db).await;
@@ -1845,7 +1785,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
     )
     .await;
     approve_as(&router, &dreamer, "term").await;
-    let work = call_tool(&router, &writer, 1, "oml_my_work", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
     let term = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
@@ -2122,16 +2062,16 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
     drop_db(&db).await;
 }
 
-/// `oml_remember`'s `workarea` takes the node's name as well as its id: the
+/// `oml_write`'s `workarea` takes the node's name as well as its id: the
 /// facade passes it through as the body's `workarea` and the server
 /// resolves it,
-/// so a remember naming `metals-crew` is captured there and the own-work
+/// so a write naming `metals-crew` is captured there and the own-work
 /// listing under that name lists it, while a derived path is refused as
 /// `request.validation` naming the HTTP field the argument maps to; the
 /// served catalog says so (mcp-plugin.md, a workarea by id or name;
 /// errors.md `details.field`; ADR-0026 d4, d7).
 #[tokio::test]
-async fn oml_remember_with_a_workarea_name_submits_into_it() {
+async fn oml_write_with_a_workarea_name_submits_into_it() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2141,7 +2081,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
         &router,
         &agent,
         1,
-        "oml_remember",
+        "oml_write",
         json!({
             "workarea": "metals-crew",
             "claim_key": "supplier-quote-am-7741",
@@ -2158,7 +2098,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
         &router,
         &agent,
         2,
-        "oml_my_work",
+        "oml_read",
         json!({"workarea": "metals-crew"}),
     )
     .await;
@@ -2173,7 +2113,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
         &router,
         &agent,
         3,
-        "oml_remember",
+        "oml_write",
         json!({
             "workarea": "universe.metals-crew",
             "claim_key": "supplier-quote-am-7742",
@@ -2187,8 +2127,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
     assert_eq!(error["code"], "request.validation", "{refused}");
     assert_eq!(error["details"]["field"], "/workarea", "{refused}");
 
-    // The served entry of its successor, oml_write, describes what the
-    // build serves: the id or the name, and no path (ADR-0025 d12,
+    // The served entry of oml_write describes what the build serves: the id or the name, and no path (ADR-0025 d12,
     // ADR-0039 d10).
     let listed = rpc(&router, &agent, 4, "tools/list", json!({})).await;
     let tool = listed["result"]["tools"]
@@ -2207,7 +2146,7 @@ async fn oml_remember_with_a_workarea_name_submits_into_it() {
 }
 
 #[tokio::test]
-async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() {
+async fn oml_workarea_without_an_argument_describes_the_default_workarea() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2272,9 +2211,9 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;
 
-    // Listed under its v0.4.0 name, oml_workarea, and still callable under
-    // this one; omitted workarea means the key's journalled default: the
-    // same answer as naming it, from one ring call (ADR-0039 d10, d12).
+    // Listed, and with workarea omitted it reads the key's journalled
+    // default: the same answer as naming it, from one ring call (ADR-0039
+    // d10).
     let listed = rpc(&router, &agent, 1, "tools/list", json!({})).await;
     assert!(
         listed["result"]["tools"]
@@ -2284,7 +2223,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
             .any(|t| t["name"] == "oml_workarea"),
         "{listed}"
     );
-    let info = call_tool(&router, &agent, 2, "oml_workarea_info", json!({})).await;
+    let info = call_tool(&router, &agent, 2, "oml_workarea", json!({})).await;
     assert_eq!(info["isError"], false, "{info}");
     let view = &info["structuredContent"];
     assert_eq!(
@@ -2312,7 +2251,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
             &router,
             &agent,
             id,
-            "oml_workarea_info",
+            "oml_workarea",
             json!({"workarea": workarea}),
         )
         .await;
@@ -2332,7 +2271,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
             "request.validation",
         ),
     ] {
-        let refused = call_tool(&router, token, id, "oml_workarea_info", args).await;
+        let refused = call_tool(&router, token, id, "oml_workarea", args).await;
         assert_eq!(refused["isError"], true, "{refused}");
         assert_eq!(
             refused["structuredContent"]["error"]["code"], code,
@@ -2344,7 +2283,7 @@ async fn oml_workarea_info_without_an_argument_describes_the_default_workarea() 
 }
 
 #[tokio::test]
-async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_default() {
+async fn an_admin_keys_oml_workarea_is_the_rings_structure_read_of_its_default() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2383,7 +2322,7 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
     // its key role, structure only (ADR-0026 d15): the bootstrap admin reads
     // its default, the root, with no effective verb, and the admin key with
     // no default is refused by name.
-    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workarea_info", json!({})).await;
+    let read = call_tool(&router, &bootstrap_admin, 1, "oml_workarea", json!({})).await;
     assert_eq!(read["isError"], false, "{read}");
     assert_eq!(read["structuredContent"]["path"], "universe", "{read}");
     assert_eq!(
@@ -2391,7 +2330,7 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
         json!([]),
         "{read}"
     );
-    let refused = call_tool(&router, &second_admin, 2, "oml_workarea_info", json!({})).await;
+    let refused = call_tool(&router, &second_admin, 2, "oml_workarea", json!({})).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["structuredContent"]["error"]["code"], "request.workarea_unresolved",
@@ -2402,7 +2341,7 @@ async fn an_admin_keys_oml_workarea_info_is_the_rings_structure_read_of_its_defa
 }
 
 #[tokio::test]
-async fn oml_my_work_pages_with_a_client_held_cursor() {
+async fn oml_read_listing_pages_with_a_client_held_cursor() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2413,7 +2352,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
             &router,
             &writer,
             n,
-            "oml_remember",
+            "oml_write",
             json!({
                 "claim_key": format!("supplier-quote-am-774{n}"),
                 "text": format!("Supplier Accra Metals quoted 41{n} USD/t."),
@@ -2427,7 +2366,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
     written.reverse();
 
     // The first page, newest first, and a cursor the client holds.
-    let first = call_tool(&router, &writer, 4, "oml_my_work", json!({"limit": 2})).await;
+    let first = call_tool(&router, &writer, 4, "oml_read", json!({"limit": 2})).await;
     assert_eq!(first["isError"], false, "{first}");
     let page = &first["structuredContent"];
     let items = page["items"].as_array().expect("items");
@@ -2438,7 +2377,8 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
             .collect::<Vec<_>>(),
         written[..2]
     );
-    // Claim items without text, from the ring's memory summary (ADR-0025 d12).
+    // Claim items with text, from the ring's memory summary (ADR-0025 d12,
+    // ADR-0039 d4).
     let mut fields: Vec<&str> = items[0]
         .as_object()
         .expect("item")
@@ -2458,6 +2398,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
             "replaces",
             "retirement",
             "state",
+            "text",
             "tip",
             "tokens",
             "version",
@@ -2465,6 +2406,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
             "workarea_path",
         ]
     );
+    assert_eq!(page["mode"], "listing");
     assert_eq!(items[0]["state"], "held");
     assert_eq!(items[0]["tip"], false);
     assert_eq!(items[0]["workarea"], crew.to_string());
@@ -2480,7 +2422,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
         &router,
         &writer,
         5,
-        "oml_my_work",
+        "oml_read",
         json!({"limit": 2, "cursor": cursor}),
     )
     .await;
@@ -2502,7 +2444,7 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
         &router,
         &writer,
         6,
-        "oml_my_work",
+        "oml_read",
         json!({"workarea": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
     )
     .await;
@@ -2511,17 +2453,10 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
     assert_eq!(items[0]["claim_key"], "supplier-quote-am-7742");
 
     // Own work is the calling key's alone, and its cursor answers no other.
-    let theirs = call_tool(&router, &reader, 7, "oml_my_work", json!({})).await;
+    let theirs = call_tool(&router, &reader, 7, "oml_read", json!({})).await;
     assert_eq!(theirs["isError"], false, "{theirs}");
     assert_eq!(theirs["structuredContent"]["items"], json!([]));
-    let foreign = call_tool(
-        &router,
-        &reader,
-        8,
-        "oml_my_work",
-        json!({"cursor": cursor}),
-    )
-    .await;
+    let foreign = call_tool(&router, &reader, 8, "oml_read", json!({"cursor": cursor})).await;
     assert_eq!(foreign["isError"], true, "{foreign}");
     assert_eq!(
         foreign["structuredContent"]["error"]["code"],
@@ -2532,14 +2467,14 @@ async fn oml_my_work_pages_with_a_client_held_cursor() {
 }
 
 #[tokio::test]
-async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
+async fn oml_read_listing_limit_is_at_most_200_as_on_the_ring() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (writer, _, _, _) = crew(&router).await;
 
-    // The served schema of its successor, oml_read's listing, states the
-    // ring's page bound, so an agent never sends a limit the catalog admits
+    // The served schema of oml_read's listing states the ring's page
+    // bound, so an agent never sends a limit the catalog admits
     // and the ring refuses (ADR-0025 d12, ADR-0039 d10).
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
     let my_work = listed["result"]["tools"]
@@ -2552,9 +2487,9 @@ async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
     assert_eq!(limit["minimum"], 1, "{limit}");
     assert_eq!(limit["maximum"], 200, "{limit}");
 
-    let at_bound = call_tool(&router, &writer, 2, "oml_my_work", json!({"limit": 200})).await;
+    let at_bound = call_tool(&router, &writer, 2, "oml_read", json!({"limit": 200})).await;
     assert_eq!(at_bound["isError"], false, "{at_bound}");
-    let refused = call_tool(&router, &writer, 3, "oml_my_work", json!({"limit": 201})).await;
+    let refused = call_tool(&router, &writer, 3, "oml_read", json!({"limit": 201})).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["structuredContent"]["error"]["code"], "request.validation",
@@ -2565,7 +2500,7 @@ async fn oml_my_work_limit_is_at_most_200_as_on_the_ring() {
 }
 
 #[tokio::test]
-async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
+async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2575,7 +2510,7 @@ async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
         &router,
         &writer,
         1,
-        "oml_remember",
+        "oml_write",
         json!({
             "claim_key": "quote-validity",
             "kind": "steering",
@@ -2612,7 +2547,7 @@ async fn oml_recall_serves_steering_as_claim_items_with_text_and_no_score() {
         &router,
         &reader,
         2,
-        "oml_recall",
+        "oml_read",
         json!({"query": "aluminium price"}),
     )
     .await;
@@ -2675,14 +2610,15 @@ async fn approve_as(router: &Router, dreamer: &str, tag: &str) {
     assert_eq!(verdict["state"], "promoted", "{verdict}");
 }
 
-/// The agent remembers each `(claim_key, kind, text)` held, in order.
+/// The agent writes each `(claim_key, kind, text)` through `oml_write`,
+/// held, in order.
 async fn remember_all(router: &Router, agent: &str, rows: &[(&str, &str, &str)]) {
     for (n, (claim_key, kind, text)) in (1_u64..).zip(rows) {
         let held = call_tool(
             router,
             agent,
             100 + n,
-            "oml_remember",
+            "oml_write",
             json!({
                 "claim_key": claim_key,
                 "kind": kind,
@@ -2715,13 +2651,13 @@ const ALLOY: &str =
     "Tema Alloys aluminium price is 409 USD/t for Q1-2027 delivery, valid until 2026-12-15.";
 
 #[tokio::test]
-async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_them() {
+async fn oml_read_recall_takes_include_unreviewed_and_max_tokens_as_it_declares_them() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (agent, _, reader, _) = agent_crew(&router).await;
 
-    // tools/list advertises, on the successor oml_read, the one flag for
+    // tools/list advertises, on oml_read, the one flag for
     // unreviewed rows and the ring's k and max_tokens maxima, the latter the
     // largest integer RFC 8785 digests exactly (retrieval.md token budgets;
     // ADR-0025 d7, d12; ADR-0039 d4, d10).
@@ -2747,15 +2683,15 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
     )
     .await;
 
-    // include_own_held: the author's held row joins the hits, flagged held;
+    // include_unreviewed: the author's held row joins the hits, flagged held;
     // without it the recall serves promoted rows only, and no other key sees
     // the row whatever it sends (ADR-0025 d4).
     let own = call_tool(
         &router,
         &agent,
         2,
-        "oml_recall",
-        json!({"query": "aluminium price", "include_own_held": true}),
+        "oml_read",
+        json!({"query": "aluminium price", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(own["isError"], false, "{own}");
@@ -2768,8 +2704,8 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
         &router,
         &agent,
         3,
-        "oml_recall",
-        json!({"query": "aluminium price", "include_own_held": false}),
+        "oml_read",
+        json!({"query": "aluminium price", "include_unreviewed": false}),
     )
     .await;
     assert_eq!(promoted_only["isError"], false, "{promoted_only}");
@@ -2778,8 +2714,8 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
         &router,
         &reader,
         4,
-        "oml_recall",
-        json!({"query": "aluminium price", "include_own_held": true}),
+        "oml_read",
+        json!({"query": "aluminium price", "include_unreviewed": true}),
     )
     .await;
     assert_eq!(theirs["isError"], false, "{theirs}");
@@ -2790,8 +2726,8 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
         &router,
         &agent,
         5,
-        "oml_recall",
-        json!({"query": "aluminium price", "include_own_held": true, "max_tokens": 1}),
+        "oml_read",
+        json!({"query": "aluminium price", "include_unreviewed": true, "max_tokens": 1}),
     )
     .await;
     assert_eq!(budgeted["isError"], false, "{budgeted}");
@@ -2811,7 +2747,7 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
             json!({"query": "aluminium price", "max_tokens": MAX_TOKENS + 1}),
         ),
     ] {
-        let refused = call_tool(&router, &agent, id, "oml_recall", args).await;
+        let refused = call_tool(&router, &agent, id, "oml_read", args).await;
         assert_eq!(refused["isError"], true, "{refused}");
         assert_eq!(
             refused["structuredContent"]["error"]["code"], "request.validation",
@@ -2823,7 +2759,7 @@ async fn oml_recall_takes_include_own_held_and_max_tokens_as_oml_read_declares_t
 }
 
 #[tokio::test]
-async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
+async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2843,7 +2779,7 @@ async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
         &router,
         &agent,
         1,
-        "oml_recall",
+        "oml_read",
         json!({"query": "aluminium price"}),
     )
     .await;
@@ -2904,7 +2840,7 @@ async fn oml_recall_steering_items_carry_text_and_tokens_not_body() {
 }
 
 #[tokio::test]
-async fn oml_recall_under_max_tokens_returns_the_budget_object() {
+async fn oml_read_recall_under_max_tokens_returns_the_budget_object() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2931,7 +2867,7 @@ async fn oml_recall_under_max_tokens_returns_the_budget_object() {
         &router,
         &agent,
         1,
-        "oml_recall",
+        "oml_read",
         json!({"query": "aluminium price"}),
     )
     .await;
@@ -2955,7 +2891,7 @@ async fn oml_recall_under_max_tokens_returns_the_budget_object() {
         &router,
         &agent,
         2,
-        "oml_recall",
+        "oml_read",
         json!({"query": "aluminium price", "max_tokens": max_tokens}),
     )
     .await;
