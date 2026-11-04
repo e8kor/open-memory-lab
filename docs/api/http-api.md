@@ -536,17 +536,17 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | Endpoint | Verb ceiling (effective access unless noted) | Contract |
 |---|---|---|
 | `GET /v2/memories/{artifact_id}/lineage` | reader | designed |
-| `GET /v2/edges` | `kind=claim`: reader; `kind=workarea`: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | designed |
-| `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=workarea`: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)) | designed |
-| `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on both endpoints for `kind=workarea`; never the proposer (R2) | designed |
+| `GET /v2/edges` | `kind=claim`: reader; `kind=brief`: reader on the workarea, each edge served only when its claim is read ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7); `kind=workarea` designed: reader, or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)); *built for v0.5.2, not released* | served |
+| `POST /v2/edges` | `kind=claim`: dreamer(propose); `kind=brief`: dreamer on the workarea, a promoted served tip the key reads; `kind=workarea` designed: dreamer(propose) on ≥1 endpoint, reader on both (edge-authority rule, [workareas.md](../architecture/workareas.md)); *built for v0.5.2, not released* | served |
+| `POST /v2/edges/{edge_id}/ratify` | dreamer(review), on the workarea for `kind=brief`, on both endpoints for `kind=workarea`; never the proposer (R2); *built for v0.5.2, not released* | served |
 | `GET /v2/workareas/{workarea}` · `/tree` | reader; or admin (key role), structure only and tenant-wide ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix)) | served |
 | `GET /v2/workareas` | reader; or admin (key role), structure only and tenant-wide | designed |
 | `POST /v2/workareas` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/reparent` | admin (key role) | designed |
 | `POST /v2/workareas/{workarea}/crew` | admin (key role) | served |
 | `GET /v2/crews` · `GET /v2/crews/{crew}` · `POST /v2/crews` · `POST /v2/crews/{crew}/update` | admin (key role) | served |
-| `POST /v2/workareas/{workarea}/transitions` | dreamer or admin | designed |
-| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin | designed |
+| `POST /v2/workareas/{workarea}/transitions` | dreamer or admin; *built for v0.5.2, not released* | served |
+| `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin; *built for v0.5.2, not released* | served |
 | `GET /v2/events` | reader | served |
 | `GET /v2/vocab/suggest` · `GET /v2/vocab/terms/{curie}` · `GET /v2/vocab/terms/{curie}/hierarchy` · `GET /v2/vocab/mappings` | reader | designed |
 | `POST /v2/review/next` · `POST /v2/review/verdicts` | dreamer(review); refused per row by lineage-closure exclusion | served |
