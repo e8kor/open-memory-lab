@@ -580,7 +580,7 @@ rings, and routed only where the deployment sets `oauth.issuer`
 | `GET /oauth/authorize` · `POST /oauth/authorize` | none; the person proves authority with the connect code | served |
 | `POST /oauth/token` · `POST /oauth/register` | none; public clients only | served |
 
-*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed):* the web pages are unversioned, outside both
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):* the web pages are unversioned, outside both
 rings, routed only by the lead and only where the deployment sets `oauth.issuer` and a sign-in
 provider, and authenticated by a session cookie alone, never by a key
 ([Web pages](#web-pages-the-user-page-and-the-admin-page)):
@@ -1363,7 +1363,7 @@ This is the MCP request forwarded to the same endpoint, not a token passed to a 
 
 ## Web pages: the user page and the admin page
 
-*Since v0.5.0; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
+*Since v0.5.0; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)*
 
 Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
 page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
@@ -1430,7 +1430,7 @@ issued on the user page is shown once, in the answering page, never in a redirec
 
 ### Admin read
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*
 
 An admin key reads every memory of its tenant, with its text and its attribution, on two lab
 routes and nowhere else; every other route keeps the rule that an admin key reads structure and

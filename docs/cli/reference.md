@@ -14,7 +14,7 @@ answers: every administrative CLI verb, its flags and refusals; oml write, oml r
 `oml` is the administration surface of Open Memory Lab. There is no web UI today: every administrative
 ceremony — key issuance, review, mass operations, settings — is a CLI verb, a decision recorded in
 ADR-0015. Since v0.5.0 a user page and an admin page serve people signed in with Google or GitHub
-([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed); every ceremony keeps its verb here, and
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)); every ceremony keeps its verb here, and
 `oml web allow`, `oml web list` and `oml web remove` keep the email allowlist that lets the
 first admin in. The CLI is a lab client: it speaks the same [HTTP API](../api/http-api.md) as every
 agent — every ceremony rides the lab ring (`/v2`,
@@ -428,7 +428,7 @@ throughout; no agent role reaches these verbs.
 
 ## `oml web` — the email allowlist
 
-*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2*
 
 Who may sign in to the [web pages](../api/http-api.md#web-pages-the-user-page-and-the-admin-page):
 an email address, the user it signs in as, and whether it opens the admin page. The first admin
@@ -444,7 +444,7 @@ digest, never the address.
 
 ## `oml admin read` — every memory, with its attribution
 
-*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
+*Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*
 
 An administrator reads every memory of the organisation — every state, every workarea, every
 person's root — with its text and who wrote, derived and reviewed it. Admin key role alone; each

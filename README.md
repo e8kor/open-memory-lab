@@ -112,6 +112,9 @@ Each row names the release that built it; [releases](docs/product/releases.md) h
 | **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Since v0.4.0 |
 | **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Since v0.4.0 |
 | **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Since v0.4.0 |
+| **A workarea of one's own** | Each person's keys write, read and make workareas under a root of their own, so two people can each have a `project`. Above them, a shared area that only curators an administrator chooses write into, each copy reviewed by someone else and shown without its author or source. | Since v0.5.0 |
+| **Sign-in with Google or GitHub** | People whose email address an administrator listed sign in to the server's own address; no password is stored and no mail is sent. Unverified: no sign-in has reached Google or GitHub yet. | Since v0.5.0 |
+| **Your page and the admin page** | On your page: your agents' keys and connect codes, the setup steps, your memories, your workareas, and review of your own agents' work. On the admin page: the list of who signs in, who reviews and who curates, how much waits for review, reading any memory with who wrote and reviewed it, and review, curation and replacing memories. | Since v0.5.0 |
 
 ## Planned
 

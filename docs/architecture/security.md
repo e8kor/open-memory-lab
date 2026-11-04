@@ -429,7 +429,7 @@ reserved provider tenant and hold no tenant content
 
 ## Web pages: sign-in and sessions
 
-*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed).* A user page and an admin
+*Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).* A user page and an admin
 page on the lead's own origin, signed in through Google or GitHub against a per-tenant email
 allowlist ([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). They add
 what [ADR-0015](../adr/ADR-0015-cli-administration.md) declined to carry: a session cookie, and
@@ -499,7 +499,7 @@ flowchart LR
 ```
 
 Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
-into oml-server, carrying a bearer key or a connection's access token that resolves to one, or, planned for v0.5.0, a session cookie that resolves to a person's session keys —
+into oml-server, carrying a bearer key or a connection's access token that resolves to one, or, since v0.5.0, a session cookie that resolves to a person's session keys —
 there is no client path to Postgres, the object store, the
 lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
 between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to

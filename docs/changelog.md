@@ -37,6 +37,15 @@ and sign-in with Google or GitHub to a user page and an admin page
 `Memory.principal` is nullable, null on a universe claim served to a key outside its authoring
 key set (ADR-0044 d9). Every other change of the revision is additive or on the lab ring.
 
+### 2026-11-04 — Release v0.5.0: ADR-0044 and ADR-0045 accepted
+
+The maintainer accepted [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+and [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+on 2026-11-04 with release v0.5.0, ADR-0045 but its demotion, planned for v0.6.0. Every
+"amended by … (proposed)" naming either loses "(proposed)"; the register rows, the
+[releases](product/releases.md) page, which moves v0.5.0 from planned to shipped, llms.txt and the
+README's "What works today" read "introduced in v0.5.0" or "since v0.5.0".
+
 ### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.0, and the spec is 0.5.0-design
 
 The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and

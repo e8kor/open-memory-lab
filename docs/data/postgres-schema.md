@@ -758,7 +758,7 @@ stands.
 ## web (ADR-0045)
 
 *Since v0.5.0 (migration `0015_web`) ·
-[ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, d4, d5, proposed*
+[ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, d4, d5*
 
 ```sql
 CREATE TABLE web_emails (

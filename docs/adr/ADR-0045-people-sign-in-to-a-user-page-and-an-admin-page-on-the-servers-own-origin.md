@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
 -->
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** proposed · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20)
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20)
 
-**Release:** built for v0.5.0 but demotion — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0015 (the decline of a web console in its context, its consequences and its rejected alternatives; d2 gains a second human surface), ADR-0010 (d1, d7), ADR-0025 (d3), ADR-0026 (d15: the admin key reads content through the admin read, d21), ADR-0031 (d7), ADR-0042 (d2), ADR-0044 (d6, d9 for the admin read, d11)
 
@@ -40,7 +40,7 @@ process holds only in memory (`oauth/seal.rs`) and a same-origin check on every 
 log line drops the `Location` query (`logged` in `oauth/mod.rs`; [ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md)
 d2). The origin policy, the CSP and the frame rule ADR-0015 wanted to avoid are therefore
 already designed, built and running on the maintainer's deployment; a session cookie is not.
-Second, the proposed [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+Second, [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 gives every person a root of their own, so the population now includes people who are neither
 operators nor admins, and who today get a key, a connect code and a workarea only by asking an
 admin to run the CLI for them.
@@ -76,7 +76,7 @@ The constitution holds over all of it ([ADR-0001](ADR-0001-the-constitution.md))
 not a surface an agent can call (R1), the reviewer key is never in the row's lineage (R2), review
 changes visibility and not ranking (R3), and nothing is deleted (R4).
 
-Decided; built for v0.5.0 but demotion (d12), which waits for its verb.
+Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its verb.
 
 ## Decision
 

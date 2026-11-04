@@ -276,7 +276,7 @@ and [FR-23](roadmap.md) migration rehearsal; a security pass against
   [positioning page](positioning.md) carries the boundary.
 - **User or agent profiles.** Declined; `derived_fact` claims and dreamer crews are the
   substitute, per the same boundary.
-- **A web console.** Declined in [ADR-0015](../adr/ADR-0015-cli-administration.md), beyond the user page and admin page that the proposed [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) plans for v0.5.0.
+- **A web console.** Declined in [ADR-0015](../adr/ADR-0015-cli-administration.md), beyond the user page and admin page that [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) introduced in v0.5.0.
 
 ## Traceability
 

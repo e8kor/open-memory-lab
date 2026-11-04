@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: what a user is and where their root workarea sits; how a key is tied to its person and when the person's root is created; how a user key addresses, reads and creates workareas; which grants a user key may carry and how a universe read stops short of other users' roots; what a node grant is; who places claims in universe and how curation counts toward review under R1 and R2; whether the reviewer exclusion covers the person behind a key; what a reader of a universe claim is served and what stays in the journal; how recall, steering and guardrails reach universe from a user's scope; how names stay unique when two users both want the same one; what crews and existing tenants do; which fields, flags and doctor lines change; what it amends in ADR-0001, ADR-0008, ADR-0010, ADR-0018, ADR-0025, ADR-0026, ADR-0028 and ADR-0039
 -->
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** proposed · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
-**Release:** planned for v0.5.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0008 (d1, d3, d4), ADR-0010 (d1), ADR-0018 (d4), ADR-0025 (d2, d3, d8), ADR-0026 (d1, d4, d5, d7), ADR-0028 (d1), ADR-0039 (d15)
 
@@ -67,7 +67,7 @@ ADR-0037, proposed on [#20](https://github.com/e8kor/open-memory-lab/pull/20) an
 branch, serves a key's guardrails from its scope node and, under `guardrail_scope: ancestors`,
 from every ancestor its reader access covers; d10 below states how that reaches `universe`.
 
-Decided, not built.
+Decided; introduced in v0.5.0.
 
 ## Decision
 

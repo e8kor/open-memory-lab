@@ -299,7 +299,7 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The constitution (R1–R4, the development exception) | [architecture/overview.md](architecture/overview.md) §5 | [ADR-0001](adr/ADR-0001-the-constitution.md) |
 | Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
 | Workarea tree, grants, denies, edges, crews | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md), [ADR-0026](adr/ADR-0026-names-are-keys.md) |
-| Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed) |
+| Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) |
 | Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
 | Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |

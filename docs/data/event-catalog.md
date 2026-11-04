@@ -749,7 +749,7 @@ its connections with no event of this type
 
 ## Web family
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2, proposed*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2*
 
 ### web.email_allowed
 
@@ -777,7 +777,7 @@ sessions; the user's agent keys are untouched (ADR-0045 d13).
 { "artifact_ids": ["…"], "query_digest": "sha256:…" }
 ```
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed.* An admin key read
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21.* An admin key read
 memories' text and attribution through the admin read: the ids served, and for a search the
 SHA-256 of its query, null for a read of one memory. Never the text and never the query. The
 envelope names the admin key; nothing but the journal changes.

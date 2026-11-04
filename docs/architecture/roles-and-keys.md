@@ -573,7 +573,7 @@ key**; a key without it is a **tenant key**, which every key issued before the b
 
 ## Session keys
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) (proposed) · [releases](../product/releases.md)*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../product/releases.md)*
 
 A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
 `held_by: human` with no value and no connection, held by the server for one person and acted

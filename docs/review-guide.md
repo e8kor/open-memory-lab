@@ -94,7 +94,7 @@ per-replica rate-limit approximation an acceptable v1 posture? Carried by
 
 ## 6. CLI-only administration (D14, ADR-0015)
 
-There is no web UI today; the proposed [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) plans a user page and an admin page for v0.5.0 and answers ADR-0015's reasons in turn. Administration, key ceremonies, the review flow, mass operations
+Since v0.5.0 [ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) serves a user page and an admin page for people signed in with Google or GitHub, and answers ADR-0015's reasons in turn. Administration, key ceremonies, the review flow, mass operations
 (dry-run by default), evidence export, and diagnostics all live in one CLI speaking the same HTTP
 API as the agents. The review ceremony is the load-bearing part: a reviewer is served an item
 with all its attachments under a server-side serve binding that expires, is consumed by its first
