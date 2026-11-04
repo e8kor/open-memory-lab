@@ -1,20 +1,20 @@
 <!--
 id: guides/claude-ai-and-mobile
 tier: engineering
-status: draft for review · built for v0.4.0, not yet released; no live claude.ai connection made
+status: draft for review · since v0.4.0; no live claude.ai connection made
 answers: how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; how a connection ends; and the open question of claude.ai's request headers
 -->
 
 # Guide: claude.ai and mobile
 
-**Status:** draft for review · built for v0.4.0, not yet released; no live claude.ai connection made
+**Status:** draft for review · since v0.4.0; no live claude.ai connection made
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md))
+**Release:** since v0.4.0 ([releases](../product/releases.md))
 
 Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and Android cannot run
 `oml login`, so OML links them to one agent key through a one-time connect code, over OAuth 2.1,
 on the same origin that serves `/mcp`: there is no separate host, port or service
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), proposed). Claude never
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). Claude never
 receives the key, only a connection the server can withdraw.
 
 **Unverified.** `oml-server-lead`'s `oauth_flow` suite and `oml-cli`'s `connect_flow` suite run

@@ -1,20 +1,20 @@
 <!--
 id: start/install
 tier: engineering
-status: draft for review · the installers built for v0.4.0, not yet released
+status: draft for review · the installers since v0.4.0
 answers: what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered
 -->
 
 # Install the `oml` command
 
-**Status:** draft for review · the installers built for v0.4.0, not yet released
+**Status:** draft for review · the installers since v0.4.0
 
-**Release:** the per-platform archives since v0.3.1; the installers planned for v0.4.0, the first
+**Release:** the per-platform archives since v0.3.1; the installers since v0.4.0, the first
 tag to carry them ([releases](../product/releases.md))
 
 Two scripts install the `oml` CLI for the current user, write one file and print the next command
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d5, proposed). The lines
-below fetch them at the tag `v0.4.0`. Until that tag exists, the fetch answers 404; the scripts
+([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d5). The lines
+below fetch them at the tag `v0.4.0`. Before that release the scripts
 were run against v0.3.1 on Linux x86_64, with cosign, without it and with `latest`
 (ADR-0041, "Where each item stands"), and `install.ps1` runs only in CI's `install-smoke` job.
 

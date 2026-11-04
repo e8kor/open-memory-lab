@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: how an agent gets the memory a turn needs beyond what the session-start hook loads; what the MCP server's initialize instructions, the oml_read description, the oml-memory skill and the session-start context say about recalling; what `oml hook tool-failure` sends, when, under which budget and with which framing; what its session cache holds and when `oml hook session-end` deletes it; what the plugin's librarian subagent may call and what it returns; and why recall from every prompt is not built now
 -->
 
 # ADR-0038 — The agent recalls for itself, and a failed command recalls only when the user opted in
 
-**Status:** proposed · 2026-11-03
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0029 (d6, d7) — the session-start context gains one line asking Claude to recall (d3 below), and the plugin's hook file gains two entries beside SessionStart (d9 below).
 

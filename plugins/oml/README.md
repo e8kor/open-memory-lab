@@ -9,7 +9,7 @@ you store it.
 
 ## Install
 
-*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 With the `oml` CLI ([below](#the-oml-cli)), one command installs the plugin at the CLI's own
 release and configures it, refusing an administrator's key:
@@ -141,7 +141,7 @@ conversation. See the
 
 ## The `oml` CLI
 
-*Available since v0.1.0; per-platform archives since v0.3.1; the installer planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; per-platform archives since v0.3.1; the installer since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 `oml setup claude-code`, the session-start hook below and key issuance need the `oml` CLI on
 your `PATH`. One line installs it for you alone and checks the download:
@@ -157,7 +157,7 @@ runs only when Git for Windows, which provides Git Bash, is installed; see the
 
 ## Every session starts from memory
 
-*Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It
@@ -198,7 +198,7 @@ still held until a different identity reviews it, so nothing it records is share
 
 ## Recall after a failed command (opt-in)
 
-*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 Set `OML_FAILURE_RECALL=1` and, when a Bash command fails, the plugin's PostToolUseFailure hook
 runs `oml hook tool-failure`: it searches with up to three distinctive words of the error, such
@@ -213,7 +213,7 @@ the SessionEnd hook deletes it. See the
 
 ## The librarian
 
-*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
 to it, or you ask for it with `@agent-oml:librarian`. Recall matches every word exactly, with no
@@ -255,7 +255,7 @@ that documentation does not settle as unverified.
 
 ## Upgrading from 0.3
 
-*Planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
@@ -275,7 +275,7 @@ tool: an agent learns what became of its writes with `oml_read` and `state`, and
 
 ## What is served today
 
-*Eight tools since v0.2.0; three task-shaped tools planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Eight tools since v0.2.0; three task-shaped tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the three tools above,
 each with its MCP annotations: `oml_read` and `oml_workarea` are read-only, and `oml_write` is

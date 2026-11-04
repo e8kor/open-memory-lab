@@ -81,8 +81,7 @@ else in the workarea finds it only after a reviewer approves it. About two minut
 three lines to that first held save is a target; no run has timed it yet
 ([roadmap](docs/product/roadmap.md)).
 
-These lines are for v0.4.0, which is built and not yet released: until its release exists, the
-installer line answers "not found". On Windows, and to read the script before it runs, see
+These lines are for v0.4.0. On Windows, and to read the script before it runs, see
 [install](docs/start/install.md).
 
 **No server yet?** On a machine with Docker, `oml quickstart` is built to start one, create a
@@ -94,7 +93,6 @@ Unverified: its compose file has no recorded green run under Docker yet.
 ## What works today
 
 Each row names the release that built it; [releases](docs/product/releases.md) has the detail.
-"Built for v0.4.0" means built on the release branch and not yet released.
 
 | | What you get | Release |
 | --- | --- | --- |
@@ -105,11 +103,11 @@ Each row names the release that built it; [releases](docs/product/releases.md) h
 | **Search** | Keyword search within a token budget you set. Standing instructions always come first and are never cut. | Keyword search since v0.1.0; the budget and instructions first since v0.2.0 |
 | **Keys** | A key per agent, scoped to the workareas it needs, issued in one command straight to a private file. | Since v0.2.0; one-command issue since v0.2.1 |
 | **Sessions that start from memory** | Each Claude Code session starts with the agent's recent work and the memories that match the project. | Since v0.2.2 |
-| **Three agent tools** | `oml_write`, `oml_read` and `oml_workarea`, in place of eight. | Built for v0.4.0 |
-| **One address and one key** | The only settings any client needs: the command line, the Claude Code plugin, the kit for other tools and the SDKs. | Built for v0.4.0 |
-| **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Built for v0.4.0 |
-| **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Built for v0.4.0 |
-| **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Built for v0.4.0 |
+| **Three agent tools** | `oml_write`, `oml_read` and `oml_workarea`, in place of eight. | Since v0.4.0 |
+| **One address and one key** | The only settings any client needs: the command line, the Claude Code plugin, the kit for other tools and the SDKs. | Since v0.4.0 |
+| **Recall during a session** | The agent searches memory for itself before non-trivial work, and, if you opt in, after a failed command. A read-only librarian subagent searches for you. | Since v0.4.0 |
+| **Claude on the web and on your phone** | A one-time connect code links claude.ai and the Claude apps to one agent key, on the server's own address. Unverified: its end-to-end suites have no recorded green run, and no live claude.ai connection has been made yet. | Since v0.4.0 |
+| **Quick start** | The installer, `oml login`, `oml setup claude-code` and `oml quickstart`. | Since v0.4.0 |
 
 ## Planned
 
@@ -264,7 +262,7 @@ it.
 | Profile | Use it for | Release |
 | --- | --- | --- |
 | **One host** | A laptop or a single server, from the server archive. | Since v0.1.0; the archive since v0.3.1 |
-| **Docker** | One person's laptop, with `oml quickstart` (unverified: no recorded green compose run yet) or the compose file, whose passwords are for a laptop and which listens on `127.0.0.1` only. | Compose since v0.1.0; `oml quickstart` built for v0.4.0 |
+| **Docker** | One person's laptop, with `oml quickstart` (unverified: no recorded green compose run yet) or the compose file, whose passwords are for a laptop and which listens on `127.0.0.1` only. | Compose since v0.1.0; `oml quickstart` since v0.4.0 |
 | **Kubernetes** | One server instance from the Helm chart. | Since v0.3.0; more than one instance not scheduled |
 
 Every profile runs the same server and the same history format. See

@@ -9,7 +9,7 @@ answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab rou
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the routed operations arrived in v0.1.0, v0.2.0 and v0.3.0; the rewrite is planned for v0.4.0 ([releases](../product/releases.md)).
+**Release:** the routed operations arrived in v0.1.0, v0.2.0 and v0.3.0; the rewrite arrived in v0.4.0 ([releases](../product/releases.md)).
 
 This page owns decision **D13** as contract: the two-ring JSON surface — the provider ring
 (`/v1`) and the lab ring (`/v2`) — authentication, idempotency
@@ -41,7 +41,7 @@ wrappers and the rule that regenerates them on every change to this contract are
 
 ## Two rings
 
-*Available since v0.1.0; `workarea` in the request in place of the `X-OML-Workarea` header planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `workarea` in the request in place of the `X-OML-Workarea` header since v0.4.0 · [releases](../product/releases.md)*
 
 One keyed listener carries two **stability rings**
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)); this page remains the one contract document for
@@ -123,7 +123,7 @@ additive — is in force.
 
 ## Authentication and authorization
 
-*Available since v0.1.0; grants of several roles per key since v0.2.0; `tenant` in place of `tenant_id` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; grants of several roles per key since v0.2.0; `tenant` in place of `tenant_id` since v0.4.0 · [releases](../product/releases.md)*
 
 Every request on either ring carries `Authorization: Bearer <api-key>`. `/mcp` is designed to
 take the same header with either a key value or, where the deployment sets `oauth.issuer`, a
@@ -164,13 +164,12 @@ the two discovery documents and the OAuth endpoints are unauthenticated.
 
 Bearer keys are the shipped mechanism on every route; `/mcp` also accepts a connection's access
 token, as exactly the key the connection is bound to, and no other route does
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md),
-[RS-2](../product/roadmap.md)). The role vocabulary and key authorization semantics are owned by
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). The role vocabulary and key authorization semantics are owned by
 [roles-and-keys.md](../architecture/roles-and-keys.md).
 
 ## Names and ids
 
-*Available since v0.3.0; request fields named after the kind they reference, the v0.3.0 spellings refused, and `text` in place of `body` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.3.0; request fields named after the kind they reference, the v0.3.0 spellings refused, and `text` in place of `body` since v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site for names
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md)): which records carry one, what a name may spell,
@@ -365,7 +364,7 @@ revokes the old one; the derived name stays on the old key, and still addresses 
 
 ## Idempotency
 
-*Available since v0.1.0; the body's `workarea` as the resolved workarea component planned for v0.4.0; the in-progress answer is not built · [releases](../product/releases.md)*
+*Available since v0.1.0; the body's `workarea` as the resolved workarea component since v0.4.0; the in-progress answer is not built · [releases](../product/releases.md)*
 
 Every state-creating `POST` requires an `Idempotency-Key` header (missing →
 `request.idempotency_key_required`). Read-shaped `POST`s — `recall`, `settings/validate` — do not
@@ -547,7 +546,7 @@ exist (R1, R4).
 
 ### Submit — `POST /v1/memories`
 
-*Available since v0.1.0; `workarea` in the body, the optional `verb` and `kind`, and the derived `claim_key` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `workarea` in the body, the optional `verb` and `kind`, and the derived `claim_key` since v0.4.0 · [releases](../product/releases.md)*
 
 One endpoint for the two submission verbs; `verb` selects the journal event
 (`submission.remember` / `submission.learn`, [event catalog](../data/event-catalog.md)). The
@@ -640,7 +639,7 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 ### Recall — `POST /v1/memories/recall`
 
-*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0 · [releases](../product/releases.md)*
 
 Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
 the lake (D12; [retrieval.md](../architecture/retrieval.md)). The scope is the subtree of the
@@ -701,7 +700,7 @@ unmeasured — [FR-4](../product/roadmap.md).
 
 ### Search — `GET /v1/memories`
 
-*Available since v0.2.0, as the own-work listing; the `workarea` parameter, and an own-work listing across every workarea the key wrote in, planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0, as the own-work listing; the `workarea` parameter, and an own-work listing across every workarea the key wrote in, since v0.4.0 · [releases](../product/releases.md)*
 
 Structured listing, paginated. Parameters: `workarea` (the subtree read), `claim_key`, `state`,
 `kind`, `since` (inclusive), `until` (exclusive), `own`. Returns memory summaries (no text), each carrying `tokens`,
@@ -738,7 +737,7 @@ re-applies the filters ([Pagination](#pagination)). On every listing, as on get 
 
 ### Get — `GET /v1/memories/{artifact_id}`
 
-*Available since v0.1.0; `text` in place of `body` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `text` in place of `body` since v0.4.0 · [releases](../product/releases.md)*
 
 One memory with its `text` (decrypted on the serving path only), its `tokens` and attachment
 descriptors. The calling key may fetch its own rows in any state, with no grant needed (global
@@ -782,7 +781,7 @@ ancestor of a promoted version included — which is the residual
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
 
-*Available since v0.1.0; the tip moves at ratification since v0.2.0; `workarea` in the body planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the tip moves at ratification since v0.2.0; `workarea` in the body since v0.4.0 · [releases](../product/releases.md)*
 
 Proposes a replacement for the version `{artifact_id}` names: a new attributed submission of the
 same `claim_key`, held like any write, whose `derives_from` includes the target and whose response
@@ -855,7 +854,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` planned for v0.4.0; status and edges planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.0 · [releases](../product/releases.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -952,7 +951,7 @@ successors for one-hop self-healing) — are declared in [errors.md](errors.md).
 
 ## Events tail
 
-*Available since v0.1.0; filtered per key since v0.2.0; the `workarea` parameter planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; filtered per key since v0.2.0; the `workarea` parameter since v0.4.0 · [releases](../product/releases.md)*
 
 `GET /v2/events?after_seq=<n>&limit=<m>&workarea=<node>` — the per-tenant journal, served as
 the [event catalog](../data/event-catalog.md)'s envelopes with **digest-only payloads** (D1: no
@@ -1027,7 +1026,7 @@ the chain live ([cli/reference.md](../cli/reference.md)).
 
 ## Review
 
-*Available since v0.1.0; a verdict without `serve_id` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; a verdict without `serve_id` since v0.4.0 · [releases](../product/releases.md)*
 
 The review ceremony over HTTP — external crews holding dreamer keys are the designed review
 capacity; the CLI is the human exception path (D11, D14). Review throughput is unmeasured —
@@ -1047,7 +1046,7 @@ promotion time, plus the per-workarea independence axis — are owned by
 
 ## Keys, grants, denials
 
-*Available since v0.1.0 (issuance), v0.2.0 (grants, denials) and v0.3.0 (key read); `workarea`, `default_workarea` and `tenant` in place of the v0.3.0 spellings planned for v0.4.0; revocation, rotation and grant changes not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (issuance), v0.2.0 (grants, denials) and v0.3.0 (key read); `workarea`, `default_workarea` and `tenant` in place of the v0.3.0 spellings since v0.4.0; revocation, rotation and grant changes not scheduled · [releases](../product/releases.md)*
 
 Admin key role throughout; a grant's role must be admissible under the key's role, and an issued
 key's role never exceeds the issuer's (`access.issuer_ceiling`; the
@@ -1074,7 +1073,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 ### Whoami — `GET /v2/whoami`
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 Any live key reads its own record, whatever its role, so a client started from its URL and key
 alone derives everything else from this one read ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)

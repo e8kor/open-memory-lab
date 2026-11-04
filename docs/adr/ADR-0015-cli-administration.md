@@ -7,7 +7,7 @@ answers: why the CLI is the whole administration surface, why a web console is d
 
 # ADR-0015 — The CLI is the administration surface; a web console is declined
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0028](ADR-0028-agent-key-issuance.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0028](ADR-0028-agent-key-issuance.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md)
 
 **Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 

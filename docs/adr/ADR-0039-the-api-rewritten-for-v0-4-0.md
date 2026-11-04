@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0039-the-api-rewritten-for-v0-4-0
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is pre-release instead of layered; the three MCP tools that replace the eight served ones, their hints and their argument rules; why the events tail leaves MCP and no file tool returns; the server-derived claim_key beside a required idempotency_key; one workarea field in place of the X-OML-Workarea header; one include_unreviewed flag; which HTTP routes collapse and where the 49 declared-but-unrouted operations go; the old-to-new mapping that shows nothing is lost; the breaking changes, their migration and the alias window; one error shape on HTTP and MCP; the URL and key that are every client's only start settings, and the whoami read that derives the rest; the build plan and its tests
 -->
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
-**Status:** proposed · 2026-11-03
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0014 (d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1), ADR-0029 (d2, d6, d8)
 

@@ -9,7 +9,7 @@ answers: what the system looks like end to end — what the v0.4.0 build runs, t
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the first slice since v0.1.0, see each page; the clients section as built for v0.4.0, not yet released; most containers are not scheduled ([releases](../product/releases.md)).
+**Release:** the first slice since v0.1.0, see each page; the clients section as of v0.4.0; most containers are not scheduled ([releases](../product/releases.md)).
 
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory
 asserts a claim; every claim is held on arrival, scanned, reviewed by an identity that did not
@@ -21,7 +21,7 @@ is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
 
 ## 0. What the build runs
 
-Sections 1 to 6 are the design. The build on `feat/v0.4.0`, not yet released, runs a subset of it:
+Sections 1 to 6 are the design. Release v0.4.0 runs a subset of it:
 
 | Part | As built | Decision |
 |---|---|---|

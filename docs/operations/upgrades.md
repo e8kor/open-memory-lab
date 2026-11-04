@@ -188,11 +188,18 @@ recorded in ADR-0034 d7 with the date.
 
 ## Server, CLI and plugin together (the upgrade to v0.4.0)
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 v0.4.0 rewrites the agent and HTTP surfaces and leaves the data alone: keys, grants, stored
-memories, the journal and the schema do not change, and it adds no migration
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). Its clients change with it,
+memories and the journal do not change
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). The schema only grows: two
+forward-only migrations, `0012_connections` and `0013_oauth_clients`, add `api_keys.credential`,
+with every existing key folded as `bearer`, make `api_keys.hash` nullable for connector keys,
+and add the five connection tables, each under `FORCE ROW LEVEL SECURITY` and granted to the
+serving role in 0007's form
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10). The lead runs
+them at start under `postgres.owner_url`, as every migration since v0.3.1, so the upgrade needs
+no step of its own for them. Its clients change with it,
 so the server, the `oml` CLI and the Claude Code plugin move in one window; the
 [changelog](../changelog.md) lists every break with its migration.
 
@@ -216,13 +223,18 @@ so the server, the `oml` CLI and the Claude Code plugin move in one window; the
 6. **Check** with `oml doctor`, which names each setting's source and the key the server sees,
    and in a Claude Code session, where `oml_write`, `oml_read` and `oml_workarea` are the
    plugin's tools.
+7. **Turn on connections**, only for Claude's hosted apps: set `OML_OAUTH__ISSUER` to the
+   public origin, pass `/.well-known/oauth-*` and `/oauth/*` through the proxy, and keep the
+   `Location` header of `POST /oauth/authorize` out of its access log
+   ([deployment](deployment.md#connections-behind-a-reverse-proxy)). Unset, connections stay
+   off and nothing else changes.
 
 A raw MCP client or a script that still calls a v0.3 tool name or CLI verb keeps working
 through v0.4.x, hidden, and each MCP call logs `mcp_alias_called` with the calling key's
 `key_id`, so the log names the keys to move before v0.5.0 removes the old names. That window is
 ADR-0039 d12's reading, which the maintainer has not decided. Rolling back means the v0.3
-server, CLI and plugin together; with no schema change, the v0.3 binaries run on the data as
-it stands.
+server, CLI and plugin together; the two migrations stay, as every migration does, and no
+v0.3 binary has been run on the v0.4.0 schema yet.
 
 **oml.doublegate.io**, the maintainer's deployment, runs a v0.3 release. Its upgrade is these
 steps, the server, the CLI and the plugin together, with the plugin configured and the

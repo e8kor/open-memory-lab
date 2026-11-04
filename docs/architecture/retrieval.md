@@ -24,7 +24,7 @@ declared in [roles-and-keys.md](roles-and-keys.md).
 
 ## The rule: Postgres serves, the lake never does
 
-*Available since v0.1.0; the names `include_unreviewed` and `workarea` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../product/releases.md)*
 
 Every client read — recall, fetch, FTS, vector search, graph and lineage
 reads — is served from PostgreSQL. **Delta Lake serves no client read.** The
@@ -262,7 +262,7 @@ wire.
 
 ## Own held rows in recall
 
-*Available since v0.2.0; the name `include_unreviewed` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the name `include_unreviewed` since v0.4.0 · [releases](../product/releases.md)*
 
 A recall with `include_unreviewed: true`, v0.3.0's `include_own_held`
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4;
@@ -358,7 +358,7 @@ predicate fails toward invisibility.
 
 ## Token budgets
 
-*Available since v0.2.0; the name `include_text` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the name `include_text` since v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site for recall budgets
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d7).

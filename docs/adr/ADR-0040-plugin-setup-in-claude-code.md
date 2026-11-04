@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0040-plugin-setup-in-claude-code
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: how a user points the oml plugin at a server and gives it a key inside Claude Code; the two userConfig options, why they are the same URL-and-key pair as every other client, and why the key is sensitive; why .mcp.json reads the options alone while the hooks fall back to OML_URL and OML_API_KEY, and the precedence between them; how a key file reaches the keychain without entering argv or a transcript; the minimum Claude Code version; what it amends in ADR-0028 and ADR-0029; which directory-submission blockers it clears and which remain
 -->
 
 # ADR-0040 — The plugin takes its server URL and its key through Claude Code's plugin configuration, keeps the key in the keychain, and falls back to `OML_URL` and `OML_API_KEY` only in its hooks
 
-**Status:** proposed · 2026-11-03
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0028 (d1), ADR-0029 (d4)
 

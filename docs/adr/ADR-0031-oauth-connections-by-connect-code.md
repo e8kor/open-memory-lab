@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0031-oauth-connections-by-connect-code
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: how Claude's hosted apps reach the agent plugin through a claude.ai custom connector; OML as an OAuth 2.1 protected resource with its own authorization server; the 401 challenge and the discovery documents; client registration by client ID metadata document with dynamic registration as the fallback, and the redirect allowlist; the connector key and its one-time connect code; the authorization page; tokens, rotation and reuse detection; why a token is never more than its key; the connection journal events, the oauth error family, operations, the version move and the build order
 -->
 
 # ADR-0031 — Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key
 
-**Status:** proposed · 2026-10-31
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0010 (d3, d7), ADR-0014 (d1, d2, d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15), ADR-0028 (d1)
 

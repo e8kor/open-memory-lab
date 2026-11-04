@@ -9,7 +9,7 @@ answers: which MCP tools the agent plugin exposes over streamable HTTP and how e
 
 **Status:** design draft for review · decided, not built
 
-**Release:** eight tools available, four since v0.1.0 and four since v0.2.0; the three task-shaped tools that replace them are planned for v0.4.0 ([releases](../product/releases.md)).
+**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answer unlisted through the 0.4 releases ([releases](../product/releases.md)).
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
@@ -45,7 +45,7 @@ common or mcp-tools.json differs from the served `tools/list`.
 
 ## Transport: streamable HTTP, stateless
 
-*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, since v0.4.0 · [releases](../product/releases.md)*
 
 The plugin runs the MCP streamable HTTP transport in stateless mode, declared
 up front:
@@ -92,7 +92,7 @@ time — the same sourcing discipline the auth question below already follows.
 
 ## Authentication: bearer keys and connections
 
-*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code since v0.4.0 · [releases](../product/releases.md)*
 
 Every HTTP request carrying an MCP message presents one credential in the same header: the
 agent's API key, or, for a client that cannot hold a key, a connection's access token:
@@ -129,8 +129,8 @@ mutually indistinguishable to every one of those mechanisms.
 Bearer keys stay the credential of every client that can hold one — the Claude
 Code plugin, scripts, reviewer crews — and nothing about them changes. The
 MCP authorization specification, revision 2025-11-25 (fetched 2026-10-31),
-and the clients that need it are recorded in
-[RS-2 on the roadmap](../product/roadmap.md).
+and the clients that need it are recorded in the context of
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md).
 
 ## The verb ceiling: what this surface can never do (R1)
 
@@ -296,7 +296,7 @@ items carry `text` and `tokens` like every other item, never a score.
 
 ## `oml_write`
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 Store a claim, a claim derived from others, a new version of one, or a
 proposal to retire one. Every write is **held on arrival**: scanned, then
@@ -370,7 +370,7 @@ banned author.
 
 ## `oml_read`
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 Find, fetch or list claims. Every mode answers
 [claim items](#the-claim-item) with their `text`, under a `mode` field
@@ -417,7 +417,7 @@ naming it in `details.field`:
 
 ## `oml_workarea`
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 One workarea as the calling key may see it: its identity, derived path,
 status, crew record, readable immediate children, and the verbs the key's
@@ -1589,7 +1589,7 @@ a `depth`/`limit` above the served ceiling returns the typed limit error from
 
 ## Wiring it into your agent
 
-*Available since v0.1.0; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; setup through Claude Code's plugin settings since v0.4.0 · [releases](../product/releases.md)*
 
 A generic MCP client configuration — the shape most harnesses accept, adjust
 the key names to yours:
@@ -1642,7 +1642,7 @@ this shape (ADR-0040 d6).
 
 Claude's hosted apps — claude.ai, Claude Desktop, and the Claude iOS and Android
 apps — cannot carry the header above, so they connect through a connection
-instead (built for v0.4.0, no live connection yet: [FR-34](../product/roadmap.md)).
+instead (since v0.4.0, no live connection yet: [FR-34](../product/roadmap.md)).
 The deployment must set `oauth.issuer` to its public origin, and its reverse
 proxy must pass the discovery and OAuth paths through
 ([deployment](../operations/deployment.md#connections-behind-a-reverse-proxy)).
@@ -1753,10 +1753,10 @@ an id, and the named crew record the workarea read serves, are the proposed
 [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s. The three-tool catalog, its
 modes and annotations, the designed annex, the events tail leaving MCP, and
 the rule that a new capability is a parameter, a resource or a hook first are
-the proposed [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)'s
+[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)'s
 (d2 to d5, d8). The Claude Code plugin's two settings and the entry that
-reads them alone are the proposed
+reads them alone are
 [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)'s (d1, d2, d6). Authentication by a connection,
-for Claude's hosted apps, is the proposed
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s, which would
-amend ADR-0014 d1, d2 and d4.
+for Claude's hosted apps, is
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s, which
+amends ADR-0014 d1, d2 and d4.

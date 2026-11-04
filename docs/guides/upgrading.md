@@ -1,19 +1,21 @@
 <!--
 id: guides/upgrading
 tier: engineering
-status: draft for review · describes the upgrade to v0.4.0, built and not yet released
+status: draft for review · describes the upgrade to v0.4.0
 answers: how a user and an operator move from v0.3.x to v0.4.0: the old-to-new tool, verb and setting table, the alias window and its undecided reading, the break list, claude plugin update and the one plugin configuration, the credentials file, and the server upgrade
 -->
 
 # Guide: upgrading from v0.3.x to v0.4.0
 
-**Status:** draft for review · describes the upgrade to v0.4.0, built and not yet released
+**Status:** draft for review · describes the upgrade to v0.4.0
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md))
+**Release:** since v0.4.0 ([releases](../product/releases.md))
 
 v0.4.0 rewrites what agents and clients call and leaves the data alone: keys, grants, stored
-memories, the journal and the schema do not change, and there is no migration
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). The server, the `oml` CLI and
+memories and the journal do not change
+([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). The schema only grows: the
+server runs two migrations for connections at start
+([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)), with no step of yours. The server, the `oml` CLI and
 the Claude Code plugin move together. The mechanics of the server's side are on
 [upgrades](../operations/upgrades.md#server-cli-and-plugin-together-the-upgrade-to-v040); this page is
 the order for each person.
@@ -76,5 +78,5 @@ decided; the other reading keeps no aliases, and then v0.4.0 answers only the ne
    it names each key still calling an old tool.
 5. Check with `oml doctor`.
 
-Rolling back means the v0.3 server, CLI and plugin together. With no schema change, the v0.3
-binaries run on the data as it stands.
+Rolling back means the v0.3 server, CLI and plugin together. The two migrations stay, and no
+v0.3 binary has been run on the v0.4.0 schema yet.

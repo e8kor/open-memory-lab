@@ -122,8 +122,12 @@ produces the number or the decision.
   FR-24; provider-ring latency against declared targets — FR-25
   ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md),
   [ADR-0024](../adr/ADR-0024-performance-foundation.md)).
-- Open questions, each a decision not yet taken: embedding model and boundary (RS-1), MCP
-  OAuth (RS-2), federation (RS-3), the Merkle specification (RS-4), sampling-policy semantics
+- Claude's own apps over OAuth by connect code
+  ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)): the connect flow green end
+  to end and one live claude.ai connection — FR-34; the sign-in challenge on every refused
+  request — FR-35; the key value a retried issuance keeps for a day — FR-36.
+- Open questions, each a decision not yet taken: embedding model and boundary (RS-1),
+  federation (RS-3), the Merkle specification (RS-4), sampling-policy semantics
   (RS-5), the connector surface (RS-6), MWK rotation (RS-7), tenant-wide erased-digest
   matching (RS-8), external chain-head anchoring (RS-9), the `oml:` upper-vocabulary register
   (RS-10), the external-ontology import profile (RS-11), the standalone keyring mechanism

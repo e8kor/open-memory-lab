@@ -27,12 +27,42 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## 0.4.0-design (in progress)
+## 0.4.0-design
 
 Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
-records. `info.version` moved to `0.4.0-design` with the contract split below; entries land
-here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
-this section rather than a second one.
+records. `info.version` moved to `0.4.0-design` with the contract split below; entries landed
+here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
+this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
+
+### 2026-11-04 — Release v0.4.0: ADR-0031, ADR-0038, ADR-0039, ADR-0040 and ADR-0041 accepted
+
+The maintainer accepted [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md),
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md),
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md) and
+[ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) on 2026-11-04 with release
+v0.4.0: three agent tools, one URL and one key to start, claude.ai and mobile by connect code,
+the plugin set up in Claude Code, and a one-line install. Each record's Status becomes accepted
+design, and its Release line names v0.4.0.
+
+- **Amended records:** ADR-0010, ADR-0014, ADR-0015, ADR-0018, ADR-0022, ADR-0025, ADR-0028 and
+  ADR-0029 gain their "amended by" pointers to the accepted records that amend them.
+- **Rewordings ADR-0031 owes:** a claim↔claim or workarea↔workarea link is a "connection edge"
+  in ADR-0010 d5, ADR-0012's context and ADR-0025's d1 rejected alternative; ADR-0025's agent-facing
+  results say the plugin "needs one key"; and the "token" that named a key in ADR-0022 and
+  ADR-0025 d13, d14 and d13's rejected alternative is now "key". RS-2 leaves the
+  [roadmap](product/roadmap.md), its exit criterion met, and [commitments](product/commitments.md)
+  lists FR-34, FR-35 and FR-36 in its place.
+- **Not done here:** the `spec-v0.4` tag of ADR-0031 d15 is cut with the release tag, not by this
+  change.
+- **Corrected:** [upgrades](operations/upgrades.md) and the [upgrading guide](guides/upgrading.md)
+  said v0.4.0 adds no migration; it adds `0012_connections` and `0013_oauth_clients`, which the
+  lead runs at start under the owner URL, and the upgrade gains the optional step that turns
+  connections on.
+- **Pages touched:** the five records, the amended records, the [register](adr/index.md),
+  [releases](product/releases.md), the roadmap, commitments, `llms.txt`, the pages citing RS-2,
+  every page whose release marker said planned or built for v0.4.0, and this page.
+- **No surface change:** `info.version` stays `0.4.0-design`.
 
 ### 2026-11-04 — The v0.4.0 documentation: Get started, install, five guides, eight quick scenarios beside the use-case catalogue, and every front page rewritten for the three tools and the one pair (ADR-0018, ADR-0041)
 
@@ -275,10 +305,11 @@ gains d10, the librarian v0.4.0 carries (ADR-0039, context).
 
 ### 2026-11-04 — Turn context on the rewritten surface: the agent recalls with `oml_read`, and a failed command recalls when opted in (ADR-0038, rebased onto ADR-0039 d2 and ADR-0040 d3)
 
-The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
+[ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md),
+proposed on 2026-11-03 and accepted by the maintainer on 2026-11-04 with release v0.4.0,
 was built on v0.3.0's tools in PR #24; this change merges it into v0.4.0 and fits it to the
 rewrite, as ADR-0039's consequences owe. It amends [ADR-0029](adr/ADR-0029-session-start-hook.md)
-d6 and d7; the pointer on ADR-0029 is added on acceptance, not before.
+d6 and d7; the pointer on ADR-0029 was added on acceptance, on 2026-11-04.
 
 - **Decided and built:** `initialize` answers with server instructions under 4,096 characters
   that ask for `oml_read` with a query within their first 1,024 and name `oml_write` for a record,
@@ -648,13 +679,14 @@ ADR-0039's build.
 
 ### 2026-10-31 — Connections: Claude's hosted apps over OAuth, bound by a one-time connect code (ADR-0031)
 
-The proposed [ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md) designs how claude.ai,
+[ADR-0031](adr/ADR-0031-oauth-connections-by-connect-code.md), proposed on 2026-10-31 and accepted by the
+maintainer on 2026-11-04 with release v0.4.0, designs how claude.ai,
 Claude Desktop and the Claude iOS and Android apps reach the [agent plugin](api/mcp-plugin.md)
 through a claude.ai custom connector, on the maintainer's three fixed decisions: OML as an OAuth 2.1
 protected resource with its own authorization server, beside unchanged bearer keys; the binding by a
 one-time connect code; the build after iteration 3. It amends ADR-0010 (d3, d7), ADR-0014 (d1, d2,
 d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15) and ADR-0028 (d1); their Status lines gain
-the back-pointer on acceptance, not before. Sources: the MCP authorization specification, revision
+the back-pointer on acceptance, and did on 2026-11-04. Sources: the MCP authorization specification, revision
 2025-11-25, Anthropic's connector documentation, the client ID metadata document draft (-02), RFC
 9700, RFC 9207, the Fetch Standard, the IANA IPv4 and IPv6 Special-Purpose Address Registries and
 Caddy's `log` directive documentation, all fetched 2026-10-31.
@@ -762,7 +794,8 @@ its Status line, and the [register](adr/index.md) a Release column; neither rest
 
 ### 2026-11-03 — A quick start in one command per role (proposed ADR-0041), the installers, and the v0.4.0 documentation plan
 
-Proposed [ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md) decides how a person
+[ADR-0041](adr/ADR-0041-a-quick-start-in-one-command-per-role.md), proposed on 2026-11-03 and accepted by the
+maintainer on 2026-11-04 with release v0.4.0, decides how a person
 goes from nothing to a first memory in one command per role. Its d1–d3 and d8 are built;
 d4–d7, d9 and d10 are decided, not built. No `info.version` change: no HTTP surface moves.
 
@@ -790,7 +823,8 @@ agent kit of MCP configurations for other agent tools, signed and summed with th
 
 ### 2026-11-03 — The API rewritten for v0.3.2, and the plugin configured in Claude Code (ADR-0039, ADR-0040, proposed)
 
-[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), proposed on 2026-11-03, records the
+[ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), proposed on 2026-11-03 and accepted by the maintainer
+on 2026-11-04 with release v0.4.0, records the
 maintainer's choice that day to rewrite the API while OML is pre-release instead of layering on it,
 to ship the rewrite as v0.3.2, and the maintainer's answers to its open questions and to six
 findings of the use-case call map. It decides the three MCP tools `oml_write`, `oml_read` and
@@ -810,7 +844,8 @@ tenant, role, key name and default workarea; `oml bootstrap claim --token-stdin`
 built `--token`; the breaking changes and their migration; and the build plan. It amends ADR-0014
 (d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1) and ADR-0029 (d2, d6, d8).
 
-[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md), proposed the same day, records the
+[ADR-0040](adr/ADR-0040-plugin-setup-in-claude-code.md), proposed the same day and accepted with release
+v0.4.0 on 2026-11-04, records the
 maintainer's choice to configure the plugin in Claude Code: a `url` option and a sensitive
 `api_key` option kept in the keychain, the same pair as every other client; `.mcp.json` reading
 `${user_config.*}` and nothing from the environment; the hooks reading `CLAUDE_PLUGIN_OPTION_*`

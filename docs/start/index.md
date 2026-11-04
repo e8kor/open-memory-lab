@@ -1,21 +1,19 @@
 <!--
 id: start/index
 tier: client
-status: draft for review · describes v0.4.0, built and not yet released
+status: draft for review · describes v0.4.0
 answers: the three ways to start with Open Memory Lab, each led by one command: use OML with a server and a key, run OML on a machine with Docker, and add an agent as an administrator; what each needs, what it prints, its target time, and when a first memory becomes visible to others
 -->
 
 # Get started
 
-**Status:** draft for review · describes v0.4.0, built and not yet released
+**Status:** draft for review · describes v0.4.0
 
 There are three ways in, one for each role. Each starts with one command. Every client needs
 exactly two settings, the server's address and a key, and the server works out everything else
 from the key.
 
-The commands on this page are for v0.4.0, which is built and not yet released
-([releases](../product/releases.md)). Until the release exists, the installer answers "not
-found".
+The commands on this page are for v0.4.0 ([releases](../product/releases.md)).
 
 ## Use OML: you have a server address and a key
 

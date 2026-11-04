@@ -1,16 +1,16 @@
 <!--
 id: guides/claude-code
 tier: engineering
-status: draft for review · describes v0.4.0, built and not yet released
+status: draft for review · describes v0.4.0
 answers: how to connect Claude Code to an OML server from nothing: install the CLI, oml login, oml setup claude-code, reload, the first write and read and why the write is held, the session-start hook and the permission rule it needs, the librarian and failure recall, the manual path without the CLI, and removal
 -->
 
 # Guide: Claude Code
 
-**Status:** draft for review · describes v0.4.0, built and not yet released
+**Status:** draft for review · describes v0.4.0
 
 **Release:** the plugin since v0.1.0; setup through Claude Code's plugin settings and `oml setup
-claude-code` planned for v0.4.0 ([releases](../product/releases.md))
+claude-code` since v0.4.0 ([releases](../product/releases.md))
 
 From nothing to an agent that saves and finds shared memory in Claude Code. You need Claude Code
 2.1.285 or later, the server's address and an agent key from your administrator. The commands

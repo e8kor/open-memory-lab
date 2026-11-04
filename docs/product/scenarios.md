@@ -1,13 +1,13 @@
 <!--
 id: product/scenarios
 tier: client
-status: draft for review · describes v0.4.0, built and not yet released
-answers: what people and agents do with Open Memory Lab, as eight short scenarios of five steps or fewer, one call per step, on the three agent tools; who each is for, what each step shows, and whether it works in the current release or in v0.4.0
+status: draft for review · describes v0.4.0
+answers: what people and agents do with Open Memory Lab, as eight short scenarios of five steps or fewer, one call per step, on the three agent tools; who each is for, what each step shows, and whether it works since v0.3.1 or since v0.4.0
 -->
 
 # Quick scenarios
 
-**Status:** draft for review · describes v0.4.0, built and not yet released
+**Status:** draft for review · describes v0.4.0
 
 Eight scenarios cover what people and agents do with Open Memory Lab (OML). Each has five steps
 or fewer, and each step is one call: one tool call by an agent, or one command by a person.
@@ -21,8 +21,8 @@ engineering companion.
 
 | Status | Means |
 |---|---|
-| **Available now** | Works in the current release, v0.3.1, under its older tool names. |
-| **In v0.4.0** | Built for v0.4.0, which is not released yet. |
+| **Available now** | Works since v0.3.1 or earlier, under its older tool names. |
+| **In v0.4.0** | Introduced in v0.4.0, the current release. |
 
 Nothing on this page has been measured. Where a step depends on how fast or how well something
 works, such as how good search results are, the [roadmap](roadmap.md) holds the open question.

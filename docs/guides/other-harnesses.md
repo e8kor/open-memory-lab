@@ -1,13 +1,13 @@
 <!--
 id: guides/other-harnesses
 tier: engineering
-status: draft for review · the kit since v0.3.1; the one pair built for v0.4.0, not yet released
+status: draft for review · the kit since v0.3.1; the one pair since v0.4.0
 answers: how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_URL and OML_API_KEY; which tools need the URL edited; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link yet
 -->
 
 # Guide: Codex, Cursor, Gemini CLI, VS Code and Claude Desktop
 
-**Status:** draft for review · the kit since v0.3.1; the one pair built for v0.4.0, not yet released
+**Status:** draft for review · the kit since v0.3.1; the one pair since v0.4.0
 
 **Release:** the agent kit since v0.3.1; `OML_URL` and `OML_API_KEY` as its only settings planned
 for v0.4.0 ([releases](../product/releases.md))

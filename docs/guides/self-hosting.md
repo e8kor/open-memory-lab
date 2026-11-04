@@ -1,17 +1,17 @@
 <!--
 id: guides/self-hosting
 tier: engineering
-status: draft for review · oml quickstart built for v0.4.0, not yet released; its compose file not yet run under Docker
+status: draft for review · oml quickstart since v0.4.0; its compose file not yet run under Docker
 answers: how to run OML yourself: oml quickstart on a laptop and what it writes, runs and prints; the docker profile's one-trust-domain caveat; then one host with TLS from the server archive behind a reverse proxy; then Kubernetes with the interim chart; and what each step does not give
 -->
 
 # Guide: self-hosting
 
-**Status:** draft for review · `oml quickstart` built for v0.4.0, not yet released; its compose
+**Status:** draft for review · `oml quickstart` since v0.4.0; its compose
 file not yet run under Docker
 
 **Release:** compose since v0.1.0, the server archive since v0.3.1, the chart since v0.3.0;
-`oml quickstart` planned for v0.4.0 ([releases](../product/releases.md))
+`oml quickstart` since v0.4.0 ([releases](../product/releases.md))
 
 Three steps, each a larger trust domain: a laptop, one host that people reach over TLS, and a
 Kubernetes cluster. The settings are declared on [configuration](../operations/configuration.md)

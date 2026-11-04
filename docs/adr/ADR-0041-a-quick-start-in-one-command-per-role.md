@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0041-a-quick-start-in-one-command-per-role
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: how a person goes from nothing to a first memory in one command per role; what install.sh and install.ps1 download, check and write, and what they leave alone; how cosign and the checksum-only path differ and what each catches; the pinned default version and latest; where the scripts are served and what a piped install trusts; oml login and oml doctor as the onboarding step; oml setup claude-code; oml quickstart for a self-hoster; the install-smoke CI job and check_release.py's installer checks; the time-to-first-memory targets and their roadmap row
 -->
 
 # ADR-0041 — A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`
 
-**Status:** proposed · 2026-11-03
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.4.0; `install.sh --quickstart` and d4's short install address are not in it ([releases](../product/releases.md#decisions))
 
 ## Context
 

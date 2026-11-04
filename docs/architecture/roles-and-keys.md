@@ -154,7 +154,7 @@ matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
 
-*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` since v0.4.0 · [releases](../product/releases.md)*
 
 This section is the single declaration site for which grant roles a key may carry and for the
 order in which a workarea-scoped verb is refused
@@ -295,7 +295,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 
 ## Own
 
-*Available since v0.2.0; the names `include_unreviewed` and `workarea` planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../product/releases.md)*
 
 A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
 key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
@@ -811,6 +811,5 @@ admissibility, the refusal order, the issuance order, own and the effective verb
 key's crew and the admin structure reads are the proposed
 [ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
 adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
-keys, connect codes and connections are the proposed
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11), which
-restates [RS-2](../product/roadmap.md).
+keys, connect codes and connections are
+[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11).

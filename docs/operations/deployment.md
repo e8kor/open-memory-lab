@@ -309,7 +309,7 @@ runs. An archive that does not verify is not installed.
 
 ## Connections behind a reverse proxy
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 Claude's hosted apps — claude.ai, Claude Desktop and the Claude mobile apps — reach OML through a
 connection opened by a one-time connect code
@@ -473,7 +473,7 @@ the consequences.
 
 ### Docker quickstart
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 `oml quickstart` is the docker profile's quick start as built: one verb writes a compose file with
 the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with an owner-only

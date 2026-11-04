@@ -201,7 +201,7 @@ in an incident review is a design defect ([observability](observability.md)):
 
 ## Client settings
 
-*Planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../product/releases.md)*
 
 This page configures the server. A client takes two settings and nothing else: the server's URL
 without `/mcp`, and a key ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d15). The

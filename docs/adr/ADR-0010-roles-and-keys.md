@@ -7,7 +7,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 # ADR-0010 — Roles and keys: reader, writer, dreamer, admin, operator
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md)
 
 **Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 
@@ -57,7 +57,7 @@ Everything here is decided, not built.
 
 - **d5 — Dreamer is one role with two capability classes, split at promotion.** Class (a),
   propose: edit-as-proposal (a new attributed submission carrying `derives_from`) and connection
-  proposals, claim↔claim and workarea↔workarea. Class (b), review: verdicts and connection
+  proposals, claim↔claim and workarea↔workarea. Class (b), review: verdicts and connection-edge
   ratification. The split is enforced where it matters — at promotion time: a dreamer's verdict
   is refused when that dreamer's key or principal appears anywhere in the row's lineage closure,
   pending and ratified edges alike ([ADR-0001](ADR-0001-the-constitution.md) d2), and a

@@ -1,13 +1,13 @@
 <!--
 id: product/use-cases
 tier: client
-status: draft for review · statuses read v0.3.1 as released and v0.4.0 as built on its release branch, not yet released
+status: draft for review · statuses read v0.3.1 and v0.4.0 as released
 answers: who uses Open Memory Lab and for what; each use case's goal, how it plays out in v0.4.0, what its user sees and whether it is available now in v0.3.1, in v0.4.0, designed with its planned release, parked or not scheduled, or planned; grouped by journey, with one walkthrough of a day of an agent and a reviewer
 -->
 
 # Use cases
 
-**Status:** draft for review · statuses read v0.3.1 as released and v0.4.0 as built on its release branch, not yet released
+**Status:** draft for review · statuses read v0.3.1 and v0.4.0 as released
 
 This page describes what each kind of user does with Open Memory Lab (OML), one use case at a
 time: the goal, how it plays out, what the user sees, and whether it works today. It explains
@@ -31,8 +31,8 @@ Every use case has one of these statuses. A status describes the software, never
 
 | Status | Means |
 |---|---|
-| **Available now** | Works in the current release, v0.3.1. Where v0.4.0 changes how it works, the story tells the v0.4.0 way and a note says what v0.3.1 does. |
-| **In v0.4.0** | Built for v0.4.0, which is not released yet. |
+| **Available now** | Works since v0.3.1 or earlier. Where v0.4.0 changes how it works, the story tells the v0.4.0 way and a note says what v0.3.1 does. |
+| **In v0.4.0** | Introduced in v0.4.0, the current release. |
 | **Designed** | Decided, not built, and in no release. Each says what [releases](releases.md) assigns it: **planned for** a named release, **parked** (deliberately set aside, with no release) or **not scheduled** (no release assigned yet). |
 | **Planned** | Decided, not yet designed: the project has decided to do it, and how it works is still open. |
 
