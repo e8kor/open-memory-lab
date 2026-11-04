@@ -1,0 +1,1206 @@
+{
+ "version": 1,
+ "workarea": "eval-crew",
+ "memories": [
+  {
+   "id": "m001",
+   "type": "decision",
+   "topic": "deploy",
+   "text": "We deploy the api service with a canary that takes 5% of traffic for 20 minutes before full rollout, because the March 2026 outage reached every customer within two minutes of a direct rollout."
+  },
+  {
+   "id": "m002",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The production Kubernetes cluster is named tl-prod-euw1 and runs in the europe-west1 region."
+  },
+  {
+   "id": "m003",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The staging cluster tl-stage-euw1 is rebuilt from scratch every Sunday at 03:00 UTC, so nothing stateful may live there."
+  },
+  {
+   "id": "m004",
+   "type": "gotcha",
+   "topic": "deploy",
+   "text": "Helm upgrades of the api chart fail with 'field is immutable' if the Deployment's selector labels change; the selector must be left as app.kubernetes.io/name=api."
+  },
+  {
+   "id": "m005",
+   "type": "convention",
+   "topic": "deploy",
+   "text": "Every Helm release name equals the chart name plus the environment, for example api-prod or worker-stage."
+  },
+  {
+   "id": "m006",
+   "type": "decision",
+   "topic": "deploy",
+   "text": "Rollbacks are done with helm rollback to the previous revision, never by redeploying an older image tag by hand, so the release history stays truthful."
+  },
+  {
+   "id": "m007",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The deploy window for production was Tuesday and Thursday 09:00 to 15:00 CET until 2026-05-31."
+  },
+  {
+   "id": "m008",
+   "type": "decision",
+   "topic": "deploy",
+   "text": "Since 2026-06-01 production deploys are allowed Monday to Thursday 09:00 to 16:00 CET; Friday deploys stay forbidden."
+  },
+  {
+   "id": "m009",
+   "type": "gotcha",
+   "topic": "deploy",
+   "text": "The worker pods need terminationGracePeriodSeconds of at least 120, otherwise invoice PDF jobs are killed mid-render during a rollout."
+  },
+  {
+   "id": "m010",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The ingress controller is ingress-nginx 1.11 and terminates TLS with certificates issued by cert-manager from Let's Encrypt."
+  },
+  {
+   "id": "m011",
+   "type": "finding",
+   "topic": "deploy",
+   "text": "Cert-manager renewal failed silently in August 2026 because the ClusterIssuer's ACME account email pointed at a deleted mailbox."
+  },
+  {
+   "id": "m012",
+   "type": "convention",
+   "topic": "deploy",
+   "text": "Container images are tagged with the full git commit SHA, never with latest, so a running pod can be traced back to its commit."
+  },
+  {
+   "id": "m013",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The api Deployment runs 6 replicas in production with a HorizontalPodAutoscaler that scales between 6 and 18 on 65% CPU."
+  },
+  {
+   "id": "m014",
+   "type": "gotcha",
+   "topic": "deploy",
+   "text": "kubectl port-forward to the production database is blocked by a NetworkPolicy; use the bastion pod db-bastion in the ops namespace instead."
+  },
+  {
+   "id": "m015",
+   "type": "decision",
+   "topic": "deploy",
+   "text": "We chose Argo CD over Flux in January 2026 because Argo's UI let the on-call reviewer see drift without cluster credentials."
+  },
+  {
+   "id": "m016",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "Argo CD syncs the tl-prod-euw1 cluster from the deploy/prod directory of the infra repository every three minutes."
+  },
+  {
+   "id": "m017",
+   "type": "gotcha",
+   "topic": "deploy",
+   "text": "Argo CD marks the api application OutOfSync forever if the HPA changes spec.replicas; the Deployment manifest must omit replicas."
+  },
+  {
+   "id": "m018",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "Node pools in production use e2-standard-8 machines; the pdf-render pool uses c2-standard-16 because rendering is CPU bound."
+  },
+  {
+   "id": "m019",
+   "type": "finding",
+   "topic": "deploy",
+   "text": "After moving pdf rendering to the c2-standard-16 pool, the p95 invoice render time fell from 4.1 s to 1.7 s."
+  },
+  {
+   "id": "m020",
+   "type": "decision",
+   "topic": "deploy",
+   "text": "Secrets reach pods through the External Secrets Operator from Google Secret Manager; no secret is ever committed to the infra repository, even encrypted."
+  },
+  {
+   "id": "m021",
+   "type": "gotcha",
+   "topic": "deploy",
+   "text": "An ExternalSecret refresh does not restart pods; after rotating a secret, run kubectl rollout restart on the Deployment that mounts it."
+  },
+  {
+   "id": "m022",
+   "type": "fact",
+   "topic": "deploy",
+   "text": "The blue-green switch for the marketing site is a Cloud DNS record change with a TTL of 60 seconds."
+  },
+  {
+   "id": "m023",
+   "type": "convention",
+   "topic": "deploy",
+   "text": "Database migrations run as a Kubernetes Job named migrate-<sha> before the api rollout starts, and the rollout waits for the Job to succeed."
+  },
+  {
+   "id": "m024",
+   "type": "finding",
+   "topic": "deploy",
+   "text": "Pod startup takes 38 seconds on average, of which 30 seconds is the JVM warming the invoice template cache."
+  },
+  {
+   "id": "m025",
+   "type": "fact",
+   "topic": "database",
+   "text": "The primary database is PostgreSQL 16 on Cloud SQL, instance tl-pg-prod, with one synchronous standby in a second zone."
+  },
+  {
+   "id": "m026",
+   "type": "finding",
+   "topic": "database",
+   "text": "Before the upgrade the database ran PostgreSQL 13; the upgrade to 16 happened on 2026-03-14 with 11 minutes of write downtime."
+  },
+  {
+   "id": "m027",
+   "type": "finding",
+   "topic": "database",
+   "text": "After the upgrade to PostgreSQL 16, the nightly ledger aggregation query got 3x faster because of incremental sort."
+  },
+  {
+   "id": "m028",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "After the PostgreSQL 16 upgrade, run ANALYZE on every table, because pg_upgrade does not carry planner statistics and the first day's plans were terrible."
+  },
+  {
+   "id": "m029",
+   "type": "convention",
+   "topic": "database",
+   "text": "Every table has a created_at and updated_at column of type timestamptz, set by the database, never by the application."
+  },
+  {
+   "id": "m030",
+   "type": "decision",
+   "topic": "database",
+   "text": "We use UUIDv7 primary keys instead of bigserial so ids sort by creation time and can be generated by clients before insert."
+  },
+  {
+   "id": "m031",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "Adding a column with a volatile default rewrites the whole table; on the invoices table that took a lock for 9 minutes in staging."
+  },
+  {
+   "id": "m032",
+   "type": "convention",
+   "topic": "database",
+   "text": "Indexes on large tables are created with CREATE INDEX CONCURRENTLY, and the migration must not run inside a transaction for that statement."
+  },
+  {
+   "id": "m033",
+   "type": "fact",
+   "topic": "database",
+   "text": "The invoices table holds about 410 million rows and is partitioned by month on issued_at."
+  },
+  {
+   "id": "m034",
+   "type": "decision",
+   "topic": "database",
+   "text": "Old monthly partitions of invoices older than 7 years are detached and exported to cold storage, because the retention law requires 7 years."
+  },
+  {
+   "id": "m035",
+   "type": "fact",
+   "topic": "database",
+   "text": "The connection pooler is PgBouncer in transaction mode with a pool of 80 server connections per database."
+  },
+  {
+   "id": "m036",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "With PgBouncer in transaction mode, session-level SET statements and prepared statements leak between clients; use SET LOCAL inside a transaction."
+  },
+  {
+   "id": "m037",
+   "type": "finding",
+   "topic": "database",
+   "text": "The ledger_entries table had 31% bloat in July 2026 because autovacuum could not keep up with updates to the status column."
+  },
+  {
+   "id": "m038",
+   "type": "decision",
+   "topic": "database",
+   "text": "Ledger entries are append-only: a correction is a new reversing entry, never an UPDATE, so the ledger can be audited."
+  },
+  {
+   "id": "m039",
+   "type": "fact",
+   "topic": "database",
+   "text": "Point-in-time recovery for tl-pg-prod is configured with 14 days of WAL retention."
+  },
+  {
+   "id": "m040",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "The read replica lags up to 40 seconds under the nightly batch, so reports that must be exact read from the primary."
+  },
+  {
+   "id": "m041",
+   "type": "convention",
+   "topic": "database",
+   "text": "Migration files live in db/migrations and are named with a timestamp prefix like 20260314_0930_add_tax_region.sql."
+  },
+  {
+   "id": "m042",
+   "type": "fact",
+   "topic": "database",
+   "text": "The tax_rates table is keyed by (country_code, region_code, valid_from) and the lookup takes the latest valid_from not after the invoice date."
+  },
+  {
+   "id": "m043",
+   "type": "finding",
+   "topic": "database",
+   "text": "A missing index on payments(invoice_id) caused sequential scans that added 800 ms to the invoice detail page; the index was added on 2026-04-02."
+  },
+  {
+   "id": "m044",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "jsonb columns compared with = treat key order as irrelevant, but the text cast does not; never compare jsonb::text in queries."
+  },
+  {
+   "id": "m045",
+   "type": "fact",
+   "topic": "database",
+   "text": "Row level security is enabled on every tenant table and filters by current_setting('app.tenant_id')."
+  },
+  {
+   "id": "m046",
+   "type": "gotcha",
+   "topic": "database",
+   "text": "A connection that never set app.tenant_id sees zero rows rather than an error, so a missing tenant context looks like an empty account."
+  },
+  {
+   "id": "m047",
+   "type": "decision",
+   "topic": "database",
+   "text": "We do not use database triggers for business logic; triggers are only allowed for updated_at and audit rows."
+  },
+  {
+   "id": "m048",
+   "type": "fact",
+   "topic": "database",
+   "text": "Database backups are taken nightly at 01:00 UTC and copied to a bucket in a second region, tl-backups-euw4."
+  },
+  {
+   "id": "m049",
+   "type": "finding",
+   "topic": "database",
+   "text": "The restore drill on 2026-09-10 restored tl-pg-prod into a scratch instance in 47 minutes."
+  },
+  {
+   "id": "m050",
+   "type": "fact",
+   "topic": "api",
+   "text": "The public API is versioned in the URL path; v2 is current and v1 is deprecated with a sunset date of 2027-01-31."
+  },
+  {
+   "id": "m051",
+   "type": "convention",
+   "topic": "api",
+   "text": "Every API error response is a JSON object with code, message and request_id fields, and the code is a dotted string such as invoice.not_found."
+  },
+  {
+   "id": "m052",
+   "type": "decision",
+   "topic": "api",
+   "text": "Pagination uses opaque cursors rather than page numbers, because offsets over the partitioned invoices table were slow and unstable under inserts."
+  },
+  {
+   "id": "m053",
+   "type": "fact",
+   "topic": "api",
+   "text": "The default page size is 50 and the maximum is 200; a larger limit is refused with request.validation."
+  },
+  {
+   "id": "m054",
+   "type": "gotcha",
+   "topic": "api",
+   "text": "The Idempotency-Key header is required on POST /v2/invoices; a retry without it creates a duplicate invoice."
+  },
+  {
+   "id": "m055",
+   "type": "fact",
+   "topic": "api",
+   "text": "Idempotency keys are remembered for 24 hours; a reuse after that creates a new resource."
+  },
+  {
+   "id": "m056",
+   "type": "convention",
+   "topic": "api",
+   "text": "Handler functions are named verb_resource, for example create_invoice, list_payments, void_credit_note."
+  },
+  {
+   "id": "m057",
+   "type": "fact",
+   "topic": "api",
+   "text": "The rate limit is 600 requests per minute per API key, enforced by a token bucket in Redis, answering 429 with Retry-After."
+  },
+  {
+   "id": "m058",
+   "type": "finding",
+   "topic": "api",
+   "text": "Most 429 responses in September 2026 came from one integration partner polling GET /v2/invoices every second instead of using webhooks."
+  },
+  {
+   "id": "m059",
+   "type": "decision",
+   "topic": "api",
+   "text": "Webhooks are signed with HMAC-SHA256 over the raw body and the timestamp, using a per-endpoint secret, and receivers must reject signatures older than 5 minutes."
+  },
+  {
+   "id": "m060",
+   "type": "gotcha",
+   "topic": "api",
+   "text": "Webhook signature checks fail if the receiver parses and re-serializes the JSON before hashing; the signature covers the raw bytes."
+  },
+  {
+   "id": "m061",
+   "type": "fact",
+   "topic": "api",
+   "text": "Webhook delivery retries with exponential backoff for up to 72 hours, then the endpoint is disabled and the account owner is emailed."
+  },
+  {
+   "id": "m062",
+   "type": "fact",
+   "topic": "api",
+   "text": "The OpenAPI document is generated from the handlers by utoipa and published at /v2/openapi.json."
+  },
+  {
+   "id": "m063",
+   "type": "convention",
+   "topic": "api",
+   "text": "Money amounts in the API are integer minor units with an ISO 4217 currency code, never floats: amount_minor=1999, currency=EUR."
+  },
+  {
+   "id": "m064",
+   "type": "gotcha",
+   "topic": "api",
+   "text": "Currencies with three decimal places, such as KWD and BHD, break code that assumes minor units are cents; use the currency's exponent."
+  },
+  {
+   "id": "m065",
+   "type": "decision",
+   "topic": "api",
+   "text": "The API uses ISO 8601 timestamps in UTC with a trailing Z; local times are never accepted or returned."
+  },
+  {
+   "id": "m066",
+   "type": "fact",
+   "topic": "api",
+   "text": "The api service is written in Kotlin on Ktor 2.3 and runs on Java 21."
+  },
+  {
+   "id": "m067",
+   "type": "finding",
+   "topic": "api",
+   "text": "Switching the JSON library from Jackson to kotlinx.serialization cut p50 latency of GET /v2/invoices/{id} from 42 ms to 31 ms."
+  },
+  {
+   "id": "m068",
+   "type": "gotcha",
+   "topic": "api",
+   "text": "kotlinx.serialization drops fields with default values from the output unless encodeDefaults is true, which silently removed status=draft from responses."
+  },
+  {
+   "id": "m069",
+   "type": "fact",
+   "topic": "api",
+   "text": "Request timeouts are 30 seconds at the ingress and 25 seconds in the Ktor server, so the server answers before the ingress cuts the connection."
+  },
+  {
+   "id": "m070",
+   "type": "fact",
+   "topic": "auth",
+   "text": "User login uses OpenID Connect with Auth0 as the identity provider; the tenant id travels in a custom claim https://tallyline.example/tenant."
+  },
+  {
+   "id": "m071",
+   "type": "decision",
+   "topic": "auth",
+   "text": "API keys are stored as SHA-256 hashes with a visible 8 character prefix like tl_live_ab12cd34, and the full key is shown once at creation."
+  },
+  {
+   "id": "m072",
+   "type": "gotcha",
+   "topic": "auth",
+   "text": "Auth0 access tokens expire after 1 hour but the console kept a stale token in localStorage, so users saw 401 errors after lunch until the refresh fix."
+  },
+  {
+   "id": "m073",
+   "type": "convention",
+   "topic": "auth",
+   "text": "Permission checks happen in the service layer with requirePermission(), never in controllers or SQL."
+  },
+  {
+   "id": "m074",
+   "type": "fact",
+   "topic": "auth",
+   "text": "Roles are owner, admin, accountant and viewer; only owner can delete the organization or change billing."
+  },
+  {
+   "id": "m075",
+   "type": "decision",
+   "topic": "auth",
+   "text": "We rejected storing session tokens in cookies without SameSite=strict after the CSRF finding in the June 2026 pentest."
+  },
+  {
+   "id": "m076",
+   "type": "finding",
+   "topic": "auth",
+   "text": "The June 2026 penetration test found a CSRF hole on POST /settings/members because the session cookie used SameSite=lax."
+  },
+  {
+   "id": "m077",
+   "type": "gotcha",
+   "topic": "auth",
+   "text": "Auth0 rate limits the Management API to 15 requests per second; bulk user imports must be throttled or they fail halfway."
+  },
+  {
+   "id": "m078",
+   "type": "fact",
+   "topic": "auth",
+   "text": "Two-factor authentication is mandatory for owner and admin roles since 2026-07-01."
+  },
+  {
+   "id": "m079",
+   "type": "convention",
+   "topic": "auth",
+   "text": "Never log full API keys, tokens or passwords; the logger's redact filter masks fields named token, secret, password and authorization."
+  },
+  {
+   "id": "m080",
+   "type": "decision",
+   "topic": "auth",
+   "text": "Service-to-service calls inside the cluster use mTLS through the Linkerd mesh rather than shared bearer tokens."
+  },
+  {
+   "id": "m081",
+   "type": "gotcha",
+   "topic": "auth",
+   "text": "Linkerd's mTLS is skipped for traffic to the database port because the proxy is configured to skip port 5432; database TLS is enforced by Cloud SQL instead."
+  },
+  {
+   "id": "m082",
+   "type": "fact",
+   "topic": "auth",
+   "text": "Signing keys for JWTs issued by the api are rotated every 90 days and published at /.well-known/jwks.json."
+  },
+  {
+   "id": "m083",
+   "type": "finding",
+   "topic": "auth",
+   "text": "An expired JWKS cache in the worker caused all webhook-triggered jobs to fail authorization for 25 minutes on 2026-08-19."
+  },
+  {
+   "id": "m084",
+   "type": "decision",
+   "topic": "auth",
+   "text": "Personal data of end customers is encrypted at the field level with envelope encryption under a Cloud KMS key per tenant."
+  },
+  {
+   "id": "m085",
+   "type": "gotcha",
+   "topic": "auth",
+   "text": "Deleting a tenant's KMS key makes its encrypted fields unrecoverable after the 30-day destroy schedule; that is the GDPR erasure path and must never run by accident."
+  },
+  {
+   "id": "m086",
+   "type": "convention",
+   "topic": "auth",
+   "text": "Security findings are tracked as issues with the label security and must be fixed within 7 days for high severity and 30 days for medium."
+  },
+  {
+   "id": "m087",
+   "type": "fact",
+   "topic": "auth",
+   "text": "The SSO feature for enterprise plans supports SAML 2.0 through Auth0 enterprise connections."
+  },
+  {
+   "id": "m088",
+   "type": "fact",
+   "topic": "frontend",
+   "text": "The customer console is a React 18 single-page app built with Vite and TypeScript, deployed to Cloud Storage behind Cloud CDN."
+  },
+  {
+   "id": "m089",
+   "type": "convention",
+   "topic": "frontend",
+   "text": "React components use PascalCase file names, such as InvoiceTable.tsx, and hooks start with use, such as useInvoiceFilters.ts."
+  },
+  {
+   "id": "m090",
+   "type": "decision",
+   "topic": "frontend",
+   "text": "Server state is managed with TanStack Query rather than Redux, because almost all state is a cache of API responses."
+  },
+  {
+   "id": "m091",
+   "type": "gotcha",
+   "topic": "frontend",
+   "text": "TanStack Query refetches on window focus by default, which tripled API traffic from the console; refetchOnWindowFocus is now false for list queries."
+  },
+  {
+   "id": "m092",
+   "type": "fact",
+   "topic": "frontend",
+   "text": "The console's design system is in packages/ui and is published to the internal npm registry as @tallyline/ui."
+  },
+  {
+   "id": "m093",
+   "type": "finding",
+   "topic": "frontend",
+   "text": "The console bundle was 2.4 MB gzipped in May 2026; lazy-loading the reports module brought the initial bundle down to 780 kB."
+  },
+  {
+   "id": "m094",
+   "type": "gotcha",
+   "topic": "frontend",
+   "text": "Intl.NumberFormat with style currency rounds JPY to zero decimals, so the console must not append a hard-coded .00."
+  },
+  {
+   "id": "m095",
+   "type": "convention",
+   "topic": "frontend",
+   "text": "All user-facing strings go through the i18n function t() with keys in locales/en.json; German and French are the other shipped locales."
+  },
+  {
+   "id": "m096",
+   "type": "decision",
+   "topic": "frontend",
+   "text": "Dates in the console are displayed in the organization's time zone, not the browser's, because accountants share screens across offices."
+  },
+  {
+   "id": "m097",
+   "type": "fact",
+   "topic": "frontend",
+   "text": "End-to-end tests for the console use Playwright and run against the staging environment on every merge to main."
+  },
+  {
+   "id": "m098",
+   "type": "gotcha",
+   "topic": "frontend",
+   "text": "Playwright tests flake when they click the invoice row before the virtualized table has measured rows; wait for data-ready=true first."
+  },
+  {
+   "id": "m099",
+   "type": "finding",
+   "topic": "frontend",
+   "text": "Sentry showed 40% of console errors in October 2026 came from a browser extension injecting scripts, not from our code; those are now filtered by allowUrls."
+  },
+  {
+   "id": "m100",
+   "type": "fact",
+   "topic": "frontend",
+   "text": "Feature flags in the console come from LaunchDarkly and are read through the useFlag hook."
+  },
+  {
+   "id": "m101",
+   "type": "convention",
+   "topic": "frontend",
+   "text": "Form validation uses zod schemas shared with the API client generated from openapi.json."
+  },
+  {
+   "id": "m102",
+   "type": "gotcha",
+   "topic": "frontend",
+   "text": "The generated API client must be regenerated with npm run gen:api after any API change, or TypeScript types silently drift from the server."
+  },
+  {
+   "id": "m103",
+   "type": "fact",
+   "topic": "ci",
+   "text": "CI runs on GitHub Actions; the main workflow is .github/workflows/ci.yml and must pass before merge."
+  },
+  {
+   "id": "m104",
+   "type": "fact",
+   "topic": "ci",
+   "text": "The api service builds with Gradle 8.7 and the Kotlin 1.9.24 compiler."
+  },
+  {
+   "id": "m105",
+   "type": "gotcha",
+   "topic": "ci",
+   "text": "The Gradle build cache in CI is keyed on gradle/libs.versions.toml; changing a dependency version invalidates the whole cache and the build takes 14 minutes instead of 4."
+  },
+  {
+   "id": "m106",
+   "type": "decision",
+   "topic": "ci",
+   "text": "We require two approving reviews on the api repository and one on the console, because api changes reach money."
+  },
+  {
+   "id": "m107",
+   "type": "convention",
+   "topic": "ci",
+   "text": "Commit messages follow Conventional Commits, for example fix(api): refuse negative invoice totals."
+  },
+  {
+   "id": "m108",
+   "type": "fact",
+   "topic": "ci",
+   "text": "Container images are built with Docker Buildx and pushed to Artifact Registry at europe-west1-docker.pkg.dev/tallyline/images."
+  },
+  {
+   "id": "m109",
+   "type": "gotcha",
+   "topic": "ci",
+   "text": "The integration tests use Testcontainers and need Docker; they fail on the macOS runners, so the job is pinned to ubuntu-24.04."
+  },
+  {
+   "id": "m110",
+   "type": "finding",
+   "topic": "ci",
+   "text": "The flaky test InvoiceNumberingTest.concurrentIssue failed 6% of runs because two threads raced on the numbering sequence; it was fixed with SELECT FOR UPDATE."
+  },
+  {
+   "id": "m111",
+   "type": "convention",
+   "topic": "ci",
+   "text": "A test that flakes is quarantined with the @Flaky annotation and an issue link within one day, never just retried."
+  },
+  {
+   "id": "m112",
+   "type": "fact",
+   "topic": "ci",
+   "text": "Dependabot opens dependency update pull requests every Monday, grouped by ecosystem."
+  },
+  {
+   "id": "m113",
+   "type": "gotcha",
+   "topic": "ci",
+   "text": "Renovating ktor from 2.3 to 3.0 is blocked because ktor 3.0 needs Kotlin 2.0 and our kapt annotation processors do not support K2 yet."
+  },
+  {
+   "id": "m114",
+   "type": "decision",
+   "topic": "ci",
+   "text": "We stay on Kotlin 1.9 until the kapt processors are replaced with KSP, planned for Q1 2027."
+  },
+  {
+   "id": "m115",
+   "type": "fact",
+   "topic": "ci",
+   "text": "Static analysis runs detekt for Kotlin and eslint for TypeScript; a new detekt finding fails the build."
+  },
+  {
+   "id": "m116",
+   "type": "convention",
+   "topic": "ci",
+   "text": "Release tags follow semantic versioning with a v prefix, such as v4.12.0, and each tag builds and publishes a release image."
+  },
+  {
+   "id": "m117",
+   "type": "fact",
+   "topic": "ci",
+   "text": "The SBOM for every image is generated by syft and attached to the GitHub release as sbom.spdx.json."
+  },
+  {
+   "id": "m118",
+   "type": "gotcha",
+   "topic": "ci",
+   "text": "The GitHub Actions cache is limited to 10 GB per repository, and the Gradle and npm caches together evict each other on busy days."
+  },
+  {
+   "id": "m119",
+   "type": "finding",
+   "topic": "ci",
+   "text": "Moving the npm install step to pnpm with a shared store cut the console's CI time from 9 minutes to 5 minutes."
+  },
+  {
+   "id": "m120",
+   "type": "fact",
+   "topic": "ci",
+   "text": "The console uses pnpm 9 and Node 20 LTS, pinned in .nvmrc and packageManager in package.json."
+  },
+  {
+   "id": "m121",
+   "type": "decision",
+   "topic": "ci",
+   "text": "Merges to main are squash merges only, so main's history has one commit per pull request."
+  },
+  {
+   "id": "m122",
+   "type": "gotcha",
+   "topic": "ci",
+   "text": "Self-hosted runners were removed in 2026 because a fork pull request could run code on them; never re-enable pull_request_target with checkout of the head."
+  },
+  {
+   "id": "m123",
+   "type": "fact",
+   "topic": "data",
+   "text": "The analytics pipeline exports invoices and payments nightly from PostgreSQL to BigQuery dataset tl_analytics with Datastream."
+  },
+  {
+   "id": "m124",
+   "type": "fact",
+   "topic": "data",
+   "text": "dbt models for analytics live in the analytics repository under models/marts, and run at 05:00 UTC after the export."
+  },
+  {
+   "id": "m125",
+   "type": "decision",
+   "topic": "data",
+   "text": "Revenue metrics are computed in dbt, not in the application, so finance and the product dashboard read one definition."
+  },
+  {
+   "id": "m126",
+   "type": "gotcha",
+   "topic": "data",
+   "text": "Datastream converts PostgreSQL numeric columns to BigQuery BIGNUMERIC, and dbt models that cast them to FLOAT64 lose cents."
+  },
+  {
+   "id": "m127",
+   "type": "convention",
+   "topic": "data",
+   "text": "dbt model names are prefixed by layer: stg_ for staging, int_ for intermediate, fct_ and dim_ for marts."
+  },
+  {
+   "id": "m128",
+   "type": "fact",
+   "topic": "data",
+   "text": "The monthly recurring revenue model is fct_mrr_daily and is the source for the board's MRR chart."
+  },
+  {
+   "id": "m129",
+   "type": "finding",
+   "topic": "data",
+   "text": "fct_mrr_daily double-counted upgrades in August 2026 because the plan change event was emitted twice; dedup on event_id fixed it."
+  },
+  {
+   "id": "m130",
+   "type": "gotcha",
+   "topic": "data",
+   "text": "BigQuery charges by bytes scanned; queries on tl_analytics.invoices must filter on the partition column issued_date or they scan 900 GB."
+  },
+  {
+   "id": "m131",
+   "type": "fact",
+   "topic": "data",
+   "text": "The churn model labels an account churned after 45 days without a paid invoice."
+  },
+  {
+   "id": "m132",
+   "type": "decision",
+   "topic": "data",
+   "text": "Product events are sent to Segment and land in BigQuery; we decided not to send them to the operational database to keep it small."
+  },
+  {
+   "id": "m133",
+   "type": "gotcha",
+   "topic": "data",
+   "text": "Segment's identify calls from the console sent the user email as the user id until 2026-05; those rows must be excluded from user-level analyses."
+  },
+  {
+   "id": "m134",
+   "type": "fact",
+   "topic": "data",
+   "text": "Airflow 2.9 on Cloud Composer orchestrates the pipeline; the main DAG is nightly_finance_pipeline."
+  },
+  {
+   "id": "m135",
+   "type": "finding",
+   "topic": "data",
+   "text": "The nightly_finance_pipeline DAG missed its 07:00 SLA four times in September 2026 because the Datastream backfill after the schema change took 3 hours."
+  },
+  {
+   "id": "m136",
+   "type": "convention",
+   "topic": "data",
+   "text": "A schema change to a table exported by Datastream needs a heads-up in the #data channel one day before, so the backfill can be scheduled."
+  },
+  {
+   "id": "m137",
+   "type": "fact",
+   "topic": "data",
+   "text": "Data retention in BigQuery is 25 months for raw event tables; aggregated marts are kept indefinitely."
+  },
+  {
+   "id": "m138",
+   "type": "gotcha",
+   "topic": "data",
+   "text": "dbt incremental models with unique_key on a partitioned table do a full merge scan unless incremental_predicates limits the target partitions."
+  },
+  {
+   "id": "m139",
+   "type": "decision",
+   "topic": "data",
+   "text": "Personal data is pseudonymized in the stg_ layer with a salted hash, and only the finance service account can read the salt."
+  },
+  {
+   "id": "m140",
+   "type": "fact",
+   "topic": "data",
+   "text": "Looker is the BI tool; its LookML project reads only the marts, never staging tables."
+  },
+  {
+   "id": "m141",
+   "type": "fact",
+   "topic": "billing",
+   "text": "Invoice numbers are sequential per organization and per year, formatted like INV-2026-000123, because several EU countries require gapless numbering."
+  },
+  {
+   "id": "m142",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "A voided invoice keeps its number; issuing a replacement takes the next number, never reuses the voided one."
+  },
+  {
+   "id": "m143",
+   "type": "decision",
+   "topic": "billing",
+   "text": "Credit notes are separate documents that reference the original invoice, instead of editing an issued invoice, because issued invoices are legally immutable."
+  },
+  {
+   "id": "m144",
+   "type": "fact",
+   "topic": "billing",
+   "text": "VAT is calculated per line and rounded half-up to the currency's minor unit, then summed, as German tax rules require."
+  },
+  {
+   "id": "m145",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "Rounding the invoice total instead of each line gives a different VAT amount by up to one cent per line; accountants reject those invoices."
+  },
+  {
+   "id": "m146",
+   "type": "fact",
+   "topic": "billing",
+   "text": "Reverse charge applies to B2B invoices inside the EU when the buyer has a valid VAT ID; the invoice then shows 0% VAT and the note 'Reverse charge'."
+  },
+  {
+   "id": "m147",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "VIES VAT ID validation is down for some member states for hours at a time; we accept the ID and re-validate later rather than block invoicing."
+  },
+  {
+   "id": "m148",
+   "type": "fact",
+   "topic": "billing",
+   "text": "Payments are collected through Stripe; card and SEPA Direct Debit are supported, and SEPA payments settle after up to 5 business days."
+  },
+  {
+   "id": "m149",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "A SEPA Direct Debit can be charged back up to 8 weeks after collection, so an invoice paid by SEPA is not final until then."
+  },
+  {
+   "id": "m150",
+   "type": "decision",
+   "topic": "billing",
+   "text": "Dunning sends reminders at 3, 10 and 21 days after the due date, then suspends the account at 30 days."
+  },
+  {
+   "id": "m151",
+   "type": "finding",
+   "topic": "billing",
+   "text": "Moving the first reminder from 7 to 3 days after the due date reduced average days-to-pay from 19 to 14."
+  },
+  {
+   "id": "m152",
+   "type": "fact",
+   "topic": "billing",
+   "text": "Subscription plans are Starter, Growth and Scale, billed monthly or yearly; yearly plans get two months free."
+  },
+  {
+   "id": "m153",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "Proration on a mid-cycle plan upgrade is computed by Stripe; our own preview must call Stripe's upcoming invoice endpoint rather than estimate."
+  },
+  {
+   "id": "m154",
+   "type": "convention",
+   "topic": "billing",
+   "text": "Stripe objects are referenced by their Stripe id in a column named stripe_<object>_id, such as stripe_customer_id."
+  },
+  {
+   "id": "m155",
+   "type": "fact",
+   "topic": "billing",
+   "text": "Stripe webhooks are received at /hooks/stripe and verified with the Stripe signing secret before any processing."
+  },
+  {
+   "id": "m156",
+   "type": "gotcha",
+   "topic": "billing",
+   "text": "Stripe can deliver the invoice.paid event before checkout.session.completed, so handlers must not assume event order."
+  },
+  {
+   "id": "m157",
+   "type": "fact",
+   "topic": "billing",
+   "text": "E-invoices for Italian customers are sent through the SDI exchange in FatturaPA XML format via the provider Acube."
+  },
+  {
+   "id": "m158",
+   "type": "decision",
+   "topic": "billing",
+   "text": "XRechnung and ZUGFeRD support for German public sector customers is scheduled for Q2 2027, not before."
+  },
+  {
+   "id": "m159",
+   "type": "fact",
+   "topic": "observability",
+   "text": "Metrics are scraped by Google Managed Prometheus and dashboards live in Grafana at grafana.ops.tallyline.example."
+  },
+  {
+   "id": "m160",
+   "type": "fact",
+   "topic": "observability",
+   "text": "Logs are structured JSON written to stdout and shipped to Cloud Logging, kept 30 days."
+  },
+  {
+   "id": "m161",
+   "type": "convention",
+   "topic": "observability",
+   "text": "Every log line carries request_id, tenant_id and service; a log without request_id fails the logging lint in CI."
+  },
+  {
+   "id": "m162",
+   "type": "fact",
+   "topic": "observability",
+   "text": "Traces use OpenTelemetry with the OTLP exporter to Cloud Trace, sampled at 10% except errors which are always kept."
+  },
+  {
+   "id": "m163",
+   "type": "decision",
+   "topic": "observability",
+   "text": "Alerts page only on symptoms customers feel (error rate, latency, failed payments), not on causes like CPU, to avoid alert fatigue."
+  },
+  {
+   "id": "m164",
+   "type": "fact",
+   "topic": "observability",
+   "text": "The api SLO is 99.9% of requests answered without a 5xx over 30 days, with p95 latency under 300 ms."
+  },
+  {
+   "id": "m165",
+   "type": "gotcha",
+   "topic": "observability",
+   "text": "The error-rate alert ignores 429 responses; a partner flood of 429s once hid a real outage behind a quiet dashboard, so 429 has its own alert now."
+  },
+  {
+   "id": "m166",
+   "type": "fact",
+   "topic": "observability",
+   "text": "On-call rotates weekly on Monday at 10:00 CET through PagerDuty, with one primary and one secondary."
+  },
+  {
+   "id": "m167",
+   "type": "convention",
+   "topic": "observability",
+   "text": "Every alert must link a runbook in the runbooks repository, and an alert without a runbook is not merged."
+  },
+  {
+   "id": "m168",
+   "type": "finding",
+   "topic": "observability",
+   "text": "Half of the pages in Q3 2026 were the DiskPressure alert on the pdf-render pool, which was noise; it was downgraded to a ticket."
+  },
+  {
+   "id": "m169",
+   "type": "gotcha",
+   "topic": "observability",
+   "text": "Prometheus counters reset when a pod restarts; use rate() or increase(), never raw counter values, in dashboards."
+  },
+  {
+   "id": "m170",
+   "type": "fact",
+   "topic": "observability",
+   "text": "Uptime checks probe https://api.tallyline.example/healthz from three regions every minute."
+  },
+  {
+   "id": "m171",
+   "type": "decision",
+   "topic": "observability",
+   "text": "High-cardinality labels such as tenant_id are forbidden on Prometheus metrics; per-tenant numbers come from logs instead."
+  },
+  {
+   "id": "m172",
+   "type": "finding",
+   "topic": "observability",
+   "text": "Adding invoice_id as a metric label in July 2026 created 2 million series and the Prometheus bill grew fivefold in a week."
+  },
+  {
+   "id": "m173",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-03-02 outage was caused by a direct rollout of an api image with a broken database migration; all requests failed for 34 minutes."
+  },
+  {
+   "id": "m174",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-08-19 incident: webhook-triggered jobs failed for 25 minutes after a signing key rotation because the worker cached the old JWKS for 24 hours."
+  },
+  {
+   "id": "m175",
+   "type": "decision",
+   "topic": "incident",
+   "text": "After the 2026-08-19 incident the JWKS cache lifetime was cut to 10 minutes and a key is published 24 hours before it signs."
+  },
+  {
+   "id": "m176",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-10-07 incident: invoice emails were delayed by 6 hours because the SendGrid API key was rotated but the ExternalSecret was not refreshed in the worker."
+  },
+  {
+   "id": "m177",
+   "type": "convention",
+   "topic": "incident",
+   "text": "Every incident with customer impact gets a blameless postmortem within 5 business days, stored in the postmortems folder of the runbooks repository."
+  },
+  {
+   "id": "m178",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-09-23 slowdown came from a reporting query that took an ACCESS EXCLUSIVE lock through an accidental ALTER TABLE in a migration."
+  },
+  {
+   "id": "m179",
+   "type": "gotcha",
+   "topic": "incident",
+   "text": "During an incident, the status page at status.tallyline.example must be updated by the incident commander within 15 minutes of declaring it."
+  },
+  {
+   "id": "m180",
+   "type": "fact",
+   "topic": "incident",
+   "text": "Severity levels are SEV1 (all customers down or money wrong), SEV2 (a feature down for many customers) and SEV3 (degraded, workaround exists)."
+  },
+  {
+   "id": "m181",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-05-12 double charge: 214 SEPA mandates were charged twice because a retried batch job had no idempotency key."
+  },
+  {
+   "id": "m182",
+   "type": "decision",
+   "topic": "incident",
+   "text": "Batch payment jobs must pass an idempotency key per invoice to Stripe since the 2026-05-12 double charge."
+  },
+  {
+   "id": "m183",
+   "type": "gotcha",
+   "topic": "incident",
+   "text": "When refunding the double-charged customers, refunds over 10000 EUR needed manual approval in Stripe and stalled the bulk script."
+  },
+  {
+   "id": "m184",
+   "type": "finding",
+   "topic": "incident",
+   "text": "The 2026-06-30 DNS incident: the marketing site went down for 50 minutes because the domain's auto-renewal card had expired."
+  },
+  {
+   "id": "m185",
+   "type": "steering",
+   "topic": "process",
+   "text": "Do not run destructive SQL (DELETE, UPDATE without WHERE, DROP, TRUNCATE) against tl-pg-prod from an agent session; open a change request instead."
+  },
+  {
+   "id": "m186",
+   "type": "steering",
+   "topic": "process",
+   "text": "Never deploy to production on a Friday or on the day before a public holiday in Germany."
+  },
+  {
+   "id": "m187",
+   "type": "steering",
+   "topic": "process",
+   "text": "Do not add a new runtime dependency to the api without a short note in the pull request on why the standard library or an existing dependency is not enough."
+  },
+  {
+   "id": "m188",
+   "type": "steering",
+   "topic": "process",
+   "text": "Do not edit generated files such as the OpenAPI client in packages/api-client by hand; regenerate them."
+  },
+  {
+   "id": "m189",
+   "type": "steering",
+   "topic": "process",
+   "text": "Never store customer invoice PDFs in a public bucket; the invoices bucket tl-invoice-pdfs is private and served through signed URLs that expire after 15 minutes."
+  },
+  {
+   "id": "m190",
+   "type": "convention",
+   "topic": "process",
+   "text": "Architecture decisions are recorded as ADRs in docs/adr with the number, a title sentence and the rejected alternatives."
+  },
+  {
+   "id": "m191",
+   "type": "convention",
+   "topic": "process",
+   "text": "Pull requests stay under about 400 changed lines; a larger change is split into a stack."
+  },
+  {
+   "id": "m192",
+   "type": "fact",
+   "topic": "process",
+   "text": "The team works in two-week sprints starting on Wednesdays; planning is Wednesday 10:00 CET."
+  },
+  {
+   "id": "m193",
+   "type": "convention",
+   "topic": "process",
+   "text": "Branch names start with the issue number, such as 1432-dunning-sepa-retry."
+  },
+  {
+   "id": "m194",
+   "type": "fact",
+   "topic": "process",
+   "text": "The api repository's code owners for billing code are the billing crew; changes under src/main/kotlin/billing need their approval."
+  },
+  {
+   "id": "m195",
+   "type": "steering",
+   "topic": "process",
+   "text": "Do not use floating point types for money anywhere in the code base; use Long minor units or BigDecimal."
+  },
+  {
+   "id": "m196",
+   "type": "finding",
+   "topic": "process",
+   "text": "The invoice_service.rs prototype in Rust was abandoned in April 2026 because the team's Kotlin expertise outweighed the latency gain of 8 ms."
+  },
+  {
+   "id": "m197",
+   "type": "fact",
+   "topic": "process",
+   "text": "The function compute_line_vat in billing/VatCalculator.kt is the single place VAT per line is computed."
+  },
+  {
+   "id": "m198",
+   "type": "fact",
+   "topic": "process",
+   "text": "The InvoiceRenderer class renders PDFs with OpenPDF 1.3.30 and embeds the Noto Sans font for non-Latin scripts."
+  },
+  {
+   "id": "m199",
+   "type": "gotcha",
+   "topic": "process",
+   "text": "Upgrading OpenPDF past 1.3.30 changed default line spacing and shifted totals onto a second page for long invoices; pin it until the template is fixed."
+  },
+  {
+   "id": "m200",
+   "type": "fact",
+   "topic": "process",
+   "text": "The environment variable TL_PDF_CONCURRENCY controls how many invoice PDFs a worker renders at once; the default is 4."
+  }
+ ]
+}
