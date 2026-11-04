@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server
 tier: engineering
-status: proposed · 2026-11-04
+status: accepted design · 2026-11-04
 answers: which server the plugins and harness configurations OML releases connect to when the user names none; why the plugin's url option has a default and is no longer required; how the hooks read a plugin configured with its key alone; why oml setup claude-code takes the default and no other CLI verb does; why every kit configuration names the default URL literally; what a user sees when a key meant for another server is sent to the default one; what it amends in ADR-0039, ADR-0040 and ADR-0041
 -->
 
 # ADR-0043 — What OML releases defaults to the maintainer's public server, so an agent needs only its key; only `oml setup claude-code` among the CLI's verbs takes that default
 
-**Status:** proposed · 2026-11-04
+**Status:** accepted design · 2026-11-04
 
-**Release:** planned for v0.4.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.1 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0039 (d15), ADR-0040 (d1, d3), ADR-0041 (d7)
 

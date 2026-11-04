@@ -10,7 +10,7 @@ answers: how to connect Claude Code to an OML server from nothing: install the C
 **Status:** draft for review · describes v0.4.0
 
 **Release:** the plugin since v0.1.0; setup through Claude Code's plugin settings and `oml setup
-claude-code` since v0.4.0; the maintainer's public server as the default planned for v0.4.1
+claude-code` since v0.4.0; the maintainer's public server as the default since v0.4.1
 ([releases](../product/releases.md))
 
 From nothing to an agent that saves and finds shared memory in Claude Code. You need Claude Code

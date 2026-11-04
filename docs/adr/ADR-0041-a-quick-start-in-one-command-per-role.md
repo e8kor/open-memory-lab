@@ -7,7 +7,7 @@ answers: how a person goes from nothing to a first memory in one command per rol
 
 # ADR-0041 — A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) (proposed)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
 
 **Release:** partly in v0.4.0; `install.sh --quickstart` and d4's short install address are not in it ([releases](../product/releases.md#decisions))
 
