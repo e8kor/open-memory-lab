@@ -180,7 +180,7 @@ conclusion as a file (not scheduled).
 
 ### Install the command-line tool from a verified download
 
-**Available now** for Linux, macOS and Windows · the one-line installer **in v0.4.0** · anyone
+**Available now** for Linux and Windows (macOS paused after v0.5.2) · the one-line installer **in v0.4.0** · anyone
 who runs the `oml` command
 
 - **Goal:** install the `oml` tool from a signed release, checked before it runs.

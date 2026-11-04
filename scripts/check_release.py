@@ -50,7 +50,7 @@ disagreement found:
   the release builds, and every one of their OS's; verify SHA256SUMS with
   cosign verify-blob under the release workflow's identity; install the
   workspace version by default; and ci.yml job install-smoke runs them on
-  Linux, macOS and Windows, then the installed `oml --version`
+  Linux and Windows (macOS paused), then the installed `oml --version`
   (docs/adr/ADR-0041-a-quick-start-in-one-command-per-role.md d1, d2, d8);
 - every installer URL a reader page shows (README.md, a plugin, SDK or kit
   README, and docs/ outside adr/, atlas/ and changelog.md) fetches
@@ -79,8 +79,6 @@ CARGO = ROOT / "Cargo.toml"
 CLI_TARGETS = {
     "x86_64-unknown-linux-musl": "ubuntu-24.04",
     "aarch64-unknown-linux-musl": "ubuntu-24.04-arm",
-    "aarch64-apple-darwin": "macos-15",
-    "x86_64-apple-darwin": "macos-15-intel",
     "x86_64-pc-windows-msvc": "windows-2025",
 }
 SERVER_TARGETS = {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}
@@ -374,7 +372,7 @@ def check_installers(errors: list[str], jobs: dict) -> None:
         errors.append("ci.yml has no job install-smoke, so no installer has run against a release")
         return
     runners = {str(r.get("runner")) for r in matrix_rows(job)}
-    for os_name in ("ubuntu", "macos", "windows"):
+    for os_name in ("ubuntu", "windows"):  # macOS paused (ci-and-toolchain.md "Paused targets")
         if not any(r.startswith(os_name) for r in runners):
             errors.append(f"ci.yml install-smoke has no {os_name} runner")
     script = "\n".join(runs(job))

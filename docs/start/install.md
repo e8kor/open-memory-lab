@@ -20,7 +20,9 @@ were run against v0.3.1 on Linux x86_64, with cosign, without it and with `lates
 
 ## The line
 
-Linux and macOS:
+**macOS is paused.** Releases after v0.5.2 carry no macOS build while GitHub's macOS runners are unreliable ([paused targets](../engineering/ci-and-toolchain.md#paused-targets)); on a Mac the installer stops with that message. Build the CLI from source instead: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
+
+Linux:
 
 ```sh
 curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.2/scripts/install/install.sh | sh
@@ -126,9 +128,8 @@ cosign verify-blob \
   && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
 ```
 
-macOS: the same lines with `t=aarch64-apple-darwin` (Apple silicon) or `t=x86_64-apple-darwin`
-(Intel), with the last line `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`, or any
-directory on your `PATH`.
+macOS: no archive while macOS targets are paused; v0.5.2 and earlier ship `t=aarch64-apple-darwin` (Apple
+silicon) and `t=x86_64-apple-darwin` (Intel), installed with `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`.
 
 Windows, in PowerShell:
 

@@ -84,15 +84,8 @@ detect_target() {
             esac
             ;;
         Darwin)
-            # A shell under Rosetta reports x86_64 on Apple silicon.
-            if [ "$arch" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
-                arch="arm64"
-            fi
-            case "$arch" in
-                arm64 | aarch64) echo "aarch64-apple-darwin" ;;
-                x86_64) echo "x86_64-apple-darwin" ;;
-                *) die "no oml release for macOS on $arch" ;;
-            esac
+            # macOS release targets are paused (docs/engineering/ci-and-toolchain.md "Paused targets").
+            die "no oml release for macOS in this version: macOS builds are paused; build it from source with cargo install --git https://github.com/e8kor/open-memory-lab --tag v$version oml-cli (see docs/start/install.md)"
             ;;
         MINGW* | MSYS* | CYGWIN*)
             die "on Windows, run install.ps1 in PowerShell instead: $DOCS/cli/reference/"

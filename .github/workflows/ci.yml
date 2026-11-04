@@ -207,10 +207,7 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
-          - target: aarch64-apple-darwin
-            runner: macos-15
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
+          # macOS targets are paused; see docs/engineering/ci-and-toolchain.md "Paused targets".
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
@@ -265,7 +262,6 @@ jobs:
           - runner: ubuntu-24.04
           - runner: ubuntu-24.04
             cosign: true
-          - runner: macos-15
           - runner: windows-2025
     runs-on: ${{ matrix.runner }}
     env:
