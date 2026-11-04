@@ -14,7 +14,10 @@ from ..models.workarea_view_my_effective_verbs_item import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.brief import Brief
     from ..models.crew import Crew
+    from ..models.review_policy import ReviewPolicy
+    from ..models.transition import Transition
     from ..models.workarea_view_children_item import WorkareaViewChildrenItem
     from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
 
@@ -44,6 +47,11 @@ class WorkareaView:
                 what this server build serves.
             permission_epoch (int): The calling key's permission epoch as declared in docs/architecture/workareas.md
                 (ADR-0025 d14).
+            policy (ReviewPolicy): The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3).
+            pending_transitions (list[Transition]): The node's live proposals in proposal order, the pending rows whose from
+                is the node's status (ADR-0039 d9; ADR-0046 d3).
+            brief (Brief): The workarea's ratified brief as this key reads it, in ratification order, cut by
+                brief.max_tokens; empty for an admin key (ADR-0046 d8, d9).
             crew (Crew | None | Unset): The crew record the workarea names, or null.
             created_at (datetime.datetime | Unset):
     """
@@ -57,6 +65,9 @@ class WorkareaView:
     edges: list[WorkareaViewEdgesItem]
     my_effective_verbs: list[WorkareaViewMyEffectiveVerbsItem]
     permission_epoch: int
+    policy: ReviewPolicy
+    pending_transitions: list[Transition]
+    brief: Brief
     crew: Crew | None | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -92,6 +103,15 @@ class WorkareaView:
 
         permission_epoch = self.permission_epoch
 
+        policy = self.policy.to_dict()
+
+        pending_transitions = []
+        for pending_transitions_item_data in self.pending_transitions:
+            pending_transitions_item = pending_transitions_item_data.to_dict()
+            pending_transitions.append(pending_transitions_item)
+
+        brief = self.brief.to_dict()
+
         crew: dict[str, Any] | None | Unset
         if isinstance(self.crew, Unset):
             crew = UNSET
@@ -117,6 +137,9 @@ class WorkareaView:
                 "edges": edges,
                 "my_effective_verbs": my_effective_verbs,
                 "permission_epoch": permission_epoch,
+                "policy": policy,
+                "pending_transitions": pending_transitions,
+                "brief": brief,
             }
         )
         if crew is not UNSET:
@@ -128,7 +151,10 @@ class WorkareaView:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.brief import Brief
         from ..models.crew import Crew
+        from ..models.review_policy import ReviewPolicy
+        from ..models.transition import Transition
         from ..models.workarea_view_children_item import WorkareaViewChildrenItem
         from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
 
@@ -173,6 +199,19 @@ class WorkareaView:
 
         permission_epoch = d.pop("permission_epoch")
 
+        policy = ReviewPolicy.from_dict(d.pop("policy"))
+
+        pending_transitions = []
+        _pending_transitions = d.pop("pending_transitions")
+        for pending_transitions_item_data in _pending_transitions:
+            pending_transitions_item = Transition.from_dict(
+                pending_transitions_item_data
+            )
+
+            pending_transitions.append(pending_transitions_item)
+
+        brief = Brief.from_dict(d.pop("brief"))
+
         def _parse_crew(data: object) -> Crew | None | Unset:
             if data is None:
                 return data
@@ -207,6 +246,9 @@ class WorkareaView:
             edges=edges,
             my_effective_verbs=my_effective_verbs,
             permission_epoch=permission_epoch,
+            policy=policy,
+            pending_transitions=pending_transitions,
+            brief=brief,
             crew=crew,
             created_at=created_at,
         )
