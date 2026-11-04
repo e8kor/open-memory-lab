@@ -1440,7 +1440,12 @@ Each page is one `GET`, whose views are chosen by the query (`view`, `q`, `memor
 user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea`,
 `review_next`, `verdict` and `sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
 `grant_curation`, `review_next`, `verdict`, `curate`, `supersede`, `cut_off` and, in v0.6.0,
-`demote`. A
+`demote`. The user page's `view=guardrails` shows, read-only, the guardrails in force at the
+person's root as `oml hook guardrails` renders them, a held guardrail served for review carries
+its load warning, a key the page issues takes the default guardrail scope, and no act writes,
+supersedes or retires a guardrail: `supersede` naming one is `request.validation` (planned for
+v0.5.1, [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+d17). A
 follower routes none; without `oauth.issuer` and a provider every one is an unknown path.
 
 **Sign-in.** `POST /web/sign-in` (`provider=google|github`) passes the same-origin check of

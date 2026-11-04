@@ -1052,6 +1052,15 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 let read = retry_chain(|| self.app.admin_read(Bearer::Session(&admin), target))
                     .await
                     .map_err(app_error)?;
+                // No page supersedes or retires a guardrail: it is written
+                // with its severity and rule on the API or the command line
+                // (proposed ADR-0037 d17).
+                if read.memory.kind == MemoryKind::Guardrail {
+                    return Err(ApiError::validation(
+                        "a guardrail is superseded and retired on the API or the command line, with its severity and rule, never on this page",
+                    )
+                    .with_details(json!({"field": "memory"})));
+                }
                 let curate = self.caller(session, Capacity::Curate).await.ok();
                 let acting = match curate {
                     Some(c) if read.memory.author_key_id == c.key().key_id => c,
