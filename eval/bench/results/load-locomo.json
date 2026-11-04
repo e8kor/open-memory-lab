@@ -1,0 +1,13 @@
+{
+ "dataset": "locomo",
+ "docs": 5882,
+ "written": 5882,
+ "refused": 0,
+ "refusals": {},
+ "approved": 5882,
+ "write_seconds": 60.3,
+ "review_seconds": 56.9,
+ "writers": 8,
+ "reviewers": 6,
+ "retried_503": 435
+}
