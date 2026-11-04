@@ -95,8 +95,8 @@ say otherwise.
   d9's serving rule holds for edges as for `derives_from`. A user key's claim-edge proposal with
   either endpoint in `universe` is refused `access.grant_refused` with `needed_role: dreamer`
   before anything is journalled, failing closed on the maintainer's rule that users neither write
-  nor propose to `universe`. The check needs ADR-0044's user keys and lands with them; until then
-  no key is a user key and the check refuses nothing.
+  nor propose to `universe`. A brief edge from a user key is refused the same way when its claim
+  or its workarea is `universe`.
 
 - **d6 — A claim-edge label is any non-empty NFC string; `supports`, `contradicts`,
   `relates_to` and `continues` are the recommended labels, and the `oml:` labels stay reserved.**
@@ -148,11 +148,13 @@ say otherwise.
 - **Vocabulary domain modules ride along.** The claim-edge code needs `oml-domain`'s `vocab`,
   `vocab_edges` and the narrowed dreamer grant (`LabelledGrant`), built for the parked ADR-0027;
   nothing else of the vocabulary work is replayed. No route serves them.
-- **What waits on ADR-0044.** d1's `user_root` refusal, d2's `same_user` mark and d5's universe
-  refusal read facts that only user roots and user keys carry. The domain rules are built and
-  tested; the use cases pass "not a user root" and "no user" until ADR-0044's build adds
-  `user_root` to the workarea row and `user` to the key, so on this branch the refusal never fires
-  and `same_user` is always `false`.
+- **Over ADR-0044.** d1's `user_root` refusal reads the workarea row's `user_root`, d2's
+  `same_user` compares the proposing key's `user`, read from its key row, with the ratifier's,
+  and d5's universe refusal reads the key's `user`; all three are built over v0.5.0's user roots.
+- **The web pages show none of this in v0.5.2.** Neither ADR-0045 nor this record puts the
+  lifecycle, edges or the brief on the user page or the admin page; a read-only view of a
+  workarea's status, its waiting proposals and its brief on the user page is planned, for a later
+  record, and until then the CLI and the API serve them.
 - **Limits.** The brief edges of one workarea are read whole and paged in the use case; the count
   per workarea is unbounded, tracked with the budget as FR-77. A brief member must be promoted, so
   a brief starts empty in a workarea with nothing reviewed.

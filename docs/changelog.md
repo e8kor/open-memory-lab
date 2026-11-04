@@ -359,6 +359,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — v0.5.2 rebased onto v0.5.0, with the user-root rules wired (implementation)
+
+The v0.5.2 work is rebased onto release 0.5.0 (ADR-0044's user roots and ADR-0045's web pages)
+on `feat/v0.5.2-r2`, its migrations kept at 0017 to 0019 with 0016 left to guardrails.
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2 and d5 now read what v0.5.0 stores. `info.version` does not move.
+
+- **A user root climbs to `committed` at most** (d1): `workarea.transition_refused` with reason
+  `user_root` on a proposal or ratification of `validated`.
+- **`same_user`** (d2) on `workarea.status_transition` and a claim or brief edge's `review.ratify`
+  is `true` when the proposing key's `user`, read from its key row, is the ratifier's.
+- **No user-key edge into `universe`** (d5): a claim edge with an endpoint in `universe`, or a
+  brief edge whose claim or workarea is `universe`, is `access.grant_refused` with `needed_role:
+  dreamer` from a user key, and nothing is journalled.
+- **Rebase fixes.** A narrowed dreamer grant reaches a node grant's node alone, as every grant
+  does under ADR-0044 d4; the pre-users migration fixture stores the root `committed`, as every
+  build did, which 0017's `workareas_universe_committed` holds.
+- **Not built:** a view of the lifecycle, edges or the brief on the web pages, planned.
+
 ### 2026-11-04 — v0.5.2 built: the lifecycle, claim edges and the brief served, ADR-0046's answers recorded (implementation)
 
 The maintainer answered ADR-0046's nine questions on 2026-11-04 by taking each recommendation;

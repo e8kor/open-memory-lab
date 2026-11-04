@@ -214,8 +214,8 @@ The act that finds the review policy satisfied — for a claim or a proposed cla
 full lineage closure at this moment, with the policy snapshot journalled. A claim edge's and a
 brief edge's ratification (`subject_kind: "brief_edge"`, with `edge_id`, the member's
 `artifact_id` and the `workarea_id`) also carry `same_user`, `true` when the ratifying key and
-the proposing key name one user ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8); no key names a user until
-ADR-0044 is built, so it is `false` today. A brief edge's ratification carries no lineage digest:
+the proposing key name one user ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), read from the proposing key's row; a tenant key names no user, so a ratification
+involving one is `false`. A brief edge's ratification carries no lineage digest:
 membership in a brief widens no closure.
 
 ### review.reopen
