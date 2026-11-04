@@ -356,7 +356,8 @@ pub enum MetadataFold {
     },
     /// `claim_edge.proposed`: the edge row, pending with no ratifier. The
     /// store refuses an endpoint or a proposer key its tenant does not hold,
-    /// an edge id it holds already, and an edge that is not pending.
+    /// an edge id it holds already, an edge that is not pending, and a
+    /// `created_at` that is not the event's `at`.
     ///
     /// A pending edge enters the lineage closure (audit-and-lineage.md, the
     /// derivation graph: pending and ratified alike; ADR-0001 d2), and the
@@ -852,14 +853,15 @@ pub trait JournalStore: Send + Sync {
 
     /// One page of the tenant's claim edges, pending and ratified, that pass
     /// `filter` — `artifact_id` matching either endpoint, `workarea_id`
-    /// either endpoint's workarea — ordered by edge id ascending, strictly
-    /// after `after`, at most `limit` of them (http-api.md, claim edges).
-    /// Read scope is the use-case's.
+    /// either endpoint's workarea — newest first, `created_at` descending
+    /// then `edge_id` descending, strictly after `after`, at most `limit` of
+    /// them (http-api.md pagination and claim edges). Read scope is the
+    /// use-case's.
     fn claim_edges(
         &self,
         tenant_id: Uuid,
         filter: &ClaimEdgeFilter,
-        after: Option<ClaimEdgePosition>,
+        after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<ClaimEdgeRecord>, StoreError>> + Send;
 }

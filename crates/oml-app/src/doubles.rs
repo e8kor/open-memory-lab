@@ -158,7 +158,7 @@ struct TenantState {
     /// Web sessions by their token's digest (postgres-schema.md
     /// `web_sessions`; ADR-0045 d5).
     web_sessions: BTreeMap<[u8; 32], WebSessionRecord>,
-    /// Claim edges by id, which is their listing order.
+    /// Claim edges by id.
     claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
 }
 
@@ -1352,7 +1352,7 @@ fn apply_fold(
             ratify_transition_fold(state, transition_id, workarea_id, to, ratifier_key_id)?;
         }
         MetadataFold::ClaimEdgeProposed(edge) => {
-            require_proposable(state, tenant_id, &edge)?;
+            require_proposable(state, tenant_id, &edge, at)?;
             let (src, dst) = (edge.src_artifact_id, edge.dst_artifact_id);
             state.claim_edges.insert(edge.edge_id, edge);
             widen_lineage(state, src, dst);
@@ -1363,11 +1363,13 @@ fn apply_fold(
 
 /// A proposed edge the schema admits: one of this tenant's, an id it does
 /// not hold yet, both endpoints and the proposer key its own, pending with
-/// no ratifier (postgres-schema.md `claim_edges`).
+/// no ratifier, created at its event's `at` (postgres-schema.md
+/// `claim_edges`).
 fn require_proposable(
     state: &TenantState,
     tenant_id: Uuid,
     edge: &ClaimEdgeRecord,
+    at: &EventTime,
 ) -> Result<(), StoreError> {
     let refuse = |why: String| Err(StoreError::Backend(why));
     if edge.tenant_id != tenant_id {
@@ -1394,6 +1396,12 @@ fn require_proposable(
     if edge.state != EdgeState::Pending || edge.ratifier_key_id.is_some() {
         return refuse(format!(
             "claim edge {} is proposed pending, with no ratifier",
+            edge.edge_id
+        ));
+    }
+    if edge.created_at != *at {
+        return refuse(format!(
+            "claim edge {} is created at its claim_edge.proposed event's at",
             edge.edge_id
         ));
     }
@@ -2468,7 +2476,7 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
         filter: &ClaimEdgeFilter,
-        after: Option<ClaimEdgePosition>,
+        after: Option<&ClaimEdgePosition>,
         limit: usize,
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
@@ -2476,10 +2484,14 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workarea_id);
-        Ok(state
-            .claim_edges
-            .values()
-            .filter(|e| after.is_none_or(|p| e.edge_id > p.edge_id))
+        let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
+        let mut edges: Vec<&ClaimEdgeRecord> = state.claim_edges.values().collect();
+        edges.sort_by_key(|e| std::cmp::Reverse(position(e)));
+        Ok(edges
+            .into_iter()
+            .filter(|e| {
+                after.is_none_or(|p| position(e) < (p.created_at.as_str().to_owned(), p.edge_id))
+            })
             .filter(|e| {
                 filter
                     .artifact_id

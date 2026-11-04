@@ -3389,7 +3389,7 @@ impl JournalStore for PgStore {
         &self,
         _tenant_id: Uuid,
         _filter: &ClaimEdgeFilter,
-        _after: Option<ClaimEdgePosition>,
+        _after: Option<&ClaimEdgePosition>,
         _limit: usize,
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
         Err(StoreError::Backend(

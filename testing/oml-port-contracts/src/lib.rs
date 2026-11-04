@@ -5142,7 +5142,9 @@ impl EdgeWorld {
         memory
     }
 
-    /// A pending edge `src -> dst` by this world's proposer.
+    /// A pending edge `src -> dst` by this world's proposer, its
+    /// `created_at` the `at` of the rig's next event, which
+    /// [`Self::propose`] stamps again when it commits it.
     fn edge(&self, edge_id: Uuid, src: Uuid, dst: Uuid) -> ClaimEdgeRecord {
         ClaimEdgeRecord {
             edge_id,
@@ -5154,11 +5156,27 @@ impl EdgeWorld {
             proposer_key_id: self.proposer.key_id,
             proposer_principal: self.proposer.principal.clone(),
             ratifier_key_id: None,
+            created_at: ChainRig::at(self.rig.n + 1),
         }
     }
 
-    /// Commits `claim_edge.proposed` folding `edge`.
+    /// Commits `claim_edge.proposed` folding `edge`, its `created_at` the
+    /// event's `at`; the edge as committed.
     async fn propose<S: JournalStore>(
+        &mut self,
+        store: &S,
+        edge: ClaimEdgeRecord,
+    ) -> Result<ClaimEdgeRecord, StoreError> {
+        let edge = ClaimEdgeRecord {
+            created_at: ChainRig::at(self.rig.n + 1),
+            ..edge
+        };
+        self.propose_as_given(store, edge.clone()).await?;
+        Ok(edge)
+    }
+
+    /// Commits `claim_edge.proposed` folding `edge` exactly as given.
+    async fn propose_as_given<S: JournalStore>(
         &mut self,
         store: &S,
         edge: ClaimEdgeRecord,
@@ -5223,8 +5241,13 @@ pub async fn a_proposed_claim_edge_reads_back_pending_with_its_proposer<S: Journ
     let b = world
         .hold(store, root, Uuid::from_u128(0x301B), "bob", &[])
         .await;
-    let edge = world.edge(Uuid::from_u128(0x301E), a.memory_id, b.memory_id);
-    world.propose(store, edge.clone()).await.expect("propose");
+    let edge = world
+        .propose(
+            store,
+            world.edge(Uuid::from_u128(0x301E), a.memory_id, b.memory_id),
+        )
+        .await
+        .expect("propose");
 
     let read = store
         .claim_edge(world.rig.tenant_id, edge.edge_id)
@@ -5254,6 +5277,50 @@ pub async fn a_proposed_claim_edge_reads_back_pending_with_its_proposer<S: Journ
         None,
         "an unknown id reads nothing"
     );
+}
+
+/// A proposal whose `created_at` is not its event's `at` commits nothing:
+/// the edge's listing time is its proposal's, never a caller's
+/// (http-api.md pagination; event-catalog.md `claim_edge.proposed`).
+pub async fn a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing<S: JournalStore>(
+    store: &S,
+) {
+    let mut world = EdgeWorld::new(store, 306).await;
+    let root = world.root;
+    let a = world
+        .hold(store, root, Uuid::from_u128(0x306A), "alice", &[])
+        .await;
+    let b = world
+        .hold(store, root, Uuid::from_u128(0x306B), "bob", &[])
+        .await;
+    let head = store
+        .chain_head(world.rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("a chain");
+    let edge = ClaimEdgeRecord {
+        created_at: ChainRig::at(0),
+        ..world.edge(Uuid::from_u128(0x306E), a.memory_id, b.memory_id)
+    };
+    assert!(
+        world.propose_as_given(store, edge.clone()).await.is_err(),
+        "a created_at the event does not carry is refused"
+    );
+    assert_eq!(
+        store.chain_head(world.rig.tenant_id).await.expect("head"),
+        Some(head),
+        "nothing is journalled"
+    );
+    assert_eq!(
+        store
+            .claim_edge(world.rig.tenant_id, edge.edge_id)
+            .await
+            .expect("read"),
+        None,
+        "no edge is stored"
+    );
+    let (principals, _) = world.closure(store, a.memory_id).await;
+    assert!(!principals.contains("bob"), "no closure is widened");
 }
 
 /// A pending edge puts each endpoint's authors, principal and key id, in
@@ -5499,11 +5566,11 @@ pub async fn the_stores_widened_closure_equals_the_authors_of_the_domains_lineag
     }
 }
 
-/// A claim-edge page is ordered by edge id, resumes strictly after its
-/// cursor, and its artifact filter matches either endpoint, its workarea
-/// filter either endpoint's node; another tenant lists nothing
-/// (http-api.md, claim edges).
-pub async fn a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_endpoint<
+/// A claim-edge page is newest first, `created_at` then edge id
+/// descending, resumes strictly after its cursor, and its artifact filter
+/// matches either endpoint, its workarea filter either endpoint's node;
+/// another tenant lists nothing (http-api.md pagination and claim edges).
+pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint<
     S: JournalStore,
 >(
     store: &S,
@@ -5525,43 +5592,50 @@ pub async fn a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_e
     let c = world
         .hold(store, side, Uuid::from_u128(0x320C), "carol", &[])
         .await;
-    // Proposed out of id order, so the page order is the store's.
-    let e3 = world.edge(Uuid::from_u128(0x320E3), b.memory_id, c.memory_id);
-    let e1 = world.edge(Uuid::from_u128(0x320E1), a.memory_id, b.memory_id);
-    let e4 = world.edge(Uuid::from_u128(0x320E4), c.memory_id, a.memory_id);
-    let e2 = world.edge(Uuid::from_u128(0x320E2), a.memory_id, a.memory_id);
-    for edge in [&e3, &e1, &e4, &e2] {
-        world.propose(store, edge.clone()).await.expect("propose");
+    // Proposed out of id order, so the page order is the proposals' time,
+    // newest first, and never the ids'.
+    let mut proposed = Vec::new();
+    for (id, src, dst) in [
+        (0x320E3, b.memory_id, c.memory_id),
+        (0x320E1, a.memory_id, b.memory_id),
+        (0x320E4, c.memory_id, a.memory_id),
+        (0x320E2, a.memory_id, a.memory_id),
+    ] {
+        let edge = world.edge(Uuid::from_u128(id), src, dst);
+        proposed.push(world.propose(store, edge).await.expect("propose"));
     }
+    let [e3, e1, e4, e2] = <[ClaimEdgeRecord; 4]>::try_from(proposed).expect("four edges");
     let all = ClaimEdgeFilter::default();
+    let at = |e: &ClaimEdgeRecord| ClaimEdgePosition {
+        created_at: e.created_at.clone(),
+        edge_id: e.edge_id,
+    };
 
     let first = store
         .claim_edges(tenant, &all, None, 2)
         .await
         .expect("page");
-    assert_eq!(first, vec![e1.clone(), e2.clone()], "the first page, by id");
-    let after = ClaimEdgePosition {
-        edge_id: first[1].edge_id,
-    };
+    assert_eq!(
+        first,
+        vec![e2.clone(), e4.clone()],
+        "the first page, newest first"
+    );
     let second = store
-        .claim_edges(tenant, &all, Some(after), 2)
+        .claim_edges(tenant, &all, Some(&at(&first[1])), 2)
         .await
         .expect("page");
     assert_eq!(
         second,
-        vec![e3.clone(), e4.clone()],
+        vec![e1.clone(), e3.clone()],
         "strictly after its cursor"
     );
-    let last = ClaimEdgePosition {
-        edge_id: e4.edge_id,
-    };
     assert!(
         store
-            .claim_edges(tenant, &all, Some(last), 2)
+            .claim_edges(tenant, &all, Some(&at(&e3)), 2)
             .await
             .expect("page")
             .is_empty(),
-        "nothing after the last edge"
+        "nothing after the oldest edge"
     );
 
     let on_b = ClaimEdgeFilter {
@@ -5576,23 +5650,16 @@ pub async fn a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_e
         vec![e1.clone(), e3.clone()],
         "b is e1's target and e3's source"
     );
-    let on_c_after_e3 = ClaimEdgeFilter {
+    let on_c = ClaimEdgeFilter {
         artifact_id: Some(c.memory_id),
         workarea_id: None,
     };
     assert_eq!(
         store
-            .claim_edges(
-                tenant,
-                &on_c_after_e3,
-                Some(ClaimEdgePosition {
-                    edge_id: e3.edge_id
-                }),
-                10
-            )
+            .claim_edges(tenant, &on_c, Some(&at(&e4)), 10)
             .await
             .expect("page"),
-        vec![e4.clone()],
+        vec![e3.clone()],
         "the filter and the cursor both hold"
     );
     let on_side = ClaimEdgeFilter {
@@ -5604,7 +5671,7 @@ pub async fn a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_e
             .claim_edges(tenant, &on_side, None, 10)
             .await
             .expect("page"),
-        vec![e3.clone(), e4.clone()],
+        vec![e4.clone(), e3.clone()],
         "the workarea filter matches either endpoint's node"
     );
     let a_on_side = ClaimEdgeFilter {
@@ -5748,8 +5815,11 @@ where
         &new_store().await,
     )
     .await;
-    a_claim_edges_page_resumes_after_its_cursor_and_filters_by_either_endpoint(&new_store().await)
-        .await;
+    a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_filters_by_either_endpoint(
+        &new_store().await,
+    )
+    .await;
+    a_claim_edge_whose_created_at_is_not_its_events_at_commits_nothing(&new_store().await).await;
 }
 
 // ---------------------------------------------------------------------------
