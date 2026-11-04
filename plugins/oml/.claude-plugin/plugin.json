@@ -8,5 +8,20 @@
   "homepage": "https://e8kor.github.io/open-memory-lab/",
   "repository": "https://github.com/e8kor/open-memory-lab",
   "license": "Apache-2.0",
-  "keywords": ["memory", "mcp", "review", "agents"]
+  "keywords": ["memory", "mcp", "review", "agents"],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "OML server URL",
+      "description": "Your Open Memory Lab server, without /mcp, for example https://oml.example.com",
+      "required": true
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Agent key",
+      "description": "This agent's own OML key, never an admin key. Stored in the system keychain.",
+      "sensitive": true,
+      "required": true
+    }
+  }
 }

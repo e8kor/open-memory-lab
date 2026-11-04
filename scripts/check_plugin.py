@@ -8,9 +8,15 @@ class of disagreement found:
 - the marketplace lists the plugin at a directory that has a manifest;
 - the plugin's version is the workspace version (Cargo.toml), so a release tag
   names one version for the image, the binaries and the plugin;
-- .mcp.json declares exactly one server, `oml`: one key does the agent's whole
-  loop (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025);
-- every MCP entry targets the server's /mcp endpoint with a bearer key;
+- the plugin declares exactly url and a sensitive api_key: plugin.json's
+  userConfig is ADR-0040 d1's two options, titles and descriptions included,
+  neither with a default;
+- the mcp entry reads no environment variable: .mcp.json declares exactly one
+  http server, `oml`, since one key does the agent's whole loop (ADR-0025), at
+  `${user_config.url}/mcp` with the header `Bearer ${user_config.api_key}`,
+  and names no `OML_` variable (ADR-0040 d2);
+- the plugin README shows no `export OML_API_KEY` line: the Claude Code path
+  configures the api_key option instead (ADR-0040 d4, d6);
 - the skill and the plugin README name every tool the server serves
   (SERVED_TOOLS in crates/transports/oml-transport-http/src/mcp.rs), every
   served tool is declared in docs/api/mcp-tools.json, and the skill, its
@@ -69,6 +75,26 @@ DERIVED = re.compile(r"(?:tenant|wa|crew|key)-[0-9a-f]{32}")
 TOOL = re.compile(r"\boml_[a-z]+(?:_[a-z]+)*\b")
 RULE = re.compile(r"mcp__plugin_oml_oml__([a-z_]+)")
 HOOK_RS = "crates/bins/oml-cli/src/hook.rs"
+# ADR-0040 d1: the same URL-and-key pair as every other client, lower-cased.
+USER_CONFIG = {
+    "url": {
+        "type": "string",
+        "title": "OML server URL",
+        "description": "Your Open Memory Lab server, without /mcp, for example https://oml.example.com",
+        "required": True,
+    },
+    "api_key": {
+        "type": "string",
+        "title": "Agent key",
+        "description": "This agent's own OML key, never an admin key. Stored in the system keychain.",
+        "sensitive": True,
+        "required": True,
+    },
+}
+# ADR-0040 d2.
+MCP_URL = "${user_config.url}/mcp"
+MCP_AUTHORIZATION = "Bearer ${user_config.api_key}"
+EXPORT_KEY = re.compile(r"^\s*(?:\$\s*)?export\s+OML_API_KEY\b")
 
 
 def main() -> int:
@@ -93,14 +119,9 @@ def main() -> int:
             f"plugin.json version {manifest['version']} != workspace version {workspace_version}"
         )
 
-    servers = json.loads((plugin_dir / ".mcp.json").read_text())["mcpServers"]
-    if list(servers) != ["oml"]:
-        errors.append(f".mcp.json declares {sorted(servers)}, not exactly the one server oml")
-    for name, server in servers.items():
-        if server.get("type") != "http" or not server.get("url", "").endswith("/mcp"):
-            errors.append(f".mcp.json {name}: not an http entry ending in /mcp")
-        if not server.get("headers", {}).get("Authorization", "").startswith("Bearer ${"):
-            errors.append(f".mcp.json {name}: Authorization is not a bearer key from the environment")
+    the_plugin_declares_exactly_url_and_a_sensitive_api_key(manifest, errors)
+    the_mcp_entry_reads_no_environment_variable(plugin_dir, errors)
+    the_readme_exports_no_api_key(plugin_dir, errors)
 
     mcp_rs = (ROOT / "crates/transports/oml-transport-http/src/mcp.rs").read_text()
     match = re.search(r"SERVED_TOOLS: \[&str; \d+\] = \[([^\]]*)\]", mcp_rs)
@@ -136,6 +157,55 @@ def main() -> int:
     check_hooks(plugin_dir, errors)
     check_admin(entries, workspace_version, errors)
     return report(errors)
+
+
+def the_plugin_declares_exactly_url_and_a_sensitive_api_key(manifest: dict, errors: list[str]) -> None:
+    """plugin.json's userConfig is exactly ADR-0040 d1's two options: `url`, and
+    `api_key` with `sensitive: true`, so Claude Code keeps the key in the
+    keychain and never in settings.json; neither has a default, which would
+    send the key to whatever listens there."""
+    declared = manifest.get("userConfig")
+    if declared != USER_CONFIG:
+        errors.append(
+            f"plugin.json userConfig is {json.dumps(declared, sort_keys=True)}, not exactly the url and "
+            f"sensitive api_key options of ADR-0040 d1: {json.dumps(USER_CONFIG, sort_keys=True)}"
+        )
+
+
+def the_mcp_entry_reads_no_environment_variable(plugin_dir: Path, errors: list[str]) -> None:
+    """.mcp.json declares the one http server `oml` (ADR-0025), at
+    `${user_config.url}/mcp` with the header `Bearer ${user_config.api_key}`,
+    and names no `OML_` variable, so the tools and the hook never read two
+    different keys (ADR-0040 d2)."""
+    text = (plugin_dir / ".mcp.json").read_text()
+    servers = json.loads(text)["mcpServers"]
+    if list(servers) != ["oml"]:
+        errors.append(f".mcp.json declares {sorted(servers)}, not exactly the one server oml")
+    for name, server in servers.items():
+        if server.get("type") != "http":
+            errors.append(f".mcp.json {name}: type is {server.get('type')!r}, not http")
+        if server.get("url") != MCP_URL:
+            errors.append(f".mcp.json {name}: url is {server.get('url')!r}, not {MCP_URL!r} (ADR-0040 d2)")
+        if server.get("headers") != {"Authorization": MCP_AUTHORIZATION}:
+            errors.append(
+                f".mcp.json {name}: headers are {server.get('headers')!r}, not exactly "
+                f"Authorization {MCP_AUTHORIZATION!r} (ADR-0040 d2)"
+            )
+    if "OML_" in text:
+        errors.append(".mcp.json names an OML_ variable; the MCP entry reads the plugin's options alone (ADR-0040 d2)")
+
+
+def the_readme_exports_no_api_key(plugin_dir: Path, errors: list[str]) -> None:
+    """The plugin README configures the key through Claude Code and shows no
+    `export OML_API_KEY` line, so no example reads a credential from the
+    user's environment and sends it to a server (ADR-0040 d4, d6)."""
+    readme = plugin_dir / "README.md"
+    for number, line in enumerate(readme.read_text().splitlines(), 1):
+        if EXPORT_KEY.search(line):
+            errors.append(
+                f"{readme.relative_to(ROOT)}:{number} shows `export OML_API_KEY`; the Claude Code path "
+                f"configures the api_key option (ADR-0040 d4, d6): {line.strip()}"
+            )
 
 
 def check_hooks(plugin_dir: Path, errors: list[str]) -> None:

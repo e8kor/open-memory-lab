@@ -243,6 +243,17 @@ jobs:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
       - run: python scripts/check_agent_kit.py
+      # Claude Code's own validator, which errors on a reference to an
+      # undeclared option and on an MCP url that is not absolute; 2.1.281 is
+      # the first that checks MCP entries (ADR-0040 d2, d5).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: claude plugin validate --strict
+        run: |
+          npm install --global @anthropic-ai/claude-code@2.1.312
+          claude plugin validate --strict plugins/oml
+          claude plugin validate --strict plugins/oml-admin
 
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md

@@ -131,15 +131,15 @@ only. For production, see [Run it your way](#run-it-your-way).
 <details open>
 <summary><b>Claude Code</b></summary>
 
-```sh
-export OML_URL=http://127.0.0.1:8080
-export OML_API_KEY=<agent key>
-claude plugin marketplace add e8kor/open-memory-lab
-claude plugin install oml@open-memory-lab
+```text
+/plugin marketplace add e8kor/open-memory-lab
+/plugin install oml@open-memory-lab
 ```
 
-The plugin adds the OML tools and a skill that tells the agent when to recall, remember and
-revise. See [plugins/oml](plugins/oml/README.md).
+In a Claude Code session the install asks for two settings: `url`, here
+`http://127.0.0.1:8080`, and `api_key`, the agent key, which Claude Code keeps in the system
+keychain. The plugin adds the OML tools and a skill that tells the agent when to recall,
+remember and revise. See [plugins/oml](plugins/oml/README.md).
 </details>
 
 <details>

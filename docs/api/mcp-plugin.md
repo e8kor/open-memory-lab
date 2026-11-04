@@ -448,7 +448,11 @@ nothing: allow `mcp__plugin_oml_oml__oml_read` and
 ([the plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md);
 amends [ADR-0029](../adr/ADR-0029-session-start-hook.md) d8). Run
 `claude plugin update oml@open-memory-lab` and the v0.4.0 CLI, so the cached
-skill and the session-start hook name the three tools (d13).
+skill and the session-start hook name the three tools (d13), then set the
+plugin's `url` and `api_key` settings once, since its entry no longer reads
+`OML_URL` and `OML_API_KEY`
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d2,
+[below](#wiring-it-into-your-agent)).
 
 ## A new capability is a parameter, a resource or a hook first
 
@@ -1537,6 +1541,36 @@ the key names to yours:
 }
 ```
 
+In Claude Code the `oml` plugin declares this entry for you, reading two
+plugin settings and nothing from the environment
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d1, d2):
+
+```json
+{
+  "mcpServers": {
+    "oml": {
+      "type": "http",
+      "url": "${user_config.url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_key}"
+      }
+    }
+  }
+}
+```
+
+`url` is the server without `/mcp` and `api_key` the agent's key, marked
+`sensitive`, so Claude Code keeps it in the system keychain and never in
+`settings.json`; neither has a default. `/plugin install` asks for both in a
+masked dialog and `/plugin configure oml@open-memory-lab` changes them; from a
+shell, Claude Code 2.1.285 or later reads them from the key file through
+`claude plugin configure --values-stdin`, as the
+[plugin README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md#install)
+shows (ADR-0040 d4, d5). A v0.3.x install that only exported `OML_URL` and
+`OML_API_KEY` serves no tools until the plugin is configured once.
+`scripts/check_plugin.py` fails when the entry or the two options differ from
+this shape (ADR-0040 d6).
+
 Operational notes:
 
 - **One key per agent.** Issue each crew member its own key
@@ -1545,14 +1579,13 @@ Operational notes:
   collusion statistics depend on it. `oml keys issue-agent <key-name>
   --principal <principal> --workarea <workarea>` issues the one key this
   plugin needs, under the key's [name](http-api.md#names-and-ids)
-  ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12), and prints the
-  `OML_URL` and `OML_API_KEY` lines it reads
+  ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d12)
   ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)), and the
   [`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs it for an
   operator with `--out`, so the value lands in an owner-only file and never in
-  a transcript; this plugin cannot issue keys, since key issuance is an
-  admin verb (R1). Keep the key in the environment, never in the config file
-  you commit.
+  a transcript, the file the plugin's shell configuration reads; this plugin
+  cannot issue keys, since key issuance is an admin verb (R1). Never put the
+  key in a config file you commit.
 - **One key does the agent's whole loop.** An agent that writes and recalls
   holds one writer-role key with a writer grant and a reader grant on its
   workarea, and that workarea as its default
@@ -1577,8 +1610,9 @@ Operational notes:
 - **Start each session from memory.** In Claude Code the `oml` plugin's
   SessionStart hook runs `oml hook session-start` when the CLI is on `PATH`,
   which injects the workarea's steering, the key's recent submissions and the
-  memories matching the working directory's name, under a token budget and
-  under the same `OML_URL` and `OML_API_KEY` as the entry above; it is
+  memories matching the working directory's name, under a token budget; in
+  this release it reads `OML_URL` and `OML_API_KEY`, not yet the plugin's
+  two settings (ADR-0040 d3 is not built); it is
   declared, with its variables and how it fails open, on the
   [CLI reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)
   ([ADR-0029](../adr/ADR-0029-session-start-hook.md)).
@@ -1602,4 +1636,6 @@ an id, and the named crew record the workarea read serves, are the proposed
 modes and annotations, the designed annex, the events tail leaving MCP, and
 the rule that a new capability is a parameter, a resource or a hook first are
 the proposed [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)'s
-(d2 to d5, d8).
+(d2 to d5, d8). The Claude Code plugin's two settings and the entry that
+reads them alone are the proposed
+[ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)'s (d1, d2, d6).

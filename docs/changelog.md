@@ -34,6 +34,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The plugin's userConfig and .mcp.json read the url and api_key options alone (ADR-0040 d1, d2, d5, d6, implementation)
+
+`plugins/oml/.claude-plugin/plugin.json` declares two `userConfig` options, `url` and a
+`sensitive` `api_key`, neither with a default, and `.mcp.json` reaches `${user_config.url}/mcp`
+with `Bearer ${user_config.api_key}` and names no `OML_` variable. A v0.3.x install that only
+exported `OML_URL` and `OML_API_KEY` serves no tools until the plugin is configured once, in the
+`/plugin install` dialog, with `/plugin configure oml@open-memory-lab`, or from a shell by piping
+the key file through `jq` into `claude plugin configure --values-stdin`, which needs Claude Code
+2.1.285. `scripts/check_plugin.py` checks that the plugin declares exactly url and a sensitive
+api_key, that the mcp entry reads no environment variable, and that the plugin README shows no
+`export OML_API_KEY` line; CI's plugin job also runs `claude plugin validate --strict`. The
+plugin README discloses the session-start hook's two requests and the directory name it sends.
+The hook still reads `OML_URL` and `OML_API_KEY` (ADR-0040 d3 is not built), and the plugin's
+version stays the workspace's until the release bump.
+
+- **Pages:** [mcp-plugin.md](api/mcp-plugin.md), the plugin README, the root README's Claude
+  Code block and the quickstart's closing instructions.
+
 ### 2026-11-04 — Both SDKs move to 0.2.0 with the seven wrapper verbs and the URL-and-key start (ADR-0039 d10, d11, d15, implementation)
 
 The Python and TypeScript wrappers take `write`, `read`, `workarea`, `events`, `review_next`

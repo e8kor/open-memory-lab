@@ -134,11 +134,11 @@ Each key is shown once; store them now.
   agent   (writes and recalls)  $agent
   dreamer (a person reviews)    $dreamer
 
-Give the agent its one key and install the plugin:
-  export OML_URL=$OML_URL
-  export OML_API_KEY=$agent
-  claude plugin marketplace add e8kor/open-memory-lab
-  claude plugin install oml@open-memory-lab
+Give the agent its one key: in a Claude Code session, install the plugin, and
+the install asks for its two settings, url $OML_URL and api_key the agent key
+above, kept in the system keychain:
+  /plugin marketplace add e8kor/open-memory-lab
+  /plugin install oml@open-memory-lab
 
 Nothing the agent writes reaches another key until the dreamer key approves it:
   ${CLI[*]} --url $CLI_SERVER --api-key <dreamer> review next

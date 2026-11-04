@@ -2,9 +2,9 @@
   "mcpServers": {
     "oml": {
       "type": "http",
-      "url": "${OML_URL:-http://127.0.0.1:8080}/mcp",
+      "url": "${user_config.url}/mcp",
       "headers": {
-        "Authorization": "Bearer ${OML_API_KEY}"
+        "Authorization": "Bearer ${user_config.api_key}"
       }
     }
   }

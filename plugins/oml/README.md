@@ -8,12 +8,35 @@ you store it.
 
 ## Install
 
+The plugin takes two settings: `url`, your server without `/mcp`, such as
+`https://oml.example.com`, and `api_key`, this agent's own key. Claude Code keeps the key in the
+system keychain, never in `settings.json`, and neither setting has a default, so the key goes
+only to the server you name.
+
+In a Claude Code session, add the marketplace and install the plugin; the install opens a dialog
+for the two settings, and the key field is masked:
+
+```text
+/plugin marketplace add e8kor/open-memory-lab
+/plugin install oml@open-memory-lab
+```
+
+Run `/plugin configure oml@open-memory-lab` to change either setting later.
+
+From a shell, `claude plugin install` opens no dialog, so pipe the settings to `claude plugin
+configure --values-stdin`. This path needs Claude Code 2.1.285 or later. With the key in the
+owner-only file that `oml keys issue-agent --out` writes, `jq` reads the file and the key never
+enters a command line or your shell history:
+
 ```sh
-export OML_URL=http://127.0.0.1:8080        # the server, without /mcp
-export OML_API_KEY=oml_...                  # this agent's one key
 claude plugin marketplace add e8kor/open-memory-lab
 claude plugin install oml@open-memory-lab
+jq -n --arg u 'https://oml.example.com' --rawfile k "$HOME/.config/oml/keys/crew-agent-7" \
+  '{url: $u, api_key: ($k | rtrimstr("\n"))}' \
+  | claude plugin configure oml@open-memory-lab --values-stdin
 ```
+
+Until both settings are set the plugin serves no tools.
 
 ### One release, or offline
 
@@ -81,17 +104,15 @@ rows are never cut, the hits are the longest run from the top of the ranking tha
 `budget` reports the cut.
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews
-their own work, both depend on it. Keep the key in the environment, not in a file you
-commit. To issue keys and run a server, see "Quickstart" in the
+their own work, both depend on it. To issue keys and run a server, see "Quickstart" in the
 [repository README](../../README.md#quickstart).
 
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
 agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
-workarea, given by its name or id, which is also its default. It prints the `export OML_URL=…`
-and `export OML_API_KEY=…` lines to run before you start Claude Code. With `--out <path>` the
-value goes to a new owner-only file and the second line reads it from there; the `oml-admin`
-plugin in this marketplace runs it that way from inside Claude Code, so the value never enters
-the conversation. See the
+workarea, given by its name or id, which is also its default. With `--out <path>` the value goes
+to a new owner-only file, the file the shell path under "Install" reads; the `oml-admin` plugin
+in this marketplace runs it that way from inside Claude Code, so the value never enters the
+conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
 
 ## The `oml` CLI
@@ -142,12 +163,17 @@ the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-
 ## Every session starts from memory
 
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
-session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It reads the
-workarea's steering, your key's ten newest submissions and the memories that match the name of
-the directory you work in, at most 800 budget tokens of matches, and adds them to the session as
-stored data to check. After a compaction it also asks Claude to record the summary's durable facts
-with `oml_write`. It reads `OML_URL` and `OML_API_KEY`, never the CLI's own credentials, and
-prints nothing when the server does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
+session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It
+sends two requests with the agent's key, both to that one server: `GET
+/v1/memories?own=true&limit=10`, your key's ten newest submissions, and `POST
+/v1/memories/recall`, whose query is the name of the directory you work in, split into words
+(`open memory lab` for `~/src/open-memory-lab`, never the rest of the path), and which answers
+the workarea's steering and at most 800 budget tokens of matching memories. It adds what comes
+back to the session as stored data to check. After a compaction it also asks Claude to record the
+summary's durable facts with `oml_write`. In this release the hook reads its server and key from
+`OML_URL` and `OML_API_KEY`, not yet from the plugin's two settings, and never from the CLI's own
+credentials; with either variable unset it sends nothing, and it prints nothing when the server
+does not answer. Set `OML_SESSION_CONTEXT=off` to turn it off, or
 `OML_SESSION_CONTEXT_MAX_TOKENS` to change the budget. Without the CLI the hook does nothing. See
 the [CLI reference](../../docs/cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin).
 
@@ -199,8 +225,15 @@ that documentation does not settle as unverified.
 
 ## Upgrading from 0.3
 
-Release 0.4.0 replaces the eight 0.3 tools with these three. The `permissions.allow` rules you wrote
-for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and
+Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
+`OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
+you configure the plugin once. Run `claude plugin update oml@open-memory-lab` (auto-update is off
+by default for a third-party marketplace), then set `url` to the old `OML_URL` and `api_key` to
+the old key, in the dialog or through the shell path under "Install". The exported variables can
+then leave your shell profile, unless the session-start hook or the `oml` CLI still reads them.
+
+Release 0.4.0 also replaces the eight 0.3 tools with these three. The `permissions.allow` rules
+you wrote for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_workarea_info` and
 `oml_events_tail`, allow nothing any more: replace them with the two rules above, or with
 `mcp__plugin_oml_oml`. Run `claude plugin update oml@open-memory-lab` and install the 0.4.0
 CLI, so the skill and the session-start hook name the new tools. The events tail is no longer a
