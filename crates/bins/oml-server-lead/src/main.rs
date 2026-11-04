@@ -160,6 +160,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         config.oauth_issuer.clone(),
         PinnedFetcher,
         traffic,
+        config.brief_max_tokens,
     )
     .await?;
     match &start.fork_check {

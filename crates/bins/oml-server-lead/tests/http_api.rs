@@ -2799,6 +2799,9 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "edges": [],
                 "my_effective_verbs": [],
                 "permission_epoch": view["permission_epoch"],
+                "policy": { "k": 1, "required_roles": ["dreamer"] },
+                "pending_transitions": [],
+                "brief": empty_brief(),
             })
         );
     }
@@ -5257,6 +5260,9 @@ async fn crew_given_at_create_is_persisted_and_returned() {
                 "remember", "learn", "attach", "supersede",
             ],
             "permission_epoch": view["permission_epoch"],
+            "policy": { "k": 1, "required_roles": ["dreamer"] },
+            "pending_transitions": [],
+            "brief": empty_brief(),
         })
     );
     assert!(view["permission_epoch"].is_u64(), "{view}");
@@ -7168,8 +7174,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        31,
-        "the 24 routed operations, whoami and the six OAuth operations"
+        36,
+        "the 29 routed operations, whoami and the six OAuth operations"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -7677,4 +7683,277 @@ async fn each_reference_field_takes_an_id_or_a_name() {
         assert_eq!(status, StatusCode::OK, "{by_name}: {read_by_name}");
         assert_eq!(read_by_id, read_by_name, "{by_id} and {by_name}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// The lifecycle, claim edges and the brief over HTTP (ADR-0046)
+// ---------------------------------------------------------------------------
+
+/// A dreamer key that also reads `node`: it reviews, proposes and ratifies.
+async fn dreamer_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> String {
+    issue_key_with(
+        router,
+        admin,
+        "dreamer",
+        principal,
+        json!([
+            { "workarea": node, "role": "dreamer" },
+            { "workarea": node, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned()
+}
+
+/// Submits `claim_key` under `writer` into `node` and promotes it under
+/// `dreamer` through review next and a verdict; the artifact id.
+async fn promoted_artifact_over_http(
+    router: &Router,
+    writer: &str,
+    dreamer: &str,
+    node: Uuid,
+    claim_key: &str,
+) -> String {
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        "/v1/memories",
+        submit_into(
+            writer,
+            &format!("s-{claim_key}"),
+            &node.to_string(),
+            claim_key,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(dreamer)
+            .idem(&format!("n-{claim_key}"))
+            .body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(dreamer)
+            .idem(&format!("v-{claim_key}"))
+            .body(json!({ "serve_id": serve["serve_id"], "verdict": "approve" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    accepted["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned()
+}
+
+/// A proposal is `202` and pending, the workarea read lists it with the
+/// policy in force, a second identity's ratification moves the node, and the
+/// proposer's own ratification is `review.ratifier_is_proposer` (ADR-0046
+/// d2, d3; ADR-0039 d9).
+#[tokio::test]
+async fn a_transition_proposed_and_ratified_over_http_moves_the_workarea_and_the_read_lists_it_while_pending()
+ {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "crew").await;
+    let dora = dreamer_on(router, &admin, "dora", crew).await;
+    let dan = dreamer_on(router, &admin, "dan", crew).await;
+
+    let (status, _, proposal) = send(
+        router,
+        "POST",
+        "/v2/workareas/crew/transitions",
+        Call::auth(&dora)
+            .idem("t-1")
+            .body(json!({ "to": "committed" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    assert_eq!(proposal["state"], "pending");
+    assert_eq!(proposal["from"], "development");
+    assert_eq!(proposal["to"], "committed");
+    let transition = proposal["transition_id"].as_str().expect("id").to_owned();
+
+    let (status, _, node) = send(router, "GET", "/v2/workareas/crew", Call::auth(&dan)).await;
+    assert_eq!(status, StatusCode::OK, "{node}");
+    assert_eq!(
+        node["policy"],
+        json!({ "k": 1, "required_roles": ["dreamer"] })
+    );
+    assert_eq!(
+        node["pending_transitions"][0]["transition_id"],
+        transition.as_str()
+    );
+    assert_eq!(
+        node["pending_transitions"][0]["proposed_by_key_id"],
+        Value::Null
+    );
+
+    let (status, _, body) = send(
+        router,
+        "POST",
+        &format!("/v2/workareas/crew/transitions/{transition}/ratify"),
+        Call::auth(&dora).idem("t-2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "review.ratifier_is_proposer");
+
+    let (status, _, ratified) = send(
+        router,
+        "POST",
+        &format!("/v2/workareas/crew/transitions/{transition}/ratify"),
+        Call::auth(&dan).idem("t-3"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ratified}");
+    assert_eq!(ratified["state"], "ratified");
+    let (_, _, node) = send(router, "GET", "/v2/workareas/crew", Call::auth(&dan)).await;
+    assert_eq!(node["status"], "committed");
+    assert_eq!(node["pending_transitions"], json!([]));
+
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/workareas/crew/transitions",
+        Call::auth(&dora)
+            .idem("t-4")
+            .body(json!({ "to": "development" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    drop_db(&rig.db_name).await;
+}
+
+/// `/v2/edges` serves `kind` claim and brief: a proposal is `202` pending,
+/// the page lists it, a second identity ratifies it by id whatever its
+/// kind, and a ratified brief edge puts its claim in the workarea read's
+/// `brief`; `kind: workarea` is designed and refused naming `/kind`
+/// (ADR-0046 d4, d7, d9; ADR-0039 d9).
+#[tokio::test]
+async fn claim_and_brief_edges_are_proposed_listed_and_ratified_on_v2_edges_and_the_brief_reaches_the_workarea_read()
+ {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workarea(router, &admin, root, "crew").await;
+    let writer = agent_on(router, &admin, "crew/writer", crew).await;
+    let dora = dreamer_on(router, &admin, "dora", crew).await;
+    let dan = dreamer_on(router, &admin, "dan", crew).await;
+    let a = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-a").await;
+    let b = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-b").await;
+
+    let (status, _, claim_edge) = send(
+        router,
+        "POST",
+        "/v2/edges",
+        Call::auth(&dora).idem("e-1").body(json!({
+            "kind": "claim", "from_artifact_id": a, "to_artifact_id": b, "label": "supports",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{claim_edge}");
+    assert_eq!(claim_edge["kind"], "claim");
+    assert_eq!(claim_edge["state"], "pending");
+
+    let (status, _, page) = send(
+        router,
+        "GET",
+        &format!("/v2/edges?kind=claim&artifact_id={a}"),
+        Call::auth(&dan),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"][0]["edge_id"], claim_edge["edge_id"]);
+
+    let (status, _, brief_edge) = send(
+        router,
+        "POST",
+        "/v2/edges",
+        Call::auth(&dora).idem("e-2").body(json!({
+            "kind": "brief", "from_artifact_id": a, "to_workarea_id": "crew",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{brief_edge}");
+    assert_eq!(brief_edge["kind"], "brief");
+    assert_eq!(brief_edge["label"], "brief");
+
+    for (edge, idem) in [(&claim_edge, "r-1"), (&brief_edge, "r-2")] {
+        let id = edge["edge_id"].as_str().expect("edge id");
+        let (status, _, ratified) = send(
+            router,
+            "POST",
+            &format!("/v2/edges/{id}/ratify"),
+            Call::auth(&dan).idem(idem),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{ratified}");
+        assert_eq!(ratified["state"], "ratified");
+        assert_eq!(ratified["kind"], edge["kind"]);
+    }
+
+    let (status, _, page) = send(
+        router,
+        "GET",
+        "/v2/edges?kind=brief&workarea_id=crew",
+        Call::auth(&dan),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"][0]["state"], "ratified");
+
+    let (_, _, node) = send(router, "GET", "/v2/workareas/crew", Call::auth(&dan)).await;
+    assert_eq!(
+        node["brief"]["items"][0]["artifact_id"],
+        a.as_str(),
+        "{node}"
+    );
+    assert_eq!(node["brief"]["budget"]["max_tokens"], 400);
+
+    let (status, _, body) = send(
+        router,
+        "POST",
+        "/v2/edges",
+        Call::auth(&dora).idem("e-3").body(json!({
+            "kind": "workarea", "from_workarea_id": crew, "to_workarea_id": root, "label": "continues",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_envelope(&body, "request.validation");
+    assert_eq!(body["error"]["details"]["field"], "/kind");
+    drop_db(&rig.db_name).await;
+}
+
+/// The brief a workarea with no ratified brief edge serves: no item, and
+/// the default budget unspent (ADR-0046 d8).
+fn empty_brief() -> Value {
+    json!({
+        "items": [],
+        "budget": {
+            "max_tokens": 400,
+            "counter": "oml-tc/1",
+            "steering_tokens": 0,
+            "used_tokens": 0,
+            "truncated": false,
+            "hits_omitted": 0,
+            "next_hit_tokens": null,
+        },
+    })
 }

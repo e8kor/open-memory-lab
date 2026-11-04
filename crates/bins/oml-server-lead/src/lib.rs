@@ -69,6 +69,9 @@ pub struct Config {
     /// `server.otlp_endpoint`: the collector spans are exported to; unset,
     /// none are (ADR-0042 d13).
     pub otlp_endpoint: Option<otlp::Endpoint>,
+    /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
+    /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
+    pub brief_max_tokens: u64,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -91,6 +94,7 @@ const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
 const KEY_METRICS_LISTEN: &str = "server.metrics_listen";
 const KEY_OTLP_ENDPOINT: &str = "server.otlp_endpoint";
+const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -131,7 +135,11 @@ impl Config {
             }
             doc.as_ref()
                 .and_then(|d| file_lookup(d, key))
-                .and_then(|v| v.as_str().map(ToOwned::to_owned))
+                .and_then(|v| {
+                    v.as_str()
+                        .map(ToOwned::to_owned)
+                        .or_else(|| v.as_integer().map(|n| n.to_string()))
+                })
         };
         // The PoC composes the kms-file adapter only (ADR-0023 d4); naming
         // another adapter is refused rather than silently ignored.
@@ -217,6 +225,16 @@ impl Config {
             .map(|value| otlp::Endpoint::parse(&value))
             .transpose()
             .map_err(ConfigError::Invalid)?;
+        // A brief that serves nothing is no brief: zero and anything but a
+        // positive whole number stop the start (ADR-0046 d8).
+        let brief_max_tokens = match lookup(KEY_BRIEF_MAX_TOKENS) {
+            None => oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+            Some(value) => value.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_BRIEF_MAX_TOKENS} {value:?} is not a positive whole number of budget tokens (configuration.md)"
+                ))
+            })?,
+        };
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -226,6 +244,7 @@ impl Config {
             trusted_proxies,
             metrics_listen,
             otlp_endpoint,
+            brief_max_tokens,
         })
     }
 
@@ -803,6 +822,7 @@ pub async fn start_lead(
         oauth_issuer,
         PinnedFetcher,
         Traffic::default(),
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
     )
     .await
 }
@@ -817,12 +837,13 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     oauth_issuer: Option<Issuer>,
     fetcher: F,
     traffic: Traffic,
+    brief_max_tokens: u64,
 ) -> Result<LeadStart, String> {
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
-    let app = lead_app(store, signing_key);
+    let app = lead_app(store, signing_key).with_brief_max_tokens(brief_max_tokens);
     let app = match oauth_issuer {
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
@@ -1087,6 +1108,32 @@ mod tests {
                 err.to_string().contains("server.metrics_listen"),
                 "{bad}: {err}"
             );
+        }
+    }
+
+    #[test]
+    fn brief_max_tokens_is_400_by_default_reads_oml_brief_max_tokens_and_refuses_zero_or_a_non_number()
+     {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("the default loads");
+        assert_eq!(cfg.brief_max_tokens, 400);
+        let file = "[brief]\nmax_tokens = 900\n";
+        let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
+            .expect("a file value loads");
+        assert_eq!(cfg.brief_max_tokens, 900);
+        let mut env = env_of(&base);
+        env.insert("OML_BRIEF__MAX_TOKENS".to_owned(), "120".to_owned());
+        let cfg = Config::from_sources(Some(file), &|k| env.get(k).cloned())
+            .expect("the environment wins");
+        assert_eq!(cfg.brief_max_tokens, 120);
+        for bad in ["0", "many", "-5"] {
+            env.insert("OML_BRIEF__MAX_TOKENS".to_owned(), bad.to_owned());
+            let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("refused");
+            assert!(err.to_string().contains("brief.max_tokens"), "{bad}: {err}");
         }
     }
 
