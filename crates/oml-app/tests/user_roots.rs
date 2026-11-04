@@ -1169,3 +1169,182 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
         Err(AppError::VerbCeiling { .. })
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Guardrails under user roots (proposed ADR-0037 d16, build step S6)
+// ---------------------------------------------------------------------------
+
+use oml_app::domain::guardrail::{GuardrailScope, Severity};
+use oml_app::types::{GuardrailRequest, GuardrailSet};
+
+fn guardrail(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
+    SubmitRequest {
+        kind: MemoryKind::Guardrail,
+        severity: Some(Severity::Must),
+        ..submit(idem, body, workarea)
+    }
+}
+
+async fn set_of(app: &TestApp, key: &str) -> GuardrailSet {
+    app.guardrails(key, &GuardrailRequest::default())
+        .await
+        .expect("the guardrail read")
+}
+
+fn texts(set: &GuardrailSet) -> Vec<&str> {
+    set.guardrails.iter().map(|g| g.body.as_str()).collect()
+}
+
+/// A guardrail on `universe`, written by a curator and approved by a tenant
+/// reviewer on `universe` (ADR-0044 d7).
+async fn universe_guardrail(app: &TestApp, admin: &str, body: &str) -> Uuid {
+    let curator = curator(app, admin, &[]).await;
+    let id = written(
+        app,
+        &curator.value,
+        &guardrail("u-g", body, Some("universe")),
+    )
+    .await;
+    let reviewer = universe_reviewer(app, admin, "universe-reviewer").await;
+    approve(app, &reviewer.value, id).await;
+    id
+}
+
+#[tokio::test]
+async fn a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let own = written(
+        &app,
+        &alice.value,
+        &guardrail("a-g", "Run the tests first.", None),
+    )
+    .await;
+    approve(&app, &alice_review.value, own).await;
+    universe_guardrail(&app, admin, "Never push to main.").await;
+
+    let set = set_of(&app, &alice.value).await;
+    assert_eq!(set.guardrail_scope, GuardrailScope::Ancestors);
+    assert_eq!(set.scope_path, "universe.alice");
+    assert_eq!(texts(&set), ["Never push to main.", "Run the tests first."]);
+    let paths: Vec<Option<&str>> = set
+        .guardrails
+        .iter()
+        .map(|g| g.workarea_path.as_deref())
+        .collect();
+    assert_eq!(paths, [Some("universe"), Some("universe.alice")]);
+}
+
+#[tokio::test]
+async fn a_user_key_with_scope_workarea_loads_no_universe_guardrail() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    universe_guardrail(&app, admin, "Never push to main.").await;
+    let narrow = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                guardrail_scope: Some(GuardrailScope::Workarea),
+                ..user_req(
+                    Role::Reader,
+                    "alice",
+                    "alice/narrow",
+                    vec![grant(by_name("alice"), Role::Reader)],
+                )
+            },
+        )
+        .await
+        .expect("issue a narrow user key");
+    let set = set_of(&app, &narrow.value).await;
+    assert_eq!(set.guardrail_scope, GuardrailScope::Workarea);
+    assert!(set.guardrails.is_empty(), "{:?}", texts(&set));
+}
+
+#[tokio::test]
+async fn no_guardrail_of_another_users_root_is_ever_served() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
+    let bob_review = user_dreamer(&app, admin, "bob", "bob/review").await;
+    let bobs = written(&app, &bob.value, &guardrail("b-g", "Bob's own rule.", None)).await;
+    approve(&app, &bob_review.value, bobs).await;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let set = set_of(&app, &alice.value).await;
+    assert!(set.guardrails.is_empty(), "{:?}", texts(&set));
+    assert!(set.own_held.is_empty());
+    // Named directly, bob's root is outside alice's grants.
+    let err = app
+        .guardrails(
+            alice.value.as_str(),
+            &GuardrailRequest {
+                workarea: Some(Reference::Name(name("bob"))),
+            },
+        )
+        .await
+        .expect_err("another user's root");
+    assert!(
+        matches!(err, AppError::NotFound | AppError::GrantRefused { .. }),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let alice = user_writer(&app, &boot.admin_key.value, "alice", "alice/laptop").await;
+    let err = app
+        .submit_memory(
+            alice.value.as_str(),
+            &guardrail("u", "A rule for everyone.", Some("universe")),
+        )
+        .await
+        .expect_err("universe is curated");
+    assert!(matches!(err, AppError::UniverseRefused), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_universe_guardrail_is_served_with_origin_universe_its_verdicts_and_no_source() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    universe_guardrail(&app, admin, "Never push to main.").await;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let set = set_of(&app, &alice.value).await;
+    let g = set.guardrails.first().expect("the universe guardrail");
+    assert_eq!(g.workarea_path.as_deref(), Some("universe"));
+    assert_eq!(g.depth, 0);
+    // Its verdict's attestation and time, never a key (d18 Q6).
+    assert_eq!(g.verdicts.len(), 1);
+    assert_eq!(g.verdicts[0].held_by, HeldBy::Agent);
+}
+
+#[tokio::test]
+async fn the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = &boot.admin_key.value;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let alice_review = user_dreamer(&app, admin, "alice", "alice/review").await;
+    let id = written(
+        &app,
+        &alice.value,
+        &guardrail("a-g", "Run the tests first.", None),
+    )
+    .await;
+    assert_eq!(set_of(&app, &alice.value).await.own_held.len(), 1);
+    let outcome = app
+        .post_verdict(&alice_review.value, id, Verdict::Approve, None)
+        .await
+        .expect("the person's reviewer key is not the author");
+    assert_eq!(outcome.state, MemoryStatus::Promoted);
+    assert_eq!(
+        texts(&set_of(&app, &alice.value).await),
+        ["Run the tests first."]
+    );
+}
