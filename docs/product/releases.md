@@ -41,7 +41,7 @@ Nothing in this section is released. Each row is the plan of 2026-11-03.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
+| **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. A workarea of one's own for each person, created when their first key is issued, where their keys write, read and make workareas, so two people can each have a `project`; the organisation's shared area above them, read by everyone and written only by curators an administrator chooses, each copy reviewed by someone else and shown without its author or its source. Workareas and keys made before then stay where they are. | ADR-0037 (proposed); [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
@@ -50,7 +50,7 @@ ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
 ([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0037
-([#20](https://github.com/e8kor/open-memory-lab/pull/20)). The number ADR-0032 is not used by any record.
+([#20](https://github.com/e8kor/open-memory-lab/pull/20)); ADR-0044 is on the branch `feat/user-roots`. The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -112,6 +112,7 @@ many memories in one request. A web console is declined, not deferred.
 | Guardrails | planned for v0.5.0 |
 | Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | planned for v0.5.0 |
+| A workarea of one's own for each person, and a curated shared area above them | planned for v0.5.0 |
 | A brief for each workarea | planned for v0.5.0 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
@@ -169,3 +170,4 @@ which part is still decided, not built.
 | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) quick start per role | accepted | Partly in v0.4.0: the installers, `oml login`, `oml doctor`, `oml setup claude-code`, `oml quickstart` and the install page. `install.sh --quickstart` and the short install address are not in it. |
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
+| [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | proposed | Planned for v0.5.0; decided, not built. |
