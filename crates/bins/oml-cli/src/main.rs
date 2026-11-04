@@ -471,51 +471,93 @@ fn parse_grant(s: &str) -> Result<(String, String), String> {
 // Context resolution
 // ---------------------------------------------------------------------------
 
+/// The first start source that sets either value, with the names it gives
+/// them; never printed with its values (ADR-0039 d15).
+struct Source<'a> {
+    /// The credentials file as a refusal names it; `None` for the flags and
+    /// the environment, whose value names stand alone.
+    file: Option<String>,
+    url_name: &'static str,
+    key_name: &'static str,
+    url: Option<&'a String>,
+    key: Option<&'a String>,
+}
+
+impl Source<'_> {
+    /// Where `name` was set, as doctor reports it: the flag or variable, or
+    /// the field and the file.
+    fn origin(&self, name: &str) -> String {
+        match &self.file {
+            Some(file) => format!("{name} in {file}"),
+            None => name.to_owned(),
+        }
+    }
+
+    /// Why a source that sets one value alone is refused, naming the other.
+    fn half(&self) -> String {
+        let (set, unset) = if self.url.is_some() {
+            (self.url_name, self.key_name)
+        } else {
+            (self.key_name, self.url_name)
+        };
+        match &self.file {
+            Some(file) => format!("{file} sets {set} without {unset}"),
+            None => format!("{set} is set without {unset}"),
+        }
+    }
+}
+
+/// Why no start source sets anything.
+const NO_PAIR: &str = "no URL and API key: pass --url and --api-key, set OML_URL and OML_API_KEY, \
+                       or run `oml bootstrap claim`";
+
+/// The flags, then the environment, then the credentials file: the first
+/// that sets either value, or `None` (ADR-0039 d15).
+fn first_source<'a>(cli: &'a Cli, stored: &'a Credentials) -> Option<Source<'a>> {
+    let file = creds::path().map_or_else(
+        |_| "the credentials file".to_owned(),
+        |p| format!("the credentials file {}", p.display()),
+    );
+    [
+        Source {
+            file: None,
+            url_name: "--url",
+            key_name: "--api-key",
+            url: cli.start.flag_url.as_ref(),
+            key: cli.start.flag_key.as_ref(),
+        },
+        Source {
+            file: None,
+            url_name: "OML_URL",
+            key_name: "OML_API_KEY",
+            url: cli.start.env_url.as_ref(),
+            key: cli.start.env_key.as_ref(),
+        },
+        Source {
+            file: Some(file),
+            url_name: "url",
+            key_name: "api_key",
+            url: stored.url.as_ref(),
+            key: stored.api_key.as_ref(),
+        },
+    ]
+    .into_iter()
+    .find(|s| s.url.is_some() || s.key.is_some())
+}
+
 /// The client of one URL-and-key pair, taken from the first source that sets
 /// either value: the flags, then the environment, then the credentials file.
 /// A source setting one alone is refused naming the other, so a key is never
 /// sent to a URL from another source (ADR-0039 d15).
 fn resolve(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
-    let file = || {
-        creds::path().map_or_else(
-            |_| "the credentials file".to_owned(),
-            |p| format!("the credentials file {}", p.display()),
-        )
-    };
-    let sources = [
-        (
-            "--url",
-            "--api-key",
-            &cli.start.flag_url,
-            &cli.start.flag_key,
-        ),
-        (
-            "OML_URL",
-            "OML_API_KEY",
-            &cli.start.env_url,
-            &cli.start.env_key,
-        ),
-    ];
-    for (url_name, key_name, url, key) in sources {
-        match (url, key) {
-            (Some(url), Some(key)) => return Ok(Client::new(url.clone(), Some(key.clone()))),
-            (Some(_), None) => {
-                return Err(missing(&format!("{url_name} is set without {key_name}")));
-            }
-            (None, Some(_)) => {
-                return Err(missing(&format!("{key_name} is set without {url_name}")));
-            }
-            (None, None) => {}
-        }
-    }
-    match (&stored.url, &stored.api_key) {
-        (Some(url), Some(key)) => Ok(Client::new(url.clone(), Some(key.clone()))),
-        (Some(_), None) => Err(missing(&format!("{} sets url without api_key", file()))),
-        (None, Some(_)) => Err(missing(&format!("{} sets api_key without url", file()))),
-        (None, None) => Err(missing(
-            "no URL and API key: pass --url and --api-key, set OML_URL and OML_API_KEY, or run \
-             `oml bootstrap claim`",
-        )),
+    match first_source(cli, stored) {
+        Some(Source {
+            url: Some(url),
+            key: Some(key),
+            ..
+        }) => Ok(Client::new(url.clone(), Some(key.clone()))),
+        Some(source) => Err(missing(&source.half())),
+        None => Err(missing(NO_PAIR)),
     }
 }
 
@@ -536,6 +578,11 @@ fn resolve_url(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
 /// variable that is set, named for renaming and never read (ADR-0039 d12,
 /// d15).
 fn missing(why: &str) -> CliError {
+    CliError::local(missing_message(why))
+}
+
+/// [`missing`]'s message, which doctor prints as its next action.
+fn missing_message(why: &str) -> String {
     let mut message = format!(
         "{why}; a URL and its key come from one source, the flags, the environment or the \
          credentials file (cli/reference.md \"Start settings\")"
@@ -548,7 +595,7 @@ fn missing(why: &str) -> CliError {
             let _ = write!(message, "; {old} is not read since v0.4.0: rename it {new}");
         }
     }
-    CliError::local(message)
+    message
 }
 
 fn main() -> ExitCode {
@@ -1447,39 +1494,115 @@ fn run_verify_chain(
 // oml doctor
 // ---------------------------------------------------------------------------
 
+/// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
+/// URL and which set the key, never the key; `/healthz` and `/readyz` at
+/// the first source's URL, keyless, so a URL alone is enough to probe; and
+/// `GET /v2/whoami` and the events tail only when that same source also
+/// holds the key. No URL in the first source sends nothing and fails; a URL
+/// without its key warns, naming the missing setting.
 fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
-    let client = resolve(cli, stored)?;
-    let (health_status, health) = client.probe("/healthz")?;
-    let (ready_status, ready) = client.probe("/readyz")?;
-    let healthy = health_status == 200 && ready_status == 200;
+    let source = first_source(cli, stored);
+    let url_source = source
+        .as_ref()
+        .filter(|s| s.url.is_some())
+        .map(|s| s.origin(s.url_name));
+    let key_source = source
+        .as_ref()
+        .filter(|s| s.key.is_some())
+        .map(|s| s.origin(s.key_name));
+    let next = match &source {
+        None => Some(missing_message(NO_PAIR)),
+        Some(s) if s.url.is_none() || s.key.is_none() => Some(missing_message(&s.half())),
+        Some(_) => None,
+    };
 
-    // Chain head via the events tail, when a key is in context.
-    let head_seq: Option<u64> = client
-        .get("/v2/events?after_seq=0&limit=1")
-        .ok()
-        .and_then(|(_, v)| v["head_seq"].as_u64());
+    let mut health = None;
+    let mut ready = None;
+    let mut me: Option<Result<Value, CliError>> = None;
+    let mut head_seq: Option<u64> = None;
+    if let Some(url) = source.as_ref().and_then(|s| s.url) {
+        let keyless = Client::new(url.clone(), None);
+        health = Some(keyless.probe("/healthz")?);
+        ready = Some(keyless.probe("/readyz")?);
+        if let Some(key) = source.as_ref().and_then(|s| s.key) {
+            let client = Client::new(url.clone(), Some(key.clone()));
+            me = Some(client.get("/v2/whoami").map(|(_, v)| v));
+            head_seq = client
+                .get("/v2/events?after_seq=0&limit=1")
+                .ok()
+                .and_then(|(_, v)| v["head_seq"].as_u64());
+        }
+    }
+    let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
+    let whoami_ok = !matches!(me, Some(Err(_)));
+    let outcome = if !probes_ok || !whoami_ok {
+        "fail"
+    } else if me.is_none() {
+        "warn"
+    } else {
+        "ok"
+    };
+    let whoami = match &me {
+        Some(Ok(v)) => json!({
+            "role": v["role"],
+            "tenant": v["tenant"]["name"],
+            "default_workarea": v["default_workarea"]["path"],
+        }),
+        Some(Err(e)) => json!({ "error": refusal(e) }),
+        None => Value::Null,
+    };
+    let probe_json = |p: &Option<(u16, Value)>| {
+        p.as_ref().map_or(
+            Value::Null,
+            |(status, body)| json!({ "status": status, "body": body }),
+        )
+    };
 
     if cli.json {
         print_json(&json!({
-            "healthz": { "status": health_status, "body": health },
-            "readyz": { "status": ready_status, "body": ready },
+            "url_source": url_source,
+            "key_source": key_source,
+            "healthz": probe_json(&health),
+            "readyz": probe_json(&ready),
+            "whoami": whoami,
             "chain_head_seq": head_seq,
             "client_version": env!("CARGO_PKG_VERSION"),
             // The PoC API exposes no server version endpoint.
             "server_version": Value::Null,
-            "verdict": if healthy { "ok" } else { "fail" },
+            "verdict": outcome,
+            "next": next,
         }));
     } else {
-        println!(
-            "healthz     : {} ({})",
-            verdict(health_status == 200),
-            field(&health, "status")
-        );
-        println!("readyz      : {}", verdict(ready_status == 200));
-        if let Some(checks) = ready["checks"].as_object() {
-            for (name, state) in checks {
-                println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
+        println!("url         : {}", url_source.as_deref().unwrap_or("unset"));
+        println!("api key     : {}", key_source.as_deref().unwrap_or("unset"));
+        match &health {
+            Some((status, body)) => println!(
+                "healthz     : {} ({})",
+                verdict(*status == 200),
+                field(body, "status")
+            ),
+            None => println!("healthz     : not probed (no URL)"),
+        }
+        match &ready {
+            Some((status, body)) => {
+                println!("readyz      : {}", verdict(*status == 200));
+                if let Some(checks) = body["checks"].as_object() {
+                    for (name, state) in checks {
+                        println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
+                    }
+                }
             }
+            None => println!("readyz      : not probed (no URL)"),
+        }
+        match &me {
+            Some(Ok(_)) => println!(
+                "whoami      : role {}, tenant {}, default workarea {}",
+                whoami["role"].as_str().unwrap_or("—"),
+                whoami["tenant"].as_str().unwrap_or("—"),
+                whoami["default_workarea"].as_str().unwrap_or("—"),
+            ),
+            Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
+            None => println!("whoami      : not called (no key with this URL)"),
         }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),
@@ -1487,13 +1610,25 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         println!("server      : version not exposed by the PoC API");
-        println!("verdict     : {}", verdict(healthy));
+        println!("verdict     : {outcome}");
+        if let Some(next) = &next {
+            println!("next        : {next}");
+        }
     }
-    Ok(if healthy {
-        ExitCode::SUCCESS
-    } else {
+    Ok(if outcome == "fail" {
         ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     })
+}
+
+/// A failed call as doctor reports it: the status and code of a refusal, or
+/// the local reason, which never carries a key.
+fn refusal(e: &CliError) -> String {
+    match e {
+        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+        CliError::Local(why) | CliError::Unanswered(why) => why.clone(),
+    }
 }
 
 fn verdict(ok: bool) -> &'static str {

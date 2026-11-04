@@ -34,6 +34,18 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml doctor` reports each start setting's source and probes with a URL alone (ADR-0039 d15, implementation)
+
+`oml doctor` no longer takes the pair through the refusal every other verb applies. It names the
+source of the URL and of the key, never the key; probes `/healthz` and `/readyz` keyless at the
+first source's URL; and calls `GET /v2/whoami` and the events tail only when that source also
+holds the key. A URL alone is a `warn` (exit `0`) naming the missing key, as `oml --server X
+doctor` answered without a key in v0.3.0; no URL in the first source sends nothing and is a
+`fail` (exit `1`). `--json` gains `url_source`, `key_source`, `whoami` and `next`, and its
+`verdict` can be `warn`.
+
+- **Pages touched:** [cli/reference.md](cli/reference.md#start-settings).
+
 ### 2026-11-04 — The CLI starts from one URL-and-key pair: flag, then environment, then file (ADR-0039 d15, implementation)
 
 The CLI's start settings are `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`, and the

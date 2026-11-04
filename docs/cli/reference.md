@@ -160,6 +160,13 @@ file, so a second server is a second file. A v0.3.0 file's `server` and `key` ar
 and `api_key` through v0.4.x, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
 `oml audit verify-chain` without `--tenant` reads the key's tenant through `GET /v2/whoami`.
 
+`oml doctor` checks the pair alone and refuses nothing: it reports which source set the URL and
+which set the key, never the key, and probes `/healthz` and `/readyz` at the first source's URL
+with no key, so a URL alone is enough to probe readiness. It calls `GET /v2/whoami`, printing
+role, tenant and default workarea, and reads the chain head from the events tail only when that
+same source also holds the key. A URL without its key is a `warn` (exit `0`) naming the missing
+setting; no URL in the first source sends nothing and is a `fail` (exit `1`).
+
 The v0.3.0 names follow [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12. `--server`
 and `--key` still answer, hidden, each printing one stderr line naming `--url` or `--api-key`,
 until v0.5.0 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting

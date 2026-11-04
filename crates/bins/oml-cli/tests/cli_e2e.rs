@@ -3499,3 +3499,201 @@ async fn the_hidden_server_and_key_flags_answer_and_each_prints_one_line_naming_
     );
     task.abort();
 }
+
+// ---------------------------------------------------------------------------
+// oml doctor checks the pair alone (ADR-0039 d15)
+// ---------------------------------------------------------------------------
+
+/// The path and bearer of every request a stub received, in order.
+type Calls = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+/// A stub answering `/healthz`, `/readyz`, `GET /v2/whoami` and the events
+/// tail as a healthy lead would, recording each request's path and bearer;
+/// returns its URL, what it saw and the task serving it.
+async fn doctor_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
+    let seen: Calls = Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new()
+        .fallback(|State(seen): State<Calls>, request: Request| async move {
+            let path = request.uri().path().to_owned();
+            seen.lock().expect("calls lock").push((
+                path.clone(),
+                request
+                    .headers()
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .map(ToOwned::to_owned),
+            ));
+            axum::Json(match path.as_str() {
+                "/healthz" => json!({ "status": "ok" }),
+                "/readyz" => json!({ "status": "ready", "checks": { "database": "ok" } }),
+                "/v2/whoami" => json!({
+                    "key_id": "k1",
+                    "name": "agent-7",
+                    "role": "writer",
+                    "principal": "crew/agent-7",
+                    "held_by": "agent",
+                    "tenant": { "id": "t1", "name": "acme" },
+                    "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
+                    "crew": null,
+                    "grants": [],
+                }),
+                "/v2/events" => json!({ "events": [], "head_seq": 7 }),
+                _ => json!({}),
+            })
+        })
+        .with_state(seen.clone());
+    let (url, task) = serve_stub(router).await;
+    (url, seen, task)
+}
+
+/// `oml <global…> --json doctor` with exactly the variables `vars` names
+/// and a `HOME` that holds nothing; returns (exit code, stdout JSON,
+/// stderr).
+fn doctor_run(global: &[&str], vars: &[(&str, &str)]) -> (i32, Value, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(global).args(["--json", "doctor"]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-doctor-e2e-no-home"));
+    for (name, value) in vars {
+        cmd.env(name, value);
+    }
+    let out = cmd.output().expect("the oml binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    (
+        out.status.code().unwrap_or(-1),
+        serde_json::from_str(stdout.trim()).unwrap_or(Value::Null),
+        format!(
+            "stdout: {stdout}\nstderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn calls(seen: &Calls) -> Vec<(String, Option<String>)> {
+    std::mem::take(&mut *seen.lock().expect("calls lock"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_with_a_url_alone_probes_readiness_and_names_the_missing_key() {
+    let (url, seen, task) = doctor_stub().await;
+    let (dir, file) = start_file(
+        "doctor-url-alone",
+        "url = \"http://127.0.0.1:9\"\napi_key = \"oml_file_key\"\n",
+    );
+    let file = ("OML_CLI_CREDENTIALS", file.to_str().expect("a UTF-8 path"));
+
+    // (flags, variables, the URL's source, the name of the missing key).
+    type Case<'a> = (&'a [&'a str], Vec<(&'a str, &'a str)>, &'a str, &'a str);
+    let cases: [Case; 2] = [
+        (&["--url", &url], vec![file], "--url", "--api-key"),
+        (&[], vec![file, ("OML_URL", &url)], "OML_URL", "OML_API_KEY"),
+    ];
+    for (global, vars, source, missing) in cases {
+        let (code, doctor, log) = doctor_run(global, &vars);
+        assert_eq!(code, 0, "{source}: {log}");
+        assert_eq!(doctor["verdict"], "warn", "{source}: {log}");
+        assert_eq!(doctor["url_source"], source, "{log}");
+        assert_eq!(doctor["key_source"], Value::Null, "{log}");
+        assert_eq!(doctor["healthz"]["status"], 200, "{log}");
+        assert_eq!(doctor["readyz"]["status"], 200, "{log}");
+        assert_eq!(doctor["whoami"], Value::Null, "{log}");
+        assert!(
+            doctor["next"]
+                .as_str()
+                .expect("a next action")
+                .contains(missing),
+            "{source}: {log}"
+        );
+        assert!(!log.contains("oml_file_key"), "no key printed: {log}");
+        assert_eq!(
+            calls(&seen),
+            vec![("/healthz".to_owned(), None), ("/readyz".to_owned(), None)],
+            "{source}: the probes alone, keyless"
+        );
+    }
+    task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_sources_key() {
+    let (url, seen, task) = doctor_stub().await;
+    let (dir, file) = start_file(
+        "doctor-pair",
+        &format!("url = \"{url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let path = file.to_str().expect("a UTF-8 path");
+
+    let (code, doctor, log) = doctor_run(&[], &[("OML_CLI_CREDENTIALS", path)]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(doctor["verdict"], "ok", "{log}");
+    let url_source = doctor["url_source"].as_str().expect("a URL source");
+    let key_source = doctor["key_source"].as_str().expect("a key source");
+    assert!(
+        url_source.contains(path) && url_source.contains("url"),
+        "{log}"
+    );
+    assert!(
+        key_source.contains(path) && key_source.contains("api_key"),
+        "{log}"
+    );
+    assert_eq!(doctor["whoami"]["role"], "writer", "{log}");
+    assert_eq!(doctor["whoami"]["tenant"], "acme", "{log}");
+    assert_eq!(doctor["whoami"]["default_workarea"], "acme/metals", "{log}");
+    assert_eq!(doctor["chain_head_seq"], 7, "{log}");
+    assert!(!log.contains("oml_file_key"), "no key printed: {log}");
+    let seen = calls(&seen);
+    assert_eq!(
+        seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+        ["/healthz", "/readyz", "/v2/whoami", "/v2/events"],
+    );
+    assert_eq!(seen[0].1, None);
+    assert_eq!(seen[1].1, None);
+    assert_eq!(seen[2].1, bearer("oml_file_key"));
+    assert_eq!(seen[3].1, bearer("oml_file_key"));
+    task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_without_a_url_in_the_first_source_sends_nothing_and_says_so() {
+    let (url, seen, task) = doctor_stub().await;
+    let (dir, file) = start_file(
+        "doctor-no-url",
+        &format!("url = \"{url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let file = ("OML_CLI_CREDENTIALS", file.to_str().expect("a UTF-8 path"));
+    let (empty_dir, empty) = start_file("doctor-none", "");
+    let empty = ("OML_CLI_CREDENTIALS", empty.to_str().expect("a UTF-8 path"));
+
+    // The environment's key alone is never paired with the file's URL.
+    let (code, doctor, log) = doctor_run(&[], &[file, ("OML_API_KEY", "oml_env_key")]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(doctor["verdict"], "fail", "{log}");
+    assert_eq!(doctor["url_source"], Value::Null, "{log}");
+    assert_eq!(doctor["key_source"], "OML_API_KEY", "{log}");
+    assert!(
+        doctor["next"].as_str().expect("next").contains("OML_URL"),
+        "{log}"
+    );
+    assert!(!log.contains("oml_env_key"), "no key printed: {log}");
+
+    // No source sets either.
+    let (code, doctor, log) = doctor_run(&[], &[empty]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(doctor["verdict"], "fail", "{log}");
+    assert_eq!(doctor["url_source"], Value::Null, "{log}");
+    assert_eq!(doctor["key_source"], Value::Null, "{log}");
+    assert!(
+        doctor["next"].as_str().expect("next").contains("--url"),
+        "{log}"
+    );
+
+    assert!(calls(&seen).is_empty(), "nothing was sent");
+    task.abort();
+    for dir in [dir, empty_dir] {
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+}
