@@ -838,7 +838,24 @@ pub struct WorkareaStatusView {
     /// The policy a verdict's ratification and a transition's
     /// `policy_snapshot` read, so the three never disagree.
     pub policy: serde_json::Value,
-    pub pending: Vec<TransitionRecord>,
+    pub pending: Vec<TransitionView>,
+}
+
+/// One live proposal as the status read serves it, the openapi
+/// `Transition` shape: never the proposer's principal nor the tenant, and
+/// the proposing key only to a key in the proposer's own key set, as the
+/// tail serves it (workareas.md, the status read names the proposing key
+/// only to its own key set; http-api.md#events-tail; ADR-0025 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionView {
+    pub transition_id: Uuid,
+    pub workarea_id: Uuid,
+    pub from: WorkareaStatus,
+    pub to: WorkareaStatus,
+    pub state: TransitionState,
+    /// The proposing key when it is in the reader's own key set; `None`
+    /// to every other reader, an admin key included.
+    pub proposed_by_key_id: Option<Uuid>,
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
