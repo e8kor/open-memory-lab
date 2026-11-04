@@ -19,17 +19,14 @@ use oml_domain::{
     ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
 };
 
-use crate::types::{AdminSearch, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth};
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
+    AdminSearch, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
+    ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
-    TransitionRecord,
-    ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord,
-    ClaimEdgeSelection,
-    BriefEdgeRecord,
+    PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
