@@ -27,7 +27,7 @@ URL as it is (since v0.4.1). For your own server you also need its address, such
 `https://oml.example.com`:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.1/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```

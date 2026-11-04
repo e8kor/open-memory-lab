@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design and 0.4.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design and 0.5.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.4.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,12 +27,22 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## 0.4.0-design
+## 0.5.0-design
 
-Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
-records. `info.version` moved to `0.4.0-design` with the contract split below; entries landed
-here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
-this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
+Opened on 2026-11-04 for release v0.5.0, which carries this revision: a person's own workarea and
+the curated shared area above it ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
+and sign-in with Google or GitHub to a user page and an admin page
+([ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).
+`info.version` moved to `0.5.0-design` because a provider-ring response changed shape:
+`Memory.principal` is nullable, null on a universe claim served to a key outside its authoring
+key set (ADR-0044 d9). Every other change of the revision is additive or on the lab ring.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.0, and the spec is 0.5.0-design
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.0; every reader page fetches the
+installer at `v0.5.0`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.0-design`.
 
 ### 2026-11-04 — The user page and the admin page act through session keys, and an admin reads every memory, journalled (ADR-0045 W3, W4, implementation)
 
@@ -139,6 +149,13 @@ rewrites and journals nothing: every existing key is a tenant key and every work
   the [roadmap](product/roadmap.md) and [llms.txt](llms.txt) read "since v0.5.0"; the
   [event catalog](data/event-catalog.md) and [Postgres schema](data/postgres-schema.md) carry the
   new fields and columns.
+
+## 0.4.0-design
+
+Opened on 2026-11-03 for the rewrite [ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+records. `info.version` moved to `0.4.0-design` with the contract split below; entries landed
+here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
+this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 
