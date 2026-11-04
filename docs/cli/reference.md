@@ -805,6 +805,11 @@ command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0
 
 *Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d6–d9; built on its branch, not released · [releases](../product/releases.md)*
 
+| Verb | Does |
+|---|---|
+| `oml hook guardrails` | Reads the SessionStart or SubagentStart JSON object on stdin, sends one `GET /v1/guardrails` under the agent's own key, and prints one hook document for that event; at SessionStart alone it writes the session's rule cache. Exits `0` whatever happens, a failure being a `systemMessage`. |
+| `oml hook pre-tool-use` | Reads the PreToolUse JSON object on stdin, checks the call against the session's rule cache and prints `deny`, `ask`, one warning or nothing. Sends no request. Exits `2`, which blocks the call, when stdin or its `session_id` cannot be read. |
+
 `oml hook guardrails` is the agent plugin's second SessionStart hook and its SubagentStart hook.
 It reads the server and key as `oml hook session-start` does, sends one `GET /v1/guardrails`, and
 prints one hook document whose `additionalContext` is the set in its own frame: a header naming
