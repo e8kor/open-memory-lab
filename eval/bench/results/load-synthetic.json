@@ -1,0 +1,12 @@
+{
+ "dataset": "synthetic",
+ "docs": 200,
+ "written": 200,
+ "refused": 0,
+ "refusals": {},
+ "approved": 200,
+ "write_seconds": 2.6,
+ "review_seconds": 2.4,
+ "writers": 8,
+ "reviewers": 6
+}
