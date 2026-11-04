@@ -50,6 +50,15 @@ openapi.yaml.
   (`listMemories`) and `verdict` are gone, with no alias (d12); `base_url` (`baseUrl`) is `url`;
   a URL argument with the key left to `OML_API_KEY`, or the reverse, is refused; the raising
   `upload_attachment` stub and `NotBuiltError` are removed.
+- **Breaks, same names:** `pages` and `iter_memories` (`pages` and `memories`) now send
+  `own=true` when `own` is omitted, as `read`'s listing does, so they yield the key's own rows in
+  every state where 0.1.0 sent no `own` and got the promoted tips of the default workarea; pass
+  `own=False` (`own: false`) to keep that. TypeScript's `pages(query, options)` and
+  `memories(query, options)` take one argument: move `options.workarea` into the query.
+- **Breaks, stored kind:** `learn` defaulted `kind` to `derived_fact`; `write` with
+  `derives_from` sends no kind, so the server stores `memory` and a recall filtered on `kinds`
+  finds the row under that kind. Pass `kind="derived_fact"` (`kind: "derived_fact"`) where a
+  caller relied on `learn`'s default.
 - **Pages touched:** [SDKs](engineering/sdks.md), the root README and both SDK READMEs.
 
 ### 2026-11-04 — `oml login <url>` stores the pair once whoami accepts the key (ADR-0039 d15, implementation)

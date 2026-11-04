@@ -237,6 +237,34 @@ test("read with neither lists the key's own rows", async () => {
   );
 });
 
+test("the listing iterators send own true unless the caller passes own false, workarea in the query", async () => {
+  const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
+  const oml = client(fetcher);
+  for await (const _ of oml.memories({ limit: 5 })) assert.fail("no rows were answered");
+  for await (const _ of oml.pages({ own: false, workarea: "w", limit: 5 })) continue;
+  assert.deepEqual(
+    requests.map((r) => Object.fromEntries(new URL(r.url).searchParams)),
+    [
+      { own: "true", limit: "5" },
+      { own: "false", workarea: "w", limit: "5" },
+    ],
+  );
+});
+
+test("write with derives_from sends no kind unless the caller names one", async () => {
+  const { requests, fetcher } = recorder(202, ACCEPTED);
+  const oml = client(fetcher);
+  await oml.write({ text: "Derived without a kind.", derives_from: ["art_0"] });
+  await oml.write({ text: "Derived as learn stored it.", derives_from: ["art_0"], kind: "derived_fact" });
+  assert.deepEqual(
+    await Promise.all(requests.map((r) => r.json())),
+    [
+      { body: "Derived without a kind.", derives_from: ["art_0"] },
+      { body: "Derived as learn stored it.", derives_from: ["art_0"], kind: "derived_fact" },
+    ],
+  );
+});
+
 test("approve without serve_id sends none", async () => {
   const result = { artifact_id: "art_1", version: 1, verdict: "approve", state: "promoted" };
   const { requests, fetcher } = recorder(200, result);

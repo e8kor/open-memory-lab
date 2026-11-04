@@ -25,7 +25,11 @@ console.log(written.idempotencyKey); // the key every retry of this call sent
 const { hits } = await oml.read({ query: "canary stage", include_unreviewed: true });
 for (const hit of hits) console.log(hit.memory.state, hit.memory.text);
 
-const memory = await oml.read({ artifact_id: written.value.artifact_id });
+const memory = await oml.read({ artifact_id: written.value.artifact_id }); // own row, any state
+console.log(memory.state, memory.text);
+
+// replaces must name the served tip, so a reviewer's approve promotes the version first:
+// superseding it while it is held rejects with SubmissionError (submission.tip_conflict).
 await oml.write({ text: "Drain, then wait five minutes.", replaces: memory.artifact_id });
 
 for await (const row of oml.memories({ limit: 50 })) {

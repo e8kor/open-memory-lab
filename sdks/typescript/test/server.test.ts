@@ -102,6 +102,29 @@ describe("the agent loop", live, () => {
     assert.equal((await agent.read({ artifact_id: held.artifact_id })).state, "promoted");
     assert.equal(await reviewer.reviewNext(), null);
   });
+
+  test("a held version cannot be superseded and the promoted one can", async () => {
+    const word = marker();
+    const workarea = server.reviewWorkarea;
+    const held = (
+      await agent.write({ text: `The SDK README's canary rule, ${word}.`, claim_key: `tip-${word}`, workarea })
+    ).value;
+    const supersede = { text: "Drain, then wait five minutes.", replaces: held.artifact_id };
+    await assert.rejects(agent.write(supersede), (error: unknown) => {
+      assert.ok(error instanceof SubmissionError);
+      assert.equal(error.code, "submission.tip_conflict");
+      return true;
+    });
+
+    assert.equal((await reviewer.reviewNext())?.item.artifact_id, held.artifact_id);
+    assert.equal((await reviewer.approve()).value.state, "promoted");
+    const successor = (await agent.write(supersede)).value;
+    assert.deepEqual([successor.state, successor.replaces?.artifact_id], ["held", held.artifact_id]);
+
+    assert.equal((await reviewer.reviewNext())?.item.artifact_id, successor.artifact_id);
+    await reviewer.reject({ reason: "the test's successor; nothing more waits" });
+    assert.equal(await reviewer.reviewNext(), null);
+  });
 });
 
 describe("idempotency", live, () => {

@@ -1,5 +1,9 @@
 """The agent loop through the SDK, against a real server (docs/engineering/sdks.md, "Tests")."""
 
+import pytest
+
+from oml_sdk import SubmissionError
+
 
 def test_a_written_memory_is_held_recalled_by_its_author_alone_and_promoted_by_a_reviewer(
     oml_server, agent, reviewer, marker
@@ -31,4 +35,25 @@ def test_a_written_memory_is_held_recalled_by_its_author_alone_and_promoted_by_a
         (held.artifact_id, "promoted")
     ]
     assert agent.read(held.artifact_id).state == "promoted"
+    assert reviewer.review_next() is None
+
+
+def test_a_held_version_cannot_be_superseded_and_the_promoted_one_can(
+    oml_server, agent, reviewer, marker
+):
+    review = oml_server.review_workarea
+    held = agent.write(
+        f"The SDK README's canary rule, {marker}.", claim_key=f"tip-{marker}", workarea=review
+    ).value
+    with pytest.raises(SubmissionError) as refused:
+        agent.write("Drain, then wait five minutes.", replaces=held.artifact_id)
+    assert refused.value.code == "submission.tip_conflict"
+
+    assert reviewer.review_next().item.artifact_id == held.artifact_id
+    assert reviewer.approve().value.state == "promoted"
+    successor = agent.write("Drain, then wait five minutes.", replaces=held.artifact_id).value
+    assert (successor.state, successor.replaces.artifact_id) == ("held", held.artifact_id)
+
+    assert reviewer.review_next().item.artifact_id == successor.artifact_id
+    reviewer.reject(reason="the test's successor; nothing more waits")
     assert reviewer.review_next() is None

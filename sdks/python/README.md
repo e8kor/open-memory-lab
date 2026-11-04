@@ -24,7 +24,11 @@ with OmlClient() as oml:
     for hit in oml.read(query="canary stage", include_unreviewed=True).hits:
         print(hit.memory.state, hit.memory.text)
 
-    memory = oml.read(written.value.artifact_id)
+    memory = oml.read(written.value.artifact_id)   # the key's own row, in any state
+    print(memory.state, memory.text)
+
+    # replaces must name the served tip, so a reviewer's approve promotes the version first:
+    # superseding it while it is held raises SubmissionError (submission.tip_conflict).
     oml.write("Drain, then wait five minutes.", replaces=memory.artifact_id)
 
     for row in oml.iter_memories(limit=50):   # the key's own rows; follows next_cursor to the end

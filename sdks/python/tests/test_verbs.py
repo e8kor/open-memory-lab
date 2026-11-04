@@ -110,6 +110,28 @@ def test_read_with_neither_lists_the_keys_own_rows():
     ]
 
 
+def test_the_listing_iterators_send_own_true_unless_the_caller_passes_own_false():
+    requests, transport = recording(200, {"items": [], "next_cursor": None})
+    with client(transport) as oml:
+        list(oml.iter_memories(limit=5))
+        list(oml.pages(own=False, limit=5))
+    assert [dict(r.url.params) for r in requests] == [
+        {"own": "true", "limit": "5"},
+        {"own": "false", "limit": "5"},
+    ]
+
+
+def test_write_with_derives_from_sends_no_kind_unless_the_caller_names_one():
+    requests, transport = recording(202, ACCEPTED)
+    with client(transport) as oml:
+        oml.write("Derived without a kind.", derives_from=["art_0"])
+        oml.write("Derived as learn stored it.", derives_from=["art_0"], kind="derived_fact")
+    assert [json.loads(r.content) for r in requests] == [
+        {"body": "Derived without a kind.", "derives_from": ["art_0"]},
+        {"body": "Derived as learn stored it.", "derives_from": ["art_0"], "kind": "derived_fact"},
+    ]
+
+
 def test_approve_without_serve_id_sends_none():
     result = {"artifact_id": "art_1", "version": 1, "verdict": "approve", "state": "promoted"}
     requests, transport = recording(200, result)
