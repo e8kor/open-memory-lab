@@ -1408,6 +1408,7 @@ dependencies = [
  "hex",
  "oml-app",
  "oml-fetch",
+ "oml-guardrail",
  "oml-pg",
  "oml-transport-http",
  "opentelemetry",
