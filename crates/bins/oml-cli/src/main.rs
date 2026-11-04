@@ -141,6 +141,15 @@ enum Command {
         #[command(subcommand)]
         command: AuditCommand,
     },
+    /// Read an API key without echo, from the terminal or from stdin when
+    /// stdin is not one, check it through GET /v2/whoami, and only then
+    /// store the URL and the key, nothing else, owner-only (ADR-0039 d15).
+    Login {
+        /// The server's URL, without /mcp.
+        // Not `url`: clap would merge that id with the global --url.
+        #[arg(value_name = "URL")]
+        target: String,
+    },
     /// Each health signal with a verdict; exit 1 on any fail.
     Doctor,
     /// Claude Code hooks of the agent plugin, run under the agent's own key.
@@ -1127,6 +1136,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: AuditCommand::VerifyChain(args),
         } => run_verify_chain(cli, &stored, args),
 
+        Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
         Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
@@ -1475,7 +1485,7 @@ fn run_verify_chain(
     let tenant = match &args.tenant {
         Some(tenant) => tenant.clone(),
         None => {
-            let (_, me) = client.get("/v2/whoami")?;
+            let me = client.whoami()?;
             me["tenant"]["id"]
                 .as_str()
                 .map(ToOwned::to_owned)
@@ -1488,6 +1498,79 @@ fn run_verify_chain(
          this server does not serve yet; the events tail is a filtered feed, not a verification \
          surface (http-api.md events tail)"
     )))
+}
+
+// ---------------------------------------------------------------------------
+// oml login
+// ---------------------------------------------------------------------------
+
+/// `oml login <url>` (ADR-0039 d15): the key read without echo from the
+/// terminal, or from stdin when stdin is not one; `GET /v2/whoami` under it;
+/// and only on success `url` and `api_key`, nothing else, written to the
+/// owner-only credentials file. A refusal writes nothing and exits 1 with
+/// the envelope's code; the key is never printed.
+fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
+    let key = read_key(target)?;
+    let client = Client::new(target.to_owned(), Some(key.clone()));
+    let me = client.whoami()?;
+    let path = creds::store(&Credentials {
+        url: Some(client.server().to_owned()),
+        api_key: Some(key),
+    })
+    .map_err(CliError::Local)?;
+    if cli.json {
+        print_json(&me);
+    } else {
+        println!(
+            "logged in to {} as key {} ({}): role {}, tenant {}, default workarea {}",
+            client.server(),
+            field(&me, "name"),
+            field(&me, "key_id"),
+            field(&me, "role"),
+            field(&me["tenant"], "name"),
+            field(&me["default_workarea"], "path"),
+        );
+        println!(
+            "url and api_key stored in {} (owner-only); the flags and OML_URL with \
+             OML_API_KEY still win over it",
+            path.display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The API key for `url`: prompted for on the terminal and read without
+/// echo when stdin is one, else the first line of stdin, its line ending
+/// cut. An empty key, or one with a byte outside printable ASCII, which no
+/// header carries, is refused before anything is sent.
+fn read_key(url: &str) -> Result<String, CliError> {
+    use std::io::{BufRead as _, IsTerminal as _};
+    let stdin = std::io::stdin();
+    let (line, from) = if stdin.is_terminal() {
+        let line = rpassword::prompt_password(format!("API key for {url}: "))
+            .map_err(|e| CliError::local(format!("cannot read the key from the terminal: {e}")))?;
+        (line, "the terminal")
+    } else {
+        let mut line = String::new();
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| CliError::local(format!("cannot read the key from stdin: {e}")))?;
+        (line, "stdin")
+    };
+    let key = line.trim();
+    if key.is_empty() {
+        return Err(CliError::local(format!(
+            "no API key on {from}; nothing was sent and nothing written"
+        )));
+    }
+    if !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(CliError::local(format!(
+            "the key on {from} holds a character outside printable ASCII, which no key holds; \
+             nothing was sent and nothing written"
+        )));
+    }
+    Ok(key.to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -1526,7 +1609,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         ready = Some(keyless.probe("/readyz")?);
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
-            me = Some(client.get("/v2/whoami").map(|(_, v)| v));
+            me = Some(client.whoami());
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
                 .ok()

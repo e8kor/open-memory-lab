@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::middleware::{self, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 use sqlx::postgres::PgConnection;
@@ -3696,4 +3696,297 @@ async fn doctor_without_a_url_in_the_first_source_sends_nothing_and_says_so() {
     for dir in [dir, empty_dir] {
         std::fs::remove_dir_all(&dir).expect("cleaned up");
     }
+}
+
+// ---------------------------------------------------------------------------
+// oml login <url> and oml doctor over whoami (ADR-0039 d15)
+// ---------------------------------------------------------------------------
+
+/// The one key [`login_stub`]'s whoami accepts.
+const GOOD_KEY: &str = "oml_login_good_key";
+
+/// A stub whose `GET /v2/whoami` answers [`doctor_stub`]'s record for
+/// [`GOOD_KEY`] and `auth.invalid` for any other bearer, recording each
+/// request's path and bearer.
+async fn login_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
+    let seen: Calls = Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new()
+        .fallback(|State(seen): State<Calls>, request: Request| async move {
+            let path = request.uri().path().to_owned();
+            let bearer = request
+                .headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .map(ToOwned::to_owned);
+            seen.lock()
+                .expect("calls lock")
+                .push((path.clone(), bearer.clone()));
+            if path == "/v2/whoami" && bearer == Some(format!("Bearer {GOOD_KEY}")) {
+                return axum::Json(json!({
+                    "key_id": "k1",
+                    "name": "agent-7",
+                    "role": "writer",
+                    "principal": "crew/agent-7",
+                    "held_by": "agent",
+                    "tenant": { "id": "t1", "name": "acme" },
+                    "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
+                    "crew": null,
+                    "grants": [],
+                }))
+                .into_response();
+            }
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                axum::Json(json!({ "error": {
+                    "code": "auth.invalid",
+                    "message": "the key is unknown",
+                    "rule": "D6",
+                    "details": { "reason": "unknown" },
+                    "request_id": "r1",
+                }})),
+            )
+                .into_response()
+        })
+        .with_state(seen.clone());
+    let (url, task) = serve_stub(router).await;
+    (url, seen, task)
+}
+
+/// `oml login <url>` with `stdin` piped in, the credentials file at
+/// `creds`, and no start variable set; returns (exit code, stdout, stderr).
+fn login_run(url: &str, creds: &Path, stdin: &str) -> (i32, String, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(["login", url]);
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-login-e2e-no-home"))
+        .env("OML_CLI_CREDENTIALS", creds)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("the oml binary runs");
+    child
+        .stdin
+        .take()
+        .expect("a stdin pipe")
+        .write_all(stdin.as_bytes())
+        .expect("stdin written");
+    let out = child.wait_with_output().expect("the oml binary exits");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn login_stores_only_url_and_key_owner_only_and_nothing_when_whoami_refuses() {
+    let (url, seen, task) = login_stub().await;
+    let (dir, _) = stub_paths("login-store");
+    let file = dir.join("oml").join("credentials");
+
+    // A refused key writes no file.
+    let (code, stdout, stderr) = login_run(&url, &file, "oml_login_bad_key\n");
+    assert_eq!(code, 1, "a refusal exits 1: {stdout}{stderr}");
+    assert!(
+        stderr.contains("auth.invalid"),
+        "the code is named: {stderr}"
+    );
+    assert!(!file.exists(), "nothing written on a refusal");
+    assert!(
+        !stdout.contains("oml_login_bad_key") && !stderr.contains("oml_login_bad_key"),
+        "the key is never printed: {stdout}{stderr}"
+    );
+
+    // An accepted key writes the URL and the key, nothing else, owner-only.
+    let (code, stdout, stderr) = login_run(&url, &file, &format!("{GOOD_KEY}\n"));
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let text = std::fs::read_to_string(&file).expect("the credentials file");
+    let fields: toml::Table = toml::from_str(&text).expect("TOML");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["api_key", "url"],
+        "the two keys alone: {text}"
+    );
+    assert_eq!(fields["url"].as_str(), Some(url.as_str()));
+    assert_eq!(fields["api_key"].as_str(), Some(GOOD_KEY));
+    #[cfg(unix)]
+    assert_eq!(mode_of(&file), 0o600, "owner-only");
+    assert!(
+        !stdout.contains(GOOD_KEY) && !stderr.contains(GOOD_KEY),
+        "the key is never printed: {stdout}{stderr}"
+    );
+
+    // A refusal over a stored pair leaves the file as it was.
+    let (code, _, stderr) = login_run(&url, &file, "oml_login_bad_key\n");
+    assert_eq!(code, 1, "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("still there"),
+        text,
+        "a refusal writes nothing"
+    );
+
+    assert_eq!(
+        calls(&seen)
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>(),
+        ["/v2/whoami", "/v2/whoami", "/v2/whoami"],
+        "whoami alone, once per login"
+    );
+    task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn login_reads_the_key_from_stdin_when_stdin_is_not_a_terminal() {
+    let (url, seen, task) = login_stub().await;
+    let (dir, _) = stub_paths("login-stdin");
+    let file = dir.join("credentials");
+
+    for line in [
+        format!("{GOOD_KEY}\n"),
+        format!("{GOOD_KEY}\r\n"),
+        GOOD_KEY.to_owned(),
+    ] {
+        let (code, stdout, stderr) = login_run(&format!("{url}/"), &file, &line);
+        assert_eq!(code, 0, "{line:?}: {stdout}{stderr}");
+        assert_eq!(
+            calls(&seen),
+            vec![("/v2/whoami".to_owned(), bearer(GOOD_KEY))],
+            "{line:?}: the stdin line, its line ending cut, is the bearer"
+        );
+        let stored: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&file).expect("stored")).expect("TOML");
+        assert_eq!(stored["api_key"].as_str(), Some(GOOD_KEY), "{line:?}");
+        assert_eq!(stored["url"].as_str(), Some(url.as_str()), "{line:?}");
+    }
+
+    // An empty stdin is no key: nothing is sent and nothing written.
+    std::fs::remove_file(&file).expect("removed");
+    let (code, _, stderr) = login_run(&url, &file, "\n");
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("stdin"),
+        "the refusal names stdin: {stderr}"
+    );
+    assert!(calls(&seen).is_empty(), "nothing sent");
+    assert!(!file.exists(), "nothing written");
+    task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// `oml <global…> doctor`, human layout, with exactly the variables `vars`
+/// names; returns (exit code, stdout and stderr together).
+fn doctor_text(global: &[&str], vars: &[(&str, &str)]) -> (i32, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_oml"));
+    cmd.args(global).arg("doctor");
+    for name in HOOK_VARIABLES {
+        cmd.env_remove(name);
+    }
+    cmd.env("HOME", std::env::temp_dir().join("oml-doctor-e2e-no-home"));
+    for (name, value) in vars {
+        cmd.env(name, value);
+    }
+    let out = cmd.output().expect("the oml binary runs");
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_names_each_values_source_and_never_prints_the_key() {
+    let (url, seen, task) = doctor_stub().await;
+    let (dir, file) = start_file(
+        "doctor-sources",
+        &format!("url = \"{url}\"\napi_key = \"oml_file_key\"\n"),
+    );
+    let path = file.to_str().expect("a UTF-8 path").to_owned();
+    let file_var = ("OML_CLI_CREDENTIALS", path.as_str());
+
+    // (flags, variables, the key, the URL's source, the key's source).
+    type Case<'a> = (
+        Vec<&'a str>,
+        Vec<(&'a str, &'a str)>,
+        &'a str,
+        String,
+        String,
+    );
+    let cases: [Case; 3] = [
+        (
+            vec!["--url", &url, "--api-key", "oml_flag_key"],
+            vec![file_var, ("OML_URL", &url), ("OML_API_KEY", "oml_env_key")],
+            "oml_flag_key",
+            "--url".to_owned(),
+            "--api-key".to_owned(),
+        ),
+        (
+            vec![],
+            vec![file_var, ("OML_URL", &url), ("OML_API_KEY", "oml_env_key")],
+            "oml_env_key",
+            "OML_URL".to_owned(),
+            "OML_API_KEY".to_owned(),
+        ),
+        (
+            vec![],
+            vec![file_var],
+            "oml_file_key",
+            format!("url in the credentials file {path}"),
+            format!("api_key in the credentials file {path}"),
+        ),
+    ];
+    for (global, vars, key, url_source, key_source) in cases {
+        let (code, doctor, log) = doctor_run(&global, &vars);
+        assert_eq!(code, 0, "{url_source}: {log}");
+        assert_eq!(doctor["url_source"], url_source.as_str(), "{log}");
+        assert_eq!(doctor["key_source"], key_source.as_str(), "{log}");
+        assert!(!log.contains(key), "{url_source}: no key printed: {log}");
+        assert_eq!(calls(&seen)[2].1, bearer(key), "{url_source}: its own key");
+
+        let (code, text) = doctor_text(&global, &vars);
+        assert_eq!(code, 0, "{text}");
+        assert!(
+            text.contains(&format!("url         : {url_source}\n"))
+                && text.contains(&format!("api key     : {key_source}\n")),
+            "{url_source}: each value's source: {text}"
+        );
+        assert!(!text.contains(key), "{url_source}: no key printed: {text}");
+        calls(&seen);
+    }
+    task.abort();
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
+    let (url, seen, task) = doctor_stub().await;
+    let pair = ["--url", url.as_str(), "--api-key", "oml_flag_key"];
+
+    let (code, doctor, log) = doctor_run(&pair, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        doctor["whoami"],
+        json!({ "role": "writer", "tenant": "acme", "default_workarea": "acme/metals" }),
+        "{log}"
+    );
+    let (code, text) = doctor_text(&pair, &[]);
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("whoami      : role writer, tenant acme, default workarea acme/metals\n"),
+        "{text}"
+    );
+    assert!(
+        calls(&seen)
+            .iter()
+            .filter(|(p, _)| p == "/v2/whoami")
+            .all(|(_, b)| *b == bearer("oml_flag_key")),
+        "whoami under the pair's key"
+    );
+    task.abort();
 }

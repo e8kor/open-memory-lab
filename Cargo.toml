@@ -35,6 +35,10 @@ getrandom = "0.2"
 # the hexagon only over the network).
 ureq = { version = "2.12", features = ["json"] }
 toml = "0.8"
+# `oml login` reads the key without echo from the terminal (ADR-0039 d15): std
+# has no no-echo read, and no crate in the graph offers one. Its libc and
+# windows-sys 0.61 are already in the graph.
+rpassword = "7.5"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

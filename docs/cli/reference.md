@@ -153,8 +153,10 @@ refused, not paired. An environment holding an agent's pair, as the shell that s
 plugin's agent may, wins over the stored admin pair; run an admin verb there with both variables
 unset. The key is never printed, in a refusal or anywhere else.
 
-`oml bootstrap claim` sends no key, so it takes the URL of the first source that sets one, and
-writes `url` and `api_key`, nothing else, to the credentials file
+`oml login <url>` writes the pair once `GET /v2/whoami` accepts the key
+([below](#oml-login-and-oml-doctor-storing-and-checking-the-pair)). `oml bootstrap claim` sends
+no key, so it takes the URL of the first source that sets one, and writes `url` and `api_key`,
+nothing else, to the credentials file
 ([owner-only](#installing-oml-and-what-differs-on-windows)). `OML_CLI_CREDENTIALS` selects the
 file, so a second server is a second file. A v0.3.0 file's `server` and `key` are read as `url`
 and `api_key` through v0.4.x, and its `key_id`, `tenant_id` and `root_workarea_id` are ignored:
@@ -172,21 +174,18 @@ and `--key` still answer, hidden, each printing one stderr line naming `--url` o
 until v0.5.0 removes them. `OML_CLI_SERVER` and `OML_CLI_KEY` are not read; when a start setting
 is missing and either is set, the failure names the variable to rename.
 
-## `oml context` — auth and endpoint
+## `oml login` and `oml doctor` — storing and checking the pair
 
-The CLI keeps named contexts (endpoint URL + a reference to a key) in a local file with
-owner-only permissions. The key value itself can be supplied per call (`--key-stdin`, or the
-`OML_API_KEY` environment variable); storing it in the context file is a convenience the operator
-may forbid by policy. The context never changes what a key can do — tenant and role are derived
-server-side from the key on every call, never from the context
-([security](../architecture/security.md)).
+`oml login` stores the [start pair](#start-settings) and `oml doctor` checks it; they replace
+the designed `oml context` verbs ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d15). There are no named contexts: a second server is a second credentials file, selected with
+`OML_CLI_CREDENTIALS`. Tenant and role are derived server-side from the key on every call, never
+from the file ([security](../architecture/security.md)).
 
 | Verb | Does |
 |---|---|
-| `oml context add <name> --url <https://…> [--key-stdin]` | Record a context. With `--key-stdin` the key is read once from stdin, never from argv (argv is visible to other processes). |
-| `oml context use <name>` | Select the active context. |
-| `oml context show` | Active context: endpoint, key id (never the value), role, tenant, key expiry — resolved by one authenticated call. |
-| `oml context remove <name>` | Forget a context locally. Removing a context revokes nothing; revocation is `oml keys revoke`. |
+| `oml login <url>` | Prompt for the key on the terminal and read it without echo, or read the first line of stdin when stdin is not a terminal, so the key never reaches argv. Call `GET /v2/whoami` under it, and only on success write `url` and `api_key`, nothing else, to the [owner-only](#installing-oml-and-what-differs-on-windows) credentials file, replacing what it held, and print the key's name, role, tenant and default workarea. A refusal writes nothing and exits `1` with the envelope's code; an empty key sends nothing (exit `2`). The flags and the environment still win over the stored pair. |
+| `oml doctor` | Each value's source, never the key; `/healthz` and `/readyz`; and `whoami`'s role, tenant and default workarea when the same source holds the key ([start settings](#start-settings)). |
 
 ## `oml bootstrap` — claiming the root operator key
 

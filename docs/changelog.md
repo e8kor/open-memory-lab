@@ -34,6 +34,18 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml login <url>` stores the pair once whoami accepts the key (ADR-0039 d15, implementation)
+
+`oml login <url>` reads the key without echo from the terminal, or the first line of stdin when
+stdin is not a terminal, calls `GET /v2/whoami` under it, and only on success writes `url` and
+`api_key`, nothing else, to the owner-only credentials file. A refusal writes nothing, leaving a
+stored pair as it was, and exits `1` with the envelope's code. The designed `oml context` verbs
+leave the reference: `oml login` replaces `context add`, `oml doctor` replaces `context show`,
+and a second server is a second file through `OML_CLI_CREDENTIALS`. The no-echo read is
+`rpassword` 7.5, the CLI's one new dependency, since std reads no terminal without echo.
+
+- **Pages touched:** [cli/reference.md](cli/reference.md#oml-login-and-oml-doctor-storing-and-checking-the-pair).
+
 ### 2026-11-04 — `oml doctor` reports each start setting's source and probes with a URL alone (ADR-0039 d15, implementation)
 
 `oml doctor` no longer takes the pair through the refusal every other verb applies. It names the

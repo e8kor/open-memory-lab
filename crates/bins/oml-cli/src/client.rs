@@ -102,6 +102,12 @@ impl Client {
         finish(request.call())
     }
 
+    /// `GET /v2/whoami`: the calling key's own record, from which a client
+    /// derives everything beyond its URL and key (ADR-0039 d15).
+    pub fn whoami(&self) -> Result<Value, CliError> {
+        self.get("/v2/whoami").map(|(_, me)| me)
+    }
+
     /// GET without credentials, tolerating any status: `/readyz` answers 503
     /// with a diagnostic body, which is the probe's signal, not a refusal.
     pub fn probe(&self, path: &str) -> Result<(u16, Value), CliError> {
