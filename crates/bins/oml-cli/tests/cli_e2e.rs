@@ -186,12 +186,19 @@ fn oml_in(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("the oml binary runs");
-    child
+    // A binary that refuses before reading its stdin closes the pipe: a
+    // broken pipe here is that refusal, which its exit code reports.
+    match child
         .stdin
         .take()
         .expect("piped stdin")
         .write_all(stdin.as_bytes())
-        .expect("stdin is written");
+    {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            panic!("stdin is written: {e}")
+        }
+        _ => {}
+    }
     let out = child.wait_with_output().expect("the oml binary ends");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed = serde_json::from_str(stdout.trim()).unwrap_or(Value::Null);
@@ -4578,6 +4585,30 @@ async fn bootstrap_claim_reads_the_secret_from_stdin_and_takes_no_token_flag() {
         "the same two fields as oml login (ADR-0039 d15)"
     );
     assert_eq!(fields["api_key"].as_str(), Some(STUB_VALUE));
+    let _ = std::fs::remove_dir_all(&dir);
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_claim_without_token_stdin_is_refused_whether_or_not_its_stdin_is_read() {
+    // A stdin larger than a pipe's buffer: a binary that refuses before
+    // reading it closes the pipe while the fixture is still writing, which
+    // is the same refusal, not a fixture failure.
+    let (server, seen, task) = canned_stub().await;
+    let (dir, _) = stub_paths("token-stdin-unread");
+    let creds = dir.join("credentials");
+    let unread = format!("{ENROLLMENT}\n").repeat(1 << 14);
+    let (code, _, log) = oml_in(
+        &server,
+        &creds,
+        None,
+        &["bootstrap", "claim", "root-admin"],
+        &unread,
+    );
+    assert_eq!(code, 2, "{log}");
+    assert!(log.contains("--token-stdin"), "{log}");
+    assert!(taken(&seen).is_empty(), "nothing was sent: {log}");
+    assert!(!creds.exists(), "nothing was written");
     let _ = std::fs::remove_dir_all(&dir);
     task.abort();
 }
