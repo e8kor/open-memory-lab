@@ -3845,7 +3845,13 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
     let seen = calls(&seen);
     assert_eq!(
         seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-        ["/healthz", "/readyz", "/v2/whoami", "/v2/workareas/w1", "/v2/events"],
+        [
+            "/healthz",
+            "/readyz",
+            "/v2/whoami",
+            "/v2/workareas/w1",
+            "/v2/events"
+        ],
     );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
