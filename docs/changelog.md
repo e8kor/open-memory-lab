@@ -34,6 +34,23 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The plugin's librarian subagent answers what OML holds about a subject, reading with `oml_read` alone (ADR-0038 d10)
+
+The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
+gains d10, the librarian v0.4.0 carries (ADR-0039, context).
+
+- **Decided and built:** `plugins/oml/agents/librarian.md`, the subagent `oml:librarian`, on
+  `model: haiku`, whose only tool is `mcp__plugin_oml_oml__oml_read`; it recalls with the
+  subject's exact words and then one variant at a time, at most eight queries, because recall
+  stems nothing, and returns each finding's `artifact_id`, `claim_key`, `workarea_path` and
+  `created_at` under the hooks' framing line, with the queries it ran. The plugin README
+  describes it, and `scripts/check_plugin.py` fails on a second agent, another model, any tool
+  beside `oml_read`, an omitted `tools` field, a field a plugin subagent ignores, or a prompt
+  without hook.rs's framing line.
+- No HTTP operation, MCP tool, error code or package version changes.
+- **Pages touched:** ADR-0038 and its [register](adr/index.md) row, the plugin README,
+  `scripts/check_plugin.py` and this page.
+
 ### 2026-11-04 — Turn context on the rewritten surface: the agent recalls with `oml_read`, and a failed command recalls when opted in (ADR-0038, rebased onto ADR-0039 d2 and ADR-0040 d3)
 
 The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)

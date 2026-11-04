@@ -1,8 +1,9 @@
 # The `oml` agent plugin
 
 This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds three
-tools, `oml_write`, `oml_read` and `oml_workarea`, plus a skill that explains when to use
-them. Every write is held until a different identity approves it.
+tools, `oml_write`, `oml_read` and `oml_workarea`, a skill that explains when to use
+them, and a read-only subagent that searches for you. Every write is held until a
+different identity approves it.
 That is the point of the server, and it means a fact you store is not shared the moment
 you store it.
 
@@ -213,6 +214,20 @@ first. The cost is that the error's words go to your server. A per-session file 
 `~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
 the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
+
+## The librarian
+
+The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
+to it, or you ask for it with `@agent-oml:librarian`. Recall matches every word exactly, with no
+stemming, so one query that finds nothing proves little; the librarian runs up to eight, the
+subject's own words and then their variants (plural, other verb forms, other spellings of an
+identifier), and returns each finding with its `artifact_id`, `claim_key`, workarea and time,
+under the same data line the hooks use, with the queries it ran. Its only tool is `oml_read`: it
+cannot call `oml_write`, edit a file or run a command. It runs on Haiku, so the searching costs
+less than on the main conversation's model and its raw results stay out of that conversation's
+context; the cost is that a smaller model chooses the variants and which hits matter. The
+`oml_read` rule under `permissions.allow` above applies to the whole session, the librarian's
+calls included; without it, each of its calls asks you in the main session.
 
 ## Other MCP clients
 

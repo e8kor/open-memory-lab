@@ -36,6 +36,14 @@ class of disagreement found:
   when no `oml` is on PATH, and otherwise runs `oml` with exactly its
   arguments and exits 0 even when that `oml` fails (docs/cli/reference.md,
   "oml hook session-start" and "oml hook tool-failure");
+- plugins/oml/agents/ holds exactly one subagent, librarian.md, whose
+  frontmatter names it `librarian`, sets `model: haiku`, sets only fields a
+  plugin subagent supports, and allows exactly the one tool
+  `mcp__plugin_oml_oml__oml_read`, so it reads and never writes: no
+  `oml_write`, no `oml_workarea`, no built-in tool that edits a file or runs a
+  command; its prompt names no tool the server does not serve, sets the
+  framing line of hook.rs's FRAMING over what it returns, and the plugin
+  README names it `oml:librarian` (ADR-0038 d10);
 - the marketplace lists oml-admin at a directory that has a manifest, at the
   workspace version;
 - oml-admin has no .mcp.json, so it adds no tool to any tool list;
@@ -86,6 +94,18 @@ DERIVED = re.compile(r"(?:tenant|wa|crew|key)-[0-9a-f]{32}")
 TOOL = re.compile(r"\boml_[a-z]+(?:_[a-z]+)*\b")
 RULE = re.compile(r"mcp__plugin_oml_oml__([a-z_]+)")
 HOOK_RS = "crates/bins/oml-cli/src/hook.rs"
+# ADR-0038 d10: the plugin's one subagent and the one tool it may call.
+LIBRARIAN = "agents/librarian.md"
+LIBRARIAN_TOOLS = ["mcp__plugin_oml_oml__oml_read"]
+# The frontmatter fields a plugin subagent supports (Claude Code, "Add
+# components to a plugin", "Frontmatter fields in plugin agents", fetched
+# 2026-11-04); permissionMode, hooks, mcpServers and initialPrompt are
+# ignored there, so a librarian setting one would read as holding a rule it
+# does not.
+PLUGIN_AGENT_FIELDS = {
+    "name", "description", "model", "effort", "maxTurns", "autoCompactWindow", "tools",
+    "disallowedTools", "skills", "memory", "background", "omitClaudeMd", "isolation", "color",
+}
 # ADR-0040 d1: the same URL-and-key pair as every other client, lower-cased.
 USER_CONFIG = {
     "url": {
@@ -158,7 +178,9 @@ def main() -> int:
                     f"which names no served tool (ADR-0039 d13)"
                 )
 
-    for path in [plugin_dir / "skills/oml-memory/SKILL.md", ROOT / HOOK_RS]:
+    for path in [plugin_dir / "skills/oml-memory/SKILL.md", plugin_dir / LIBRARIAN, ROOT / HOOK_RS]:
+        if not path.is_file():
+            continue
         text = path.read_text()
         # hook.rs's unit tests feed the hooks error lines and URLs, which
         # are never added to a session; only the code above them is held.
@@ -170,6 +192,7 @@ def main() -> int:
                 f"{path.relative_to(ROOT)} names tools the server does not serve: {sorted(unserved)}"
             )
 
+    the_librarian_reads_and_never_writes(plugin_dir, served, errors)
     check_hooks(plugin_dir, errors)
     check_admin(entries, workspace_version, errors)
     return report(errors)
@@ -222,6 +245,69 @@ def the_readme_exports_no_api_key(plugin_dir: Path, errors: list[str]) -> None:
                 f"{readme.relative_to(ROOT)}:{number} shows `export OML_API_KEY`; the Claude Code path "
                 f"configures the api_key option (ADR-0040 d4, d6): {line.strip()}"
             )
+
+
+def the_librarian_reads_and_never_writes(plugin_dir: Path, served: set[str], errors: list[str]) -> None:
+    """plugins/oml/agents/ holds exactly librarian.md, a haiku subagent whose
+    one tool is oml_read, so it answers "what does OML hold about X" without
+    a way to write, edit a file or run a command, and returns what it found
+    under the framing line every injected context sets (ADR-0038 d10,
+    ADR-0029 d6)."""
+    agents = plugin_dir / "agents"
+    path = plugin_dir / LIBRARIAN
+    shown = path.relative_to(ROOT)
+    found = sorted(p.relative_to(agents).as_posix() for p in agents.rglob("*") if p.is_file()) if agents.is_dir() else []
+    if found != ["librarian.md"]:
+        errors.append(f"plugins/oml/agents holds {found}, not exactly librarian.md (ADR-0038 d10)")
+    if not path.is_file():
+        return
+    text = path.read_text()
+    match = re.match(r"---\n(.*?)\n---\n(.*)", text, re.S)
+    if not match:
+        errors.append(f"{shown} has no frontmatter between --- lines")
+        return
+    fields: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        key, sep, value = line.partition(":")
+        if not sep or line[:1].isspace():
+            errors.append(f"{shown}: frontmatter line {line!r} is not one `field: value` (ADR-0038 d10)")
+            continue
+        if ": " in value or " #" in value:
+            errors.append(
+                f"{shown}: the {key.strip()} value holds ': ' or ' #', which ends a plain YAML scalar, "
+                f"so Claude Code would load the agent with every field ignored"
+            )
+        fields[key.strip()] = value.strip()
+    body = match.group(2)
+    for field in sorted(set(fields) - PLUGIN_AGENT_FIELDS):
+        errors.append(f"{shown} sets {field}, which a plugin subagent does not support (ADR-0038 d10)")
+    if fields.get("name") != "librarian":
+        errors.append(f"{shown}: name is {fields.get('name')!r}, not 'librarian' (ADR-0038 d10)")
+    if fields.get("model") != "haiku":
+        errors.append(f"{shown}: model is {fields.get('model')!r}, not 'haiku' (ADR-0038 d10)")
+    if not fields.get("description"):
+        errors.append(f"{shown} has no description, so Claude never delegates to it")
+    tools = [t.strip() for t in fields.get("tools", "").split(",") if t.strip()]
+    if tools != LIBRARIAN_TOOLS:
+        errors.append(
+            f"{shown}: tools are {tools}, not exactly {LIBRARIAN_TOOLS}: the librarian reads and "
+            f"never writes, and an omitted tools field would inherit oml_write (ADR-0038 d10)"
+        )
+    for tool in tools:
+        name = tool.removeprefix("mcp__plugin_oml_oml__")
+        if name not in served:
+            errors.append(f"{shown}: the tool {tool} names no served tool (ADR-0039 d2)")
+    hook_rs = (ROOT / HOOK_RS).read_text()
+    framing = re.search(r'pub const FRAMING: &str =\s*"([^"]*)";', hook_rs)
+    if not framing:
+        errors.append(f"FRAMING not found in {HOOK_RS}")
+    elif framing.group(1) not in body:
+        errors.append(
+            f"{shown} does not set the framing line {framing.group(1)!r} over its findings "
+            f"(ADR-0029 d6, ADR-0038 d10)"
+        )
+    if "`oml:librarian`" not in (plugin_dir / "README.md").read_text():
+        errors.append("plugins/oml/README.md does not name the subagent `oml:librarian` (ADR-0038 d10)")
 
 
 def check_hooks(plugin_dir: Path, errors: list[str]) -> None:

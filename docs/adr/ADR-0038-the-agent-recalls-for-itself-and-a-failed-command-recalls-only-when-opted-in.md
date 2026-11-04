@@ -2,7 +2,7 @@
 id: adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in
 tier: engineering
 status: proposed
-answers: how an agent gets the memory a turn needs beyond what the session-start hook loads; what the MCP server's initialize instructions, the oml_read description, the oml-memory skill and the session-start context say about recalling; what `oml hook tool-failure` sends, when, under which budget and with which framing; what its session cache holds and when `oml hook session-end` deletes it; and why recall from every prompt is not built now
+answers: how an agent gets the memory a turn needs beyond what the session-start hook loads; what the MCP server's initialize instructions, the oml_read description, the oml-memory skill and the session-start context say about recalling; what `oml hook tool-failure` sends, when, under which budget and with which framing; what its session cache holds and when `oml hook session-end` deletes it; what the plugin's librarian subagent may call and what it returns; and why recall from every prompt is not built now
 -->
 
 # ADR-0038 — The agent recalls for itself, and a failed command recalls only when the user opted in
@@ -149,11 +149,35 @@ change merges.
   `command -v oml >/dev/null 2>&1 || exit 0; oml hook <verb> || exit 0`, as ADR-0029 d7 guards
   SessionStart, and `scripts/check_plugin.py` holds all three.
 
+- **d10 — The plugin carries one read-only subagent, `oml:librarian`, which answers "what does
+  OML hold about X" by recalling under word variants.** Decided on 2026-11-03 with v0.4.0's
+  scope (ADR-0039, context), recorded here because it is a third way the agent recalls for
+  itself, beside d1–d3 and E. `plugins/oml/agents/librarian.md` sets `tools:
+  mcp__plugin_oml_oml__oml_read` and nothing else: a plugin subagent with no `tools` field
+  "inherits every tool available to subagents", `oml_write` among them, while a listed `tools`
+  is an allowlist ([subagents](https://code.claude.com/docs/en/sub-agents), "Supported
+  frontmatter fields", fetched 2026-11-04). Its prompt runs up to eight recalls, the subject's
+  exact words and then one variant at a time (plural, verb forms, an identifier's other
+  spellings, the most distinctive word alone), because `plainto_tsquery('simple')` stems
+  nothing and ANDs every word (Context), and stops when two queries in a row add no new
+  `artifact_id`. It returns each finding with its `artifact_id`, `claim_key`, `workarea_path`
+  and `created_at`, under ADR-0029 d6's framing line, then the queries it ran, so a miss names
+  the words it was a miss for. It sets `model: haiku`, one of the aliases the field accepts
+  (same page, "Choose a model"): the searching is several cheap calls whose raw results stay
+  out of the main context. It sets none of `permissionMode`, `hooks` or `mcpServers`, which a
+  plugin subagent ignores ([plugin components](https://code.claude.com/docs/en/plugins/components),
+  "Frontmatter fields in plugin agents", fetched 2026-11-04). The `oml_read` rule in
+  `permissions.allow` covers its calls, since such rules "apply to the entire session"
+  (subagents page). `scripts/check_plugin.py` holds the file: the one agent, its name, the
+  model, exactly that tool, only supported fields, no served-tool name it lacks, and the
+  framing line read from `hook.rs`'s `FRAMING`.
+
 ## Consequences
 
 - The [CLI reference](../cli/reference.md) declares `oml hook tool-failure` and `oml hook
   session-end` and the session-start line of d3; the [agent plugin](../api/mcp-plugin.md) page
-  names the instructions `initialize` returns; the plugin README names `OML_FAILURE_RECALL`.
+  names the instructions `initialize` returns; the plugin README names `OML_FAILURE_RECALL`
+  and `oml:librarian` (d10).
 - No HTTP operation, error code, event type or claim state is added: `docs/api/openapi.yaml` and
   `docs/api/errors.md` are unchanged. The MCP `initialize` result gains `instructions`, a field
   the specification defines. No package version moves until the release.
@@ -189,3 +213,6 @@ change merges.
 | **d7 — Include the key's own held rows** | An unreviewed pitfall would be injected without the agent asking. | — |
 | **d8 — Repeat the steering with every hit** | Session start already injected it; repeating it spends the budget on text the session holds. | — |
 | **d9 — Keep the cache in memory or in the transcript** | Each hook is a new process, and the transcript is Claude's context, not the hook's. | — |
+| **d10 — Stemming on the server instead of variants in a subagent** | It changes the text-search configuration every recall uses and every existing match, which is ADR-0039's surface, not this record's; the librarian works on the server as served. | Recall gains a stemmed or vector mode. |
+| **d10 — A librarian with `oml_workarea` or the built-in read tools** | Neither answers what the server holds; each added tool widens what a prompt injected through a stored memory could reach. | A question the librarian is asked needs one. |
+| **d10 — `model: inherit`** | Every variant query would run on the main conversation's model, at its price, for work a list of exact-word searches does. | Haiku's variant choices miss what a labelled set shows a larger model finds. |
