@@ -1,13 +1,23 @@
 <!--
 id: engineering/docs-upgrade-v0.4.0
 tier: engineering
-status: plan for review · not started
+status: plan for review · steps 1 to 5 carried out on 2026-11-04; step 6 waits for the v0.4.0 tag
 answers: which pages the v0.4.0 documentation upgrade rewrites, adds or retires; for each, what changes, which record or file is its source of truth, and whether it waits for the API rewrite, the installer verbs or OAuth; the simplified scenarios that replace the use-case catalogue; the order of work and the checks that close each step
 -->
 
 # Documentation upgrade for v0.4.0: a page-by-page plan
 
-**Status:** plan for review · not started
+**Status:** plan for review · steps 1 to 5 carried out on 2026-11-04; step 6 waits for the v0.4.0 tag
+
+**Carried out on 2026-11-04**, on `feat/v0.4.0`: the Get started and install pages, the five
+guides, the use cases as eight scenarios (taken from `feat/use-cases`, PR #26, which is not
+merged), the call map with the refusal and retry notes, the README, the overview's build and
+client sections, the CLI reference's installer, the plugin, `oml-admin` and kit READMEs, the
+deployment and configuration pages, the home page, `llms.txt`, the nav and the releases page.
+Not done, and why: the deployment transcript waits for a green CI run of `oml quickstart`;
+`docker-compose.yml` still names `latest` and `oml_dev_only`, a code change outside this step;
+step 6 waits for the tag; the claude.ai request-headers check was fetched only through a
+summarising fetch (the claude.ai guide quotes it as reported).
 
 v0.4.0 changes how a person starts with OML and what an agent calls. This page lists every page
 that change reaches and says, for each one, what changes, where its truth comes from, and what it

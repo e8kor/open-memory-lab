@@ -34,6 +34,24 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — The v0.4.0 documentation: Get started, install, five guides, the use cases as eight scenarios, and every front page rewritten for the three tools and the one pair (ADR-0018, ADR-0041)
+
+A documentation change carrying out the [v0.4.0 documentation plan](engineering/docs-upgrade-v0.4.0.md)
+steps 1 to 5. The README marks each unbuilt capability as planned with its release, or not
+scheduled, and its Quickstart is the installer at `v0.4.0`, `oml login` and `oml setup
+claude-code`. New: [Get started](start/index.md), [install](start/install.md), and the guides for
+[Claude Code](guides/claude-code.md), [claude.ai and mobile](guides/claude-ai-and-mobile.md),
+[other agent tools](guides/other-harnesses.md), [self-hosting](guides/self-hosting.md) and
+[upgrading from v0.3](guides/upgrading.md). [Use cases](product/use-cases.md), from PR #26, is
+rewritten as eight scenarios, and the [use-case call map](engineering/use-case-call-map.md) comes
+with it, read against v0.3.1.
+
+- **Checks:** `check_release.py` fails an installer URL on a reader page at a tag other than the
+  workspace version's or `vX.Y.Z`, and a README Quickstart other than those three lines;
+  `check_contract_sync.py` reads `docs/start/`, `docs/guides/` and the use cases as start pages.
+- **No surface change:** `info.version` stays `0.4.0-design`.
+- **Unmeasured:** every time named is ADR-0041 d10's target, FR-68.
+
 ### 2026-11-04 — `oml keys issue-agent --out` prints the `oml setup claude-code --key-file` line after the configure line (ADR-0041 d7, implementation)
 
 With `--out` the verb prints a fourth stdout line,

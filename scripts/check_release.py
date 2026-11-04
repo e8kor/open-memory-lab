@@ -51,7 +51,14 @@ disagreement found:
   cosign verify-blob under the release workflow's identity; install the
   workspace version by default; and ci.yml job install-smoke runs them on
   Linux, macOS and Windows, then the installed `oml --version`
-  (docs/adr/ADR-0041-a-quick-start-in-one-command-per-role.md d1, d2, d8).
+  (docs/adr/ADR-0041-a-quick-start-in-one-command-per-role.md d1, d2, d8);
+- every installer URL a reader page shows (README.md, a plugin, SDK or kit
+  README, and docs/ outside adr/, atlas/ and changelog.md) fetches
+  scripts/install/ from raw.githubusercontent.com at the tag of the workspace
+  version, or at the placeholder vX.Y.Z, never at main or another tag, and the
+  README's Quickstart is the three lines the v0.4.0 documentation plan names:
+  the installer at that tag, `oml login` and `oml setup claude-code`
+  (ADR-0041 d4, d6, d7; docs/engineering/docs-upgrade-v0.4.0.md).
 
 Dependencies: stdlib (Python 3.11 or later, for tomllib) + PyYAML.
 """
@@ -190,6 +197,7 @@ def main() -> int:
     check_agents(errors, jobs)
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
+    check_installer_lines(errors)
     return report(errors)
 
 
@@ -373,6 +381,55 @@ def check_installers(errors: list[str], jobs: dict) -> None:
     for needle in ("scripts/install/install.sh", "scripts/install/install.ps1", "--version"):
         if needle not in script:
             errors.append(f"ci.yml install-smoke never runs {needle}")
+
+
+# An installer URL on a reader page, and the tag it fetches the script at.
+INSTALLER_URL = re.compile(
+    r"https://raw\.githubusercontent\.com/" + re.escape(REPOSITORY) + r"/([^/\s]+)/scripts/install/install\.(?:sh|ps1)"
+)
+INSTALLER_LINE_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
+
+
+def reader_pages() -> list[Path]:
+    pages = [ROOT / "README.md", *sorted(ROOT.glob("plugins/*/README.md")), *sorted(ROOT.glob("sdks/*/README.md")),
+             ROOT / "kit" / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    return [p for p in pages if p.exists() and not any(p == e or e in p.parents for e in INSTALLER_LINE_EXEMPT)]
+
+
+def check_installer_lines(errors: list[str]) -> None:
+    """Each documented installer line fetches the script at the workspace version's tag, and the
+    README's Quickstart is the installer, oml login and oml setup claude-code (ADR-0041 d4, d6, d7)."""
+    workspace = tomllib.loads(CARGO.read_text())["workspace"]["package"]["version"]
+    tags = {f"v{workspace}", "vX.Y.Z"}
+    for page in reader_pages():
+        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            for tag in INSTALLER_URL.findall(line):
+                if tag not in tags:
+                    errors.append(
+                        f"{page.relative_to(ROOT)}:{number}: the installer is fetched at {tag}, not at "
+                        f"v{workspace} or vX.Y.Z (ADR-0041 d4)"
+                    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = re.search(r"^## Quickstart\n(.*?)(?=^## )", readme, re.M | re.S)
+    if not section:
+        errors.append("README.md has no Quickstart section")
+        return
+    blocks = re.findall(r"^```(?:sh|bash|console)\n(.*?)^```", section.group(1), re.M | re.S)
+    if not blocks:
+        errors.append("README.md's Quickstart shows no shell block")
+        return
+    lines = [ln.split("  #")[0].strip() for ln in blocks[0].replace("\\\n", " ").splitlines()]
+    lines = [ln for ln in lines if ln and not ln.startswith("#")]
+    wanted = [
+        ("the installer", lambda ln: INSTALLER_URL.search(ln) and f"/v{workspace}/" in ln and ln.endswith("| sh")),
+        ("oml login", lambda ln: ln.startswith("oml login ")),
+        ("oml setup claude-code", lambda ln: ln.startswith("oml setup claude-code")),
+    ]
+    if len(lines) != len(wanted) or not all(ok(ln) for (_, ok), ln in zip(wanted, lines)):
+        errors.append(
+            "README.md's Quickstart opens with " + repr(lines) + ", not exactly three lines: "
+            + ", ".join(name for name, _ in wanted) + f", the installer at v{workspace} (ADR-0041 d4, d6, d7)"
+        )
 
 
 def check_musl_cc(errors: list[str], where: str, job: dict) -> None:

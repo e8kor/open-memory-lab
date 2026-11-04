@@ -55,12 +55,22 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Get started:
+      - Three paths: start/index.md
+      - Install: start/install.md
+  - Guides:
+      - Claude Code: guides/claude-code.md
+      - claude.ai and mobile: guides/claude-ai-and-mobile.md
+      - Other agent tools: guides/other-harnesses.md
+      - Self-hosting: guides/self-hosting.md
+      - Upgrading from v0.3: guides/upgrading.md
   - Concepts: concepts.md
   - Review guide: review-guide.md
   - Spec changelog: changelog.md
   - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
   - Product:
       - Positioning: product/positioning.md
+      - Use cases: product/use-cases.md
       - Releases: product/releases.md
       - Roadmap: product/roadmap.md
       - Commitments: product/commitments.md
@@ -111,6 +121,7 @@ nav:
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
           - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
       - Client SDKs: engineering/sdks.md
+      - Use-case call map: engineering/use-case-call-map.md
       - "Plan: documentation for v0.4.0": engineering/docs-upgrade-v0.4.0.md
   - Decisions:
       - Index: adr/index.md

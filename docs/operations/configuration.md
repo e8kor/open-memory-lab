@@ -199,6 +199,18 @@ in an incident review is a design defect ([observability](observability.md)):
 | `FORCE ROW LEVEL SECURITY`, C6 role split | binds in all three profiles | [Security](../architecture/security.md) |
 | pgvector presence and version; iterative-scan caps (`hnsw.max_scan_tuples`, scan memory) | GUC-level cutoffs whose recall consequences are [FR-4](../product/roadmap.md)'s to measure | [Retrieval](../architecture/retrieval.md) |
 
+## Client settings
+
+*Planned for v0.4.0 · [releases](../product/releases.md)*
+
+This page configures the server. A client takes two settings and nothing else: the server's URL
+without `/mcp`, and a key ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d15). The
+CLI, the SDKs, the agent kit and the session-start hook run outside the plugin read them as
+`OML_URL` and `OML_API_KEY`; the Claude Code plugin reads its `url` and `api_key` options. The
+precedence, flag, then environment, then the credentials file, with a source that sets one alone
+refused, is declared once, in the [CLI reference](../cli/reference.md#start-settings). None of
+the server's `OML_` variables above is a client setting.
+
 ## What this page does not decide
 
 The value of any unbound default (those rows resolve at

@@ -11,7 +11,19 @@ you store it.
 
 *Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
-The plugin takes two settings: `url`, your server without `/mcp`, such as
+With the `oml` CLI ([below](#the-oml-cli)), one command installs the plugin at the CLI's own
+release and configures it, refusing an administrator's key:
+
+```sh
+oml login https://oml.example.com      # once: checks the key, then stores the pair
+oml setup claude-code
+```
+
+With a key file from `oml keys issue-agent --out`, run the line it printed instead,
+`oml setup claude-code --url <url> --key-file <file>`. Then run `/reload-plugins`, or restart
+Claude Code. The [Claude Code guide](../../docs/guides/claude-code.md) walks the whole path.
+
+Without the CLI: the plugin takes two settings: `url`, your server without `/mcp`, such as
 `https://oml.example.com`, and `api_key`, this agent's own key. Claude Code keeps the key in the
 system keychain, never in `settings.json`, and neither setting has a default, so the key goes
 only to the server you name.
@@ -85,6 +97,12 @@ Every tool argument that takes a workarea is `workarea`, and takes its name, suc
 the key cannot see is refused exactly as its id would be, with `access.not_found`, and a path
 such as `universe.procurement.metals-crew` is not a name and is refused.
 
+## Why can't I find what I just saved?
+
+Every write is held until a reviewer who did not write it approves it. Until then only its author
+reads it: the agent finds it with `oml_read` and `include_unreviewed: true`, and nobody else finds
+it at all. Once it is approved, every key that reads the workarea finds it.
+
 ## The loop
 
 On that one key the agent:
@@ -108,64 +126,34 @@ rows are never cut, the hits are the longest run from the top of the ranking tha
 `budget` reports the cut.
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews
-their own work, both depend on it. To issue keys and run a server, see "Quickstart" in the
-[repository README](../../README.md#quickstart).
+their own work, both depend on it. To run a server, see the
+[self-hosting guide](../../docs/guides/self-hosting.md).
 
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
 agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
 workarea, given by its name or id, which is also its default. With `--out <path>` the value goes
 to a new owner-only file, the file the shell path under "Install" reads, and the CLI prints
-that path's `jq | claude plugin configure` line, filled in; the `oml-admin` plugin
+that path's `oml setup claude-code --key-file` line and its `jq | claude plugin configure`
+line, filled in; the `oml-admin` plugin
 in this marketplace runs it that way from inside Claude Code, so the value never enters the
 conversation. See the
 [CLI reference](../../docs/cli/reference.md#oml-keys-issuance-revocation-rotation).
 
 ## The `oml` CLI
 
-*Available since v0.1.0; per-platform archives since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; per-platform archives since v0.3.1; the installer planned for v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
-The session-start hook below and key issuance need the `oml` CLI on your `PATH`. From the first
-release that carries them, each release attaches it as `oml-cli-X.Y.Z-<target>.tar.gz`, or `.zip`
-on Windows, with a signature bundle beside each archive. Verify the archive, then extract it:
-
-Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static, so it runs on
-any distribution:
+`oml setup claude-code`, the session-start hook below and key issuance need the `oml` CLI on
+your `PATH`. One line installs it for you alone and checks the download:
 
 ```sh
-v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and your target
-base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
-curl -fsSLO "$base/oml-cli-$v-$t.tar.gz" -O "$base/oml-cli-$v-$t.tar.gz.sigstore.json"
-cosign verify-blob \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
-  --bundle "oml-cli-$v-$t.tar.gz.sigstore.json" "oml-cli-$v-$t.tar.gz" \
-  && tar -xzf "oml-cli-$v-$t.tar.gz" \
-  && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.4.0/scripts/install/install.sh | sh
 ```
 
-macOS: the same lines with `t=aarch64-apple-darwin` (Apple silicon) or `t=x86_64-apple-darwin`
-(Intel), with the last line `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`, or any
-directory on your `PATH`.
-
-Windows, in PowerShell:
-
-```powershell
-$v = "X.Y.Z"; $t = "x86_64-pc-windows-msvc"; $n = "oml-cli-$v-$t"
-$base = "https://github.com/e8kor/open-memory-lab/releases/download/v$v"
-Invoke-WebRequest "$base/$n.zip" -OutFile "$n.zip"
-Invoke-WebRequest "$base/$n.zip.sigstore.json" -OutFile "$n.zip.sigstore.json"
-cosign verify-blob `
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
-  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' `
-  --bundle "$n.zip.sigstore.json" "$n.zip"
-if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
-```
-
-Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
-exits 0: an archive that does not verify is not a release.
-
-On Windows the hook runs only when Git for Windows, which provides Git Bash, is installed. See
-the [CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-on-windows).
+v0.4.0 is the first release to carry the installer. Windows, the inspect-first form and the
+manual `cosign` steps are on the [install page](../../docs/start/install.md). On Windows the hook
+runs only when Git for Windows, which provides Git Bash, is installed; see the
+[CLI reference](../../docs/cli/reference.md#installing-oml-and-what-differs-on-windows).
 
 ## Every session starts from memory
 

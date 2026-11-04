@@ -32,9 +32,9 @@ mockup transcripts.
 
 Each release carries the CLI alone as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
 targets listed under [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance),
-each with a CycloneDX SBOM and a cosign signature bundle. Verify the archive, then extract it.
+each with a CycloneDX SBOM and a cosign signature bundle. The installer below fetches, checks and installs it.
 
-**The installer.** One line does the steps below for this user, without sudo
+**The installer.** One line installs it for this user, without sudo
 ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d3, proposed; the
 scripts are built, and v0.4.0 is the first tag to carry them):
 
@@ -58,43 +58,9 @@ it, then run `sh install.sh`. A piped install takes its flags after `sh -s --`, 
 `… | sh -s -- --version latest`; `irm … | iex` takes none, so set `$env:OML_VERSION`,
 `$env:OML_INSTALL_DIR` or `$env:OML_REQUIRE_SIGNATURE = '1'` first.
 
-The manual steps:
-
-Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static, so it runs on
-any distribution:
-
-```sh
-v=X.Y.Z t=x86_64-unknown-linux-musl          # the release and your target
-base=https://github.com/e8kor/open-memory-lab/releases/download/v$v
-curl -fsSLO "$base/oml-cli-$v-$t.tar.gz" -O "$base/oml-cli-$v-$t.tar.gz.sigstore.json"
-cosign verify-blob \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' \
-  --bundle "oml-cli-$v-$t.tar.gz.sigstore.json" "oml-cli-$v-$t.tar.gz" \
-  && tar -xzf "oml-cli-$v-$t.tar.gz" \
-  && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
-```
-
-macOS: the same lines with `t=aarch64-apple-darwin` (Apple silicon) or `t=x86_64-apple-darwin`
-(Intel), with the last line `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`, or any
-directory on your `PATH`.
-
-Windows, in PowerShell:
-
-```powershell
-$v = "X.Y.Z"; $t = "x86_64-pc-windows-msvc"; $n = "oml-cli-$v-$t"
-$base = "https://github.com/e8kor/open-memory-lab/releases/download/v$v"
-Invoke-WebRequest "$base/$n.zip" -OutFile "$n.zip"
-Invoke-WebRequest "$base/$n.zip.sigstore.json" -OutFile "$n.zip.sigstore.json"
-cosign verify-blob `
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com `
-  --certificate-identity-regexp '^https://github.com/e8kor/open-memory-lab/\.github/workflows/release\.yml@refs/tags/.*$' `
-  --bundle "$n.zip.sigstore.json" "$n.zip"
-if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
-```
-
-Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
-exits 0: an archive that does not verify is not a release.
+The [install page](../start/install.md) carries the inspect-first form, the installer's two
+outcomes word for word, what a piped install trusts, uninstalling, and the manual `cosign
+verify-blob` steps for each OS.
 
 **Owner-only files.** The credentials file and the `--out` key file each hold a key value, so each
 is made owner-only before a byte of it is written. On Linux and macOS the file is mode `0600`, set

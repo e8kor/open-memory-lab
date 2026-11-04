@@ -13,6 +13,8 @@
 
 ## Start here
 
+- [Get started](https://e8kor.github.io/open-memory-lab/start/): the three paths, each led by one command: use OML with a server address and a key, run OML with `oml quickstart`, and add an agent with `oml keys issue-agent --out`
+- [Install](https://e8kor.github.io/open-memory-lab/start/install/): what install.sh and install.ps1 check, their two outcomes word for word, flags and variables, what a piped install trusts, uninstalling, and the manual cosign steps
 - [Open Memory Lab](https://e8kor.github.io/open-memory-lab/): what the product is, the problem it solves, and what it guarantees in plain words
 - [Concepts](https://e8kor.github.io/open-memory-lab/concepts/): the design vocabulary in reading order, each term linked to the page that decides it
 - [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): the system end to end — context, containers, modules, runtime scenarios, and where each constitutional rule is enforced
@@ -71,11 +73,21 @@
 - [Finding: chain-format vectors](https://e8kor.github.io/open-memory-lab/engineering/spikes/chain-vectors/): the chain-format test vectors reproduced byte for byte by independent non-Rust JCS, SHA-256 and Ed25519 implementations, and the Rust tests' copies of them compared with the page
 - [Findings: spike 3, RLS](https://e8kor.github.io/open-memory-lab/engineering/spikes/spike-3-rls/): S3.1–S3.4 on PostgreSQL 18.6: what held, the cross-tenant FTS index statistics that the owner's pg_stats and any session's EXPLAIN estimate expose, S3.2 as a PostgreSQL mechanism and as an open claim about OML's roles, the no-tenant behaviour, and the GIN index under RLS
 - [Plan: documentation for v0.4.0](https://e8kor.github.io/open-memory-lab/engineering/docs-upgrade-v0.4.0/): every page the v0.4.0 upgrade rewrites or adds — Get started, the install page, simplified use-case scenarios, the architecture overview, the CLI, plugin and kit pages, and guides for Claude Code, claude.ai and mobile, other harnesses, self-hosting and upgrading — each with its source of truth and what it waits for
+- [Use-case call map](https://e8kor.github.io/open-memory-lab/engineering/use-case-call-map/): the calls each v0.3.1 use case needed, the minimal client call set by Occam's razor that ADR-0039 took, and the refusals, retries and taken labels
 - [Client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): the Python and TypeScript clients generated from openapi.yaml, their pinned generators, what the hand-written wrappers add, and the regeneration rule (FR-12)
+
+## Guides
+
+- [Claude Code](https://e8kor.github.io/open-memory-lab/guides/claude-code/): install, `oml login`, `oml setup claude-code`, the first held write and read, the session-start hook and its permission rule, the librarian, removal
+- [claude.ai and mobile](https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/): a connector key and its one-time connect code, OAuth on the server's own origin, what chat and mobile get, and the open question of claude.ai's request headers
+- [Other agent tools](https://e8kor.github.io/open-memory-lab/guides/other-harnesses/): Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop from the agent kit with `OML_URL` and `OML_API_KEY`, and Claude Code without the plugin
+- [Self-hosting](https://e8kor.github.io/open-memory-lab/guides/self-hosting/): `oml quickstart` on a laptop, then one host with TLS, then Kubernetes with the interim chart
+- [Upgrading from v0.3](https://e8kor.github.io/open-memory-lab/guides/upgrading/): the old-to-new tool, verb and setting table, the alias window, and the steps for a user and an operator
 
 ## Product
 
 - [Positioning](https://e8kor.github.io/open-memory-lab/product/positioning/): who the product is for and the scoped market claim
+- [Use cases](https://e8kor.github.io/open-memory-lab/product/use-cases/): eight short scenarios of five steps or fewer on the three agent tools, each with its status
 - [Commitments](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee, sorted into four honesty tiers with enforcement points and assumptions
 - [Compliance evidence](https://e8kor.github.io/open-memory-lab/product/compliance/): the evidence OML produces for the questions compliance frameworks ask
 - [Releases](https://e8kor.github.io/open-memory-lab/product/releases/): which release introduced each feature and decision record, which release each planned one is for, and what is parked or not scheduled

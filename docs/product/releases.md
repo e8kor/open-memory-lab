@@ -1,13 +1,13 @@
 <!--
 id: product/releases
 tier: client
-status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+status: release record · shipped releases from the tags, planned releases as decided on 2026-11-03, v0.4.0's contents as built on its release branch on 2026-11-04
 answers: which release introduced each feature and decision, which release each planned one is for, and which are parked or not scheduled
 -->
 
 # Releases
 
-**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03
+**Status:** release record · shipped releases from the tags, planned releases as decided on 2026-11-03, v0.4.0's contents as built on its release branch on 2026-11-04
 
 This page is the one place that says when a feature arrived or when it is planned to arrive.
 Every other page links here instead of repeating it. A shipped release is a signed tag on the
@@ -35,11 +35,11 @@ Four words carry the status of everything below:
 
 ## Planned releases
 
-Nothing in this section is built. Each row is the plan of 2026-11-03.
+Nothing in this section is released. Each row is the plan of 2026-11-03; v0.4.0's row says what its release branch holds as of 2026-11-04, which can still change before its tag.
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.4.0** | planned | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the current eight, and one server address and one key to start. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent recalls for itself during a session, and a failed command recalls only when the user opts in. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key. A librarian subagent. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. A documentation upgrade. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (all proposed); the librarian is ADR-0038's d10 |
+| **v0.4.0** | planned; built on its release branch, not tagged | The agent interface rewritten while OML is pre-release: three task-shaped agent tools in place of the eight, with the eight old names and the old command-line verbs still answering, unlisted, through the 0.4 releases, and one server address and one key as the only settings any client needs. The Claude Code plugin set up through Claude Code's own plugin settings, with the key kept in the system keychain. The agent searches for itself during a session, a failed command searches only when the user opts in, and a read-only librarian subagent searches for you. Claude's web and mobile apps reach OML over OAuth, through a one-time connect code bound to one agent key, on the server's own address; no live claude.ai connection has been made yet. A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`. The documentation upgrade: a Get started page and an install page, guides for Claude Code, claude.ai and mobile, other agent tools, self-hosting and upgrading from v0.3, the use cases rewritten as eight short scenarios, and the README, architecture overview and plugin and kit READMEs rewritten. Not in it: the one-line install that also runs the quick start, and the short install address. | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md), [ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) (all proposed); the librarian is ADR-0038's d10 |
 | **v0.5.0** | planned | Guardrails: reviewed rules loaded at every session start and checked before each tool call. Workareas that move from development to committed to validated, each step proposed by one identity and confirmed by another. Labelled links between memories. A brief for each workarea: a few reviewed memories, confirmed as the area's brief, loaded when an agent enters it. | ADR-0037 (proposed); [ADR-0009](../adr/ADR-0009-status-ladder.md) and the memory links of [ADR-0008](../adr/ADR-0008-workarea-algebra.md) and [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. | ADR-0030 (proposed) |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
@@ -79,9 +79,9 @@ many memories in one request. A web console is declined, not deferred.
 | Replacing a memory with a new version | introduced in v0.1.0; the old version stays the one others see until the new one is approved since v0.2.0 |
 | Agent tools: remember, learn, recall, event feed | introduced in v0.1.0 |
 | Agent tools: get, supersede, my work, workarea info | introduced in v0.2.0 |
-| Three task-shaped agent tools in place of the eight | planned for v0.4.0 |
+| Three task-shaped agent tools in place of the eight | planned for v0.4.0; built, not yet released |
 | The Claude Code plugin | introduced in v0.1.0 (two keys); one key since v0.2.0 |
-| Plugin setup through Claude Code's plugin settings, key in the keychain | planned for v0.4.0 |
+| Plugin setup through Claude Code's plugin settings, key in the keychain | planned for v0.4.0; built, not yet released |
 | Docker quickstart | introduced in v0.1.0 |
 | Signed releases with a software bill of materials | introduced in v0.1.0 |
 | Health and readiness checks | introduced in v0.1.0; the build is named since v0.2.0 |
@@ -94,7 +94,7 @@ many memories in one request. A web console is declined, not deferred.
 | Issuing an agent's key in one command, written to a private file | introduced in v0.2.1 |
 | The `oml-admin` plugin | introduced in v0.2.1 |
 | A session that starts from what OML holds for its key | introduced in v0.2.2 |
-| Recall during the session, and after a failed command when opted in | planned for v0.4.0 |
+| Recall during the session, and after a failed command when opted in | planned for v0.4.0; built, not yet released |
 | Names for workareas, crews, keys and organisations | introduced in v0.3.0 |
 | Crew records and the workarea tree read | introduced in v0.3.0 |
 | Helm chart for Kubernetes, one instance | introduced in v0.3.0 |
@@ -104,10 +104,10 @@ many memories in one request. A web console is declined, not deferred.
 | The command line for Linux, macOS and Windows; the server for Intel and Arm Linux | introduced in v0.3.1 |
 | The plugins as an offline archive and a pinned marketplace | introduced in v0.3.1 |
 | The kit for Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop | introduced in v0.3.1 |
-| Claude's web and mobile apps over OAuth by connect code | planned for v0.4.0 |
-| The librarian subagent | planned for v0.4.0 |
-| Quick start in one command per role | planned for v0.4.0 |
-| Documentation upgrade | planned for v0.4.0 |
+| Claude's web and mobile apps over OAuth by connect code | planned for v0.4.0; built, not yet released |
+| The librarian subagent | planned for v0.4.0; built, not yet released |
+| Quick start in one command per role | planned for v0.4.0; built, not yet released |
+| Documentation upgrade | planned for v0.4.0; built, not yet released |
 | Guardrails | planned for v0.5.0 |
 | Workarea lifecycle: development, committed, validated | planned for v0.5.0 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | planned for v0.5.0 |

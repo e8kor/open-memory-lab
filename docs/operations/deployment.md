@@ -473,20 +473,25 @@ the consequences.
 
 ### Docker quickstart
 
-!!! warning "Design mockup"
-    Nothing below exists. No image is built, no compose file is published.
-    This transcript is the committed shape of the experience — an exit
-    criterion for the deployment work, not a record of it.
+*Planned for v0.4.0 · [releases](../product/releases.md)*
 
-```console
-$ curl -LO https://e8kor.github.io/open-memory-lab/compose/docker-compose.yaml
-$ docker compose up --detach --wait
-$ docker compose cp oml-bootstrap:/run/oml/enrollment.token - \
-    | oml bootstrap claim root-operator --url http://localhost:8080 --token-stdin
+`oml quickstart` is the docker profile's quick start as built: one verb writes a compose file with
+the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with an owner-only
+`.env` of generated passwords, brings it up on `127.0.0.1`, claims the lead, issues an agent key
+and a reviewer key into owner-only files and checks one write end to end
+([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9;
+[CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start);
+[self-hosting](../guides/self-hosting.md)). It is not the full profile above: it runs no
+`oml-bootstrap` service, no MinIO and none of the other workloads, and reads the enrollment
+token from the lead's log until `oml-bootstrap` exists.
+
+```sh
+oml quickstart                # --dir oml, --port 8080 by default
 ```
 
-Follower scale-out, when read load calls for it:
-`docker compose --profile followers up --detach --scale oml-server-follower=3`.
+No transcript is shown here yet: the page shows the output of a CI run of the verb, and CI's
+`compose` job has not run it green on a pushed branch. Until it has, the verb's behaviour is the
+reference's row, held by `oml-cli`'s `quickstart` suite against a fake `docker`.
 
 ## The lake-writer singleton and its two fences
 
