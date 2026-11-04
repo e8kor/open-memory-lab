@@ -7,7 +7,7 @@ answers: how the CLI issues the one key the agent plugin needs in one call and p
 
 # ADR-0028 — The CLI issues an agent's key in one call with its reader grant by default, and an admin skill runs it without the key value entering a transcript
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](ADR-0040-plugin-setup-in-claude-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](ADR-0040-plugin-setup-in-claude-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** introduced in v0.2.1 ([releases](../product/releases.md#decisions))
 

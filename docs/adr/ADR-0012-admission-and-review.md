@@ -7,7 +7,7 @@ answers: why review capacity is external crews rather than provider model calls;
 
 # ADR-0012 — Admission and review: external crews, serve binding, policy objects
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 

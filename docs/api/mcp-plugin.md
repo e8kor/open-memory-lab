@@ -436,7 +436,7 @@ admin key for its structure read. The output is
 
 ## The prompt `guardrails`
 
-*Planned for v0.5.1, proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d11; built on its branch, not released · [releases](../product/releases.md)*
+*Since v0.5.1 · [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d11 · [releases](../product/releases.md)*
 
 Beside its three tools the server declares the `prompts` capability and serves one prompt,
 `guardrails`, with no arguments. `prompts/get` answers one user message holding the text

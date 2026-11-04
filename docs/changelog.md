@@ -37,6 +37,17 @@ d12). `info.version` moved to `0.5.1-design` once, at the release, one step past
 ADR-0037 d18 Q9 decided: the provider ring gained `GET /v1/guardrails` and the guardrail fields of
 `POST /v1/memories`. The entries below were kept apart until this release, newest first.
 
+### 2026-11-04 — Release v0.5.1: ADR-0037 accepted
+
+The maintainer accepted [ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+on 2026-11-04 with release v0.5.1. Each record on its Amends line gains "amended by ADR-0037";
+its register row, the [releases](product/releases.md) page, which moves v0.5.1 from planned to
+shipped, `llms.txt`, the roadmap's FR-50 to FR-54, and the README's "What works today" read
+"introduced in v0.5.1" or "since v0.5.1", as do the markers on the HTTP API, the MCP plugin page,
+the CLI reference, the plugin README, the administering guide and the use cases. The export's
+refusal inside an in-progress workarea and the time-boxed freeze stay unbuilt until ADR-0030 and
+ADR-0036 are accepted.
+
 ### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.1, and the spec is 0.5.1-design
 
 The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and

@@ -1,17 +1,17 @@
 <!--
 id: adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: what a guardrail is and how it differs from steering; how it composes with user roots, universe curation and the web pages of v0.5.0; what its severities mean; why only promoted guardrails bind and how one ratifies; which guardrails apply at a scope node under the key's read access and the guardrail scope an admin sets on the key, and how a conflict is shown; the one read that serves them; how the agent plugin delivers them at session start, after a compaction and to a subagent, under which frame and cap; the deterministic rule and the local PreToolUse check, its cache and its failure modes; how other harnesses get them; how a change freeze is time-boxed; what the hooks never do; the build order
 -->
 
 # ADR-0037 — A guardrail is a claim of its own kind, ratified under its workarea's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
-**Status:** proposed · 2026-10-31 · revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045
+**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1
 
-**Release:** planned for v0.5.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.1 ([releases](../product/releases.md#decisions))
 
-**Amends:** ADR-0001 (d5), ADR-0006 (d6), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11), ADR-0026 (d9), ADR-0028 (d1), ADR-0029 (d7), ADR-0039 (d2, d3, d15); and the proposed ADR-0044 (d10) and ADR-0045 (d9), when each is accepted
+**Amends:** ADR-0001 (d5), ADR-0006 (d6), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11), ADR-0026 (d9), ADR-0028 (d1), ADR-0029 (d7), ADR-0039 (d2, d3, d15); ADR-0044 (d10) and ADR-0045 (d9)
 
 ## Context
 
@@ -23,7 +23,7 @@ it ([ADR-0029](ADR-0029-session-start-hook.md) d1, d2), but as "data to check, n
 to follow" (its d6), with no severity and no check at the tool call, where every harness
 surveyed enforces; [session claims](../engineering/session-claims.md#sources) quotes each source
 this record leans on and catalogues the other claim kinds these hook points could carry.
-Proposed, not built.
+Accepted and introduced in v0.5.1; what it leaves unbuilt is named in d15.
 
 **What the maintainer decided on 2026-10-31, recorded here, not reopened.** On the setting: "It
 should be decided in api key issued by server? Never on client". (1) No reach-down: a key loads
@@ -320,7 +320,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     | severity | `never`, `must` or `should` on a guardrail; the first key of the order, and it decides no inheritance | "priority" |
     | guardrail scope | a key's issuance attribute, `workarea` or `ancestors`, set by an admin, that bounds which applicable guardrails the key loads | "reach" |
 
-- **d15 — The build is planned for v0.5.1, after v0.5.0, in six steps, each closed by its tests.**
+- **d15 — The build shipped in v0.5.1, after v0.5.0, in six steps, each closed by its tests.**
   S1, S2 and the pure core of S3 and S4 rest on the v0.4.0 API alone and may land before
   ADR-0044 and ADR-0045 are built; S6 waits for both, and S5's d12 for ADR-0036 S1 and S3.
 
@@ -331,7 +331,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workarea_claim_key_version_and_reviewer_count`, `a_conflict_line_names_the_other_artifact_ids`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `the_header_names_the_guardrail_scope_the_server_applied`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
     | S4 | d8, d9: the rule cache, `oml hook pre-tool-use` and its PreToolUse entry | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_cache_whose_digest_line_does_not_match_denies_every_call`, `a_session_with_no_cache_decides_nothing_and_warns_in_one_line`, `a_cache_not_written_prints_no_line_as_checked_and_names_the_cause`, `a_subagent_start_writes_no_cache`, `a_cache_file_older_than_thirty_days_is_removed_at_start`, `an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks`, `each_mapped_tool_is_matched_on_its_argument_and_no_other_tool_by_any_rule`, `a_shell_segment_after_a_control_operator_is_matched`, `a_quoted_operator_splits_no_segment`, `a_command_that_does_not_tokenise_or_holds_a_substitution_asks`, `a_final_star_word_matches_zero_or_more_words_from_the_first_word_on`, `a_path_and_its_glob_are_normalised_against_the_input_cwd`, `a_star_stops_at_a_slash_and_a_double_star_does_not`, `a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot`, `a_glob_of_many_stars_matches_a_long_command_in_linear_time`; `check_plugin.py` holds the PreToolUse matcher equal to d8's tools, the timeout, `onFailure` and the status message, and runs the command under `/bin/sh` with no `oml`, with a stand-in older `oml` and with one whose verb fails: the first two exit 0 with no output, the third exits non-zero |
     | S5 | d11: export and the MCP prompt; d12 | `export_writes_promoted_guardrails_only`, `export_refuses_a_scope_inside_an_in_progress_subtree`, `the_header_carries_origin_scope_node_guardrail_scope_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
-    | S6 | d16, d17: user roots and the pages, once ADR-0044 and ADR-0045 W3 are built | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none` |
+    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none` |
 
 - **d16 — Under user roots, `ancestors` walks from the scope node through the user's root to
   `universe`, under the same reader test, and `universe`'s guardrails are the curators'.** This
@@ -419,11 +419,11 @@ answered all ten on 2026-11-04, and d18 records the answers.
   [changelog](../changelog.md) entry and the roadmap rows. The contract pages, `openapi.yaml`
   and the designed annex change with the build step that serves each field (ADR-0039 d9), and
   `info.version` with them (d18, Q9).
-  On acceptance, and not before: the record and its row become `accepted design`, dated; each
-  record on the Amends line gains "· amended by ADR-0037"; ADR-0013 d5 and ADR-0029's
-  Consequences gain dated notes; ADR-0018 d4 gains d14's rows; proposed ADR-0036 (d2, d4) and
-  ADR-0030 (d8) take d12 and d3 when accepted; proposed ADR-0044 (d10) and ADR-0045 (d9) take
-  d16 and d17 when each is accepted.
+  At acceptance, on 2026-11-04 with release v0.5.1: the record and its row became `accepted
+  design`, and each record on the Amends line gained "amended by ADR-0037". d14's vocabulary
+  rows stay in this record, as ADR-0044's and ADR-0045's stay in theirs. The proposed ADR-0036
+  (d2, d4) and ADR-0030 (d8) take d12 and d3 when each is accepted; until then S5's refusal of a
+  scope inside an in-progress subtree and d12's freeze are not built.
 
 ## Rejected alternatives
 

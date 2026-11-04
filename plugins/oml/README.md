@@ -229,7 +229,7 @@ the SessionEnd hook deletes it. See the
 
 ## Guardrails
 
-*Planned for v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 When the `oml` CLI is on your `PATH`, the plugin also runs `oml hook guardrails` at every session
 start, after a compaction and when Claude starts a subagent. It loads the reviewed rules in force

@@ -94,7 +94,7 @@ each memory, who approved or rejected it, and when.
 its first task and finds the approved dollar-quote finding, which it had never seen.
 
 What the same day will add as designed use cases are built: the team's rules loaded and checked
-before each command (planned for v0.5.1), an in-progress workarea where teammates see each
+before each command (since v0.5.1), an in-progress workarea where teammates see each
 other's unreviewed work at once (planned for v0.6.0), and the price chart attached to the
 conclusion as a file (not scheduled).
 
@@ -778,7 +778,7 @@ Every use case here is **designed** and **parked**.
 
 ### Team rules
 
-**Designed** · planned for v0.5.1 · an admin, every agent in the workarea
+**Available now** · since v0.5.1, written on the HTTP API or with `oml write` · an admin, every agent in the workarea
 
 - **Goal:** set an approved team rule ("never", "must" or "should"), optionally checked by
   machine, that applies to every agent in a workarea and below.

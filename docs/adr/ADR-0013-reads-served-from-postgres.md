@@ -7,7 +7,7 @@ answers: why reads are served from Postgres as the one serving tier; why every r
 
 # ADR-0013 — Reads are served from Postgres, journalled: one serving tier, a logged read path, steering ahead of hits
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** partly in v0.1.0 and v0.2.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 

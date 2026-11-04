@@ -7,7 +7,7 @@ answers: what the four constitutional rules R1–R4 commit, and what the one bou
 
 # ADR-0001 — The constitution: four rules, one bounded development exception
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** partly in v0.1.0; the rest planned for v0.6.0 ([releases](../product/releases.md#decisions))
 
