@@ -47,9 +47,9 @@ use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, nfc};
 use oml_app::ports::{Clock, IdGen, JournalStore, Scanner, Signer, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, CrewCreateRequest, CrewRecord, CrewUpdate, GrantRecord,
-    GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, RecallRequest, ServedMemory,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, Whoami, WorkareaInfo,
-    WorkareaRecord,
+    GrantRequest, IssueKeyRequest, IssuedKey, KeyDetail, ListRequest, NamedServe, RecallRequest,
+    ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
+    VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
 };
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
@@ -770,7 +770,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
-        let _idem = idempotency_key(headers)?;
+        let idem_key = idempotency_key(headers)?;
         let req: VerdictBody = parse_json(headers, body)?;
         let verdict = match req.verdict.as_str() {
             "approve" => Verdict::Approve,
@@ -784,21 +784,28 @@ where
         if verdict == Verdict::Reject && req.reason.as_deref().unwrap_or("").is_empty() {
             return Err(ApiError::validation("reason is required to reject"));
         }
-        let reason = req.reason.as_deref();
-        let outcome = match req.serve_id.as_deref() {
-            // Omitted, it is the reviewer key's one claimed item (ADR-0039
-            // d10).
-            None => retry_chain(|| st.app.post_verdict_on_claimed(&token, verdict, reason)).await,
-            Some(serve_id) => {
-                let memory_id = serve_id
+        // Omitted, the serve is the reviewer key's one claimed item, resolved
+        // only after the idempotency record is looked up (ADR-0039 d10).
+        let serve = match req.serve_id.as_deref() {
+            None => None,
+            Some(serve_id) => Some(NamedServe {
+                serve_id: serve_id.to_owned(),
+                memory_id: serve_id
                     .strip_prefix("srv_")
                     .and_then(|s| Uuid::parse_str(s).ok())
-                    .ok_or_else(|| ApiError::serve_invalid("unknown"))?;
-                retry_chain(|| st.app.post_verdict(&token, memory_id, verdict, reason)).await
-            }
-        }
-        .map_err(|e| map_app_error(e, ErrorContext::Review))?;
-        Ok(json_response(
+                    .ok_or_else(|| ApiError::serve_invalid("unknown"))?,
+            }),
+        };
+        let request = VerdictRequest {
+            serve,
+            verdict,
+            reason: req.reason.clone(),
+            idempotency_key: idem_key,
+        };
+        let outcome = retry_chain(|| st.app.review_verdict(&token, &request))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        let mut response = json_response(
             StatusCode::OK,
             &json!({
                 "artifact_id": outcome.memory_id,
@@ -808,7 +815,13 @@ where
                 "ratification_event_id": Value::Null,
                 "journal_seq": outcome.journal_seq,
             }),
-        ))
+        );
+        if outcome.replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
     }
 
     async fn issue_key(State(st): State<Self>, headers: HeaderMap, body: Bytes) -> Response {

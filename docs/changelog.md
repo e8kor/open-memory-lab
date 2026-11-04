@@ -43,8 +43,14 @@ with `details.field` `/serve_id`, and nothing is journalled. The default rests o
 queue row, as the explicit `serve_id` does, and the serve binding stays FR-66. A request that
 sends `serve_id` is unchanged.
 
-- **Pages touched:** [http-api.md](api/http-api.md#review), [openapi.yaml](api/openapi.yaml)
-  and the SDKs' generated layers.
+The route honours its `Idempotency-Key`, scoped to the key and a nil workarea, and looks the
+record up before the default resolves: a retry of a committed verdict replays its stored
+response with `Idempotency-Replay: true` whatever the key has claimed since, so a retried
+default never applies to an item its caller was not shown, and the same key with another body is
+`idempotency.digest_mismatch`.
+
+- **Pages touched:** [http-api.md](api/http-api.md#review), [errors.md](api/errors.md)
+  (`request.validation`), [openapi.yaml](api/openapi.yaml) and the SDKs' generated layers.
 
 ### 2026-11-04 — The eight v0.3.0 tool names answer as hidden aliases with their v0.3.0 shapes until v0.5.0 (ADR-0039 d12, implementation)
 

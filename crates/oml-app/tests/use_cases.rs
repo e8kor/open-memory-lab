@@ -20,7 +20,7 @@ use oml_app::ports::{JournalStore as _, StoreError};
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, CrewCreateRequest, CrewUpdate, GrantRequest,
     IssueKeyRequest, IssuedKey, ListRequest, NamingRefusal, RecallRequest, RecallResult,
-    SubmitRequest, SubmitVerb, SupersedeRequest, Verdict, VersionRef,
+    SubmitRequest, SubmitVerb, SupersedeRequest, Verdict, VerdictRequest, VersionRef,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5850,6 +5850,16 @@ async fn a_submission_with_derives_from_and_no_verb_journals_learn_and_an_explic
 // The default serve: a verdict without serve_id (ADR-0039 d10)
 // ---------------------------------------------------------------------------
 
+/// A verdict sent without `serve_id`, under Idempotency-Key `idem`.
+fn default_verdict(verdict: Verdict, reason: Option<&str>, idem: &str) -> VerdictRequest {
+    VerdictRequest {
+        serve: None,
+        verdict,
+        reason: reason.map(str::to_owned),
+        idempotency_key: idem.to_owned(),
+    }
+}
+
 #[tokio::test]
 async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
     let app = app();
@@ -5888,7 +5898,7 @@ async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
 
     // dora's default is dora's claim, never dana's older one.
     let outcome = app
-        .post_verdict_on_claimed(&dora.value, Verdict::Approve, None)
+        .review_verdict(&dora.value, &default_verdict(Verdict::Approve, None, "dv1"))
         .await
         .expect("verdict");
     assert_eq!(outcome.memory_id, second);
@@ -5901,7 +5911,7 @@ async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
 
     // A key holding no claim is refused, naming serve_id, and nothing moves.
     let err = app
-        .post_verdict_on_claimed(&idle.value, Verdict::Approve, None)
+        .review_verdict(&idle.value, &default_verdict(Verdict::Approve, None, "dv2"))
         .await
         .unwrap_err();
     assert!(
@@ -5916,10 +5926,9 @@ async fn the_default_serve_id_is_the_reviewers_own_claimed_item() {
 
     // dana's default is dana's own claim.
     let outcome = app
-        .post_verdict_on_claimed(
+        .review_verdict(
             &dana.value,
-            Verdict::Reject,
-            Some("superseded by the second"),
+            &default_verdict(Verdict::Reject, Some("superseded by the second"), "dv3"),
         )
         .await
         .expect("verdict");

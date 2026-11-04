@@ -41,8 +41,8 @@ use crate::types::{
     ListingScope, MemoryPage, MemoryRecord, NamingRefusal, PROVIDER_TENANT, RecallHit,
     RecallRequest, RecallResult, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
     SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VersionRef, Whoami, WorkareaInfo,
-    WorkareaRecord,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -236,6 +236,84 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
         },
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// The request digest of a review verdict: SHA-256 over the RFC 8785 JSON
+/// of the method, the route template, no path parameters and the parsed
+/// body, `serve_id` as sent and `null` when omitted, so a verdict naming a
+/// serve and the same verdict by default are two requests (http-api.md
+/// idempotency; ADR-0039 d10).
+fn verdict_request_digest(req: &VerdictRequest) -> Result<String, AppError> {
+    let doc = json!({
+        "method": "POST",
+        "route": "/v2/review/verdicts",
+        "path_params": {},
+        "body": {
+            "serve_id": req.serve.as_ref().map(|serve| serve.serve_id.as_str()),
+            "verdict": match req.verdict { Verdict::Approve => "approve", Verdict::Reject => "reject" },
+            "reason": req.reason,
+        },
+    });
+    Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// A verdict's idempotency record as [`App::review_verdict`] looked it up:
+/// the scope and the request digest its commit records under.
+struct VerdictRecording {
+    scope: IdempotencyScope,
+    request_digest: String,
+}
+
+impl VerdictRecording {
+    /// The record committed with the verdict, storing `outcome`.
+    fn put(&self, outcome: &VerdictOutcome) -> Result<IdempotencyPut, AppError> {
+        let stored = RecordedVerdict {
+            memory_id: outcome.memory_id,
+            version: outcome.version,
+            state: outcome.state.as_str().to_owned(),
+            journal_seq: outcome.journal_seq,
+        };
+        Ok(IdempotencyPut {
+            scope: self.scope.clone(),
+            record: IdempotencyRecord {
+                request_digest: self.request_digest.clone(),
+                response: serde_json::to_value(&stored)
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+            },
+        })
+    }
+}
+
+/// The stored response of a committed verdict, which a replay answers
+/// (http-api.md idempotency).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RecordedVerdict {
+    memory_id: Uuid,
+    version: u32,
+    state: String,
+    journal_seq: u64,
+}
+
+impl RecordedVerdict {
+    fn replay(self) -> Result<VerdictOutcome, AppError> {
+        // A verdict leaves its row promoted or rejected (admission.md).
+        let state = match self.state.as_str() {
+            "promoted" => MemoryStatus::Promoted,
+            "rejected" => MemoryStatus::Rejected,
+            other => {
+                return Err(AppError::StoredResponse(format!(
+                    "a verdict's stored state is {other:?}"
+                )));
+            }
+        };
+        Ok(VerdictOutcome {
+            memory_id: self.memory_id,
+            version: self.version,
+            state,
+            journal_seq: self.journal_seq,
+            replayed: true,
+        })
+    }
 }
 
 /// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
@@ -2371,47 +2449,85 @@ where
         let caller = self.authenticate(api_key).await?;
         require_admissible(&caller.key, Role::Dreamer, "verdict")?;
         refuse_service(&caller.key, "verdict")?;
-        self.verdict_on(&caller, memory_id, verdict, reason).await
+        self.verdict_on(&caller, memory_id, verdict, reason, None)
+            .await
     }
 
-    /// Record a verdict sent without `serve_id`: it applies to the one
-    /// queue entry this reviewer key has claimed, and with none or several
-    /// it is [`AppError::ServeIdUnresolved`], nothing journalled (ADR-0039
-    /// d10). Everything else is [`App::post_verdict`]'s.
-    pub async fn post_verdict_on_claimed(
+    /// Record a verdict as `POST /v2/review/verdicts` received it, under
+    /// its idempotency record. The record is looked up after the verb
+    /// ceiling and before anything else: a retry of a committed verdict
+    /// replays its stored response whatever the key holds now, so a
+    /// verdict sent without `serve_id` never resolves a new target on
+    /// retry, and the same `Idempotency-Key` with another request is
+    /// [`AppError::IdempotencyDigestMismatch`]. With no record a verdict
+    /// without `serve_id` applies to the one queue entry this reviewer key
+    /// has claimed, and with none or several it is
+    /// [`AppError::ServeIdUnresolved`], nothing journalled (http-api.md
+    /// idempotency; ADR-0039 d10). Everything else is
+    /// [`App::post_verdict`]'s.
+    pub async fn review_verdict(
         &self,
         api_key: &str,
-        verdict: Verdict,
-        reason: Option<&str>,
+        req: &VerdictRequest,
     ) -> Result<VerdictOutcome, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         require_admissible(key, Role::Dreamer, "verdict")?;
         refuse_service(key, "verdict")?;
-        // The default rests on the claimed queue row (review_queue's
-        // held_by_key), not on a serve record: the serve binding stays
-        // FR-66 (ADR-0039 Consequences, "The serve binding is not fixed
-        // here").
-        let claimed = self
-            .journal
-            .review_claimed(key.tenant_id, key.key_id)
-            .await?;
-        let [memory_id] = claimed[..] else {
-            return Err(AppError::ServeIdUnresolved {
-                several: !claimed.is_empty(),
-            });
+        let recording = VerdictRecording {
+            scope: IdempotencyScope {
+                tenant_id: key.tenant_id,
+                key_id: key.key_id,
+                workarea_id: Uuid::nil(),
+                idem_key: req.idempotency_key.clone(),
+            },
+            request_digest: verdict_request_digest(req)?,
         };
-        self.verdict_on(&caller, memory_id, verdict, reason).await
+        if let Some(recorded) = self
+            .recorded::<RecordedVerdict>(&recording.scope, &recording.request_digest)
+            .await?
+        {
+            return recorded.replay();
+        }
+        let memory_id = match &req.serve {
+            Some(serve) => serve.memory_id,
+            None => {
+                // The default rests on the claimed queue row (review_queue's
+                // held_by_key), not on a serve record: the serve binding
+                // stays FR-66 (ADR-0039 Consequences, "The serve binding is
+                // not fixed here").
+                let claimed = self
+                    .journal
+                    .review_claimed(key.tenant_id, key.key_id)
+                    .await?;
+                let [memory_id] = claimed[..] else {
+                    return Err(AppError::ServeIdUnresolved {
+                        several: !claimed.is_empty(),
+                    });
+                };
+                memory_id
+            }
+        };
+        self.verdict_on(
+            &caller,
+            memory_id,
+            req.verdict,
+            req.reason.as_deref(),
+            Some(recording),
+        )
+        .await
     }
 
     /// [`App::post_verdict`] after the verb ceiling, for an authenticated
-    /// caller.
+    /// caller, committing `recording`'s idempotency record with the verdict
+    /// when there is one.
     async fn verdict_on(
         &self,
         caller: &Caller,
         memory_id: Uuid,
         verdict: Verdict,
         reason: Option<&str>,
+        recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
         let memory = self
@@ -2490,19 +2606,23 @@ where
 
         match verdict {
             Verdict::Reject => {
-                let receipt = self
-                    .commit(
-                        verdict_event,
-                        MetadataFold::MemoryRejected { memory_id },
-                        None,
-                    )
-                    .await?;
-                Ok(VerdictOutcome {
+                let outcome = VerdictOutcome {
                     memory_id,
                     version: memory.version,
                     state: new_status,
-                    journal_seq: receipt.seq,
-                })
+                    journal_seq: verdict_event.envelope.seq,
+                    replayed: false,
+                };
+                let idempotency = recording.as_ref().map(|r| r.put(&outcome)).transpose()?;
+                let committed = self
+                    .commit(
+                        verdict_event,
+                        MetadataFold::MemoryRejected { memory_id },
+                        idempotency,
+                    )
+                    .await;
+                self.verdict_committed(committed, recording.as_ref(), outcome)
+                    .await
             }
             Verdict::Approve => {
                 // Ratification snapshots the policy it was decided under
@@ -2558,33 +2678,60 @@ where
                 // so the compare-and-set conditions the verdict too: a lost
                 // one journals neither, and a chain-head conflict leaves no
                 // verdict for the retry to journal twice (ADR-0025 d10).
+                // The record rides the verdict's link, so a lost
+                // compare-and-set records nothing either.
+                let outcome = VerdictOutcome {
+                    memory_id,
+                    version: memory.version,
+                    state: new_status,
+                    journal_seq: ratification.envelope.seq,
+                    replayed: false,
+                };
+                let idempotency = recording.as_ref().map(|r| r.put(&outcome)).transpose()?;
                 let links = vec![
-                    (
+                    commit_request(
                         verdict_event,
                         MetadataFold::VerdictRecorded {
                             memory_id,
                             reviewer_key_id: key.key_id,
                         },
+                        idempotency,
                     ),
-                    (ratification, fold),
+                    commit_request(ratification, fold, None),
                 ];
-                let receipt = match self.commit_chain(links).await {
-                    Err(AppError::Store(StoreError::TipMoved { .. })) => {
+                let committed = match self.journal.commit_chain(links).await {
+                    Err(StoreError::TipMoved { .. }) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
                                 .readable_tip(caller, memory.workarea_id, &memory.claim_key)
                                 .await?,
                         });
                     }
-                    other => other?,
+                    other => other.map_err(AppError::from),
                 };
-                Ok(VerdictOutcome {
-                    memory_id,
-                    version: memory.version,
-                    state: new_status,
-                    journal_seq: receipt.seq,
-                })
+                self.verdict_committed(committed, recording.as_ref(), outcome)
+                    .await
             }
+        }
+    }
+
+    /// A verdict's commit result as its caller is answered: `outcome` once
+    /// committed, and when another attempt under the same idempotency
+    /// record committed first, which wrote nothing here, that attempt's
+    /// stored response as a replay (http-api.md idempotency).
+    async fn verdict_committed(
+        &self,
+        committed: Result<CommitReceipt, AppError>,
+        recording: Option<&VerdictRecording>,
+        outcome: VerdictOutcome,
+    ) -> Result<VerdictOutcome, AppError> {
+        match (committed, recording) {
+            (Err(AppError::Store(StoreError::IdempotencyRecorded)), Some(recording)) => self
+                .recorded::<RecordedVerdict>(&recording.scope, &recording.request_digest)
+                .await?
+                .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?
+                .replay(),
+            (committed, _) => committed.map(|_| outcome),
         }
     }
 

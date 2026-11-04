@@ -527,6 +527,31 @@ pub struct VerdictOutcome {
     pub version: u32,
     pub state: MemoryStatus,
     pub journal_seq: u64,
+    /// Whether this answers a committed verdict's idempotency record
+    /// rather than a verdict this call journalled (http-api.md idempotency).
+    pub replayed: bool,
+}
+
+/// A serve as a verdict sent it: `serve_id` as written, digested as sent,
+/// and the row it names (http-api.md idempotency).
+#[derive(Debug, Clone)]
+pub struct NamedServe {
+    pub serve_id: String,
+    pub memory_id: Uuid,
+}
+
+/// A review verdict as `POST /v2/review/verdicts` received it. Its
+/// idempotency record is scoped to the key, the nil workarea and the
+/// `Idempotency-Key`, and looked up before the default serve resolves, so a
+/// retry replays what it committed and never resolves a new target
+/// (http-api.md idempotency; ADR-0039 d10).
+#[derive(Debug, Clone)]
+pub struct VerdictRequest {
+    /// `None` when omitted: the reviewer key's one claimed item.
+    pub serve: Option<NamedServe>,
+    pub verdict: Verdict,
+    pub reason: Option<String>,
+    pub idempotency_key: String,
 }
 
 /// The kinds recall serves as hits. Vocabulary kinds join them only by a

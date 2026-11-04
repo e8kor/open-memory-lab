@@ -1650,7 +1650,7 @@ async fn a_verdict_without_serve_id_is_refused_naming_serve_id_when_the_reviewer
 }
 
 #[tokio::test]
-async fn a_verdict_never_applies_to_an_item_another_reviewer_claimed() {
+async fn a_verdict_without_serve_id_never_applies_to_an_item_another_reviewer_claimed() {
     let router = doubles_router();
     let crew = crew(&router).await;
     let rev = reviewer(&router, &crew, "issue-rev", "crew/reviewer-5").await;
@@ -1676,4 +1676,92 @@ async fn a_verdict_never_applies_to_an_item_another_reviewer_claimed() {
         verdict(&router, &rev, "other-v-2", &json!({"verdict": "approve"})).await;
     assert_eq!(status, StatusCode::OK, "{applied}");
     assert_eq!(applied["artifact_id"], written.as_str(), "{applied}");
+}
+
+/// One `POST /v2/review/verdicts` under `token`: the status, whether it
+/// answered `Idempotency-Replay: true`, and the body.
+async fn verdict_replay(
+    router: &Router,
+    token: &str,
+    idem: &str,
+    body: &Value,
+) -> (StatusCode, bool, Value) {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v2/review/verdicts")
+        .header("authorization", format!("Bearer {token}"))
+        .header("idempotency-key", idem)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request builds");
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("infallible router");
+    let status = response.status();
+    let replayed = response
+        .headers()
+        .get("idempotency-replay")
+        .is_some_and(|v| v == "true");
+    let bytes = to_bytes(response.into_body(), 1 << 22)
+        .await
+        .expect("body collects");
+    (
+        status,
+        replayed,
+        serde_json::from_slice(&bytes).expect("json body"),
+    )
+}
+
+#[tokio::test]
+async fn a_retried_verdict_without_serve_id_replays_its_stored_response_and_never_applies_to_the_next_claim()
+ {
+    let router = doubles_router();
+    let crew = crew(&router).await;
+    let (status, first) = submit(&router, &crew.agent, "rep-0", &json!({ "body": QUOTE })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    let first = id(&first);
+    let (status, second) = submit(&router, &crew.agent, "rep-1", &json!({ "body": ALLOY })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{second}");
+    let second = id(&second);
+
+    // The approve commits; its response is taken to be lost.
+    assert_eq!(
+        claim_next(&router, &crew.dreamer, "rep-next-1").await,
+        first
+    );
+    let request = json!({"verdict": "approve"});
+    let (status, replayed, applied) =
+        verdict_replay(&router, &crew.dreamer, "rep-v-1", &request).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(!replayed, "{applied}");
+    assert_eq!(applied["artifact_id"], first.as_str(), "{applied}");
+
+    // The same key claims the next item, then retries the lost request.
+    assert_eq!(
+        claim_next(&router, &crew.dreamer, "rep-next-2").await,
+        second
+    );
+    let (status, replayed, replay) =
+        verdict_replay(&router, &crew.dreamer, "rep-v-1", &request).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert!(replayed, "{replay}");
+    assert_eq!(replay, applied);
+    assert_eq!(state(&router, &crew.agent, &second).await, "held");
+
+    // The key names one request: another body under it is refused.
+    let (status, mismatch) = verdict(
+        &router,
+        &crew.dreamer,
+        "rep-v-1",
+        &json!({"verdict": "reject", "reason": "a different request"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{mismatch}");
+    assert_eq!(
+        mismatch["error"]["code"], "idempotency.digest_mismatch",
+        "{mismatch}"
+    );
+    assert_eq!(state(&router, &crew.agent, &second).await, "held");
 }
