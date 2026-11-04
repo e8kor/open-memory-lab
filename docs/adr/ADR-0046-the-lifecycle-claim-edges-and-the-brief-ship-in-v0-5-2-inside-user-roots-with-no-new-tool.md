@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-04
 answers: how the status ladder and claim edges, built on two branches before the v0.4.0 rewrite, fit user roots (the proposed ADR-0044) and the three-tool API (ADR-0039) for v0.5.2; which surface serves them; what the workarea brief is, who curates it, how large it is and how it reaches an agent; what the maintainer answered on 2026-11-04
 -->
 
 # ADR-0046 — The lifecycle, claim edges and the brief ship in v0.5.2 inside user roots, with no new tool
 
-**Status:** proposed · 2026-11-04
+**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day
 
-**Release:** planned for v0.5.2 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.2 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0008 (d5), ADR-0009 (d1, d3, d5), ADR-0021 (d5), ADR-0029 (d2), ADR-0039 (d2, d9)
 
@@ -160,7 +160,7 @@ say otherwise.
   a brief starts empty in a workarea with nothing reviewed.
 - **New failure modes and their doctor lines.** `oml doctor` names a default workarea whose brief
   is empty and one whose pending transitions wait with no second dreamer able to ratify.
-- **At acceptance** ADR-0008, ADR-0009, ADR-0021, ADR-0029 and ADR-0039 gain
+- **At acceptance** ADR-0008, ADR-0009, ADR-0021, ADR-0029 and ADR-0039 gained
   `· amended by ADR-0046` on their Status lines.
 
 ## The maintainer's answers of 2026-11-04

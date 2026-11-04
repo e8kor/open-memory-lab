@@ -7,9 +7,9 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 # ADR-0009 — The status ladder: development, committed, validated; forward only; medallion words stay in the lake
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** planned for v0.5.2 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.2 ([releases](../product/releases.md#decisions))
 
 ## Context
 

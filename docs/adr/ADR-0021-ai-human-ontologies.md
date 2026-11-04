@@ -7,9 +7,9 @@ answers: why shared vocabularies are governed claims on the existing pipeline ra
 
 # ADR-0021 — AI+Human ontologies: vocabularies as governed claims
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** partly planned for v0.5.2; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** claim edges introduced in v0.5.2; the rest not scheduled ([releases](../product/releases.md#decisions))
 
 Everything this record decides is design — no code exists. The v1 slice is
 [FR-19](../product/roadmap.md); every other commitment below carries its own roadmap handle.

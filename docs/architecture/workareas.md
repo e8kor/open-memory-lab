@@ -9,7 +9,7 @@ answers: how the workarea algebra works — universe tree, node-id grants, deny-
 
 **Status:** design draft for review · decided, not built
 
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; edges and the status ladder planned for v0.5.2 ([releases](../product/releases.md)).
+**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; the status ladder since v0.5.2; workarea edges not scheduled ([releases](../product/releases.md)).
 
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
@@ -268,7 +268,7 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Workarea edges not scheduled; claim edges and the brief since v0.5.2, on the [HTTP API](../api/http-api.md#edges) · [releases](../product/releases.md)*
 
 ### Edge kinds
 
@@ -372,14 +372,14 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
-*Planned for v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.5.2 · [releases](../product/releases.md)*
 
-**Status:** built for v0.5.2, not released, in `oml-domain`, `oml-app` and `oml-pg` with
+**Status:** built in v0.5.2, in `oml-domain`, `oml-app` and `oml-pg` with
 `migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
 second identity, the status read) and the freeze checks on submit, supersede, approval and child
 create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · served by `POST /v2/workareas/{workarea}/transitions` and its ratify route, the
 `oml workareas status` verbs and the workarea read's `policy` and `pending_transitions`, which
-`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3, proposed) · its Postgres checks run only where a superuser mints the suites' role
+`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3) · its Postgres checks run only where a superuser mints the suites' role
 pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
 fence are decided, not built.
 
@@ -499,7 +499,7 @@ the rule it follows; none is a new decision about the ladder.
 - **A user root is a node like any other.** A user root and every workarea under it climb the
   ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
   being per key and principal; `universe` stays `committed`
-  ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, proposed, after the proposed ADR-0044 d1 and d8). Whether a user
+  ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, after ADR-0044 d1 and d8). Whether a user
   root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
   a ratification by another key of the same user is admitted and marked `same_user`
   (ADR-0046 d1, d2, answered on 2026-11-04), read from the workarea row's `user_root` and

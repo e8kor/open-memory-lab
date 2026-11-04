@@ -37,6 +37,19 @@ routes, the `/v2/edges` family for `kind` claim and brief, and the workarea read
 `pending_transitions` and `brief`. The entries below were kept apart until this release, newest
 first.
 
+### 2026-11-04 — Release v0.5.2: ADR-0046 accepted
+
+The maintainer accepted [ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) on 2026-11-04 with release v0.5.2. ADR-0008, ADR-0009,
+ADR-0021, ADR-0029 and ADR-0039, the records on its Amends line, gain "amended by ADR-0046";
+ADR-0009's release reads "introduced in v0.5.2" and ADR-0008's and ADR-0021's name their parts.
+Its register row, the [releases](product/releases.md) page, which moves v0.5.2 from planned to
+shipped, `llms.txt`, the roadmap's FR-60 and the README's "What works today" read "introduced in
+v0.5.2" or "since v0.5.2", as do the markers on the HTTP API, the MCP plugin page, the CLI
+reference, the workareas, schema and configuration pages, the administering guide and the use
+cases. The README's "What works today" also gains the guardrails row v0.5.1 left among the
+planned ones. Workarea edges, the `oml_write` `links` field and a view of the lifecycle, edges and
+brief on the web pages stay unbuilt.
+
 ### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.2, and the spec is 0.5.2-design
 
 The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and

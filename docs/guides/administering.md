@@ -115,8 +115,8 @@ A tenant's workareas form one tree under `universe`. A grant on a workarea cover
 | See one node | `oml workareas show <workarea>` |
 | Point a workarea at another crew | `oml workareas crew set <workarea> --crew <crew>` |
 
-A new workarea starts in `development`; the ladder to `committed` and `validated` is planned for
-v0.5.2. An admin key reads the structure of every workarea in its tenant and never a memory in it;
+A new workarea starts in `development`; since v0.5.2 it climbs to `committed` and `validated`,
+each step proposed by one key and ratified by another (`oml workareas status`). An admin key reads the structure of every workarea in its tenant and never a memory in it;
 the [admin read](../api/http-api.md#admin-read), since v0.5.0, adds two routes on which it
 reads every memory's text and attribution, each read journalled.
 

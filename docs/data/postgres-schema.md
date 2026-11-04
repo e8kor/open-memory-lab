@@ -521,7 +521,7 @@ CREATE INDEX claim_edges_listing ON claim_edges (tenant_id, created_at DESC, id 
 
 ### brief_edges
 
-**Status:** built in `migrations/0019_brief_edges.sql` for v0.5.2, not released
+**Status:** built in `migrations/0019_brief_edges.sql` since v0.5.2
 ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7, d8) · its checks run only where a superuser mints the suites'
 role pairs, CI's `cargo test (Postgres)`.
 
