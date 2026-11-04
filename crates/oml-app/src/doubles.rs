@@ -21,6 +21,7 @@ use oml_domain::oauth::{
     TokenKind, UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
     connection_transition,
 };
+use oml_domain::vocab_edges::EdgeState;
 use oml_domain::{
     ChainHead, EventTime, HeldBy, MemoryKind, MemoryStatus, Role, Sha256Hash, SignedEnvelope,
     WorkareaStatus, event_types, ratifier_is_proposer,
@@ -33,12 +34,13 @@ use crate::ports::{
     ScanOutcome, Scanner, Signer, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use crate::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCodeRecord,
-    ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord,
-    DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
+    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState,
+    ClientDescription, ClientKind, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
+    HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 
 /// The states whose versions hold their `claim_key` and their ordinal
@@ -144,6 +146,8 @@ struct TenantState {
     transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
+    /// Claim edges by id, which is their listing order.
+    claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1243,8 +1247,126 @@ fn apply_fold(
         } => {
             ratify_transition_fold(state, transition_id, workarea_id, to, ratifier_key_id)?;
         }
+        MetadataFold::ClaimEdgeProposed(edge) => {
+            require_proposable(state, tenant_id, &edge)?;
+            let (src, dst) = (edge.src_artifact_id, edge.dst_artifact_id);
+            state.claim_edges.insert(edge.edge_id, edge);
+            widen_lineage(state, src, dst);
+        }
     }
     Ok(())
+}
+
+/// A proposed edge the schema admits: one of this tenant's, an id it does
+/// not hold yet, both endpoints and the proposer key its own, pending with
+/// no ratifier (postgres-schema.md `claim_edges`).
+fn require_proposable(
+    state: &TenantState,
+    tenant_id: Uuid,
+    edge: &ClaimEdgeRecord,
+) -> Result<(), StoreError> {
+    let refuse = |why: String| Err(StoreError::Backend(why));
+    if edge.tenant_id != tenant_id {
+        return refuse(format!("claim edge {} names another tenant", edge.edge_id));
+    }
+    if state.claim_edges.contains_key(&edge.edge_id) {
+        return refuse(format!("claim edge {} is already held", edge.edge_id));
+    }
+    for endpoint in [edge.src_artifact_id, edge.dst_artifact_id] {
+        if !state.memories.contains_key(&endpoint) {
+            return refuse(format!("version {endpoint} is not held by this tenant"));
+        }
+    }
+    if !state
+        .keys_by_hash
+        .values()
+        .any(|k| k.key_id == edge.proposer_key_id)
+    {
+        return refuse(format!(
+            "key {} is not held by this tenant",
+            edge.proposer_key_id
+        ));
+    }
+    if edge.state != EdgeState::Pending || edge.ratifier_key_id.is_some() {
+        return refuse(format!(
+            "claim edge {} is proposed pending, with no ratifier",
+            edge.edge_id
+        ));
+    }
+    Ok(())
+}
+
+/// The versions one claim edge away from `node`, either way, over every
+/// held edge that is not rejected.
+fn edge_neighbours(state: &TenantState, node: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+    state
+        .claim_edges
+        .values()
+        .filter(|e| e.state != EdgeState::Rejected)
+        .filter_map(move |e| {
+            if e.src_artifact_id == node {
+                Some(e.dst_artifact_id)
+            } else if e.dst_artifact_id == node {
+                Some(e.src_artifact_id)
+            } else {
+                None
+            }
+        })
+}
+
+/// The lineage widening of a proposed edge between `src` and `dst`, the
+/// reading [`MetadataFold::ClaimEdgeProposed`] names: C is every version
+/// connected to either endpoint through claim edges, the new one included;
+/// every version that reaches C through `derives_from` ancestry and claim
+/// edges, C included, gains the union of C's flattened closures. Each
+/// version's stored closure is already the authors of its lineage, so that
+/// union is the authors the new edge joins.
+fn widen_lineage(state: &mut TenantState, src: Uuid, dst: Uuid) {
+    let mut component = BTreeSet::from([src, dst]);
+    let mut frontier = vec![src, dst];
+    while let Some(node) = frontier.pop() {
+        let next: Vec<Uuid> = edge_neighbours(state, node).collect();
+        for n in next {
+            if component.insert(n) {
+                frontier.push(n);
+            }
+        }
+    }
+    let mut principals = BTreeSet::new();
+    let mut key_ids = BTreeSet::new();
+    for id in &component {
+        if let Some(m) = state.memories.get(id) {
+            principals.extend(m.lineage_principals.iter().cloned());
+            key_ids.extend(m.lineage_key_ids.iter().copied());
+        }
+    }
+    // Downstream of C: a version's closure holds C once it derives from a
+    // version that does, or shares a claim edge with one.
+    let mut reached = component.clone();
+    let mut frontier: Vec<Uuid> = component.into_iter().collect();
+    while let Some(node) = frontier.pop() {
+        let children = state
+            .memories
+            .values()
+            .filter(|m| m.derives_from.contains(&node))
+            .map(|m| m.memory_id);
+        let next: Vec<Uuid> = children.chain(edge_neighbours(state, node)).collect();
+        for n in next {
+            if reached.insert(n) {
+                frontier.push(n);
+            }
+        }
+    }
+    for id in reached {
+        if let Some(m) = state.memories.get_mut(&id) {
+            let mut p: BTreeSet<String> = m.lineage_principals.drain(..).collect();
+            p.extend(principals.iter().cloned());
+            m.lineage_principals = p.into_iter().collect();
+            let mut k: BTreeSet<Uuid> = m.lineage_key_ids.drain(..).collect();
+            k.extend(key_ids.iter().copied());
+            m.lineage_key_ids = k.into_iter().collect();
+        }
+    }
 }
 
 /// The fold of `system.names_assigned` within the tenant: each crew record,
@@ -2180,6 +2302,49 @@ impl JournalStore for MemStore {
             .idempotency
             .get(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()))
             .cloned())
+    }
+
+    async fn claim_edge(
+        &self,
+        tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<ClaimEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.claim_edges.get(&edge_id).cloned())
+    }
+
+    async fn claim_edges(
+        &self,
+        tenant_id: Uuid,
+        filter: &ClaimEdgeFilter,
+        after: Option<ClaimEdgePosition>,
+        limit: usize,
+    ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let node_of = |id: Uuid| state.memories.get(&id).map(|m| m.workarea_id);
+        Ok(state
+            .claim_edges
+            .values()
+            .filter(|e| after.is_none_or(|p| e.edge_id > p.edge_id))
+            .filter(|e| {
+                filter
+                    .artifact_id
+                    .is_none_or(|a| e.src_artifact_id == a || e.dst_artifact_id == a)
+            })
+            .filter(|e| {
+                filter.workarea_id.is_none_or(|w| {
+                    node_of(e.src_artifact_id) == Some(w) || node_of(e.dst_artifact_id) == Some(w)
+                })
+            })
+            .take(limit)
+            .cloned()
+            .collect())
     }
 }
 

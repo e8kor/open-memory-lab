@@ -26,13 +26,13 @@ use oml_app::ports::{
     JournalStore, MetadataFold, StoreError, SubjectRow, TailEvent, TailScan, claim_subject,
 };
 use oml_app::types::{
-    AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
-    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord, KeyReferences,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
-    PROVIDER_TENANT, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow,
-    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WorkareaRecord,
-    WorkareaRef,
+    AuthorizationRecord, ClaimEdgeFilter, ClaimEdgePosition, ClaimEdgeRecord, ClaimKeyState,
+    ClientDescription, ClientKind, ConnectCode, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, Credential, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
+    HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -1717,6 +1717,15 @@ async fn apply_fold(
             )
             .await?;
         }
+        // Fails closed until the store writes the edge and widens the
+        // flattened lineage closure with it, so no edge lands that the
+        // review queue's exclusion would not see (ADR-0001 d2).
+        MetadataFold::ClaimEdgeProposed(edge) => {
+            return Err(StoreError::Backend(format!(
+                "claim edge {} is not stored: the Postgres claim-edge fold is not built",
+                edge.edge_id
+            )));
+        }
     }
     Ok(())
 }
@@ -3230,6 +3239,30 @@ impl JournalStore for PgStore {
             request_digest: String::from_utf8(digest_bytes).map_err(backend)?,
             response: response.unwrap_or(Value::Null),
         }))
+    }
+
+    // The claim-edge reads fail closed until the Postgres store reads
+    // `claim_edges`: an empty answer would read as "no edge".
+    async fn claim_edge(
+        &self,
+        _tenant_id: Uuid,
+        edge_id: Uuid,
+    ) -> Result<Option<ClaimEdgeRecord>, StoreError> {
+        Err(StoreError::Backend(format!(
+            "claim edge {edge_id} is not read: the Postgres claim-edge read is not built"
+        )))
+    }
+
+    async fn claim_edges(
+        &self,
+        _tenant_id: Uuid,
+        _filter: &ClaimEdgeFilter,
+        _after: Option<ClaimEdgePosition>,
+        _limit: usize,
+    ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
+        Err(StoreError::Backend(
+            "claim edges are not listed: the Postgres claim-edge read is not built".to_owned(),
+        ))
     }
 }
 
