@@ -562,6 +562,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *planned for v0.5.0, not built* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | designed |
+| `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *planned for v0.5.0, not built* ([admin read](#admin-read)) | designed |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -925,7 +926,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status and edges planned for v0.5.2 · [releases](../product/releases.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -966,7 +967,7 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Planned for v0.5.0 · [releases](../product/releases.md)*
+*Planned for v0.5.2 · [releases](../product/releases.md)*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
@@ -1363,21 +1364,22 @@ This is the MCP request forwarded to the same endpoint, not a token passed to a 
 
 ## Web pages: the user page and the admin page
 
-*Planned for v0.5.0 in part, not built; the admin page's attribution view and demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
+*Planned for v0.5.0 in part, not built; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), proposed*
 
 Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
 page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
-codes, reads the setup steps, browses their memories and `universe`'s, and creates workareas in
-their root; and the **admin page**, where an admin keeps the email allowlist, grants review and
-curation, sees the review queue's depth and age, and reviews, curates and supersedes. Nothing
-below is routed yet.
+codes, reads the setup steps, browses their memories and `universe`'s, creates workareas in
+their root, and reviews their own agents' held writes; and the **admin page**, where an admin
+keeps the email allowlist, grants review and curation, sees the review queue's depth and age,
+reads every memory's text and attribution, and reviews, curates and supersedes. Nothing below is
+routed yet.
 
 **Routes.** Six, a closed set the router serves exactly: `GET /web`, `POST /web`,
 `POST /web/sign-in`, `GET /web/callback/{provider}`, `GET /web/admin` and `POST /web/admin`.
 Each page is one `GET`, whose views are chosen by the query (`view`, `q`, `memory`,
 `workarea`), and one `POST`, whose form names one `action` from the page's closed set: on the
-user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea` and
-`sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
+user page `issue_key`, `connect_key`, `connect_code`, `cut_off`, `create_workarea`,
+`review_next`, `verdict` and `sign_out`; on the admin page `allow_email`, `remove_email`, `set_admin`, `grant_review`,
 `grant_curation`, `review_next`, `verdict`, `curate`, `supersede` and, in v0.6.0, `demote`. A
 follower routes none; without `oauth.issuer` and a provider every one is an unknown path.
 
@@ -1402,15 +1404,17 @@ allowlist entry end it.
 
 **Who acts.** Every act runs as a **session key**: a key the server holds for the person, with
 `credential: session`, `held_by: human` and no value — `<user>-web` (a user key for the user
-page), `<user>-review`, `<user>-curate` and `<user>-admin`, each created by the act that first
-needs it ([roles and keys](../architecture/roles-and-keys.md)). The server picks the key from the
+page) and `<user>-review` (dreamer and reader on the person's own root), both created at the
+first sign-in, and `<user>-curate` and `<user>-admin`, each created by the act that first needs
+it ([roles and keys](../architecture/roles-and-keys.md)). The server picks the key from the
 session and the action; no field names who acts, and a field the action does not define is
 `request.validation`.
 A session key cannot be sent as a bearer key, has no connect code (`oauth.connect_refused`,
 `details.reason: session_key`) and is reachable only from a live session of an entry naming its
 user. Review runs as the person's `<user>-review` alone, R2 checked on that key and the row's
-lineage closure; the admin key is never offered a verdict. Content on the admin page is read
-through the reviewer or curator key's grants, never the admin key's role.
+lineage closure, so a person approves their own agents' writes and never a version their own
+reviewer key proposed; the admin key is never offered a verdict. The admin page reads every
+memory's text and attribution as `<user>-admin`, through the [admin read](#admin-read).
 
 **Every page and every `POST`.** The connect page's headers: a CSP of `default-src 'none'`, one
 hashed stylesheet, `form-action 'self'` plus the configured providers' origins,
@@ -1422,6 +1426,25 @@ the server derives from the session token and compares in constant time (`reques
 `access.verb_ceiling` with `details.reason: web_is_human_only`, and `/v1`, `/v2` and `/mcp` never
 read the `Cookie` header, so a session cookie there is `auth.missing`. A key value or connect code
 issued on the user page is shown once, in the answering page, never in a redirect.
+
+### Admin read
+
+*Planned for v0.5.0, not built · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21, proposed*
+
+An admin key reads every memory of its tenant, with its text and its attribution, on two lab
+routes and nowhere else; every other route keeps the rule that an admin key reads structure and
+never content.
+
+| Route | Answers |
+|---|---|
+| `POST /v2/admin/memories/search` | `{query?, workarea?, state?, limit?, cursor?}` → a page of memories in every state, workarea and user root, `universe` included, each with `text`, `artifact_id`, `claim_key`, `version`, `state`, `workarea_path`, the authoring key's name, `principal` and `user`, and `created_at`. A `POST` so the query travels in a body. |
+| `GET /v2/admin/memories/{artifact_id}` | one memory: the fields above, `derives_from`, `replaces`, every verdict with its reviewing key, principal, reason and time, and `plaintext_digest`. A universe claim is shown with its source, unlike the served view of [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9. |
+
+Admin key role only; the operator and every other role answer `access.verb_ceiling`. Each answer
+journals one `memory.admin_read` event naming the admin key and the `artifact_ids` served, with a
+`query_digest` for a search, never the text or the query, visible on the events tail to admin keys
+alone. The routes run on the lead. They record no verdict, create no serve binding and change no
+tip. `oml admin read [<memory>] [--query <text>] [--workarea <workarea>]` calls them.
 
 **The allowlist on the API.** `GET /v2/web/emails`, `POST /v2/web/emails` (`{email, user,
 admin}`, adding or changing an entry) and `POST /v2/web/emails/remove` (`{email}`), admin key

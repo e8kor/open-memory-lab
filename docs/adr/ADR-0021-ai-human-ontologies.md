@@ -9,7 +9,7 @@ answers: why shared vocabularies are governed claims on the existing pipeline ra
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** partly planned for v0.5.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly planned for v0.5.2; the rest not scheduled ([releases](../product/releases.md#decisions))
 
 Everything this record decides is design — no code exists. The v1 slice is
 [FR-19](../product/roadmap.md); every other commitment below carries its own roadmap handle.

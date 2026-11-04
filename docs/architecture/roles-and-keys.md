@@ -582,15 +582,18 @@ session_key`). A person holds at most four, one per capacity, under the two-key 
 | Key | Role and grants |
 |---|---|
 | `<user>-web` | a [user key](#user-keys-planned): writer and reader on `universe.<user>`, and the node read on `universe` |
-| `<user>-review` | a tenant dreamer key, with the dreamer and reader grants an admin gives it |
+| `<user>-review` | a tenant dreamer key with dreamer and reader on `universe.<user>` from the first sign-in, and any further grants an admin gives it |
 | `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and reader on the user roots an admin chooses |
 | `<user>-admin` | a tenant admin key, no grants |
 
 `<user>-web`, and no bearer key, may issue reader, writer and connector keys naming its own user
 with grants inside its root, mint their connect codes and deny them on `universe`; for it, own
-means every key naming its user. The admin page reviews only as `<user>-review`, R2 checked on
-that key and the row's lineage closure, and reads content only through the reviewer or curator
-key's grants.
+means every key naming its user. `<user>-web` and `<user>-review` are created at the first
+sign-in, so a person reviews their own agents' held writes on the user page without an admin step.
+Each session key's principal is its own name, so R2, checked on the reviewing key and the row's
+lineage closure, lets `<user>-review` approve the person's agents' writes and never a version it
+proposed itself. `<user>-admin` reads every memory's text and attribution through the
+[admin read](../api/http-api.md#admin-read), journalled; it still records no verdict.
 
 ## Key format
 

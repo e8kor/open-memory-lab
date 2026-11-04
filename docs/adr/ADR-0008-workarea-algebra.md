@@ -9,7 +9,7 @@ answers: why workareas are one algebra — per-tenant universe tree, node-id gra
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed)
 
-**Release:** partly in v0.1.0, v0.2.0 and v0.3.0; the rest planned for v0.5.0 or not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0, v0.2.0 and v0.3.0; the rest planned for v0.5.2 or not scheduled ([releases](../product/releases.md#decisions))
 
 ## Context
 

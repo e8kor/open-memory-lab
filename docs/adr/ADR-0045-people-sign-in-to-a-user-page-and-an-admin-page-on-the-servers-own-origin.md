@@ -2,16 +2,16 @@
 id: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin
 tier: engineering
 status: proposed
-answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
+answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
 -->
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** proposed · 2026-11-04
+**Status:** proposed · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20)
 
-**Release:** planned for v0.5.0 in part — sign-in, sessions, the email allowlist, the user page, and review and curation from the admin page; the admin page's attribution view and demotion are planned for v0.6.0, since each rests on a verb not built ([releases](../product/releases.md#decisions))
+**Release:** planned for v0.5.0 in part — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
 
-**Amends:** ADR-0015 (the decline of a web console in its context, its consequences and its rejected alternatives; d2 gains a second human surface), ADR-0010 (d1, d7), ADR-0025 (d3), ADR-0026 (d15), ADR-0031 (d7), ADR-0042 (d2), ADR-0044 (d6, d11)
+**Amends:** ADR-0015 (the decline of a web console in its context, its consequences and its rejected alternatives; d2 gains a second human surface), ADR-0010 (d1, d7), ADR-0025 (d3), ADR-0026 (d15: the admin key reads content through the admin read, d21), ADR-0031 (d7), ADR-0042 (d2), ADR-0044 (d6, d9 for the admin read, d11)
 
 ## Context
 
@@ -213,24 +213,35 @@ Decided, not built.
   person, with credential `session` and no value, and the journal names it as the actor.**
   `api_keys.credential` gains a third kind, `session`, beside `bearer` and `connection`
   ([ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) d7). A session key is issued with
-  `held_by: human`, has a null `hash` and no connection, and is never shown: no value exists, so
+  `held_by: human`, has a null `hash` and no connection, records the allowlist user it serves
+  in its own column, `session_user`, apart from ADR-0044's `user` field (which only `<user>-web`
+  carries, since `user` is refused on admin keys and would confine a reviewer's grants to the
+  root), and is never shown: no value exists, so
   it cannot be presented on `/v1`, `/v2` or `/mcp`, and minting a connect code for it is
   refused, `oauth.connect_refused` with `details.reason: session_key`. The server reaches a
   session key only from a live session whose entry names that key's user, re-checked on every
   request, so removing the entry, or its admin flag, makes the key unreachable at once with no
   revocation, which is not built. Each person holds at most four, named from their user, each
   created by the act that first needs it and journalled as `key.issued` with the creating key as
-  actor:
+  actor; the first sign-in creates two, so a person can review their own agents' work without
+  any admin step (d20 e):
 
     | Key | Role and grants | Created when | Does |
     |---|---|---|---|
     | `<user>-web` | a user key (`user: <user>`), writer and reader on `universe.<user>`, and the `universe` node read ADR-0044 d3 adds | the entry's first sign-in, by the server under the admin key that added the entry | the user page (d9) |
-    | `<user>-review` | a tenant dreamer key with the dreamer and reader grants an admin gives it | an admin grants the person review (d10) | review, supersession proposals, the admin page's content reads |
+    | `<user>-review` | a tenant dreamer key with dreamer and reader on `universe.<user>`, and any further dreamer and reader grants an admin gives it | the entry's first sign-in, beside `<user>-web`, by the same admin key | review on the user page and the admin page, supersession proposals |
     | `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and the reader grants on the user roots an admin chooses (ADR-0044 d7) | an admin designates the person a curator (d10) | curation (d12) |
-    | `<user>-admin` | a tenant admin key, no grants | the entry gains `admin: true` | the allowlist and the admin acts (d10) |
+    | `<user>-admin` | a tenant admin key, no grants | the entry gains `admin: true` | the allowlist, the admin acts and the admin read of every memory's text and attribution (d10, d21) |
 
     The first sign-in therefore creates the person's root by ADR-0044 d2's rule: the first key
-    naming the user creates `universe.<user>`. Which key acts is decided by the server from the
+    naming the user creates `universe.<user>`, and `<user>-review` is issued after it in the same
+    act, with its grants on the root just made. `<user>-review` is a tenant key, so an admin may
+    extend it beyond the root (d10). Every session key's principal is its own name
+    (`alice-review`), so R2, which excludes the keys and principals of the row's lineage closure
+    ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+    d8), lets it approve the person's agents' writes, and still refuses it any row whose closure
+    holds `<user>-review` itself, such as a supersession it proposed; an agent key an admin issues
+    under the principal `alice-review` would share the exclusion, which is the admin's to avoid. Which key acts is decided by the server from the
     session and the `action`, never by a form field: each action defines its fields, none of
     which names who acts, and a field the action does not define is refused, `request.validation`
     with that field. A field such as `allow_email`'s `user` names what the act is about, never the
@@ -283,8 +294,9 @@ Decided, not built.
   ADR-0015's fourth reason: of the browser threats it named, only the session cookie is new
   (d5); the rest are the connect page's, already built.
 
-- **d9 — The user page shows the person's keys, setup, memories and workarea, and acts only
-  through `<user>-web`.** Its views and acts:
+- **d9 — The user page shows the person's keys, setup, memories and workarea, and reviews the
+  person's own agents' work; it acts through `<user>-web`, and through `<user>-review` for
+  review alone.** Its views and acts:
     - **Keys.** Every key whose `user` is the session's: name, role, `held_by`, credential,
       issuance time, grants, whether a global denial cuts it off, and a connector key's open
       connections. When the key was last used is not shown: nothing records it, and recording it
@@ -310,13 +322,19 @@ Decided, not built.
       held, promoted, rejected — and `universe`'s own claims under ADR-0044 d9's served view:
       origin `universe`, no author, no lineage below it. Held and rejected rows are those of
       every key naming the session's user (d16); a single memory opens by `memory=<artifact_id>`.
-      The page reads; it records no verdict and writes no memory.
+      This view reads and writes no memory.
+    - **Review.** `review_next` and `verdict`, the served ceremony of d11 as the person's own
+      `<user>-review`, over whatever that key's dreamer grants reach: `universe.<user>` from the
+      first sign-in, so the held writes of the person's agents, and more where an admin extended
+      it. The person reviews without an admin, and an admin is no longer the bottleneck for one
+      person's agents (d20 e).
     - **Workarea.** The tree of `universe.<user>` and `create_workarea` (`{name, parent?}`),
       ADR-0044 d6's create under `<user>-web`.
     - **Sign-out.** `sign_out` (d5).
 
-- **d10 — The admin page shows the allowlist, the review queue's depth and age, and the review,
-  curation and correction tools, each through the capacity it needs.** It opens for a session
+- **d10 — The admin page shows the allowlist, the review queue's depth and age, every memory's
+  text and attribution, and the review, curation and correction tools, each through the capacity
+  it needs.** It opens for a session
   whose entry has `admin: true`; any other session gets `access.not_found`, so the page's
   existence confirms nothing to a non-admin.
     - **The allowlist**, through `<user>-admin`: list, `allow_email` (`{email, user, admin}`),
@@ -325,7 +343,8 @@ Decided, not built.
       then be reopened; the CLI under an admin key can still do it. The removal confirmation
       lists the user's keys (d13).
     - **People's capacities**, through `<user>-admin`: `grant_review` (`{user, workarea}`)
-      creates or extends that user's `<user>-review` with dreamer and reader on the workarea;
+      extends that user's `<user>-review`, which the user's first sign-in created, with dreamer
+      and reader on the workarea;
       `grant_curation` (`{user, workareas}`) creates or extends `<user>-curate` with ADR-0044 d7's
       grants. Extending a key means adding a grant, which is designed and not built
       (`POST /v2/keys/{key}/grants`); until it is, each grant is fixed when the key is created.
@@ -333,16 +352,21 @@ Decided, not built.
       oldest held item's age per workarea, tenant-wide, with no content, the numbers the designed
       `GET /v2/review/queue` serves. An admin key reads them by role as structure, like the tree
       (d16).
+    - **Memories and attribution**, through `<user>-admin` and the admin read of d21: a search
+      over every memory of the tenant, every state, every workarea and every user root, with its
+      text, and for one memory its attribution — the authoring key, its principal and user, the
+      workarea path, `derives_from`, `replaces`, the verdicts with their reviewing keys and
+      times, and the digests. A universe claim is shown with its source: ADR-0044 d9's served
+      view is for the keys that use memories, and the admin read is not one of them.
     - **Review**, through the signed-in admin's own `<user>-review` alone (d11).
     - **Curation** and **supersession**, through `<user>-curate` and `<user>-review` (d12).
-    - **Attribution and demotion**, planned for v0.6.0 (d12).
+    - **Demotion**, planned for v0.6.0 (d12).
 
-    Content on the admin page is read only through the person's reviewer or curator key, by the
-    grants an admin gave it, never by the admin key: ADR-0026 d15's rule that admin keys read
-    structure and never content holds, and an admin who wants to read everything grants their
-    own `<user>-review` reader on `universe`, a journalled grant the evidence export shows.
+    Reading is not acting on what is read: the admin key reads every memory and still records no
+    verdict, writes no memory and is never served a held row for review (d11). Every admin read
+    is journalled (d21).
 
-- **d11 — Review from the admin page is the served ceremony under the person's reviewer key, and
+- **d11 — Review from either page is the served ceremony under the person's reviewer key, and
   R2 is the server's check on that key and the row's lineage closure.** `review_next` calls the
   use case behind `POST /v2/review/next` as `<user>-review` and renders everything it serves, the
   text, the version a supersession replaces and, once attachments are built, every attachment;
@@ -361,7 +385,8 @@ Decided, not built.
   served again; the serve binding, not the browser, decides what a verdict judges, and
   `no-store` keeps the item out of the browser cache, which answers ADR-0015's fifth reason.
   The development exception of ADR-0001 d5 is untouched: the page offers no self-signature.
-  The cost is that a reviewer must be granted per workarea before the page shows them anything.
+  The cost is that a reviewer reaches beyond their own root only where an admin granted it, per
+  workarea.
 
 - **d12 — Curation, supersession and demotion run as ordinary acts of the person's own keys, and
   none of them deletes.**
@@ -379,14 +404,18 @@ Decided, not built.
       served `POST /v1/memories/{artifact_id}/supersede` use case: a held version that another
       key reviews, the old version staying the tip until then ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
       d10). A retirement is the same act with `retirement: true` (ADR-0025 d11).
-    - **Demotion and attribution, planned for v0.6.0.** `demote` (`{memory, reason}`) runs the
-      designed `POST /v2/memories/{artifact_id}/demote` as `<user>-admin`: journalled, bytes kept
-      (R4). The attribution view shows, for one memory, the journalled authoring key, principal,
-      user, workarea path, `derives_from`, `replaces`, the verdicts with their reviewing keys and
-      times, and the digests — never the text — through `<user>-admin`, the per-memory decision
-      trail of the evidence export ([ADR-0015](ADR-0015-cli-administration.md) d4), which is
-      where an admin's audit of a universe claim's source already lives (ADR-0044 d9). Both wait
-      for their verbs; the page does not ship them first.
+    - **Attribution, in v0.5.0.** The attribution view is the admin read of one memory (d21):
+      its text beside the journalled authoring key, principal, user, workarea path,
+      `derives_from`, `replaces`, the verdicts with their reviewing keys and times, and the
+      digests, through `<user>-admin`. It is the per-memory decision trail of the evidence export
+      ([ADR-0015](ADR-0015-cli-administration.md) d4) served for one memory, which the export,
+      not scheduled, does not wait on.
+    - **Demotion, planned for v0.6.0.** `demote` (`{memory, reason}`) runs the designed
+      `POST /v2/memories/{artifact_id}/demote` as `<user>-admin`: journalled, bytes kept (R4). It
+      does not ride the admin read: a read adds a route and an event, while a demotion changes
+      which version is the tip, what recall serves and what the lineage of every successor
+      reads, a use case of its own with its own refusals. The page does not ship it before its
+      verb.
 
     No page has a delete, an erase, a reassignment, a tip override or a ban: those stay CLI
     ceremonies with their dry-run previews ([ADR-0015](ADR-0015-cli-administration.md) d3).
@@ -434,10 +463,10 @@ Decided, not built.
   rate the deployment serves, and a person can issue keys in their own root without a count
   limit.
 
-- **d16 — The surface grows by six web routes, three lab routes, one credential kind, and two
-  readings of existing verbs; no MCP tool changes.**
-    - `WEB_ROUTES` (d1) and the three `/v2/web/emails` routes (d2), in the designed annex until
-      built; each web route's answers are `text/html` pages or `303` redirects, as
+- **d16 — The surface grows by six web routes, five lab routes, one credential kind, one
+  journal event for reads, and two readings of existing verbs; no MCP tool changes.**
+    - `WEB_ROUTES` (d1), the three `/v2/web/emails` routes (d2) and the two admin read routes
+      (d21), in the designed annex until built; each web route's answers are `text/html` pages or `303` redirects, as
       `/oauth/authorize`'s are.
     - `credential: session` on the key record, on `GET /v2/keys/{key}`, on `GET /v2/whoami` (which
       no session key can call, having no value) and on the request line.
@@ -449,7 +478,15 @@ Decided, not built.
       the user page shows the held and rejected rows of the person's agents. A bearer key's own
       stays its authoring key.
     - **Amending ADR-0026 d15:** an admin key reads, by role and as structure, the review queue's
-      held counts and oldest ages per workarea, tenant-wide, without content.
+      held counts and oldest ages per workarea, tenant-wide; and it reads every memory's text and
+      attribution through the admin read of d21, journalled. "The admin key never reads content"
+      no longer holds for the admin key on those two routes; every other route keeps it, so an
+      admin key still recalls nothing, is served nothing by `GET /v1/memories/{artifact_id}`, and
+      reads no content over MCP, where it has no tool.
+    - **Amending ADR-0044 d9 for the admin read alone:** the anonymous served view of a universe
+      claim is the view of the keys that use memories; the admin read of d21 shows the claim's
+      authoring key, principal, user, source workarea and `derives_from` in the clear, as the
+      journal already holds them.
     - **Amending ADR-0031 d7:** a connector key may be issued by a session user key (above), and
       a session key is never a connector key.
     - **Amending ADR-0042 d2:** `credential` takes `session`; `web_action` and `web_provider` join
@@ -459,7 +496,9 @@ Decided, not built.
     - **Amending ADR-0010 d7:** human sign-in is built for the pages, through Google and GitHub;
       the CLI keeps bearer keys.
     - The CLI gains `oml web allow <email> --user <user> [--admin]`, `oml web list` and
-      `oml web remove <email>`, over the three lab routes.
+      `oml web remove <email>`, over the three lab routes, and `oml admin read [<memory>]
+      [--query <text>] [--workarea <workarea>]` over the two admin read routes, so the CLI stays
+      complete for administration.
 
 - **d17 — Settings: two providers' client credentials at boot, the public origin from
   `oauth.issuer`, and one journalled session lifetime.** Boot configuration, read at process
@@ -510,10 +549,68 @@ Decided, not built.
     |---|---|---|
     | W1 | d2, d17: the allowlist, its routes and verbs, the settings | `the_first_admin_email_is_added_by_the_cli_under_an_admin_key`, `an_email_is_unique_in_the_deployment`, `a_user_named_like_a_shared_workarea_is_name_taken`, `a_provider_without_its_secret_stops_the_process`, `the_journal_holds_an_email_digest_and_never_the_address` |
     | W2 | d3, d4, d5, d7, d8, d14, d15: sign-in, sessions, the headers, the log | `a_callback_without_the_sealed_state_makes_no_outbound_call`, `a_google_token_with_email_verified_false_is_refused`, `github_signs_in_only_the_primary_verified_email`, `a_moved_account_is_refused_as_identity_changed`, `no_session_exists_before_the_callback_admits`, `removing_an_email_ends_its_sessions`, `a_post_without_the_csrf_token_journals_nothing`, `an_authorization_header_on_a_web_route_is_verb_ceiling`, `a_session_cookie_on_the_api_is_auth_missing`, `no_log_line_holds_a_code_state_cookie_or_email`, `the_lead_serves_exactly_web_routes` |
-    | W3 | d6, d9, d13, d16: session keys and the user page | `the_first_sign_in_creates_the_users_root_and_web_key`, `a_session_key_has_no_value_and_no_connect_code`, `a_user_issues_a_key_only_inside_its_root`, `a_field_the_action_does_not_define_is_refused`, `the_user_page_shows_its_agents_held_rows`, `removing_the_last_email_leaves_the_agents_keys_working` |
-    | W4 | d10, d11, d12 (v0.5.0 part): review, curation, supersession | `review_on_the_admin_page_acts_as_the_persons_reviewer_key`, `the_admin_key_is_never_offered_a_verdict`, `a_reviewer_key_in_the_lineage_is_never_served_the_row`, `a_curated_claim_is_held_until_a_key_outside_its_lineage_approves`, `a_non_admin_session_gets_not_found_on_the_admin_page` |
+    | W3 | d6, d9, d13, d16: session keys and the user page, review of one's own agents | `the_first_sign_in_creates_the_users_root_and_web_key`, `the_first_sign_in_issues_a_review_key_on_the_users_root`, `a_person_approves_their_own_agents_write_on_the_user_page`, `a_session_key_has_no_value_and_no_connect_code`, `a_user_issues_a_key_only_inside_its_root`, `a_field_the_action_does_not_define_is_refused`, `the_user_page_shows_its_agents_held_rows`, `removing_the_last_email_leaves_the_agents_keys_working` |
+    | W4 | d10, d11, d12 (v0.5.0 part), d21: review, curation, supersession, the admin read and attribution | `the_admin_read_serves_text_and_attribution_and_journals_the_read`, `the_admin_read_shows_a_universe_claims_source`, `an_admin_key_still_recalls_nothing`, `review_on_the_admin_page_acts_as_the_persons_reviewer_key`, `the_admin_key_is_never_offered_a_verdict`, `a_reviewer_key_in_the_lineage_is_never_served_the_row`, `a_curated_claim_is_held_until_a_key_outside_its_lineage_approves`, `a_non_admin_session_gets_not_found_on_the_admin_page` |
 
-    Demotion and the attribution view follow in v0.6.0 with their verbs.
+    Demotion follows in v0.6.0 with its verb.
+
+- **d20 — The maintainer's answers of 2026-11-04 to this record's open choices.** Each is folded
+  into the decision it governs; this list is where each answer is found.
+    - **(a) An admin reads everything.** The admin session reads every memory's text and full
+      attribution directly, from v0.5.0, through `<user>-admin` and the admin read (d10, d21).
+      This reverses the first draft's narrowing, amends ADR-0026 d15 for the admin read (d16),
+      and sets ADR-0044 d9's anonymous view aside for it (d16). The attribution view moves into
+      v0.5.0; demotion stays in v0.6.0 (d12).
+    - **(b) Removing an email ends its sessions; agent keys keep working;** the confirmation
+      lists their keys with a cut-off beside each (d13), as drafted.
+    - **(c) A person issues their own keys and connect codes inside their own root** (d9), as
+      drafted.
+    - **(d) Sessions last 8 hours absolute, with no idle timeout, under `SameSite=Lax`** (d5,
+      d17), as drafted.
+    - **(e) A person reviews their own agents' work.** Every signed-in person holds
+      `<user>-review` with dreamer and reader on their own root from their first sign-in, with
+      no admin step (d6, d9); R2 stays per key and per lineage closure (d11).
+    - **(f) Tenancy.** The first clients sign in to the existing `oml` tenant, a root each; no
+      tenant is created per client, since organisations beyond the first are not scheduled.
+    - **(g) Scope.** v0.5.0 is this record and ADR-0044 alone. Guardrails (ADR-0037) move to
+      v0.5.1; the workarea lifecycle (ADR-0009), links between memories (ADR-0008, ADR-0021)
+      and the workarea brief, which rests on those links, move to v0.5.2
+      ([releases](../product/releases.md)).
+
+- **d21 — The admin read is two lab routes under the admin key role, and every admin read is
+  journalled as `memory.admin_read`.**
+    - `POST /v2/admin/memories/search` takes `{query?, workarea?, state?, limit?, cursor?}` and
+      answers a page of memories of the key's tenant — every state (held, promoted, rejected,
+      superseded), every workarea, every user root and `universe` — each with its text and its
+      attribution summary: `artifact_id`, `claim_key`, `version`, `state`, `workarea_path`, the
+      authoring key's name, principal and user, and `created_at`. `query` is the full-text
+      search recall uses, without the visibility filter; `state` and `workarea` narrow it. It is
+      a `POST` so that the query text travels in a body, never in a path or query string a proxy
+      logs.
+    - `GET /v2/admin/memories/{artifact_id}` answers one memory with its text and full
+      attribution: the summary's fields and `derives_from`, `replaces`, the submission's
+      `idempotency_key` digest, every verdict with its reviewing key, principal, reason and time,
+      and the `plaintext_digest`.
+    - **Who:** the admin key role alone. The operator, which is provider-wide and owns no
+      tenant's content, is refused `access.verb_ceiling`; every other role is refused
+      `access.verb_ceiling`, so no agent key reaches it (R1). An admin key reads only its own
+      tenant (ADR-0007).
+    - **Journalled, not only logged.** Each answer writes one `memory.admin_read` event, actor
+      the admin key, payload the `artifact_ids` served (a search page's ids, or the one id) and
+      for a search a `query_digest`, never the text or the query; the event joins the events
+      tail for admin keys alone. It is journalled because the journal is the signed, append-only
+      record an author or an auditor reads later, and an admin reading content no grant gave is
+      the act most likely to be questioned; the request log is unsigned, kept 30 days, and names
+      the route and not the memories served. The cost is a journal write per admin read, so the
+      routes run on the lead alone, and an admin who browses a lot grows the journal by one
+      event per page.
+    - **What it never does:** it never records a verdict, never consumes or creates a serve
+      binding, never changes a tip, and never reaches `oml_read`, recall or any MCP tool. The
+      admin page renders it; the CLI's `oml admin read` calls it.
+
+    The cost: an admin of a tenant reads every person's memories, held ones included, and the
+    people whose agents write into the tenant must be told so; the pages and the security model
+    say it plainly, and the journal shows every read.
 
 ## Consequences
 
@@ -537,9 +634,9 @@ Decided, not built.
   the [review guide](../review-guide.md), the [critical path](../product/critical-path.md) and the
   [home page](../index.md) mark the pages planned and not built. The register's D14 row cites this
   record. The event catalog, the Postgres schema and openapi.yaml change only with the build;
-  the designed annex holds the nine routes now, as it holds every designed operation.
-- ADR-0010 d1 and d7, ADR-0015, ADR-0025 d3, ADR-0026 d15, ADR-0031 d7, ADR-0042 d2 and ADR-0044 d6
-  and d11 keep their text; each Status line points here.
+  the designed annex holds the eleven routes now, as it holds every designed operation.
+- ADR-0010 d1 and d7, ADR-0015, ADR-0025 d3, ADR-0026 d15, ADR-0031 d7, ADR-0042 d2 and ADR-0044 d6,
+  d9 and d11 keep their text; each Status line points here.
 - The roadmap opens **FR-75**, recording when each key was last used, with its cost measured, and
   **FR-76**, the pages unverified against the live providers and unmeasured: no sign-in has run,
   whether GitHub enforces PKCE is unverified, the provider-call cap and time limit are unmeasured,
@@ -549,6 +646,13 @@ Decided, not built.
   whose egress policy blocks them has the pages and no sign-in, which the d18 doctor line names.
 - A tenant of one person can run every page: the person is an admin, a user, a reviewer and a
   curator through four keys, and every act shows which.
+- An admin reads every memory of the tenant, and the first clients share the maintainer's `oml`
+  tenant, a root each (d20 f): the maintainer, as that tenant's admin, can read every client's
+  memories, and every such read is journalled (d21). A client who needs memories no other person
+  can read needs a tenant of their own, which waits on organisations beyond the first.
+- [ADR-0026](ADR-0026-names-are-keys.md) d15's sentence that admin keys never read content
+  is narrowed by d21 to every route but the admin read; the guides, the security page and
+  positioning say so wherever they repeat it.
 
 ## Rejected alternatives
 
@@ -562,7 +666,12 @@ Decided, not built.
 | **One session credential acting with the person's combined authority, no keys** | A second authorization story beside keys and grants, and an actor the journal cannot name as a key; it would also merge admin and reviewer, against ADR-0010 d6. |
 | **Session keys with a bearer value the server keeps** | A stored usable secret where every other key is a digest; a valueless key cannot leak a value. |
 | **Reviewing through the admin key, or a page-wide reviewer** | The admin key is never a reviewer (ADR-0010 d6); one shared reviewer would put every person's verdict under one key and make R2 per key meaningless. |
-| **The person's admin flag opening every memory's text** | Admin keys read structure, never content (ADR-0026 d15); the admin grants their own reviewer key reader instead, which the export shows. |
+| **Content on the admin page read only through the admin's own reviewer key, granted reader on `universe` (this record's first draft)** | The maintainer chose otherwise on 2026-11-04 (d20 a): an admin answers for every memory in the tenant, and a reader grant an admin gives their own key is the same authority with one more step, while a reviewer key that reads every root would also be served every root's held rows for review. The admin read keeps reading apart from reviewing. |
+| **Logging the admin read in the request log only** | The log is unsigned, kept 30 days and names a route, not the memories served; the act it records is the one an author is most likely to question later. |
+| **Serving the admin read through recall or `GET /v1/memories/{artifact_id}` with the admin key** | It would put content on routes agents use and make "the admin key reads nothing on `/v1`" false; two routes of its own keep the exception where the journal sees it. |
+| **Demotion in v0.5.0 beside the admin read** | A demotion changes the tip, recall and every successor's lineage, a use case of its own; the read adds one route pair and one event (d12). |
+| **`<user>-review` only when an admin grants review (this record's first draft)** | A person would wait on an admin before reviewing their own agents' work; the maintainer chose a reviewer key on the person's own root at first sign-in (d20 e). |
+| **A session key's principal shared with the person's agent keys** | R2 excludes principals as well as keys, so the person's reviewer key could never approve their agents' writes, which d20 e asks for. |
 | **`SameSite=Strict` on the session cookie** | The redirect after a provider's cross-site callback would arrive without it, and the person would land signed out; `Lax` already withholds it from cross-site `POST`s. |
 | **An idle timeout** | A write on every page view to extend it; an absolute lifetime and sign-out bound a session without one. |
 | **Any verified GitHub address, or the profile's public email** | The public email may be unverified or unset, and accepting every verified address makes which one signed in depend on the order GitHub lists them. |

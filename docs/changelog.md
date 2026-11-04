@@ -34,6 +34,27 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — ADR-0045 revised with the maintainer's answers: an admin reads every memory, a person reviews their own agents' work, and v0.5.0 narrows to ADR-0044 and ADR-0045
+
+[ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md),
+still proposed, records the maintainer's answers to its open choices (d20). An admin session reads
+every memory's text and attribution through a new admin read, `POST /v2/admin/memories/search`
+and `GET /v2/admin/memories/{artifact_id}`, each answer journalled as `memory.admin_read` (d21),
+which narrows ADR-0026 d15 and sets ADR-0044 d9's served view aside for that read; the attribution
+view moves into v0.5.0 and demotion stays in v0.6.0. Every signed-in person holds `<user>-review`
+on their own root from the first sign-in and reviews their own agents' work on the user page. The
+first clients sign in to the existing `oml` tenant, a root each. v0.5.0 is ADR-0044 and ADR-0045
+alone: guardrails move to v0.5.1, and the workarea lifecycle, links between memories and the
+workarea brief to v0.5.2. Both admin read routes join the designed annex; `info.version` stays
+`0.4.0-design`.
+
+- **Pages:** [releases](product/releases.md), the [HTTP API](api/http-api.md#admin-read),
+  [roles and keys](architecture/roles-and-keys.md), [security](architecture/security.md),
+  [administering](guides/administering.md), [workareas](architecture/workareas.md),
+  [use cases](product/use-cases.md), [scenarios](product/scenarios.md), the
+  [CLI reference](cli/reference.md), [mcp-plugin.md](api/mcp-plugin.md), the README, the decision
+  register, [llms.txt](llms.txt) and the Release lines of ADR-0008, ADR-0009 and ADR-0021.
+
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 
 [ADR-0043](adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), proposed:

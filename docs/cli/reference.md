@@ -386,7 +386,7 @@ a ban would refuse — without journalling anything.
 
 ## `oml workareas` — tree, edges, status
 
-*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 (`create`) and v0.3.0 (`show`, `tree`, `crew set`); edges and status planned for v0.5.2 · [releases](../product/releases.md)*
 
 The algebra — one tree per tenant under `universe`, labelled `related` edges conferring zero
 access, forward-only status ladder — is declared in [workareas](../architecture/workareas.md).
