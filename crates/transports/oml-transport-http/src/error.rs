@@ -210,6 +210,29 @@ fn tip_conflict(message: &str) -> ApiError {
     )
 }
 
+/// `workarea.transition_refused` with its `{workarea_id, from, to, reason}`
+/// details (errors.md, workarea structure and status refusals).
+fn transition_refused(
+    workarea_id: uuid::Uuid,
+    from: &str,
+    to: &str,
+    reason: &str,
+    message: String,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "workarea.transition_refused",
+        "The status ladder moves forward only — development → committed → validated — and an area becomes validated only when all its children are.",
+        message,
+    )
+    .with_details(json!({
+        "workarea_id": workarea_id.to_string(),
+        "from": from,
+        "to": to,
+        "reason": reason,
+    }))
+}
+
 /// Which endpoint family the refusal surfaced on — a refused status
 /// transition means different things to a verdict (the serve no longer names
 /// a held row) and to a write (the target is not the current tip).
@@ -461,6 +484,37 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::Store(StoreError::TipMoved { .. }) => {
             tip_conflict("the supersede target stopped being the served tip before ratification")
         }
+        // The ratifying commit's re-checks refused it and journalled nothing
+        // (errors.md `workarea.transition_refused`, `review.ratifier_is_proposer`;
+        // workareas.md, ratification re-checks; ADR-0009 d3, d4).
+        AppError::Store(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from,
+            to,
+        }) => transition_refused(
+            workarea_id,
+            from.as_str(),
+            to.as_str(),
+            "stale",
+            format!("transition {transition_id} is no longer live on its node"),
+        ),
+        AppError::Store(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        }) => transition_refused(
+            workarea_id,
+            "committed",
+            "validated",
+            "children_not_validated",
+            format!("transition {transition_id}'s node has a child not validated"),
+        ),
+        AppError::Store(StoreError::RatifierIsProposer { transition_id }) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "R2 extends to edges and transitions: proposal and ratification are two identities or they are nothing.",
+            format!("the key or principal ratifying transition {transition_id} proposed it"),
+        ),
         AppError::Store(StoreError::IdempotencyRecorded) => {
             // Surfaces only when the record a concurrent attempt committed
             // was gone again when the use-case read it back to replay it.
@@ -876,6 +930,70 @@ mod tests {
             flat[at..].starts_with("key`"),
             "roles-and-keys.md names {:?}",
             &flat[at..at + 12]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use oml_app::domain::WorkareaStatus;
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn mapped(e: StoreError) -> ApiError {
+        map_app_error(AppError::Store(e), ErrorContext::Write)
+    }
+
+    #[test]
+    fn a_ratification_refused_by_its_commits_re_check_answers_transition_refused_with_its_reason() {
+        let (transition_id, workarea_id) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let stale = mapped(StoreError::TransitionStale {
+            transition_id,
+            workarea_id,
+            from: WorkareaStatus::Development,
+            to: WorkareaStatus::Committed,
+        });
+        assert_eq!(
+            (stale.status, stale.code, stale.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "development",
+                    "to": "committed",
+                    "reason": "stale",
+                }))
+            )
+        );
+        let children = mapped(StoreError::ChildrenNotValidated {
+            transition_id,
+            workarea_id,
+        });
+        assert_eq!(
+            (children.status, children.code, children.details),
+            (
+                StatusCode::CONFLICT,
+                "workarea.transition_refused",
+                Some(json!({
+                    "workarea_id": workarea_id.to_string(),
+                    "from": "committed",
+                    "to": "validated",
+                    "reason": "children_not_validated",
+                }))
+            )
+        );
+    }
+
+    #[test]
+    fn a_ratification_by_the_proposers_key_or_principal_answers_ratifier_is_proposer() {
+        let e = mapped(StoreError::RatifierIsProposer {
+            transition_id: Uuid::from_u128(1),
+        });
+        assert_eq!(
+            (e.status, e.code),
+            (StatusCode::FORBIDDEN, "review.ratifier_is_proposer")
         );
     }
 }

@@ -2846,11 +2846,12 @@ pub async fn ratifying_a_transition_moves_the_workareas_status_in_the_same_commi
 }
 
 /// Every ratification whose guard matches no row is refused at its
-/// commit: one whose `from` is no longer the node's status, one already
-/// ratified, one naming another node, another `to` or no proposal at all,
-/// and one by the proposing key. None journals its event, moves the node,
-/// or changes the row (ADR-0009 d3; ADR-0010 R2; workareas.md,
-/// ratification re-checks).
+/// commit: one whose `from` is no longer the node's status and one already
+/// ratified as [`StoreError::TransitionStale`], one by the proposing key as
+/// [`StoreError::RatifierIsProposer`], and one naming another node, another
+/// `to`, no proposal at all or a key the tenant does not hold as a defect.
+/// None journals its event, moves the node, or changes the row (ADR-0009
+/// d3; ADR-0010 R2; workareas.md, ratification re-checks).
 pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_moves_nothing<
     S: JournalStore,
 >(
@@ -2903,6 +2904,15 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
     .expect("the first ratification");
     let head = store.chain_head(t).await.expect("head");
 
+    let stale_as = |row: &TransitionRecord| {
+        Some(StoreError::TransitionStale {
+            transition_id: row.transition_id,
+            workarea_id: row.workarea_id,
+            from: row.from,
+            to: row.to,
+        })
+    };
+    // `None` expects the defect path, `StoreError::Backend`.
     let cases = [
         (
             "a proposal whose from is no longer the node's status",
@@ -2910,6 +2920,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             node,
             WorkareaStatus::Committed,
             ratifier,
+            stale_as(&stale),
         ),
         (
             "a proposal already ratified",
@@ -2917,6 +2928,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             node,
             WorkareaStatus::Committed,
             ratifier,
+            stale_as(&ratified),
         ),
         (
             "a ratification naming another node",
@@ -2924,6 +2936,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             node,
             WorkareaStatus::Committed,
             ratifier,
+            None,
         ),
         (
             "a ratification naming another to",
@@ -2931,6 +2944,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             sibling,
             WorkareaStatus::Validated,
             ratifier,
+            None,
         ),
         (
             "a ratification naming no proposal",
@@ -2938,6 +2952,7 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             sibling,
             WorkareaStatus::Committed,
             ratifier,
+            None,
         ),
         (
             "a ratification by the proposing key",
@@ -2945,6 +2960,9 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             sibling,
             WorkareaStatus::Committed,
             proposer,
+            Some(StoreError::RatifierIsProposer {
+                transition_id: live.transition_id,
+            }),
         ),
         (
             "a ratification by a key the tenant does not hold",
@@ -2952,16 +2970,20 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             sibling,
             WorkareaStatus::Committed,
             Uuid::from_u128(0xD51F),
+            None,
         ),
     ];
-    for (case, transition_id, workarea_id, to, by) in cases {
+    for (case, transition_id, workarea_id, to, by, expected) in cases {
         let refused = rig
             .ratify_transition(store, transition_id, workarea_id, to, by)
             .await;
-        assert!(
-            matches!(refused, Err(StoreError::Backend(_))),
-            "{case} is refused, got {refused:?}"
-        );
+        match expected {
+            Some(expected) => assert_eq!(refused, Err(expected), "{case} is refused by name"),
+            None => assert!(
+                matches!(refused, Err(StoreError::Backend(_))),
+                "{case} is refused as a defect, got {refused:?}"
+            ),
+        }
         assert_eq!(
             store.chain_head(t).await.expect("head"),
             head,
@@ -2995,6 +3017,262 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
             row.transition_id
         );
     }
+}
+
+/// Propose and ratify one rung of `node` from `from` in two commits, by
+/// two keys, for the laws that need a node already moved.
+async fn step_once<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    transition_id: Uuid,
+    node: Uuid,
+    from: WorkareaStatus,
+    (proposer, ratifier): (Uuid, Uuid),
+) {
+    let proposal = pending_transition(rig.tenant_id, transition_id, node, from, proposer);
+    let to = proposal.to;
+    rig.propose_transition(store, proposal)
+        .await
+        .expect("proposal");
+    rig.ratify_transition(store, transition_id, node, to, ratifier)
+        .await
+        .expect("ratification");
+}
+
+/// A step to `validated` is re-checked against the node's children inside
+/// the ratifying commit: a child created after the proposal and still
+/// short of `validated` refuses the ratification as
+/// [`StoreError::ChildrenNotValidated`], journalling nothing, moving
+/// nothing and leaving the row pending; once that child is `validated` the
+/// same proposal ratifies (ADR-0009 d4; workareas.md, ratification
+/// re-checks).
+pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_to_validated<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB530);
+    let keys = (Uuid::from_u128(0xD530), Uuid::from_u128(0xD531));
+    let mut rig = transition_ground(store, 53, node, keys).await;
+    let t = rig.tenant_id;
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE530),
+        node,
+        WorkareaStatus::Development,
+        keys,
+    )
+    .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE531),
+        node,
+        WorkareaStatus::Committed,
+        keys.0,
+    );
+    rig.propose_transition(store, proposal.clone())
+        .await
+        .expect("a step to validated with no child is proposed");
+
+    let child = Uuid::from_u128(0xB532);
+    rig.create_workarea(
+        store,
+        workarea_record(t, child, Some(node), "area-53-child"),
+    )
+    .await;
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Validated,
+            keys.1,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::ChildrenNotValidated {
+            transition_id: proposal.transition_id,
+            workarea_id: node,
+        }),
+        "a child created after the proposal refuses the step by name"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused ratification journals nothing"
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Committed),
+        "the refused ratification moves nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal.clone()),
+        "the refused ratification leaves the row pending"
+    );
+
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE532),
+        child,
+        WorkareaStatus::Development,
+        keys,
+    )
+    .await;
+    step_once(
+        &mut rig,
+        store,
+        Uuid::from_u128(0xE533),
+        child,
+        WorkareaStatus::Committed,
+        keys,
+    )
+    .await;
+    rig.ratify_transition(
+        store,
+        proposal.transition_id,
+        node,
+        WorkareaStatus::Validated,
+        keys.1,
+    )
+    .await
+    .expect("with every child validated the same proposal ratifies");
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Validated)
+    );
+}
+
+/// R2 holds on the principal, not only the key: a ratification by another
+/// key of the proposer's principal is refused in the ratifying commit as
+/// [`StoreError::RatifierIsProposer`], journalling nothing and moving
+/// nothing (ADR-0010 R2; errors.md `review.ratifier_is_proposer`).
+pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB540);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD540), Uuid::from_u128(0xD541));
+    let mut rig = transition_ground(store, 54, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let twin = Uuid::from_u128(0xD542);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            principal: key_record(t, proposer, Role::Admin, None).principal,
+            ..key_record(t, twin, Role::Admin, None)
+        },
+    )
+    .await;
+    let proposal = pending_transition(
+        t,
+        Uuid::from_u128(0xE540),
+        node,
+        WorkareaStatus::Development,
+        proposer,
+    );
+    rig.propose_transition(store, proposal.clone())
+        .await
+        .expect("proposal");
+    let head = store.chain_head(t).await.expect("head");
+
+    let refused = rig
+        .ratify_transition(
+            store,
+            proposal.transition_id,
+            node,
+            WorkareaStatus::Committed,
+            twin,
+        )
+        .await;
+    assert_eq!(
+        refused,
+        Err(StoreError::RatifierIsProposer {
+            transition_id: proposal.transition_id,
+        }),
+        "the proposer's principal under another key is the proposer"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused ratification journals nothing"
+    );
+    assert_eq!(
+        store
+            .workarea(t, node)
+            .await
+            .expect("read")
+            .map(|w| w.status),
+        Some(WorkareaStatus::Development),
+        "the refused ratification moves nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        Some(proposal),
+        "the refused ratification leaves the row pending"
+    );
+}
+
+/// A proposal carries its proposing key's own principal, the one the key
+/// row holds, or the store refuses it as a defect: a principal the key
+/// does not hold would defeat the ratifying commit's R2 check, so no row
+/// is written and nothing is journalled (ADR-0010 R2; ADR-0009 d3).
+pub async fn a_proposal_whose_principal_is_not_its_proposing_keys_is_refused<S: JournalStore>(
+    store: &S,
+) {
+    let node = Uuid::from_u128(0xB550);
+    let (proposer, ratifier) = (Uuid::from_u128(0xD550), Uuid::from_u128(0xD551));
+    let mut rig = transition_ground(store, 55, node, (proposer, ratifier)).await;
+    let t = rig.tenant_id;
+    let proposal = TransitionRecord {
+        proposer_principal: key_record(t, ratifier, Role::Admin, None).principal,
+        ..pending_transition(
+            t,
+            Uuid::from_u128(0xE550),
+            node,
+            WorkareaStatus::Development,
+            proposer,
+        )
+    };
+    let head = store.chain_head(t).await.expect("head");
+    let refused = rig.propose_transition(store, proposal.clone()).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "a principal the proposing key does not hold is refused, got {refused:?}"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "the refused proposal journals nothing"
+    );
+    assert_eq!(
+        store
+            .transition(t, proposal.transition_id)
+            .await
+            .expect("read"),
+        None,
+        "the refused proposal writes no row"
+    );
 }
 
 /// A crew given at create is stored with the node and read back whole by
@@ -4918,6 +5196,12 @@ where
         &new_store().await,
     )
     .await;
+    a_child_created_between_proposal_and_ratification_refuses_the_step_to_validated(
+        &new_store().await,
+    )
+    .await;
+    a_ratification_by_another_key_of_the_proposers_principal_is_refused(&new_store().await).await;
+    a_proposal_whose_principal_is_not_its_proposing_keys_is_refused(&new_store().await).await;
     kind_version_and_body_bytes_round_trip_through_memory_held(&new_store().await).await;
     promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its_event(&new_store().await)
         .await;
