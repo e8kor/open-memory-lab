@@ -34,6 +34,19 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — `oml keys issue-agent --out` prints the `oml setup claude-code --key-file` line after the configure line (ADR-0041 d7, implementation)
+
+With `--out` the verb prints a fourth stdout line,
+`oml setup claude-code --url '<server>' --key-file '<file>'`, which installs the plugin at the
+CLI's release and configures it from the same file, refusing an admin key. The `jq | claude
+plugin configure` line stays for a machine without the `oml` CLI. The `oml-admin` skill hands the
+operator the new line first.
+
+- **Pages touched:** [CLI reference](cli/reference.md#oml-keys-issuance-revocation-rotation)
+  (the output, the `oml-admin` plugin), the `oml-admin` skill and this page.
+- **Tests:** `the_setup_line_runs_setup_claude_code_with_the_url_and_the_key_file`, and
+  `issue_agent_out_prints_the_plugin_configure_line_and_the_setup_line_naming_the_key_file_and_never_the_key`.
+
 ### 2026-11-04 — `oml setup claude-code` runs again over a marketplace already added, and each quickstart is a compose project of its own (ADR-0041 d7, d9, implementation)
 
 `oml setup claude-code` now reads `claude plugin marketplace list --json` before it adds the

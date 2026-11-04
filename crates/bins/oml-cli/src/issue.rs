@@ -1,7 +1,8 @@
 //! The key tool's local half (ADR-0028; cli/reference.md `oml keys`): the
 //! reader grant the issuing verbs send beside a writer grant, the shell
 //! quoting of the two export lines `oml keys issue-agent` prints, the
-//! `claude plugin configure` line it adds with `--out`, the owner-only file
+//! `claude plugin configure` and `oml setup claude-code` lines it adds with
+//! `--out`, the owner-only file
 //! `--out` writes the key value to, and what `--connect-code` prints for its
 //! answer (ADR-0031 d7). Everything here runs on
 //! the operator's machine; the server takes exactly the grants it is sent
@@ -59,6 +60,20 @@ pub fn configure_line(server: &str, key_file: &str) -> String {
     format!(
         "jq -n --arg u {} --rawfile k {} '{{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}}' \
          | claude plugin configure oml@open-memory-lab --values-stdin",
+        sh_quote(server),
+        sh_quote(key_file),
+    )
+}
+
+/// The line `oml keys issue-agent --out` prints after the configure line:
+/// `oml setup claude-code` with the server as `--url` and the key file as
+/// `--key-file`, which installs the plugin at the CLI's own release and
+/// configures it from the same file, so the value never enters argv
+/// (ADR-0041 d7). `server` is the plugin's `url` option, without `/mcp`.
+#[must_use]
+pub fn setup_line(server: &str, key_file: &str) -> String {
+    format!(
+        "oml setup claude-code --url {} --key-file {}",
         sh_quote(server),
         sh_quote(key_file),
     )
@@ -298,7 +313,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{KeyFile, configure_line, connect_code_printed, minted_code_printed};
+    use super::{KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line};
 
     /// A `201` of `POST /v2/keys` with `connect_code: true`, as openapi.yaml
     /// `IssuedKey` and `ConnectCode` shape it; a replay omits the code.
@@ -480,6 +495,21 @@ mod tests {
              '/home/op/.config/oml/keys/crew-agent-7' \
              '{url: $u, api_key: ($k | rtrimstr(\"\\n\"))}' \
              | claude plugin configure oml@open-memory-lab --values-stdin"
+        );
+    }
+
+    /// The setup line runs `oml setup claude-code` with the server as `--url`
+    /// and the key file as `--key-file`, each single-quoted, so the value
+    /// never enters argv (ADR-0041 d7).
+    #[test]
+    fn the_setup_line_runs_setup_claude_code_with_the_url_and_the_key_file() {
+        assert_eq!(
+            setup_line(
+                "https://oml.example.com",
+                "/home/op/.config/oml/keys/crew-agent-7"
+            ),
+            "oml setup claude-code --url 'https://oml.example.com' --key-file \
+             '/home/op/.config/oml/keys/crew-agent-7'"
         );
     }
 

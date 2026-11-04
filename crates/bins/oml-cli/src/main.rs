@@ -23,7 +23,7 @@ use oml_cli::creds::{self, Credentials};
 use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, minted_code_printed, sh_quote,
+    KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line, sh_quote,
     with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
@@ -1910,14 +1910,17 @@ fn run_issue_agent(
                 .map_err(|e| lost(&format!("writing {shown} failed ({e})")))?;
             (
                 format!("export OML_API_KEY=\"$(cat {})\"", sh_quote(&shown)),
-                Some(configure_line(client.server(), &shown)),
+                Some([
+                    configure_line(client.server(), &shown),
+                    setup_line(client.server(), &shown),
+                ]),
             )
         }
     };
     println!("export OML_URL={}", sh_quote(client.server()));
     println!("{key_line}");
-    if let Some(configure) = configure {
-        println!("{configure}");
+    for line in configure.iter().flatten() {
+        println!("{line}");
     }
 
     let granted: Vec<String> = response["grants"]

@@ -951,11 +951,14 @@ async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value()
 }
 
 /// With `--out`, the third stdout line is the `claude plugin configure
-/// --values-stdin` pipeline that reads the key file through `jq`, naming the
-/// server and the file and never the value, on stdout or stderr (ADR-0040 d4,
-/// amending ADR-0028 d1).
+/// --values-stdin` pipeline that reads the key file through `jq`, and the
+/// fourth the `oml setup claude-code --key-file` line that installs the
+/// plugin and configures it from the same file, each naming the server and
+/// the file and never the value, on stdout or stderr (ADR-0040 d4, ADR-0041
+/// d7, amending ADR-0028 d1).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn issue_agent_out_prints_the_plugin_configure_line_naming_the_key_file_and_never_the_key() {
+async fn issue_agent_out_prints_the_plugin_configure_line_and_the_setup_line_naming_the_key_file_and_never_the_key()
+ {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -977,7 +980,14 @@ async fn issue_agent_out_prints_the_plugin_configure_line_naming_the_key_file_an
     ]);
     assert_eq!(code, 0, "{stderr}");
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "{stdout}");
+    assert_eq!(lines.len(), 4, "{stdout}");
+    assert_eq!(
+        lines[3],
+        format!(
+            "oml setup claude-code --url '{}' --key-file '{shown}'",
+            lab.server
+        )
+    );
     assert_eq!(
         lines[2],
         format!(

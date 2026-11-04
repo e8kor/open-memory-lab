@@ -266,7 +266,7 @@ shows the whole ceremony.
 
 ## `oml keys` — issuance, revocation, rotation
 
-*Available since v0.1.0 (`issue`), v0.2.1 (`issue-agent`) and v0.3.0 (`show`); the `claude plugin configure` line planned for v0.4.0; revocation and rotation not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (`issue`), v0.2.1 (`issue-agent`) and v0.3.0 (`show`); the `claude plugin configure` and `oml setup claude-code` lines planned for v0.4.0; revocation and rotation not scheduled · [releases](../product/releases.md)*
 
 Key lifecycle rules — issuer ceiling, expiry, the bootstrap ceremony — are declared in
 [roles and keys](../architecture/roles-and-keys.md). The CLI adds the **show-once ceremony**: a key
@@ -298,7 +298,7 @@ exactly the grant it names.
 | Verb | Does |
 |---|---|
 | `oml keys issue <key-name> --role <reader\|writer\|dreamer\|admin> --grant <workarea>:<role> [--grant …] [--default-workarea <workarea>] [--crew <crew>] [--write-only] [--principal <text>] [--expires <duration>] [--label <text>]` | Issue a key named `<key-name>` — its [name](../api/http-api.md#names-and-ids), unique in the tenant and never released (`name.taken`), distinct from its principal and label ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). Refused when any requested role exceeds the issuer's (issuer ceiling), and when the key would combine the admin role with a dreamer-class grant (`access.role_exclusive` — the two-key rule: admin ≠ reviewer). `--default-workarea` records a journalled issuance attribute: the workarea that provider-ring (`/v1`) requests from this key target when they name none ([ADR-0022](../adr/ADR-0022-two-ring-api.md), d4); its default when omitted is fixed by the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order). `--crew` names the key's [crew](#oml-crews-crew-records), fixed for the key's life. Each `--grant` role must be [admissible](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) under `--role`, and a writer grant brings its reader grant unless `--write-only` (above), so one writer key issued with `--grant <wa>:writer` both remembers and recalls. Prints the value once, and only after every grant is journalled; then only the key's name and id ever again. |
-| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, and a third line pipes the file to `claude plugin configure` ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; the proposed [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). Without `oauth.issuer` the issuance is refused with `oauth.connect_refused` (`not_configured`) and nothing is printed on stdout. |
+| `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> [--held-by agent\|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` | The one key the [agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent) needs, in one call: a `POST /v2/keys` with role `writer`, name `<key-name>`, the given principal, `held_by` from `--held-by` (default `agent`), a writer grant on `<workarea>` and its reader grant unless `--write-only` (above), `default_workarea` set to `<workarea>`, and `crew` when `--crew` names one. No other request, before or after, and no HTTP surface of its own: every refusal is the issuance's. Prints the two export lines below and nothing else on stdout; with `--out` the value goes to a file, neither line carries it, a third line pipes the file to `claude plugin configure`, and a fourth runs `oml setup claude-code --key-file` on it ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1; [ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4; [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d7). Give each agent its own principal: review independence and the reciprocal-approval statistics key on it. The positional `<key-name>` and `--crew` are the proposed [ADR-0026](../adr/ADR-0026-names-are-keys.md) d12's additions to [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1's verb, and the CLI as built takes both, with `<workarea>` and `<crew>` each an id or a name, sent as typed. The key's name never stands in for its principal ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)). With `--connect-code` the request carries `connect_code: true`: the key is a connector key with no value, for a claude.ai custom connector, and the verb prints the connector URL and the connect code instead (below; the proposed [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). Without `oauth.issuer` the issuance is refused with `oauth.connect_refused` (`not_configured`) and nothing is printed on stdout. |
 | `oml keys connect-code <key>` | Mint a fresh connect code for a connector key, by id or name (`POST /v2/keys/{key}/connect-codes`), for a code that lapsed or a connection that was revoked; the key's earlier codes are voided as [connections](../architecture/roles-and-keys.md#connections) declares. Prints the same two lines as `issue-agent --connect-code`. Refused with `oauth.connect_refused` for a bearer key, a revoked or expired key, or a deployment without `oauth.issuer`. As built the route keeps no idempotency record, so a re-run mints another code and voids the one before it. |
 | `oml keys disconnect <key> <connection-id> [--reason <text>]` | End a connection of the key, which is named by id or name (`POST /v2/keys/{key}/connections/{connection_id}/revoke`); a connection has no name and is named by its id. Journalled as `connection.revoked`, which ends it as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection, the 60 seconds between Connect and the token exchange, is not listed and cannot be named (`access.not_found`). Works whether or not the deployment sets `oauth.issuer`. |
 | `oml keys revoke <key>\|--matching <selector> [--reason <text>] [--apply]` | Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md)). `--matching <selector>` revokes a set and therefore defaults to `--dry-run`, requiring `--apply` to act. |
@@ -308,7 +308,7 @@ exactly the grant it names.
 
 **`oml keys issue-agent` output.** On success the verb prints two lines on stdout, the pair the
 CLI, another MCP client and the session-start hook run outside the plugin read, and every other
-line on stderr; with `--out` it adds a third, below. The `oml` plugin reads neither variable: it
+line on stderr; with `--out` it adds a third and a fourth, below. The `oml` plugin reads neither variable: it
 takes its `url` and `api_key` settings ([agent plugin](../api/mcp-plugin.md#wiring-it-into-your-agent)).
 
 ```console
@@ -326,20 +326,24 @@ will start the agent without the value entering shell history. With `--json` the
 **`--out <path>`** writes the value to a file instead of printing it. Before it sends anything the
 CLI creates `<path>` exclusively, with mode 0600; a path that already exists is refused (exit `2`)
 and nothing is sent, so no file is ever overwritten. After the `201` the CLI writes the value and
-one newline to the file and prints only these three lines, with the path made absolute:
+one newline to the file and prints only these four lines, with the path made absolute:
 
 ```console
 export OML_URL='https://oml.example.com'
 export OML_API_KEY="$(cat '/home/op/.config/oml/keys/crew-agent-7')"
 jq -n --arg u 'https://oml.example.com' --rawfile k '/home/op/.config/oml/keys/crew-agent-7' '{url: $u, api_key: ($k | rtrimstr("\n"))}' | claude plugin configure oml@open-memory-lab --values-stdin
+oml setup claude-code --url 'https://oml.example.com' --key-file '/home/op/.config/oml/keys/crew-agent-7'
 ```
 
 The third line gives the `oml` plugin its two settings: `jq` reads the file, and `claude plugin
 configure --values-stdin`, which needs Claude Code 2.1.285 or later, stores the server as `url`
 and the key in the system keychain as `api_key`, so the value enters no argv and no transcript
-([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4, d5).
+([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4, d5). The fourth line does the
+same through [`oml setup claude-code`](#oml-setup-claude-code-and-oml-quickstart-the-quick-start),
+which also installs the plugin at the CLI's own release first and refuses an admin key; it needs
+the `oml` CLI where Claude Code runs, and no `jq`. Run one of the two, not both.
 
-No key value reaches stdout, stderr or the terminal; the second and third lines read it from the
+No key value reaches stdout, stderr or the terminal; the second, third and fourth lines read it from the
 file when the operator's shell runs them. A refused issuance removes the empty file the CLI created. If the
 value cannot be written once the key is issued, the value is lost: the CLI removes the partial
 file, names the key's name and id on stderr, says to revoke it, and exits `2`; until key
@@ -582,7 +586,7 @@ what to do next. Both emit the same four named signals — the contract that
 
 ## The `oml-admin` plugin
 
-*Available since v0.2.1; handing over the `claude plugin configure` line planned for v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.1; handing over the `claude plugin configure` and `oml setup claude-code` lines planned for v0.4.0 · [releases](../product/releases.md)*
 
 A Claude Code plugin that wraps this CLI for an operator working inside Claude Code. This section
 is its single declaration site ([ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d3; the shipped
@@ -603,8 +607,8 @@ ADR-0014 d2).
   adds ([above](#oml-keys-issuance-revocation-rotation)); runs `oml keys issue-agent <key-name>
   --principal <principal> --workarea <workarea> --out <path>` itself, with `--held-by human`,
   `--crew` or `--write-only` when the operator asks for them; hands the operator the printed
-  `claude plugin configure` line, which carries a path and no value, to run where Claude Code
-  runs the agent, together with the key's name and id the CLI printed on stderr, and the two
+  `oml setup claude-code` line, or the `claude plugin configure` line where the agent's machine
+  has no `oml` CLI, each carrying a path and no value, to run where Claude Code runs the agent, together with the key's name and id the CLI printed on stderr, and the two
   export lines only for the CLI, another client or the hook run outside the plugin; and tells the
   operator to delete the key file only after `claude plugin configure` has succeeded
   ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d4).
