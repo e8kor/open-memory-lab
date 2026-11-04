@@ -170,4 +170,4 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0047](../adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md) project knowledge and the code skeleton | proposed | Planned, not assigned; gated on its evaluation harness and on ADR-0030. |
-| [ADR-0048](../adr/ADR-0048-hybrid-search-for-every-memory-filters-keywords-and-meaning-fused-under-one-budget.md) hybrid search | proposed | Planned, not assigned. |
+| [ADR-0048](../adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) search in stages | proposed | S1–S3 proposed for v0.5.3; the later stages not assigned, each gated on the recall eval. |

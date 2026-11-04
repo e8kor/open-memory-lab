@@ -14,7 +14,7 @@ answers: what OML stores about a client project's code (a small structural skele
 **Amends:** ADR-0025 (d10, d12), ADR-0029 (d2, d7), ADR-0039 (d3); and, on their branches,
 ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
 
-**Depends on:** [ADR-0048](ADR-0048-hybrid-search-for-every-memory-filters-keywords-and-meaning-fused-under-one-budget.md)
+**Depends on:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)
 for the anchor and kind filters on reads.
 
 The design mockups for this record and ADR-0048 are on one page:
@@ -27,7 +27,7 @@ knowledge view and stored entries).
 **The operator's question of 2026-11-04.** Does OML gain from a code mapping feature, with review
 tied to the project's development lifecycle rather than immediate, and are the downsides strong
 arguments or chances to improve the product without degrading its core? This record answers for
-the code side; [ADR-0048](ADR-0048-hybrid-search-for-every-memory-filters-keywords-and-meaning-fused-under-one-budget.md)
+the code side; [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)
 answers for search. A first draft of this record stored a full structural map of every file; the
 operator narrowed it the same day, and that draft is the first rejected alternative.
 
@@ -92,7 +92,7 @@ have that shape. Decided, not built.
   they are derivable and are computed locally when needed.
 
 - **d2 — Both are a new claim kind, `code`, so they never crowd ordinary recall.** Recall serves
-  kind `code` only when `kinds` names it (ADR-0048 d6), the way vocabulary kinds are kept out of
+  kind `code` only when `kinds` names it (ADR-0048 d5), the way vocabulary kinds are kept out of
   the shared indexes ([retrieval](../architecture/retrieval.md)). A `code` entry is written with
   `oml_write` like any memory (amends ADR-0039 d3 by one kind value), and its text is prose a
   person can review. The cost is one more kind in every enum and one more filter for an agent to
@@ -181,7 +181,7 @@ have that shape. Decided, not built.
 - **d11 — Staleness is a workflow: an edit marks facts stale locally, the agent answers at Stop,
   and the merge gate checks the rest.** At session start in an enabled clone the session-start
   hook lists the `code` entries anchored in this repository at *R* and the current branch
-  workarea (ADR-0048 d6's filters) into a per-session cache that SessionEnd deletes (amends
+  workarea (ADR-0048 d5's filters) into a per-session cache that SessionEnd deletes (amends
   ADR-0029 d2). `oml hook code-mark`, on `PostToolUse` for `Write|Edit|MultiEdit`, recomputes the
   hashes of anchors in the edited file and records the entries whose symbol changed or vanished,
   sending nothing. At `Stop`, `oml hook code-stop` blocks once, honouring `stop_hook_active`,
@@ -238,7 +238,7 @@ have that shape. Decided, not built.
       supersession event carries `while_held: true`. A retirement of one's own never-promoted
       version withdraws it without review, since no one outside an in-progress area has read it.
       Amends ADR-0025 d10.
-    - **d. The anchor filters** on reads, declared in ADR-0048 d6.
+    - **d. The anchor filters** on reads, declared in ADR-0048 d5 (its stage S4).
 
     Not added: the batch route (a branch writes tens of entries, not thousands), a hook that
     writes, server-side staleness, per-file entries, and a fourth MCP tool
