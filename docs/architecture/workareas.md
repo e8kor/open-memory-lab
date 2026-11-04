@@ -358,7 +358,7 @@ time.
 
 #### Readings the build takes
 
-[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave five points open
+[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave six points open
 that code cannot leave open. Each line below is **the build's reading**, with
 the rule it follows; none is a new decision about the ladder.
 
@@ -372,11 +372,32 @@ the rule it follows; none is a new decision about the ladder.
 - **Several proposals may wait on one node; ratification re-checks.** The
   status read lists "pending transitions", plural
   ([HTTP API](../api/http-api.md)), so a proposal never blocks another.
-  Ratification re-checks the proposal against the node's status at that
-  moment: a proposal whose `from` is no longer the node's status, one already
-  ratified included, is refused with `workarea.transition_refused`, reason
-  `stale`. It follows d3's forward-only rule: a ratification acts on the node
-  as it is, never on the node as the proposer saw it.
+  Ratification re-checks the proposal against the node as it is at that
+  moment, on two counts: its `from` must be the node's status, and a step to
+  `validated` must still find every child `validated`. Both checks run inside
+  the ratifying transaction, after it takes the tenant's chain lock (the
+  `pg_advisory_xact_lock` every capture takes,
+  [schema](../data/postgres-schema.md)) and with the node row locked, before
+  the status write and the `workarea.status_transition` capture in that same
+  transaction; a child created, or a subtree reparented in, between proposal
+  and ratification is therefore seen. A proposal whose `from` is no longer the
+  node's status, one already ratified included, is refused with
+  `workarea.transition_refused`, reason `stale`; a step to `validated` that
+  finds a child not `validated` is refused with reason
+  `children_not_validated`. It follows d3's forward-only rule, a ratification
+  acts on the node as it is, never on the node as the proposer saw it, and
+  d4's "by construction": nothing can arrive between the test and the write.
+- **The status read lists only live proposals.** "Pending transitions" are the
+  rows with state `pending` whose `from` equals the node's current status. A
+  proposal made stale by another's ratification drops out of the read without
+  any row write and stays `pending` in the table, since the ladder is forward
+  only and nothing can ratify it; the row and its `workarea.status_proposed`
+  event remain as history. The read uses the index on
+  `(tenant_id, workarea_id, state)`. It follows d3: a proposal is something a
+  second identity can still act on, and a stale one is not. **Limit:** the
+  number of pending proposals on one node is unbounded and none can be
+  withdrawn; one key can add rows on a node without end, bounded only by the
+  key's write quota.
 - **The policy snapshot is the policy in force plus the precondition.**
   `policy_snapshot` holds the review policy in force, which the PoC fixes as the
   one constant `{k: 1, required_roles: ["dreamer"]}`, and the precondition the
