@@ -34,6 +34,7 @@ use oml_app::App;
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::ConnectionState;
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::{
     Envelope, EventDraft, EventTime, FrozenOp, KeySet, LadderRefusal, MemoryKind, MemoryStatus,
     Role, Sha256Hash, SignedEnvelope, WorkareaStatus, event_types, next_envelope, sign,
@@ -45,6 +46,7 @@ use oml_app::ports::{
     StoreError,
 };
 use oml_app::types::{AppError, BootstrapRequest, KeyRecord, PROVIDER_TENANT};
+ClaimEdgeRecord,
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -3819,6 +3821,227 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
         }
     }
     drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The partitions of `memories` an `EXPLAIN (FORMAT JSON)` plan scans or
+/// updates; an UPDATE's ModifyTable names the parent itself, and its
+/// target partitions under "Target Tables".
+fn plan_memories_partitions(plan: &Value) -> Vec<String> {
+    let mut relations = std::collections::BTreeSet::new();
+    plan_relations(plan, &mut relations);
+    relations
+        .into_iter()
+        .filter(|r| r.starts_with("memories_t_"))
+        .collect()
+}
+
+/// Each scan of a `memories` partition in an `EXPLAIN (FORMAT JSON)`
+/// plan, as its alias and the conditions it carries ("Index Cond",
+/// "Recheck Cond" and "Filter", joined).
+fn plan_memories_scans(plan: &Value, found: &mut Vec<(String, String)>) {
+    match plan {
+        Value::Object(node) => {
+            if let (Some(Value::String(relation)), Some(_)) =
+                (node.get("Relation Name"), node.get("Node Type"))
+                && relation.starts_with("memories_t_")
+            {
+                let conditions = ["Index Cond", "Recheck Cond", "Filter"]
+                    .iter()
+                    .filter_map(|c| node.get(*c).and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let alias = node.get("Alias").and_then(Value::as_str).unwrap_or("");
+                found.push((alias.to_owned(), conditions));
+            }
+            for value in node.values() {
+                plan_memories_scans(value, found);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                plan_memories_scans(item, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A claim edge's lineage widening names its tenant on every statement on
+/// `memories`: planned under tenant A over the serving login, the
+/// adapter's statement scans and updates tenant A's partition alone under
+/// a custom plan and a generic one, and each scan of it under the custom
+/// plan carries the bound tenant, not row security's alone; run through the proposal fold, it widens tenant A's rows
+/// and leaves tenant B's rows with the same ids, the same authors and the
+/// same derivation exactly as they were held (ADR-0034 d11, d13; ADR-0001
+/// d2).
+#[tokio::test]
+async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_rows() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (x, y, z) = (
+        Uuid::from_u128(0xC230_0001),
+        Uuid::from_u128(0xC230_0002),
+        Uuid::from_u128(0xC230_0003),
+    );
+    let (ann, bob) = (Uuid::from_u128(0xD230_000A), Uuid::from_u128(0xD230_000B));
+    let workarea = Uuid::from_u128(0xB230);
+    let mut rigs = Vec::new();
+    let mut held = Vec::new();
+    for seed in [230_u64, 231] {
+        let mut rig = ChainRig::new(seed);
+        rig.seed_chain(&store, 0).await;
+        let tenant = rig.tenant_id;
+        let proposer = key_record(
+            tenant,
+            Uuid::from_u128((u128::from(seed) << 32) | 0x02),
+            Role::Dreamer,
+            None,
+        );
+        rig.issue_key(&store, proposer.clone()).await;
+        let mut child = held_memory(tenant, workarea, z, "carol", ann, "child");
+        child.derives_from = vec![x];
+        child.lineage_principals = vec!["ann".to_owned(), "carol".to_owned()];
+        for memory in [
+            held_memory(tenant, workarea, x, "ann", ann, "source"),
+            held_memory(tenant, workarea, y, "bob", bob, "target"),
+            child,
+        ] {
+            rig.commit(
+                &store,
+                event_types::SUBMISSION_REMEMBER,
+                json!({ "artifact_id": memory.memory_id.to_string() }),
+                MetadataFold::MemoryHeld {
+                    memory: memory.clone(),
+                    enqueue: false,
+                },
+                None,
+            )
+            .await
+            .expect("commit held");
+            held.push(memory);
+        }
+        rigs.push((rig, proposer));
+    }
+    let (a, b) = (rigs[0].0.tenant_id, rigs[1].0.tenant_id);
+
+    let mut conn = store.pool().acquire().await.expect("serving connection");
+    for mode in ["force_custom_plan", "force_generic_plan"] {
+        let mut tx = conn.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(a.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set tenant");
+        tx.execute(format!("SET LOCAL plan_cache_mode = {mode}").as_str())
+            .await
+            .expect("plan cache mode");
+        tx.execute(
+            format!(
+                "PREPARE oml_widen_probe (uuid, uuid, uuid) AS {}",
+                oml_pg::WIDEN_LINEAGE
+            )
+            .as_str(),
+        )
+        .await
+        .expect("prepare the adapter's statement");
+        let plan: Value = sqlx::query_scalar(&format!(
+            "EXPLAIN (FORMAT JSON) EXECUTE oml_widen_probe ('{a}', '{x}', '{y}')"
+        ))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("explain");
+        tx.execute("DEALLOCATE oml_widen_probe")
+            .await
+            .expect("deallocate");
+        tx.rollback().await.expect("rollback");
+        assert_eq!(
+            plan_memories_partitions(&plan),
+            vec![partition_of(a)],
+            "{mode}: {plan}"
+        );
+        // Row security alone would prune the same way, so the custom plan's
+        // scans must each carry the bound tenant itself: the statement's own
+        // `m.tenant_id = $1`, not the policy's `current_setting` (ADR-0034
+        // d13).
+        if mode == "force_custom_plan" {
+            let mut scans = Vec::new();
+            plan_memories_scans(&plan, &mut scans);
+            assert!(!scans.is_empty(), "the widening scans memories: {plan}");
+            let named = format!("tenant_id = '{a}'::uuid");
+            for (alias, conditions) in scans {
+                assert!(
+                    conditions.contains(&named),
+                    "scan {alias} names its tenant: {conditions}"
+                );
+            }
+        }
+    }
+    drop(conn);
+
+    let (rig, proposer) = &mut rigs[0];
+    let event = rig.next_event(
+        event_types::CLAIM_EDGE_PROPOSED,
+        json!({ "edge_id": Uuid::from_u128(0xE230).to_string() }),
+    );
+    let edge = ClaimEdgeRecord {
+        edge_id: Uuid::from_u128(0xE230),
+        tenant_id: a,
+        src_artifact_id: x,
+        dst_artifact_id: y,
+        label: "acme:supports".to_owned(),
+        state: EdgeState::Pending,
+        proposer_key_id: proposer.key_id,
+        proposer_principal: proposer.principal.clone(),
+        ratifier_key_id: None,
+        created_at: event.envelope.at.clone(),
+    };
+    store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
+            fold: MetadataFold::ClaimEdgeProposed(edge),
+            idempotency: None,
+        })
+        .await
+        .expect("the proposal commits");
+
+    let closure = |m: oml_app::types::MemoryRecord| (m.lineage_principals, m.lineage_key_ids);
+    for id in [x, y, z] {
+        let widened = store.memory(a, id).await.expect("read").expect("held");
+        assert_eq!(
+            closure(widened),
+            (
+                if id == z {
+                    vec!["ann".to_owned(), "bob".to_owned(), "carol".to_owned()]
+                } else {
+                    vec!["ann".to_owned(), "bob".to_owned()]
+                },
+                vec![ann, bob]
+            ),
+            "tenant A's {id} gains the authors the edge joins"
+        );
+    }
+    for memory in held.into_iter().filter(|m| m.tenant_id == b) {
+        let stored = store
+            .memory(b, memory.memory_id)
+            .await
+            .expect("read")
+            .expect("held");
+        assert_eq!(
+            closure(stored),
+            closure(memory.clone()),
+            "tenant B's {} is as it was held",
+            memory.memory_id
+        );
+    }
     drop_dbs(&created).await;
 }
 

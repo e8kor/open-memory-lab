@@ -16,6 +16,7 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
     ChainHead, Envelope, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
@@ -472,6 +473,57 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
        AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
+
+/// The lineage widening a `claim_edge.proposed` fold runs after its
+/// INSERT, binding `$1` the tenant, `$2` the edge's source and `$3` its
+/// target (the reading [`MetadataFold::ClaimEdgeProposed`] names; ADR-0001
+/// d2). `component` is every version connected to either endpoint through
+/// the tenant's claim edges, followed from either end, the new edge
+/// included; `reached` is `component` and every version that reaches it
+/// through `derives_from`, child to parent, and claim edges; each version
+/// in `reached` gains the union of `component`'s flattened closures,
+/// sorted and deduplicated: principals in byte order, as the application
+/// sorts them, and key ids in uuid order. Every scan of `memories` names
+/// `m.tenant_id = $1`, so the plan keeps the tenant's partition alone
+/// (ADR-0034 d11, d13); row security stays the fence. Exported so the
+/// suite plans the statement the adapter runs.
+pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
+     edge_adjacent(a, b) AS ( \
+         SELECT e.src_artifact_id, e.dst_artifact_id FROM claim_edges e \
+          WHERE e.tenant_id = $1 \
+         UNION ALL \
+         SELECT e.dst_artifact_id, e.src_artifact_id FROM claim_edges e \
+          WHERE e.tenant_id = $1), \
+     component(id) AS ( \
+         SELECT unnest(ARRAY[$2::uuid, $3::uuid]) \
+         UNION \
+         SELECT j.b FROM component c JOIN edge_adjacent j ON j.a = c.id), \
+     joined AS ( \
+         SELECT \
+           ARRAY(SELECT p FROM memories m, unnest(m.lineage_principals) p \
+                  WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM component)) \
+             AS principals, \
+           ARRAY(SELECT k FROM memories m, unnest(m.lineage_key_ids) k \
+                  WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM component)) \
+             AS key_ids), \
+     reach_adjacent(a, b) AS ( \
+         SELECT parent, m.id FROM memories m, unnest(m.derives_from) parent \
+          WHERE m.tenant_id = $1 \
+         UNION ALL \
+         SELECT a, b FROM edge_adjacent), \
+     reached(id) AS ( \
+         SELECT id FROM component \
+         UNION \
+         SELECT j.b FROM reached r JOIN reach_adjacent j ON j.a = r.id) \
+     UPDATE memories m SET \
+       lineage_principals = ARRAY( \
+           SELECT p FROM unnest(m.lineage_principals || joined.principals) p \
+            GROUP BY p ORDER BY p COLLATE \"C\"), \
+       lineage_key_ids = ARRAY( \
+           SELECT k FROM unnest(m.lineage_key_ids || joined.key_ids) k \
+            GROUP BY k ORDER BY k) \
+     FROM joined \
+     WHERE m.tenant_id = $1 AND m.id IN (SELECT id FROM reached)";
 
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
@@ -952,6 +1004,42 @@ const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_work
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
+/// A claim edge's columns, `e` the edge and `k` its proposer's key row;
+/// `created_at` comes back through `to_char` in the fixed-width signed
+/// form, as a memory's does.
+const CLAIM_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.src_artifact_id, e.dst_artifact_id, \
+     e.label, e.state, e.proposer_key_id, k.principal AS proposer_principal, \
+     e.ratifier_key_id, \
+     to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS created_at_signed";
+
+/// A claim-edge row as the port's record; a state outside the schema's
+/// CHECK is the backend's refusal.
+fn claim_edge_from_row(row: &PgRow) -> Result<ClaimEdgeRecord, StoreError> {
+    let state: String = row.try_get("state").map_err(backend)?;
+    let created: String = row.try_get("created_at_signed").map_err(backend)?;
+    Ok(ClaimEdgeRecord {
+        edge_id: row.try_get("id").map_err(backend)?,
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        src_artifact_id: row.try_get("src_artifact_id").map_err(backend)?,
+        dst_artifact_id: row.try_get("dst_artifact_id").map_err(backend)?,
+        label: row.try_get("label").map_err(backend)?,
+        state: match state.as_str() {
+            "pending" => EdgeState::Pending,
+            "ratified" => EdgeState::Ratified,
+            other => {
+                return Err(StoreError::Backend(format!(
+                    "unknown claim edge state {other:?}"
+                )));
+            }
+        },
+        proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
+        proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
+        ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+        created_at: EventTime::parse(&created).map_err(backend)?,
+    })
+}
+
 /// A key row as the port's record. A provider-level row names no tenant
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
 /// its refusals are the use-cases' own, never a storage failure (ADR-0025
@@ -1246,6 +1334,88 @@ async fn supersede_tip(
         return Err(StoreError::TipMoved { replaced });
     }
     promote_memory(tx, tenant_id, successor, at).await
+}
+
+/// The fold of `claim_edge.proposed`: the edge row, then the lineage
+/// widening, [`WIDEN_LINEAGE`], in the same transaction, so no edge is
+/// stored that the review queue's exclusion would not see (ADR-0001 d2).
+/// An edge that is not pending with no ratifier, or whose `created_at` is
+/// not its event's `at`, is refused before any write. An id the store
+/// holds, another tenant's row (row security's WITH CHECK), and an endpoint
+/// or proposer key the tenant does not hold (23503 from the tenant-keyed
+/// foreign keys) are the backend's refusals, as any fold's are (ADR-0034
+/// d12); the application has read both endpoints, so the last does not
+/// occur.
+async fn propose_claim_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge: &ClaimEdgeRecord,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    if edge.state != EdgeState::Pending || edge.ratifier_key_id.is_some() {
+        return Err(StoreError::Backend(format!(
+            "claim edge {} is proposed pending, with no ratifier",
+            edge.edge_id
+        )));
+    }
+    if edge.created_at != *at {
+        return Err(StoreError::Backend(format!(
+            "claim edge {} is created at its claim_edge.proposed event's at",
+            edge.edge_id
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO claim_edges (id, tenant_id, src_artifact_id, dst_artifact_id, label, \
+         state, proposer_key_id, ratifier_key_id, created_at) \
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, NULL, ($7)::timestamptz)",
+    )
+    .bind(edge.edge_id)
+    .bind(edge.tenant_id)
+    .bind(edge.src_artifact_id)
+    .bind(edge.dst_artifact_id)
+    .bind(&edge.label)
+    .bind(edge.proposer_key_id)
+    .bind(at.as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    sqlx::query(WIDEN_LINEAGE)
+        .bind(tenant_id)
+        .bind(edge.src_artifact_id)
+        .bind(edge.dst_artifact_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+/// The fold of a claim-edge `review.ratify`: the compare-and-set turns a
+/// pending edge of this tenant ratified by `ratifier_key_id`; a zero row
+/// count refuses the commit with [`StoreError::EdgeNotPending`], and its
+/// transaction rolls back, journal row included, as [`supersede_tip`]'s
+/// does. A ratifier equal to the proposer (`claim_edges_ratifier_is_not_proposer`)
+/// and a key the tenant does not hold (23503) are the backend's refusals
+/// (postgres-schema.md `claim_edges`; ADR-0021 d5; ADR-0012).
+async fn ratify_claim_edge(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    edge_id: Uuid,
+    ratifier_key_id: Uuid,
+) -> Result<(), StoreError> {
+    let ratified = sqlx::query(
+        "UPDATE claim_edges SET state = 'ratified', ratifier_key_id = $3 \
+         WHERE tenant_id = $1 AND id = $2 AND state = 'pending'",
+    )
+    .bind(tenant_id)
+    .bind(edge_id)
+    .bind(ratifier_key_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if ratified.rows_affected() != 1 {
+        return Err(StoreError::EdgeNotPending { edge_id });
+    }
+    Ok(())
 }
 
 /// The fold of `system.names_assigned` into the columns 0006 added: each
@@ -1801,19 +1971,14 @@ async fn apply_fold(
             )
             .await?;
         }
-        // Fails closed until the store writes the edge and widens the
-        // flattened lineage closure with it, so no edge lands that the
-        // review queue's exclusion would not see (ADR-0001 d2).
         MetadataFold::ClaimEdgeProposed(edge) => {
-            return Err(StoreError::Backend(format!(
-                "claim edge {} is not stored: the Postgres claim-edge fold is not built",
-                edge.edge_id
-            )));
+            propose_claim_edge(tx, tenant_id, &edge, at).await?;
         }
-        MetadataFold::ClaimEdgeRatified { edge_id, .. } => {
-            return Err(StoreError::Backend(format!(
-                "claim edge {edge_id} is not ratified: the Postgres claim-edge fold is not built"
-            )));
+        MetadataFold::ClaimEdgeRatified {
+            edge_id,
+            ratifier_key_id,
+        } => {
+            ratify_claim_edge(tx, tenant_id, edge_id, ratifier_key_id).await?;
         }
     }
     Ok(())
@@ -3378,39 +3543,99 @@ impl JournalStore for PgStore {
         }))
     }
 
-    // The claim-edge reads fail closed until the Postgres store reads
-    // `claim_edges`: an empty answer would read as "no edge".
     async fn claim_edge(
         &self,
-        _tenant_id: Uuid,
+        tenant_id: Uuid,
         edge_id: Uuid,
     ) -> Result<Option<ClaimEdgeRecord>, StoreError> {
-        Err(StoreError::Backend(format!(
-            "claim edge {edge_id} is not read: the Postgres claim-edge read is not built"
-        )))
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {CLAIM_EDGE_COLUMNS} FROM claim_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.id = $2"
+        ))
+        .bind(tenant_id)
+        .bind(edge_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref().map(claim_edge_from_row).transpose()
     }
 
     async fn claim_edges(
         &self,
-        _tenant_id: Uuid,
-        _filter: &ClaimEdgeFilter,
-        _after: Option<&ClaimEdgePosition>,
-        _limit: usize,
+        tenant_id: Uuid,
+        filter: &ClaimEdgeFilter,
+        after: Option<&ClaimEdgePosition>,
+        limit: usize,
     ) -> Result<Vec<ClaimEdgeRecord>, StoreError> {
-        Err(StoreError::Backend(
-            "claim edges are not listed: the Postgres claim-edge read is not built".to_owned(),
-        ))
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut sql = QueryBuilder::<Postgres>::new(format!(
+            "SELECT {CLAIM_EDGE_COLUMNS} FROM claim_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = "
+        ));
+        sql.push_bind(tenant_id);
+        if let Some(artifact_id) = filter.artifact_id {
+            sql.push(" AND (e.src_artifact_id = ")
+                .push_bind(artifact_id)
+                .push(" OR e.dst_artifact_id = ")
+                .push_bind(artifact_id)
+                .push(")");
+        }
+        // Either endpoint's workarea; the scan of memories names its
+        // tenant, as every statement on it does (ADR-0034 d13).
+        if let Some(workarea_id) = filter.workarea_id {
+            sql.push(" AND EXISTS (SELECT 1 FROM memories m WHERE m.tenant_id = ")
+                .push_bind(tenant_id)
+                .push(" AND m.id IN (e.src_artifact_id, e.dst_artifact_id) AND m.workarea_id = ")
+                .push_bind(workarea_id)
+                .push(")");
+        }
+        // Keyset: strictly after the position in the listing's order.
+        if let Some(after) = after {
+            sql.push(" AND (e.created_at, e.id) < ((")
+                .push_bind(after.created_at.as_str().to_owned())
+                .push(")::timestamptz, ")
+                .push_bind(after.edge_id)
+                .push(")");
+        }
+        sql.push(" ORDER BY e.created_at DESC, e.id DESC LIMIT ")
+            .push_bind(limit);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(claim_edge_from_row).collect()
     }
 
     async fn ratified_term_edges(
         &self,
-        _tenant_id: Uuid,
-        _label: &str,
+        tenant_id: Uuid,
+        label: &str,
     ) -> Result<Vec<(String, String)>, StoreError> {
-        Err(StoreError::Backend(
-            "ratified term edges are not read: the Postgres claim-edge read is not built"
-                .to_owned(),
-        ))
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // Both endpoints are terms; each memories scan names its tenant
+        // (ADR-0034 d13). Byte order on the pair, as the port asks.
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT s.claim_key, d.claim_key FROM claim_edges e \
+             JOIN memories s ON s.tenant_id = $1 AND s.id = e.src_artifact_id \
+                            AND s.kind = 'term' \
+             JOIN memories d ON d.tenant_id = $1 AND d.id = e.dst_artifact_id \
+                            AND d.kind = 'term' \
+             WHERE e.tenant_id = $1 AND e.state = 'ratified' AND e.label = $2 \
+             ORDER BY s.claim_key COLLATE \"C\", d.claim_key COLLATE \"C\"",
+        )
+        .bind(tenant_id)
+        .bind(label)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows)
     }
 }
 
