@@ -52,7 +52,7 @@ Proposed records live on branches and draft pull requests until they are accepte
 ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
-([#19](https://github.com/e8kor/open-memory-lab/pull/19)). The number ADR-0032 is not used by any record.
+([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0051 (branch `feat/ontology-metadata`). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -179,3 +179,4 @@ which part is still decided, not built.
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | accepted | Introduced in v0.5.0. |
 | [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | accepted | Introduced in v0.5.0: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |
+| [ADR-0051](../adr/ADR-0051-a-memory-says-what-it-is-about-in-reviewed-terms-and-recall-finds-it-by-them.md) memories described in reviewed terms, and recall by term | proposed | Not assigned: O1 (terms with labels) and O3 (recall by term) may build after ADR-0049's port, O2 (`about` at write) after ADR-0046's claim edges and ADR-0050's `oml_write` fields. |

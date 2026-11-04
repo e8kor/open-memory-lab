@@ -172,3 +172,4 @@ nav:
       - ADR-0043: adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md
       - ADR-0044: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md
       - ADR-0045: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md
+      - ADR-0051: adr/ADR-0051-a-memory-says-what-it-is-about-in-reviewed-terms-and-recall-finds-it-by-them.md
