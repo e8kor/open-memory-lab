@@ -915,7 +915,8 @@ as for recall. The set is the promoted guardrail tips on the node and, when the 
 access covers that node; `workarea` serves the node's own alone. The scope is the key's, set at
 issuance ([Keys](#keys-grants-denials)): the read takes `workarea` and nothing else, and any
 other parameter, `guardrail_scope` included, is `request.validation` naming it (d4). Recall never
-serves kind `guardrail`.
+serves kind `guardrail`, and a recall whose `kinds` names it is `request.validation` naming
+`/kinds`; the listings serve the kind like any other (d18 Q7).
 
 ```json
 {
