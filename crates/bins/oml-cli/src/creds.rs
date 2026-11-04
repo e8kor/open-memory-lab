@@ -161,21 +161,17 @@ mod tests {
     }
 
     #[test]
-    fn a_v0_3_0_credentials_file_is_read_for_its_server_and_key_only() {
+    fn a_v0_3_0_credentials_files_server_and_key_are_not_read() {
+        // Read through v0.5.0 and removed in v0.5.1 with the other v0.3.0
+        // spellings: the file still parses, and sets no pair, so the CLI
+        // asks for `oml login` (ADR-0039 d12, d15).
         let v0_3_0 = "server = \"https://oml.example.com\"\nkey = \"oml_admin\"\n\
                       key_id = \"0b7e9d5c-0000-4000-8000-000000000001\"\n\
                       tenant_id = \"0b7e9d5c-0000-4000-8000-000000000002\"\n\
                       root_workarea_id = \"0b7e9d5c-0000-4000-8000-000000000003\"\n";
         let read: Credentials = toml::from_str(v0_3_0).expect("a v0.3.0 file parses");
-        assert_eq!(read.url.as_deref(), Some("https://oml.example.com"));
-        assert_eq!(read.api_key.as_deref(), Some("oml_admin"));
-        let written = toml::to_string(&read).expect("serializes");
-        let fields: toml::Table = toml::from_str(&written).expect("parses back");
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["api_key", "url"],
-            "only the pair is written: {written}"
-        );
+        assert_eq!(read.url, None);
+        assert_eq!(read.api_key, None);
     }
 
     #[test]
