@@ -16,7 +16,7 @@ use oml_app::domain::oauth::{
 };
 use oml_app::domain::{
     EventDraft, EventTime, HeldBy, KeySet, MemoryKind, MemoryStatus, Role, Sha256Hash,
-    SignedEnvelope, derive_claim_key, event_types, next_envelope, sha256_digest_string, sign,
+    SignedEnvelope, WorkareaStatus, derive_claim_key, event_types, next_envelope, sha256_digest_string, sign,
     verify_chain,
 };
 use oml_app::doubles::{
@@ -2395,7 +2395,7 @@ async fn workarea_info_lists_only_readable_children() {
     assert_eq!(
         info.children
             .iter()
-            .map(|c| (c.workarea_id, c.name.as_str(), c.status()))
+            .map(|c| (c.workarea_id, c.name.as_str(), c.status.as_str()))
             .collect::<Vec<_>>(),
         vec![
             (a_zulu, "a-zulu", "development"),
@@ -2488,6 +2488,56 @@ async fn an_omitted_workarea_resolves_to_the_default_only_after_the_verb_ceiling
     );
 }
 
+/// The status is one stored column: `workarea.create` stores `development`
+/// on a new node and the tenant's bootstrap stores `committed` on the
+/// universe root, the read serves what the row stores, and each create
+/// event's payload spells the status it stored (ADR-0009 d1).
+#[tokio::test]
+async fn a_created_workarea_is_development_and_the_universe_root_is_committed_as_stored() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let t = boot.tenant_id;
+
+    let root = store
+        .workarea(t, boot.root_workarea_id)
+        .await
+        .expect("read")
+        .expect("the root");
+    assert_eq!(root.status, WorkareaStatus::Committed);
+    let created = store
+        .workarea(t, crew)
+        .await
+        .expect("read")
+        .expect("the crew node");
+    assert_eq!(created.status, WorkareaStatus::Development);
+
+    let stored: Vec<(String, String)> = journal(&store, t)
+        .await
+        .iter()
+        .filter(|e| e.envelope.event_type == event_types::WORKAREA_CREATE)
+        .map(|e| {
+            (
+                e.envelope.payload["workarea_id"]
+                    .as_str()
+                    .expect("id")
+                    .to_owned(),
+                e.envelope.payload["status"]
+                    .as_str()
+                    .expect("status")
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        stored,
+        vec![
+            (boot.root_workarea_id.to_string(), "committed".to_owned()),
+            (crew.to_string(), "development".to_owned()),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn the_derived_path_follows_parent_ids_from_universe() {
     let app = app();
@@ -2503,7 +2553,7 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
     assert_eq!(root.path, "universe");
     assert_eq!(root.workarea.parent_id, None);
     // The universe root is permanently committed (workareas.md).
-    assert_eq!(root.workarea.status(), "committed");
+    assert_eq!(root.workarea.status, WorkareaStatus::Committed);
 
     let leaf = app
         .workarea_info(&reader.value, Some(quarter.into()))
@@ -2511,7 +2561,7 @@ async fn the_derived_path_follows_parent_ids_from_universe() {
         .expect("the leaf");
     assert_eq!(leaf.path, "universe.crew.q1-2027");
     assert_eq!(leaf.workarea.parent_id, Some(crew));
-    assert_eq!(leaf.workarea.status(), "development");
+    assert_eq!(leaf.workarea.status, WorkareaStatus::Development);
     let middle = app
         .workarea_info(&reader.value, Some(crew.into()))
         .await
