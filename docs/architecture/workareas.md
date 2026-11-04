@@ -373,11 +373,13 @@ refusal below covers acquiring new children in any form). Lake rows keep
 ## The status ladder (D8)
 
 *Planned for v0.5.2 · [releases](../product/releases.md)*
-**Status:** built in `oml-domain`, `oml-app` and `oml-pg` with
+
+**Status:** built for v0.5.2, not released, in `oml-domain`, `oml-app` and `oml-pg` with
 `migrations/0016_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
 second identity, the status read) and the freeze checks on submit, supersede, approval and child
-create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · no HTTP route or MCP tool
-serves the transitions yet · its Postgres checks run only where a superuser mints the suites' role
+create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · no HTTP route, CLI verb or
+MCP tool serves the transitions yet; the routes, the `oml workareas status` verbs and the workarea
+read's `policy` and `pending_transitions` fields are [ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md) d3's, proposed · its Postgres checks run only where a superuser mints the suites' role
 pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
 fence are decided, not built.
 
@@ -427,7 +429,7 @@ time.
 
 #### Readings the build takes
 
-[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave seven points open
+[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave eight points open
 that code cannot leave open. Each line below is **the build's reading**, with
 the rule it follows; none is a new decision about the ladder.
 
@@ -494,6 +496,12 @@ the rule it follows; none is a new decision about the ladder.
   follows the taxonomy's rule that a refusal names the rule it enforces: d3's
   forward-only ladder gives the first three, the root's permanence the fourth,
   d4 the fifth, and the re-check above the sixth.
+- **A user root is a node like any other.** A user root and every workarea under it climb the
+  ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
+  being per key and principal; `universe` stays `committed`
+  ([ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md) d1, d2, proposed, after the proposed ADR-0044 d1 and d8). Whether a user
+  root may reach `validated`, and whether two keys of one user are independent enough, are open
+  questions 1 and 2 of that record.
 - **No simulation is fenced, vacuously.** Simulations are not built, so "no
   simulation is fenced on the subtree" holds of every subtree today; the build
   says so in a comment where the check would sit, and the check lands with
@@ -542,7 +550,8 @@ behind. The proposed reading refuses approve and reject alike with
 `validated`, so a held row left by a freeze stays held, visible to its author.
 The alternative admits reject, because a rejection promotes nothing. The
 operator decides before the build refuses verdicts by status
-([ADR-0009](../adr/ADR-0009-status-ladder.md) d5).
+([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; question 9 of [ADR-0046](../adr/ADR-0046-the-lifecycle-and-claim-edges-ship-in-v0-5-2-inside-user-roots-with-no-new-tool-and-the-brief-waits-on-its-own-record.md)). Until then
+the build refuses approve and admits reject.
 
 ## Medallion words name lake zones only
 
