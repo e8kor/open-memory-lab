@@ -354,10 +354,11 @@ service to run. Two settings make it reachable.
     }
     ```
 
-`oml doctor` then checks the route from wherever it runs: it reads the issuer the lead serves at
-the configured URL and fetches both discovery documents again from that issuer, and reports
-`oauth : failing` with the URL that failed when the proxy does not pass a path or a node serves
-another issuer ([observability](observability.md#the-doctor-contract)). With connections on,
+`oml doctor` then checks the route from wherever it runs: it reads the lead's `oauth.issuer` from
+`/readyz` at the configured URL, a route that does not depend on the discovery paths, fetches both
+discovery documents from that issuer, and reports `oauth : failing` with the URL that failed when
+the proxy does not pass a path, a `404` included, or a node serves another issuer; `off` means the
+lead names no issuer ([observability](observability.md#the-doctor-contract)). With connections on,
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> --connect-code`
 prints the connector URL and the code to give the person connecting
 ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).

@@ -53,7 +53,8 @@ No decision changes, and ADR-0031 stays proposed.
   and `oml keys disconnect` are added, and `oml keys show` lists a key's connections. The key value
   still goes only to `--out`.
 - **Doctor** gains `oauth_discovery`: `off`, `ok`, or `failing` with the URL, from both discovery
-  documents fetched at the issuer the lead serves.
+  documents fetched at the issuer the lead names on `/readyz`, which gains `oauth_issuer`, so a
+  proxy that answers `404` for the discovery paths reads as `failing`, never `off`.
 - **The check.** `oml-cli`'s `connect_flow` suite runs the flow over HTTP against the lead on a TCP
   port: the claim, the CLI's issuance, a registration, the page, the exchange, `/mcp` under the
   access token, the refresh token refused there, the token refused on `/v1`, the disconnect and a

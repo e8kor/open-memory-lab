@@ -3673,44 +3673,61 @@ async fn the_hidden_server_and_key_flags_answer_and_each_prints_one_line_naming_
 type Calls = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
 /// A stub answering `/healthz`, `/readyz`, `GET /v2/whoami` and the events
-/// tail as a healthy lead would, recording each request's path and bearer;
-/// returns its URL, what it saw and the task serving it.
+/// tail as a healthy lead without `oauth.issuer` would, behind a proxy that
+/// answers every other path with an empty `200` as Caddy does, recording
+/// each request's path and bearer; returns its URL, what it saw and the
+/// task serving it.
 async fn doctor_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
+    doctor_stub_with(None, axum::http::StatusCode::OK).await
+}
+
+/// [`doctor_stub`] whose `/readyz` names `issuer` as the lead's
+/// `oauth.issuer` and whose proxy answers `/.well-known/*` with `discovery`.
+async fn doctor_stub_with(
+    issuer: Option<&'static str>,
+    discovery: axum::http::StatusCode,
+) -> (String, Calls, tokio::task::JoinHandle<()>) {
     let seen: Calls = Arc::new(Mutex::new(Vec::new()));
     let router = axum::Router::new()
-        .fallback(|State(seen): State<Calls>, request: Request| async move {
-            let path = request.uri().path().to_owned();
-            seen.lock().expect("calls lock").push((
-                path.clone(),
-                request
-                    .headers()
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .map(ToOwned::to_owned),
-            ));
-            // A lead without oauth.issuer serves no discovery document.
-            if path == "/.well-known/oauth-authorization-server" {
-                return axum::http::StatusCode::NOT_FOUND.into_response();
-            }
-            axum::Json(match path.as_str() {
-                "/healthz" => json!({ "status": "ok" }),
-                "/readyz" => json!({ "status": "ready", "checks": { "database": "ok" } }),
-                "/v2/whoami" => json!({
-                    "key_id": "k1",
-                    "name": "agent-7",
-                    "role": "writer",
-                    "principal": "crew/agent-7",
-                    "held_by": "agent",
-                    "tenant": { "id": "t1", "name": "acme" },
-                    "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
-                    "crew": null,
-                    "grants": [],
-                }),
-                "/v2/events" => json!({ "events": [], "head_seq": 7 }),
-                _ => json!({}),
-            })
-            .into_response()
-        })
+        .fallback(
+            move |State(seen): State<Calls>, request: Request| async move {
+                let path = request.uri().path().to_owned();
+                seen.lock().expect("calls lock").push((
+                    path.clone(),
+                    request
+                        .headers()
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(ToOwned::to_owned),
+                ));
+                // The proxy routes no discovery path.
+                if path.starts_with("/.well-known/") {
+                    return discovery.into_response();
+                }
+                axum::Json(match path.as_str() {
+                    "/healthz" => json!({ "status": "ok" }),
+                    "/readyz" => json!({
+                        "status": "ready",
+                        "checks": { "database": "ok" },
+                        "oauth_issuer": issuer,
+                    }),
+                    "/v2/whoami" => json!({
+                        "key_id": "k1",
+                        "name": "agent-7",
+                        "role": "writer",
+                        "principal": "crew/agent-7",
+                        "held_by": "agent",
+                        "tenant": { "id": "t1", "name": "acme" },
+                        "default_workarea": { "id": "w1", "name": "metals", "path": "acme/metals" },
+                        "crew": null,
+                        "grants": [],
+                    }),
+                    "/v2/events" => json!({ "events": [], "head_seq": 7 }),
+                    _ => json!({}),
+                })
+                .into_response()
+            },
+        )
         .with_state(seen.clone());
     let (url, task) = serve_stub(router).await;
     (url, seen, task)
@@ -3769,6 +3786,7 @@ async fn doctor_with_a_url_alone_probes_readiness_and_names_the_missing_key() {
         assert_eq!(doctor["healthz"]["status"], 200, "{log}");
         assert_eq!(doctor["readyz"]["status"], 200, "{log}");
         assert_eq!(doctor["whoami"], Value::Null, "{log}");
+        assert_eq!(doctor["oauth_discovery"]["state"], "off", "{log}");
         assert!(
             doctor["next"]
                 .as_str()
@@ -3779,12 +3797,8 @@ async fn doctor_with_a_url_alone_probes_readiness_and_names_the_missing_key() {
         assert!(!log.contains("oml_file_key"), "no key printed: {log}");
         assert_eq!(
             calls(&seen),
-            vec![
-                ("/healthz".to_owned(), None),
-                ("/readyz".to_owned(), None),
-                ("/.well-known/oauth-authorization-server".to_owned(), None),
-            ],
-            "{source}: the probes and the discovery document alone, keyless"
+            vec![("/healthz".to_owned(), None), ("/readyz".to_owned(), None),],
+            "{source}: the probes alone, keyless; a lead naming no issuer has no route to check"
         );
     }
     task.abort();
@@ -3821,22 +3835,48 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
     let seen = calls(&seen);
     assert_eq!(
         seen.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-        [
-            "/healthz",
-            "/readyz",
-            "/v2/whoami",
-            "/v2/events",
-            "/.well-known/oauth-authorization-server"
-        ],
+        ["/healthz", "/readyz", "/v2/whoami", "/v2/events",],
     );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
     assert_eq!(seen[2].1, bearer("oml_file_key"));
     assert_eq!(seen[3].1, bearer("oml_file_key"));
-    assert_eq!(seen[4].1, None, "the discovery document is fetched keyless");
     assert_eq!(doctor["oauth_discovery"]["state"], "off", "{log}");
     task.abort();
     std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// Whether connections are on is the lead's answer on `/readyz`, not the
+/// route's: a public origin that answers `404` for `/.well-known/*` while
+/// the lead names an issuer is `failing` with the issuer's URL, never
+/// `off` (ADR-0031 d14).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_reports_oauth_failing_when_the_origin_404s_discovery_while_readyz_names_an_issuer()
+{
+    let (url, seen, task) = doctor_stub_with(
+        Some("https://oml.example.invalid"),
+        axum::http::StatusCode::NOT_FOUND,
+    )
+    .await;
+    let (code, doctor, log) = doctor_run(&["--url", &url], &[]);
+    assert_eq!(code, 1, "{log}");
+    let discovery = &doctor["oauth_discovery"];
+    assert_eq!(discovery["state"], "failing", "{log}");
+    assert_eq!(discovery["issuer"], "https://oml.example.invalid", "{log}");
+    assert!(
+        discovery["url"]
+            .as_str()
+            .is_some_and(|u| u.starts_with("https://oml.example.invalid/.well-known/")),
+        "{log}"
+    );
+    assert_eq!(doctor["verdict"], "fail", "{log}");
+    assert!(
+        !calls(&seen)
+            .iter()
+            .any(|(p, _)| p.starts_with("/.well-known/")),
+        "the issuer is the lead's, not the CLI URL's document"
+    );
+    task.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

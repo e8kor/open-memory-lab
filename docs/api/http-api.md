@@ -1398,8 +1398,11 @@ show/validate/apply shape and the retired-key refusal.
   names, `system.names_assigned` folded for every chain
   ([rows created before names](#rows-created-before-names)). Otherwise `503` with per-check
   detail. While a replica refuses writes after a failed fork check, API writes on either ring answer
-  `system.unavailable`. Ready or not, the body names the build that answered, in a `build`
-  object:
+  `system.unavailable`. Ready or not, the body names the lead's `oauth.issuer` as `oauth_issuer`,
+  or `null` where connections are off — the one place doctor learns whether they are on, since the
+  discovery documents are the route it checks
+  ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d14) — and the build that
+  answered, in a `build` object:
 
   | Field | Value |
   |---|---|

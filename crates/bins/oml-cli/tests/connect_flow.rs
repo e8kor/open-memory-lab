@@ -12,6 +12,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use axum::response::IntoResponse as _;
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 use sqlx::postgres::PgConnection;
@@ -128,6 +129,15 @@ impl Lead {
     /// or unset, served on an ephemeral port, and its first admin key
     /// claimed over HTTP with the enrollment token the start minted.
     async fn start(issuer: Option<&str>) -> Option<Self> {
+        Self::start_behind(issuer, |router| router).await
+    }
+
+    /// [`Lead::start`], its router served through `front`: what the
+    /// public origin passes to the lead, standing in for a reverse proxy.
+    async fn start_behind(
+        issuer: Option<&str>,
+        front: impl FnOnce(axum::Router) -> axum::Router,
+    ) -> Option<Self> {
         let db = format!(
             "oml_test_connect_{}_{}_{}",
             std::process::id(),
@@ -156,7 +166,7 @@ impl Lead {
             .await
             .expect("ephemeral bind");
         let url = format!("http://{}", listener.local_addr().expect("local addr"));
-        let router = started.router;
+        let router = front(started.router);
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.expect("serve");
         });
@@ -720,6 +730,47 @@ async fn doctor_reports_oauth_discovery_failing_naming_the_url_when_the_issuer_d
             && l.contains("https://oml.example.invalid/.well-known/")),
         "{stdout}"
     );
+
+    lead.stop().await;
+}
+
+/// A proxy that forwards only `/mcp`, `/v1`, `/v2` and the probes answers
+/// `404` for `/.well-known/*`; with the lead naming an issuer that is still
+/// `failing` with the issuer's URL, never `off`, because whether
+/// connections are on is the lead's answer and not the route's (ADR-0031
+/// d14).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_reports_oauth_failing_not_off_when_the_public_origin_answers_404_for_discovery_while_the_lead_has_an_issuer()
+ {
+    let Some(lead) = Lead::start_behind(Some("https://oml.example.invalid"), |router| {
+        router.layer(axum::middleware::from_fn(
+            |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                if request.uri().path().starts_with("/.well-known/") {
+                    return axum::http::StatusCode::NOT_FOUND.into_response();
+                }
+                next.run(request).await
+            },
+        ))
+    })
+    .await
+    else {
+        return;
+    };
+    let (code, doctor, out) = lead.oml_json(&["doctor"]).await;
+    assert_eq!(code, 1, "{out}");
+    let discovery = &doctor["oauth_discovery"];
+    assert_eq!(discovery["state"], "failing", "{doctor}");
+    assert_eq!(
+        discovery["issuer"], "https://oml.example.invalid",
+        "{doctor}"
+    );
+    assert!(
+        discovery["url"]
+            .as_str()
+            .is_some_and(|u| u.starts_with("https://oml.example.invalid/.well-known/")),
+        "{doctor}"
+    );
+    assert_eq!(doctor["verdict"], "fail", "{doctor}");
 
     lead.stop().await;
 }

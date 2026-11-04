@@ -361,6 +361,9 @@ where
             },
             // Ready or not, the probe names the build it belongs to.
             "build": st.build.to_json(),
+            // The lead's oauth.issuer, or null: doctor reads whether
+            // connections are on here, off the route it checks (ADR-0031 d14).
+            "oauth_issuer": st.app.oauth_issuer().map(|issuer| issuer.as_str()),
         });
         let status = if ready {
             StatusCode::OK

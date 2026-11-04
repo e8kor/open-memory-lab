@@ -1190,6 +1190,8 @@ export interface components {
             checks: {
                 [key: string]: string;
             };
+            /** @description The lead's oauth.issuer, or null where connections are off; doctor reads whether connections are on here, not from the discovery paths it checks (ADR-0031 d14). */
+            oauth_issuer: string | null;
             build: components["schemas"]["Build"];
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
@@ -3042,6 +3044,7 @@ export interface operations {
                      *         "postgres": "ok",
                      *         "fork_check": "ok"
                      *       },
+                     *       "oauth_issuer": "https://oml.example.com",
                      *       "build": {
                      *         "version": "0.2.0",
                      *         "commit": "779e7e4c1f0d8a5b2e6c9f3a7d1b4e8c2a5f9d03",

@@ -2199,7 +2199,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let oauth = source
         .as_ref()
         .and_then(|s| s.url)
-        .map(|url| discovery::check(url));
+        .zip(ready.as_ref())
+        .map(|(url, (_, body))| discovery::check(url, body));
     let oauth_ok = !oauth.as_ref().is_some_and(|o| o["state"] == "failing");
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));

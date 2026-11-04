@@ -1,9 +1,10 @@
 //! Doctor's `oauth_discovery` check (observability.md, the doctor contract;
-//! ADR-0031 d14): the issuer the lead serves at the configured URL, then
-//! both discovery documents fetched again from that issuer's own origin,
-//! wherever the CLI runs, so a reverse proxy that does not pass
-//! `/.well-known/oauth-*` through, or a node serving another issuer, shows
-//! as `failing` with the URL that failed.
+//! ADR-0031 d14): the issuer the lead names on `/readyz`, a route that does
+//! not depend on the discovery documents, then both discovery documents
+//! fetched from that issuer's own origin, wherever the CLI runs, so a
+//! reverse proxy that does not pass `/.well-known/oauth-*` through, or a
+//! node serving another issuer, shows as `failing` with the URL that
+//! failed, and a lead naming no issuer is `off` whatever the route answers.
 
 use std::time::Duration;
 
@@ -48,22 +49,24 @@ pub fn mismatch(issuer: &str, authorization_server: &Value, protected: &Value) -
     None
 }
 
-/// The check against the lead at `url`: `off` where it serves no
-/// authorization server document (`oauth.issuer` unset), `ok` with the
-/// issuer where both documents fetched from the issuer describe it, and
-/// `failing` with the URL and the reason otherwise.
+/// The check against the lead whose `/readyz` at `url` answered `ready`:
+/// `off` where it names no `oauth_issuer` (`oauth.issuer` unset, or a lead
+/// that predates connections), `ok` with the issuer where both documents
+/// fetched from the issuer describe it, and `failing` with the URL and the
+/// reason otherwise.
 #[must_use]
-pub fn check(url: &str) -> Value {
-    let lead_url = format!("{}{AUTHORIZATION_SERVER}", url.trim_end_matches('/'));
-    let lead = Client::with_timeout(url.to_owned(), None, FETCH_TIMEOUT);
-    let issuer = match lead.probe(AUTHORIZATION_SERVER) {
-        Ok((404, _)) => return json!({ "state": "off" }),
-        Ok((200, doc)) => match doc["issuer"].as_str() {
-            Some(issuer) => issuer.to_owned(),
-            None => return failing(None, &lead_url, "the document names no issuer"),
-        },
-        Ok((status, _)) => return failing(None, &lead_url, &format!("status {status}")),
-        Err(e) => return failing(None, &lead_url, &why(e)),
+pub fn check(url: &str, ready: &Value) -> Value {
+    let issuer = match &ready["oauth_issuer"] {
+        Value::Null => return json!({ "state": "off" }),
+        Value::String(issuer) => issuer.clone(),
+        other => {
+            let readyz = format!("{}/readyz", url.trim_end_matches('/'));
+            return failing(
+                None,
+                &readyz,
+                &format!("oauth_issuer is {other}, not a string or null"),
+            );
+        }
     };
     let public = Client::with_timeout(issuer.clone(), None, FETCH_TIMEOUT);
     let mut documents = Vec::new();

@@ -168,6 +168,20 @@ async fn with_oauth_issuer_unset_the_discovery_documents_and_oauth_endpoints_ans
     }
 }
 
+/// `/readyz` names the lead's `oauth.issuer`, or null where it is unset,
+/// on a route that does not depend on the discovery documents, so doctor
+/// learns whether connections are on from the lead and not from the path
+/// it is checking (ADR-0031 d14).
+#[tokio::test]
+async fn readyz_names_the_leads_oauth_issuer_or_null_where_it_is_unset() {
+    for (issuer, expected) in [(Some(ISSUER), json!(ISSUER)), (None, Value::Null)] {
+        let rig = rig(issuer);
+        let (_, _, body) = send(&rig.router, get("/readyz")).await;
+        let body = json_of(&body);
+        assert_eq!(body["oauth_issuer"], expected, "{body}");
+    }
+}
+
 /// The documents are the issuer's, whatever `Host` the request names
 /// (RFC 9728 §3.3; ADR-0031 d3).
 #[tokio::test]
