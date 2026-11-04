@@ -12,6 +12,13 @@ import createClient, { type Client } from "openapi-fetch";
 import { ConfigError, TransportError, errorFromResponse, refusedLocally } from "./errors.ts";
 import type { components, operations, paths } from "./generated/schema.ts";
 
+/**
+ * What every request sends as User-Agent, where the runtime lets a request set it (Node does;
+ * a browser keeps its own): the server's request log names the client by it (ADR-0042 d9).
+ * The version is package.json's, which a unit test holds it to.
+ */
+export const USER_AGENT = "oml-sdk-typescript/0.2.0";
+
 type Schemas = components["schemas"];
 export type SubmitRequest = Schemas["SubmitRequest"];
 export type SubmitAccepted = Schemas["SubmitAccepted"];
@@ -183,7 +190,7 @@ export class OmlClient {
     this.#timeoutMs = options.timeoutMs ?? 10_000;
     this.#api = createClient<paths>({
       baseUrl: this.#url,
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
       ...(options.fetch ? { fetch: options.fetch } : {}),
     });
   }

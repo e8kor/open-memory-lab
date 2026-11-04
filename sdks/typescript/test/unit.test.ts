@@ -14,6 +14,7 @@ import {
   type ReadInput,
   RequestError,
   SubmissionError,
+  USER_AGENT,
   type WriteInput,
   errorFromResponse,
 } from "../src/index.ts";
@@ -402,4 +403,12 @@ test("the generated SDK carries no operation the server does not route", () => {
     readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
   );
   assert.deepEqual([...generated].sort(), [...declared].sort());
+});
+
+test("every request names the SDK and package.json's version in User-Agent (ADR-0042 d9)", async () => {
+  const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(USER_AGENT, `oml-sdk-typescript/${version}`);
+  const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
+  await client(fetcher).read({ limit: 1 });
+  assert.equal(requests[0]?.headers.get("user-agent"), USER_AGENT);
 });
