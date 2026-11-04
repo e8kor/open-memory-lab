@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use oml_app::App;
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::{
     Issuer, UNUSED_REGISTRATIONS_MAX, authorization_server_document, protected_resource_document,
@@ -586,8 +587,10 @@ async fn issue_connector(rig: &Rig) -> String {
                     node: boot.root_workarea_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
+                    covers: Covers::Subtree,
                 }],
                 connect_code: true,
+                user: None,
             },
         )
         .await

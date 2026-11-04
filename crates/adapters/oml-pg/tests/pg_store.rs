@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use oml_app::App;
-use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::ConnectionState;
 use oml_app::domain::{
@@ -1298,6 +1298,7 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
             node,
             role: Role::Reader,
             deny: Vec::new(),
+            covers: Covers::Subtree,
         },
     )
     .await
@@ -2367,13 +2368,25 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
     let mut rows = Vec::new();
     for table in POC_TABLES.iter().copied().chain(["journal"]) {
         let row = match (renamed, table) {
-            (true, "tenants" | "workareas") => {
+            (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path') \
                  || jsonb_build_object('name', t.prior_name)"
             }
+            // 0014 adds user_root and namespace_root_id, folded as false and
+            // null for every workarea it finds (ADR-0044 d12).
+            (true, "workareas") => {
+                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
+                 - 'namespace_root_id') || jsonb_build_object('name', t.prior_name)"
+            }
             // 0012 adds credential, folded as bearer for every key it finds
-            // (ADR-0031 d7).
-            (true, "api_keys") => "to_jsonb(t) - 'name' - 'crew_id' - 'credential'",
+            // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
+            // finds (ADR-0044 d12).
+            (true, "api_keys") => {
+                "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id'"
+            }
+            // 0014 adds covers, subtree for every grant it finds (ADR-0044
+            // d12).
+            (true, "grants") => "to_jsonb(t) - 'covers'",
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };
@@ -5134,5 +5147,125 @@ async fn deleting_an_authorization_row_by_handle_returns_its_code_tenant_and_key
         Vec::new(),
         "a second delete with the same handle finds no row"
     );
+    drop_dbs(&created).await;
+}
+
+/// ADR-0044 d12: migration 0014 rewrites nothing and journals nothing; a key
+/// issued before users folds as a tenant key, a workarea as a shared one
+/// that is no user root, and a grant as covering its node's subtree, as
+/// their journal events, which carry none of the new fields, say.
+#[tokio::test]
+async fn a_key_issued_before_users_folds_as_a_tenant_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 13).await;
+    let tenant = Uuid::from_u128(0xA440);
+    let (universe, crew, key, grant) = (
+        Uuid::from_u128(0xB440),
+        Uuid::from_u128(0xB441),
+        Uuid::from_u128(0xD440),
+        Uuid::from_u128(0xF440),
+    );
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, 'oml')")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    for (w, parent, w_name) in [(universe, None, "universe"), (crew, Some(universe), "crew")] {
+        sqlx::query(
+            "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status) \
+             VALUES ($1, $2, $3, $4, text2ltree($5), 'development')",
+        )
+        .bind(w)
+        .bind(tenant)
+        .bind(parent)
+        .bind(w_name)
+        .bind(if parent.is_some() {
+            "universe.crew"
+        } else {
+            "universe"
+        })
+        .execute(&mut *tx)
+        .await
+        .expect("a workarea before users");
+    }
+    sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, hash, role, principal, held_by, issued_seq, \
+         name, default_workarea_id, credential) \
+         VALUES ($1, $2, $3, 'writer', 'crew/claude-mobile', 'agent', 3, 'claude-mobile', $4, \
+         'bearer')",
+    )
+    .bind(key)
+    .bind(tenant)
+    .bind(Sha256Hash::digest(b"a key before users").0.to_vec())
+    .bind(crew)
+    .execute(&mut *tx)
+    .await
+    .expect("a key before users");
+    sqlx::query(
+        "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, epoch) \
+         VALUES ($1, $2, $3, 'writer', $4, 4)",
+    )
+    .bind(grant)
+    .bind(tenant)
+    .bind(key)
+    .bind(crew)
+    .execute(&mut *tx)
+    .await
+    .expect("a grant before users");
+    tx.commit().await.expect("commit the rows before users");
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0014 applies over rows before users");
+
+    let stored = store
+        .key(tenant, key)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(stored.user, None, "a tenant key");
+    let access = store
+        .key_access(tenant, key)
+        .await
+        .expect("read")
+        .expect("access");
+    assert_eq!(access.grants.len(), 1);
+    assert_eq!(access.grants[0].grant.covers, Covers::Subtree);
+    for w in [universe, crew] {
+        let row = store
+            .workarea(tenant, w)
+            .await
+            .expect("read")
+            .expect("the workarea");
+        assert!(!row.user_root);
+        assert_eq!(row.namespace, None, "shared");
+    }
+    assert_eq!(
+        store
+            .resolve_name(tenant, NamedKind::Workarea, &name("crew"))
+            .await
+            .expect("resolve"),
+        Some(crew),
+        "its name stays in the shared namespace"
+    );
+    let journal: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    assert_eq!(journal, 0, "the upgrade journals nothing");
+    drop(conn);
     drop_dbs(&created).await;
 }

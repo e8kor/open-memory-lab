@@ -115,7 +115,9 @@ pub enum MetadataFold {
         name: Name,
     },
     /// `workarea.create`: the node, its path derived from its parent's path
-    /// and its name (postgres-schema.md `workareas`).
+    /// and its name (postgres-schema.md `workareas`). Its name is unique in
+    /// its namespace, the shared one or its user root's, and refused with
+    /// [`StoreError::NameTaken`] otherwise (ADR-0044 d5).
     WorkareaCreated(WorkareaRecord),
     /// `key.issued`: the key row, its `issued_seq` this commit's seq, with
     /// its credential. A connector key (`Credential::Connection`) carries no
@@ -610,11 +612,25 @@ pub trait JournalStore: Send + Sync {
     /// in the deployment's namespace and operator-key names in the
     /// provider's, which the operator tier reads and which this read never
     /// consults: a [`NamedKind::Tenant`] resolves nothing here, and no tenant
-    /// holds the provider tenant's nil id, so nothing resolves under it.
+    /// holds the provider tenant's nil id, so nothing resolves under it. A
+    /// [`NamedKind::Workarea`] resolves in the shared namespace alone:
+    /// `universe`, each user root and each shared workarea (ADR-0044 d5).
     fn resolve_name(
         &self,
         tenant_id: Uuid,
         kind: NamedKind,
+        name: &Name,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
+
+    /// The id of the workarea that holds `name` in the namespace of the
+    /// user root `user_root`: the names strictly beneath that root; `None`
+    /// when none does, and for a `user_root` that is no user root, whose
+    /// namespace holds nothing (ADR-0044 d5). [`JournalStore::resolve_name`]
+    /// of a workarea reads the shared namespace alone.
+    fn resolve_user_workarea(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
         name: &Name,
     ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
 

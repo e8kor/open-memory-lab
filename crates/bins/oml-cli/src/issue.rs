@@ -35,9 +35,15 @@ pub fn with_reader_beside_writers(
     let mut sent: Vec<(String, String)> = Vec::with_capacity(grants.len() * 2);
     for (node, role) in grants {
         sent.push((node.clone(), role.clone()));
-        let reads = |(n, r): &(String, String)| n == node && r == "reader";
-        if role == "writer" && !write_only && !grants.iter().chain(&sent).any(reads) {
-            sent.push((node.clone(), "reader".to_owned()));
+        // A writer grant on the node alone brings a reader grant on the node
+        // alone (ADR-0044 d4).
+        let (base, reader) = match role.split_once(':') {
+            Some((base, covers)) => (base, format!("reader:{covers}")),
+            None => (role.as_str(), "reader".to_owned()),
+        };
+        let reads = |(n, r): &(String, String)| n == node && *r == reader;
+        if base == "writer" && !write_only && !grants.iter().chain(&sent).any(reads) {
+            sent.push((node.clone(), reader.clone()));
         }
     }
     sent
@@ -313,7 +319,34 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line};
+    use super::{
+        KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line,
+        with_reader_beside_writers,
+    };
+
+    /// ADR-0044 d4 with ADR-0028 d2: a writer grant on a node alone brings a
+    /// reader grant on that node alone, and a subtree writer grant a subtree
+    /// reader grant.
+    #[test]
+    fn a_writer_node_grant_brings_a_reader_node_grant() {
+        let sent = with_reader_beside_writers(
+            &[
+                ("universe".to_owned(), "writer:node".to_owned()),
+                ("alice".to_owned(), "writer".to_owned()),
+            ],
+            false,
+        );
+        let pairs: Vec<(&str, &str)> = sent.iter().map(|(n, r)| (n.as_str(), r.as_str())).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("universe", "writer:node"),
+                ("universe", "reader:node"),
+                ("alice", "writer"),
+                ("alice", "reader"),
+            ]
+        );
+    }
 
     /// A `201` of `POST /v2/keys` with `connect_code: true`, as openapi.yaml
     /// `IssuedKey` and `ConnectCode` shape it; a replay omits the code.

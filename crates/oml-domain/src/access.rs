@@ -15,9 +15,41 @@ use uuid::Uuid;
 
 use crate::model::{HeldBy, Role};
 
-/// One grant on a key: one role over the subtree of one workarea node, with
-/// its own deny entries, each a subtree masked within this grant only
-/// (workareas.md, per-grant attenuation).
+/// What a grant covers: its node's whole subtree, the default and every
+/// grant before ADR-0044, or its node alone (ADR-0044 d4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Covers {
+    #[default]
+    Subtree,
+    Node,
+}
+
+impl Covers {
+    /// The wire and journal spelling: `subtree` or `node`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Covers::Subtree => "subtree",
+            Covers::Node => "node",
+        }
+    }
+
+    /// The value its spelling names; `None` for any other text.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "subtree" => Some(Covers::Subtree),
+            "node" => Some(Covers::Node),
+            _ => None,
+        }
+    }
+}
+
+/// One grant on a key: one role over the subtree of one workarea node, or
+/// over the node alone with [`Covers::Node`], with its own deny entries, each
+/// a subtree masked within this grant only (workareas.md, per-grant
+/// attenuation; ADR-0044 d4). A node grant carries no deny entry, since
+/// nothing beneath it is covered to mask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub grant_id: Uuid,
@@ -26,6 +58,22 @@ pub struct Grant {
     pub role: Role,
     /// Subtree roots this grant does not cover.
     pub deny: Vec<Uuid>,
+    /// The node's subtree, or the node alone (ADR-0044 d4).
+    pub covers: Covers,
+}
+
+impl Grant {
+    /// Whether the grant covers the node whose ancestry, node to root, this
+    /// is, before its deny entries: a subtree grant when its node is the node
+    /// or an ancestor of it, a node grant only when its node is the node
+    /// (ADR-0044 d4).
+    #[must_use]
+    pub fn reaches(&self, ancestry: &[Uuid]) -> bool {
+        match self.covers {
+            Covers::Subtree => ancestry.contains(&self.node),
+            Covers::Node => ancestry.first() == Some(&self.node),
+        }
+    }
 }
 
 /// A global per-key denial: a subtree the key cannot reach whatever its
@@ -126,8 +174,9 @@ pub fn check_issuance(
 }
 
 /// `effective_roles(N)` (workareas.md, effective access; ADR-0025 d1):
-/// every grant on N or an ancestor of N, less each grant whose own deny list
-/// names N or an ancestor of N, unioned; the empty set when any global
+/// every subtree grant on N or an ancestor of N and every node grant on N
+/// itself (ADR-0044 d4), less each grant whose own deny list names N or an
+/// ancestor of N, unioned; the empty set when any global
 /// denial names N or an ancestor of N. `ancestry` runs from N to the root;
 /// an empty ancestry — an unknown node — confers nothing.
 #[must_use]
@@ -141,7 +190,7 @@ pub fn effective_roles(
     }
     grants
         .iter()
-        .filter(|g| ancestry.contains(&g.node))
+        .filter(|g| g.reaches(ancestry))
         .filter(|g| !g.deny.iter().any(|d| ancestry.contains(d)))
         .map(|g| g.role)
         .collect()

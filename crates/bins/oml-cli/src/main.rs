@@ -319,14 +319,20 @@ struct KeysIssueArgs {
     /// none; some grant must cover it. Omitted, the first grant's node.
     #[arg(long)]
     default_workarea: Option<String>,
-    /// Grant as <workarea>:<role>, the workarea by id or name; repeatable. A
-    /// writer grant brings a reader grant on the same workarea unless
-    /// --write-only.
+    /// Grant as <workarea>:<role>, or <workarea>:<role>:node for the node
+    /// alone (ADR-0044 d4), the workarea by id or name; repeatable. A writer
+    /// grant brings a reader grant on the same workarea, with the same
+    /// coverage, unless --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
     /// The key's crew record, by id or name, fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
+    /// The person the key acts for: a user key, whose grants lie in the
+    /// user's root `universe.<user>` and whose workarea names resolve there;
+    /// the first key naming a user creates the root (ADR-0044 d2, d11).
+    #[arg(long)]
+    user: Option<String>,
     /// Send the writer grants alone, with no reader grant beside them
     /// (ADR-0028 d2).
     #[arg(long)]
@@ -347,9 +353,14 @@ struct IssueAgentArgs {
     #[arg(long)]
     principal: String,
     /// The workarea, by id or name, the key writes and recalls on, and its
-    /// default.
+    /// default. With --user it is optional, defaults to the user's root, and
+    /// resolves in that user's namespace (ADR-0044 d11).
     #[arg(long)]
-    workarea: String,
+    workarea: Option<String>,
+    /// The person the key acts for: a user key under `universe.<user>`, the
+    /// root created by the first key naming the user (ADR-0044 d2, d11).
+    #[arg(long)]
+    user: Option<String>,
     /// The key's crew record, by id or name, fixed for the key's life
     /// (ADR-0026 d12).
     #[arg(long)]
@@ -672,15 +683,22 @@ struct VerifyChainArgs {
     tenant: Option<String>,
 }
 
-/// `<workarea>:<role>`, the workarea by id or name, sent as typed: the
+/// `<workarea>:<role>`, or `<workarea>:<role>:node` for a grant on the node
+/// alone (ADR-0044 d4), the workarea by id or name, sent as typed: the
 /// server classifies and resolves it, the CLI neither (cli/reference.md
 /// conventions; ADR-0026 d4). Neither an id nor a name holds a `:`, so the
-/// first one splits the two.
+/// first one splits the two; the role keeps its `:node` suffix until
+/// [`grants_json`] sends it as `covers`.
 fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
         .ok_or_else(|| format!("{s:?} is not <workarea>:<role>"))?;
-    Ok((node.to_owned(), role.to_owned()))
+    match role.split_once(':') {
+        None | Some((_, "node")) => Ok((node.to_owned(), role.to_owned())),
+        Some(_) => Err(format!(
+            "{s:?} is not <workarea>:<role> or <workarea>:<role>:node"
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -987,6 +1005,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(crew) = &args.crew {
                 body["crew"] = json!(crew);
             }
+            if let Some(user) = &args.user {
+                body["user"] = json!(user);
+            }
             if let Some(p) = &args.principal {
                 body["principal"] = json!(p);
             }
@@ -1004,12 +1025,16 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    key    : {}", field(&response, "value"));
                 println!("    role   : {}", field(&response, "role"));
                 println!("    default: {}", field(&response, "default_workarea_id"));
+                if response["user"].is_object() {
+                    println!("    user   : {}", field(&response["user"], "name"));
+                }
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
                         println!(
-                            "    grant  : {} : {}",
+                            "    grant  : {} : {}{}",
                             field(g, "workarea_node_id"),
-                            field(g, "role")
+                            field(g, "role"),
+                            node_suffix(g)
                         );
                     }
                 }
@@ -1040,12 +1065,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    principal: {}", field(&response, "principal"));
                 println!("    held by  : {}", field(&response, "held_by"));
                 println!("    crew     : {}", field(&response, "crew_id"));
+                println!("    user     : {}", field(&response["user"], "name"));
                 println!("    default  : {}", field(&response, "default_workarea_id"));
                 for g in response["grants"].as_array().into_iter().flatten() {
                     println!(
-                        "    grant    : {} : {}",
+                        "    grant    : {} : {}{}",
                         field(g, "workarea_node_id"),
-                        field(g, "role")
+                        field(g, "role"),
+                        node_suffix(g)
                     );
                 }
                 for d in response["denials"].as_array().into_iter().flatten() {
@@ -1384,6 +1411,16 @@ fn field<'a>(v: &'a Value, name: &str) -> &'a str {
     v[name].as_str().unwrap_or("—")
 }
 
+/// ` (node)` for a grant on its node alone, empty for a subtree grant
+/// (ADR-0044 d4).
+fn node_suffix(grant: &Value) -> &'static str {
+    if grant["covers"] == "node" {
+        " (node)"
+    } else {
+        ""
+    }
+}
+
 /// A crew record as one line: its name and id, or `—` for none.
 fn crew_line(crew: &Value) -> String {
     if crew.is_object() {
@@ -1398,7 +1435,11 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| json!({ "workarea": node, "role": role }))
+        .map(|(node, role)| match role.split_once(':') {
+            // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
+            Some((role, covers)) => json!({ "workarea": node, "role": role, "covers": covers }),
+            None => json!({ "workarea": node, "role": role }),
+        })
         .collect()
 }
 
@@ -1822,25 +1863,38 @@ fn run_issue_agent(
              value; nothing was sent (ADR-0028 d1)",
         ));
     }
+    // With --user the workarea defaults to the user's root, which the
+    // server resolves in that user's namespace (ADR-0044 d11).
+    let workarea = match (&args.workarea, &args.user) {
+        (Some(workarea), _) => workarea.clone(),
+        (None, Some(user)) => user.clone(),
+        (None, None) => {
+            return Err(CliError::local(
+                "refused: --workarea is required without --user; nothing was sent \
+                 (ADR-0028 d1; ADR-0044 d11)",
+            ));
+        }
+    };
     let client = resolve(cli, stored)?;
     let key_file = match &args.out {
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    let grants = with_reader_beside_writers(
-        &[(args.workarea.clone(), "writer".to_owned())],
-        args.write_only,
-    );
+    let grants =
+        with_reader_beside_writers(&[(workarea.clone(), "writer".to_owned())], args.write_only);
     let mut body = json!({
         "role": "writer",
         "name": args.key_name,
         "held_by": args.held_by,
         "principal": args.principal,
-        "default_workarea": args.workarea,
+        "default_workarea": workarea,
         "grants": grants_json(&grants),
     });
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
+    }
+    if let Some(user) = &args.user {
+        body["user"] = json!(user);
     }
     if args.connect_code {
         body["connect_code"] = json!(true);
@@ -1930,7 +1984,14 @@ fn run_issue_agent(
         .map(|grants| {
             grants
                 .iter()
-                .map(|g| format!("{}:{}", field(g, "workarea_node_id"), field(g, "role")))
+                .map(|g| {
+                    format!(
+                        "{}:{}{}",
+                        field(g, "workarea_node_id"),
+                        field(g, "role"),
+                        if g["covers"] == "node" { ":node" } else { "" }
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -2146,12 +2207,13 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
         print_json(&me);
     } else {
         println!(
-            "logged in to {} as key {} ({}): role {}, tenant {}, default workarea {}",
+            "logged in to {} as key {} ({}): role {}, tenant {}, user root {}, default workarea {}",
             client.server(),
             field(&me, "name"),
             field(&me, "key_id"),
             field(&me, "role"),
             field(&me["tenant"], "name"),
+            user_root_line(&me),
             field(&me["default_workarea"], "path"),
         );
         println!(
@@ -2161,6 +2223,15 @@ fn run_login(cli: &Cli, target: &str) -> Result<ExitCode, CliError> {
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A key's user root as `oml login` and `oml doctor` print it:
+/// `universe.<user>`, or `none (tenant key: …)` (ADR-0044 d11, d14).
+fn user_root_line(me: &Value) -> String {
+    match me["user"]["name"].as_str() {
+        Some(user) => format!("universe.{user}"),
+        None => "none (tenant key: names resolve in the shared namespace)".to_owned(),
+    }
 }
 
 /// The API key for `url`, read as [`read_secret`] reads it.
@@ -2852,6 +2923,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut ready = None;
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
+    // A user key reads universe's own claims through its node grant; one
+    // that cannot is warned about (ADR-0044 d14).
+    let mut reads_universe: Option<bool> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -2859,6 +2933,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            if let Some(Ok(v)) = &me
+                && v["user"].is_object()
+            {
+                reads_universe = Some(match client.get("/v2/workareas/universe") {
+                    Ok(_) => true,
+                    Err(CliError::Refused { .. }) => false,
+                    Err(other) => return Err(other),
+                });
+            }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
                 .ok()
@@ -2876,7 +2959,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let whoami_ok = !matches!(me, Some(Err(_)));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() {
+    } else if me.is_none() || reads_universe == Some(false) {
         "warn"
     } else {
         "ok"
@@ -2885,6 +2968,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         Some(Ok(v)) => json!({
             "role": v["role"],
             "tenant": v["tenant"]["name"],
+            "user": v["user"]["name"],
             "default_workarea": v["default_workarea"]["path"],
         }),
         Some(Err(e)) => json!({ "error": refusal(e) }),
@@ -2905,6 +2989,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "readyz": probe_json(&ready),
             "whoami": whoami,
             "chain_head_seq": head_seq,
+            "reads_universe": reads_universe,
             "oauth_discovery": oauth,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
@@ -2942,6 +3027,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             ),
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
+        }
+        if let Some(Ok(v)) = &me {
+            match v["user"]["name"].as_str() {
+                Some(user) => println!("user        : {user} (root universe.{user})"),
+                None => println!(
+                    "user        : none (tenant key: names resolve in the shared namespace)"
+                ),
+            }
+        }
+        if reads_universe == Some(false) {
+            println!("universe    : warn: this key does not read universe's claims");
         }
         match head_seq {
             Some(seq) => println!("chain head  : seq {seq}"),

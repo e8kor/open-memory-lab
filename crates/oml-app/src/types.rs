@@ -1,6 +1,6 @@
 //! Application-layer records and use-case request/response shapes.
 
-use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::access::{Covers, Grant, KeyDenial};
 use oml_domain::budget::Budget;
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
@@ -86,6 +86,10 @@ pub struct KeyRecord {
     /// The crew record named at issuance, fixed for the key's life; `None`
     /// for a key with no crew (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The user root of the person the key acts for, fixed for the key's
+    /// life: a **user key**; `None` for a **tenant key**, every key issued
+    /// before ADR-0044 included (ADR-0044 d2, d12).
+    pub user: Option<Uuid>,
     /// The `at` of the key's `key.revoked`; the row stays as history, so a
     /// revoked key reads back with it. `None` for a live key, as every
     /// issuance folds one (postgres-schema.md `api_keys.revoked_at`;
@@ -718,6 +722,28 @@ pub struct WorkareaRecord {
     /// The crew record the workarea names; `None` when it names none
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// A user root, `universe.<user>`, which only issuance creates; fixed at
+    /// creation (ADR-0044 d1).
+    pub user_root: bool,
+    /// The user root whose namespace holds this node's name: the root a
+    /// node lies strictly beneath, `None` for a shared node, `universe` and
+    /// every user root included (ADR-0044 d5). Fixed at creation, since no
+    /// node crosses a user root's boundary (d1).
+    pub namespace: Option<Uuid>,
+}
+
+impl WorkareaRecord {
+    /// The user root the node belongs to: itself for a user root, the root
+    /// whose namespace holds it beneath one, `None` for a shared node
+    /// (ADR-0044 d1).
+    #[must_use]
+    pub fn user(&self) -> Option<Uuid> {
+        if self.user_root {
+            Some(self.workarea_id)
+        } else {
+            self.namespace
+        }
+    }
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
@@ -929,6 +955,11 @@ pub struct ServedMemory {
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,
+    /// A `universe` version served to a key outside its authoring key set:
+    /// no principal, no `derives_from`, and the memory's author and lineage
+    /// fields blanked, so no field says where its source lived (ADR-0044
+    /// d9). The transport serves `principal` null.
+    pub anonymous: bool,
 }
 
 impl MemoryRecord {
@@ -983,6 +1014,9 @@ pub struct IssuedKey {
     /// The crew record named at issuance, fixed for the key's life
     /// (ADR-0026 d8).
     pub crew_id: Option<Uuid>,
+    /// The key's user root, by id and name; `None` for a tenant key
+    /// (ADR-0044 d2, d11).
+    pub user: Option<NamedRef>,
     pub access: KeyAccess,
     /// A connector key's connect code, returned only after the key's last
     /// `grant.issued` and its `connection.code_issued` committed; `None` for
@@ -1037,6 +1071,11 @@ pub struct IssueKeyRequest {
     /// hold is absent at step 4 (ADR-0026 d8).
     pub crew: Option<Reference>,
     pub grants: Vec<GrantRequest>,
+    /// The person the key acts for, by the user's name: a user key, whose
+    /// grants lie in that user's root and whose references resolve in its
+    /// namespace. The first key naming a user creates its root (ADR-0044
+    /// d2, d3, d5).
+    pub user: Option<Name>,
     /// Issue a connector key: no value, a connect code in its place, after
     /// step 7 admits a key that can hold a connection (roles-and-keys.md
     /// issuance order, step 7; ADR-0031 d7).
@@ -1051,6 +1090,8 @@ pub struct GrantRequest {
     pub node: Reference,
     pub role: Role,
     pub deny: Vec<Reference>,
+    /// The node's subtree, the default, or the node alone (ADR-0044 d4).
+    pub covers: Covers,
 }
 
 /// `POST /v2/crews` (http-api.md crews; ADR-0026 d8): every field but the
@@ -1345,6 +1386,9 @@ pub struct CrewPage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDetail {
     pub key: KeyRecord,
+    /// The key's user root, by id and name; `None` for a tenant key
+    /// (ADR-0044 d11).
+    pub user: Option<NamedRef>,
     pub held_by: Option<HeldBy>,
     pub access: KeyAccess,
 }
@@ -1374,6 +1418,8 @@ pub struct KeyReferences {
     pub tenant: NamedRef,
     pub default_workarea: Option<WorkareaRef>,
     pub crew: Option<NamedRef>,
+    /// The key's user root (ADR-0044 d11).
+    pub user: Option<NamedRef>,
 }
 
 /// `GET /v2/whoami`: the calling key's own record, the references it names
@@ -1386,6 +1432,9 @@ pub struct Whoami {
     pub tenant: Option<NamedRef>,
     pub default_workarea: Option<WorkareaRef>,
     pub crew: Option<NamedRef>,
+    /// The key's user root, by id and name, from which a client learns its
+    /// root; `None` for a tenant key (ADR-0044 d11).
+    pub user: Option<NamedRef>,
     pub grants: Vec<GrantRecord>,
 }
 
@@ -1516,6 +1565,39 @@ pub enum AppError {
         "an admin key never carries a dreamer grant (roles-and-keys.md two-key rule, access.role_exclusive)"
     )]
     RoleExclusive,
+    /// A user key's grant names a node outside its user's root: issuer
+    /// ceiling, with the root the grant must lie in (ADR-0044 d3).
+    #[error(
+        "grant {grant_index} lies outside the root of user {} (ADR-0044 d3, access.issuer_ceiling)",
+        .user.as_str()
+    )]
+    GrantOutsideUserRoot {
+        role: Role,
+        admissible: &'static [Role],
+        grant_index: usize,
+        user: Name,
+    },
+    /// `user` on a key that acts for no person, or naming `universe`
+    /// (ADR-0044 d2, d14; request.validation, field user).
+    #[error("{0} (ADR-0044 d2, request.validation, field user)")]
+    UserRefused(&'static str),
+    /// A node grant carries no deny entry, since nothing beneath it is
+    /// covered (ADR-0044 d4; request.validation, field /grants/<i>/deny).
+    #[error(
+        "grant {grant_index} covers its node alone and takes no deny entry (ADR-0044 d4, request.validation)"
+    )]
+    NodeGrantDeny { grant_index: usize },
+    /// A user key's claim write addresses `universe`, which only curators
+    /// write: answered in place of `access.grant_refused` (ADR-0044 d7, d14;
+    /// errors.md `submission.universe_refused`).
+    #[error(
+        "universe holds only claims its curators write; a user key never writes there (ADR-0044 d7, submission.universe_refused)"
+    )]
+    UniverseRefused,
+    /// The key names a user root that is not one: the lead serves it
+    /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
+    #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]
+    UserRootInvalid,
     #[error(
         "the node is readable but effective access does not confer {needed_role:?} (roles-and-keys.md refusal order, access.grant_refused)"
     )]

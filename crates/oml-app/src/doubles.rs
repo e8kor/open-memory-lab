@@ -13,7 +13,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde_json::Value;
 use uuid::Uuid;
 
-use oml_domain::access::{Grant, KeyDenial};
+use oml_domain::access::{Covers, Grant, KeyDenial};
 use oml_domain::budget::{hit_order, steering_order};
 use oml_domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_domain::oauth::{
@@ -300,6 +300,17 @@ impl MemStore {
             .map_or(0, |t| t.lock().expect("tenant lock").outbox.len())
     }
 
+    /// Points a key row at `user` as its user root, as no verb does: a
+    /// fixture for the refusal of a key whose row names a node that is not a
+    /// user root (ADR-0044 d14).
+    pub fn set_key_user(&self, tenant_id: Uuid, key_id: Uuid, user: Option<Uuid>) {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if let Some(key) = state.keys.get_mut(&key_id) {
+            key.user = user;
+        }
+    }
+
     /// Test visibility: how many names have been looked up through
     /// `resolve_name` on any handle, so a test can show that a refusal came
     /// before any resolution (ADR-0026 d4).
@@ -429,6 +440,7 @@ fn fold_poc_event(
                     key_hash: None,
                     name: None,
                     crew_id: None,
+                    user: None,
                     revoked_at: None,
                 },
             );
@@ -440,6 +452,7 @@ fn fold_poc_event(
                 node: poc_required_id(payload, "workarea_node_id")?,
                 role: role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?,
                 deny: Vec::new(),
+                covers: Covers::Subtree,
             };
             if let Some(access) = state.access.get_mut(&key_id) {
                 access.grants.push(GrantRecord {
@@ -701,11 +714,25 @@ fn apply_fold(
         MetadataFold::TenantGenesis { .. } | MetadataFold::VerdictRecorded { .. } => {}
         MetadataFold::WorkareaCreated(workarea) => {
             require_universe_root(&workarea)?;
+            // Unique in its namespace: the shared one, or its user root's,
+            // as the two unique indexes hold (ADR-0044 d5).
             require_free_name(
-                state.workareas.values().map(|w| &w.name),
+                state
+                    .workareas
+                    .values()
+                    .filter(|w| w.namespace == workarea.namespace)
+                    .map(|w| &w.name),
                 NamedKind::Workarea,
                 &workarea.name,
             )?;
+            if let Some(root) = workarea.namespace
+                && !state.workareas.get(&root).is_some_and(|w| w.user_root)
+            {
+                return Err(StoreError::Backend(format!(
+                    "workarea {}'s namespace {root} is not a user root of this tenant",
+                    workarea.workarea_id
+                )));
+            }
             require_crew(state, workarea.crew_id)?;
             require_parent(state, workarea.parent_id)?;
             state.workareas.insert(workarea.workarea_id, workarea);
@@ -765,6 +792,14 @@ fn apply_fold(
                 )?;
             }
             require_crew(state, key.crew_id)?;
+            if let Some(root) = key.user
+                && !state.workareas.contains_key(&root)
+            {
+                return Err(StoreError::Backend(format!(
+                    "key {}'s user root {root} is not held by this tenant",
+                    key.key_id
+                )));
+            }
             state.access.insert(
                 key.key_id,
                 KeyAccess {
@@ -1111,10 +1146,16 @@ fn assign_names_fold(
                     name: assignment.name.clone(),
                     crew: unnamed.crew,
                     crew_id: crew_of.remove(&id),
+                    user_root: false,
+                    namespace: None,
                 };
                 require_universe_root(&workarea)?;
                 require_free_name(
-                    state.workareas.values().map(|w| &w.name),
+                    state
+                        .workareas
+                        .values()
+                        .filter(|w| w.namespace.is_none())
+                        .map(|w| &w.name),
                     NamedKind::Workarea,
                     &workarea.name,
                 )?;
@@ -1715,10 +1756,11 @@ impl JournalStore for MemStore {
         };
         let state = tenant.lock().expect("tenant lock");
         Ok(match kind {
+            // The shared namespace alone (ADR-0044 d5).
             NamedKind::Workarea => state
                 .workareas
                 .values()
-                .find(|w| &w.name == name)
+                .find(|w| w.namespace.is_none() && &w.name == name)
                 .map(|w| w.workarea_id),
             NamedKind::Crew => state
                 .crews
@@ -1733,6 +1775,24 @@ impl JournalStore for MemStore {
             // A tenant's name is in the deployment's namespace.
             NamedKind::Tenant => None,
         })
+    }
+
+    async fn resolve_user_workarea(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        name: &Name,
+    ) -> Result<Option<Uuid>, StoreError> {
+        self.name_lookups.fetch_add(1, Ordering::SeqCst);
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .workareas
+            .values()
+            .find(|w| w.namespace == Some(user_root) && &w.name == name)
+            .map(|w| w.workarea_id))
     }
 
     async fn crew(&self, tenant_id: Uuid, crew_id: Uuid) -> Result<Option<CrewRecord>, StoreError> {
@@ -1813,6 +1873,13 @@ impl JournalStore for MemStore {
             }),
             None => None,
         };
+        let user = match key.user {
+            Some(root) => self.workarea(tenant_id, root).await?.map(|w| NamedRef {
+                id: w.workarea_id,
+                name: w.name,
+            }),
+            None => None,
+        };
         Ok(Some(KeyReferences {
             tenant: NamedRef {
                 id: tenant_id,
@@ -1820,6 +1887,7 @@ impl JournalStore for MemStore {
             },
             default_workarea,
             crew,
+            user,
         }))
     }
 

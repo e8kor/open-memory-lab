@@ -275,6 +275,18 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn resolve_user_workarea(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        name: &Name,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send {
+        timed(
+            "resolve_user_workarea",
+            self.inner.resolve_user_workarea(tenant_id, user_root, name),
+        )
+    }
+
     fn crew(
         &self,
         tenant_id: Uuid,

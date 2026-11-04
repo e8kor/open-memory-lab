@@ -196,24 +196,43 @@ pub fn parse_id(value: &str) -> Option<Uuid> {
 }
 
 /// A value that names a workarea, crew, key or tenant, classified at parse,
-/// before any check that consults state (ADR-0026 d3). The two classes never
+/// before any check that consults state (ADR-0026 d3). The classes never
 /// overlap, so a value's class never depends on what exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {
     Id(Uuid),
     Name(Name),
+    /// A qualified name `<user>.<name>`: the workarea named `name` in the
+    /// namespace of the user root named `user`, unique in the tenant and
+    /// never changed (ADR-0044 d5). Only a workarea reference resolves one.
+    Qualified {
+        user: Name,
+        name: Name,
+    },
 }
 
 impl Reference {
     /// The classification of ADR-0026 d3: in the id form, an id; otherwise
     /// a name under d2's reference grammar, the derived form included;
-    /// otherwise the name's refusal, which the caller answers with
-    /// `request.validation` and `details.field` naming the field
-    /// (http-api.md, "Names and ids").
+    /// otherwise exactly two such labels joined by one `.`, the first not
+    /// `universe`, a qualified name (ADR-0044 d5); otherwise the refusal,
+    /// which the caller answers with `request.validation` and
+    /// `details.field` naming the field (http-api.md, "Names and ids"). A
+    /// value of three or more labels, or one that starts at `universe`, is a
+    /// path, refused as ADR-0026 d7 refuses every path.
     pub fn parse(value: &str) -> Result<Self, NameRefusal> {
-        match parse_id(value) {
-            Some(id) => Ok(Reference::Id(id)),
+        if let Some(id) = parse_id(value) {
+            return Ok(Reference::Id(id));
+        }
+        match value.split_once('.') {
             None => Name::parse_reference(value).map(Reference::Name),
+            Some((user, name)) if user != UNIVERSE && !name.contains('.') => {
+                Ok(Reference::Qualified {
+                    user: Name::parse_reference(user)?,
+                    name: Name::parse_reference(name)?,
+                })
+            }
+            Some(_) => Err(NameRefusal::Grammar),
         }
     }
 }
@@ -238,6 +257,9 @@ impl fmt::Display for Reference {
         match self {
             Reference::Id(id) => write!(f, "{id}"),
             Reference::Name(name) => f.write_str(name.as_str()),
+            Reference::Qualified { user, name } => {
+                write!(f, "{}.{}", user.as_str(), name.as_str())
+            }
         }
     }
 }
@@ -276,12 +298,32 @@ impl Namespace {
 /// [`parse_id`] refuses version 8.
 #[must_use]
 pub fn unresolved_value(namespace: Namespace, kind: NamedKind, name: &Name) -> Uuid {
+    unresolved_text(namespace, kind, name.as_str())
+}
+
+/// The unresolved value of a qualified name `<user>.<name>`, *n* its text
+/// as sent (ADR-0044 d5): resolved and unknown, it runs as an unknown id.
+#[must_use]
+pub fn unresolved_qualified(
+    namespace: Namespace,
+    kind: NamedKind,
+    user: &Name,
+    name: &Name,
+) -> Uuid {
+    unresolved_text(
+        namespace,
+        kind,
+        &format!("{}.{}", user.as_str(), name.as_str()),
+    )
+}
+
+fn unresolved_text(namespace: Namespace, kind: NamedKind, text: &str) -> Uuid {
     let mut hasher = Sha256::new();
     for part in ["oml-unresolved", &namespace.spelling(), kind.as_str()] {
         hasher.update(part.as_bytes());
         hasher.update([0_u8]);
     }
-    hasher.update(name.as_str().as_bytes());
+    hasher.update(text.as_bytes());
     let digest = hasher.finalize();
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&digest[..16]);

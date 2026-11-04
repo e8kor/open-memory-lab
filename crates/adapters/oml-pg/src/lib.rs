@@ -10,7 +10,7 @@
 //! Every query is the sqlx runtime API — no compile-time checked macros, so
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
-use oml_app::domain::access::{Grant, KeyDenial};
+use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
@@ -853,7 +853,8 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, crew, crew_id";
+const WORKAREA_COLUMNS: &str =
+    "id, tenant_id, parent_id, name, crew, crew_id, user_root, namespace_root_id";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -878,6 +879,8 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
             .transpose()
             .map_err(backend)?,
         crew_id: row.try_get("crew_id").map_err(backend)?,
+        user_root: row.try_get("user_root").map_err(backend)?,
+        namespace: row.try_get("namespace_root_id").map_err(backend)?,
     })
 }
 
@@ -885,7 +888,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// through `to_char` in the fixed-width signed form, as a memory's
 /// `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
-     issued_by, hash, credential, name, crew_id, \
+     issued_by, hash, credential, name, crew_id, user_root_id, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
@@ -916,6 +919,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         key_hash: stored_hash.map(|h| format!("sha256:{}", hex::encode(h))),
         name: stored_name(row, "name")?,
         crew_id: row.try_get("crew_id").map_err(backend)?,
+        user: row.try_get("user_root_id").map_err(backend)?,
         revoked_at: revoked
             .as_deref()
             .map(EventTime::parse)
@@ -1228,7 +1232,8 @@ async fn fold_names_assigned(
                 if assignment.name.as_str() == UNIVERSE {
                     "workareas_universe_is_root"
                 } else {
-                    "workareas_tenant_id_name"
+                    // Every row that predates names is shared (ADR-0044 d12).
+                    "workareas_shared_name"
                 },
             ),
             NamedKind::Key => (
@@ -1330,11 +1335,11 @@ async fn apply_fold(
                 .map_err(backend)?;
             sqlx::query(
                 "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status, crew, \
-                 crew_id) VALUES ($1, $2, $3, $4, \
+                 crew_id, user_root, namespace_root_id) VALUES ($1, $2, $3, $4, \
                  CASE WHEN $3::uuid IS NULL THEN text2ltree($4) \
                       ELSE (SELECT p.path FROM workareas p \
                              WHERE p.tenant_id = $2 AND p.id = $3) || text2ltree($4) END, \
-                 $5, $6, $7)",
+                 $5, $6, $7, $8, $9)",
             )
             .bind(w.workarea_id)
             .bind(w.tenant_id)
@@ -1343,6 +1348,8 @@ async fn apply_fold(
             .bind(w.status())
             .bind(crew)
             .bind(w.crew_id)
+            .bind(w.user_root)
+            .bind(w.namespace)
             .execute(&mut **tx)
             .await
             .map_err(|e| {
@@ -1350,11 +1357,15 @@ async fn apply_fold(
                 // to the root before the unique index, and errors.md
                 // answers it as `name.taken`; a root of another name lost
                 // no name, so its refusal stays the backend's
-                // (postgres-schema.md `workareas`; ADR-0026 d5, d6).
+                // (postgres-schema.md `workareas`; ADR-0026 d5, d6). A name
+                // is unique in its namespace, the shared one or its user
+                // root's (ADR-0044 d5).
                 let constraint = if w.parent_id.is_some() && w.name.as_str() == UNIVERSE {
                     "workareas_universe_is_root"
+                } else if w.namespace.is_some() {
+                    "workareas_user_name"
                 } else {
-                    "workareas_tenant_id_name"
+                    "workareas_shared_name"
                 };
                 name_taken_or_backend(e, constraint, NamedKind::Workarea, &w.name)
             })?;
@@ -1436,8 +1447,9 @@ async fn apply_fold(
                 // A connector key has no hash, which
                 // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7).
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
-                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
+                 user_root_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -1451,6 +1463,7 @@ async fn apply_fold(
             .bind(seq)
             .bind(k.name.as_ref().map(Name::as_str))
             .bind(k.crew_id)
+            .bind(k.user)
             .execute(&mut **tx)
             .await
             .map_err(|e| match &k.name {
@@ -1468,8 +1481,8 @@ async fn apply_fold(
         // alone would accept another tenant's key or node (0004_grants.sql).
         MetadataFold::GrantIssued { key_id, grant } => {
             sqlx::query(
-                "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO grants (id, tenant_id, key_id, role, workarea_node_id, deny, epoch, \
+                 covers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             )
             .bind(grant.grant_id)
             .bind(tenant_id)
@@ -1478,6 +1491,7 @@ async fn apply_fold(
             .bind(grant.node)
             .bind(deny_to_json(&grant.deny))
             .bind(seq)
+            .bind(grant.covers.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -2575,7 +2589,7 @@ impl JournalStore for PgStore {
             return Ok(None);
         };
         let grants = sqlx::query(
-            "SELECT id, role, workarea_node_id, deny, epoch FROM grants \
+            "SELECT id, role, workarea_node_id, deny, epoch, covers FROM grants \
              WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
         )
         .bind(tenant_id)
@@ -2611,12 +2625,18 @@ impl JournalStore for PgStore {
             .map(|row| {
                 let role: String = row.try_get("role").map_err(backend)?;
                 let deny: Value = row.try_get("deny").map_err(backend)?;
+                let covers: String = row.try_get("covers").map_err(backend)?;
                 Ok(GrantRecord {
                     grant: Grant {
                         grant_id: row.try_get("id").map_err(backend)?,
                         node: row.try_get("workarea_node_id").map_err(backend)?,
                         role: role_from_str(&role)?,
                         deny: deny_from_json(&deny)?,
+                        covers: Covers::parse(&covers).ok_or_else(|| {
+                            StoreError::Backend(format!(
+                                "grants.covers {covers:?} is not a coverage"
+                            ))
+                        })?,
                     },
                     epoch: seq_from_column(row, "epoch")?,
                 })
@@ -2656,7 +2676,11 @@ impl JournalStore for PgStore {
         // namespace; a revoked key's row stays, so its name resolves
         // (ADR-0026 d10). Tenant names are the deployment's.
         let sql = match kind {
-            NamedKind::Workarea => "SELECT id FROM workareas WHERE tenant_id = $1 AND name = $2",
+            // The shared namespace alone (ADR-0044 d5).
+            NamedKind::Workarea => {
+                "SELECT id FROM workareas WHERE tenant_id = $1 AND name = $2 \
+                 AND namespace_root_id IS NULL"
+            }
             NamedKind::Crew => "SELECT id FROM crews WHERE tenant_id = $1 AND name = $2",
             NamedKind::Key => "SELECT id FROM api_keys WHERE tenant_id = $1 AND name = $2",
             NamedKind::Tenant => return Ok(None),
@@ -2722,6 +2746,29 @@ impl JournalStore for PgStore {
         row.as_ref().map(key_from_row).transpose()
     }
 
+    async fn resolve_user_workarea(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        name: &Name,
+    ) -> Result<Option<Uuid>, StoreError> {
+        // One lookup on workareas_user_name (ADR-0044 d5).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM workareas WHERE tenant_id = $1 AND namespace_root_id = $2 \
+             AND name = $3",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .bind(name.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(id)
+    }
+
     async fn key_references(
         &self,
         tenant_id: Uuid,
@@ -2735,7 +2782,7 @@ impl JournalStore for PgStore {
         // reached a root (ADR-0039 d15).
         let row = sqlx::query(
             "WITH RECURSIVE k AS ( \
-                 SELECT default_workarea_id, crew_id FROM api_keys \
+                 SELECT default_workarea_id, crew_id, user_root_id FROM api_keys \
                   WHERE tenant_id = $1 AND id = $2 \
              ), up AS ( \
                  SELECT w.id, w.parent_id, w.name, 0 AS depth \
@@ -2753,10 +2800,12 @@ impl JournalStore for PgStore {
                         AS workarea_path, \
                     (SELECT bool_and(up.name IS NOT NULL) \
                             AND bool_or(up.parent_id IS NULL) FROM up) AS workarea_whole, \
-                    k.crew_id, c.name::text AS crew_name \
+                    k.crew_id, c.name::text AS crew_name, \
+                    k.user_root_id, r.name::text AS user_name \
                FROM k \
                JOIN tenants t ON t.id = $1 \
-               LEFT JOIN crews c ON c.tenant_id = $1 AND c.id = k.crew_id",
+               LEFT JOIN crews c ON c.tenant_id = $1 AND c.id = k.crew_id \
+               LEFT JOIN workareas r ON r.tenant_id = $1 AND r.id = k.user_root_id",
         )
         .bind(tenant_id)
         .bind(key_id)
@@ -2807,10 +2856,23 @@ impl JournalStore for PgStore {
                 })?,
             }),
         };
+        let user = match row
+            .try_get::<Option<Uuid>, _>("user_root_id")
+            .map_err(backend)?
+        {
+            None => None,
+            Some(root) => Some(NamedRef {
+                id: root,
+                name: stored_name(&row, "user_name")?.ok_or_else(|| {
+                    StoreError::Backend(format!("key {key_id}'s user root {root} names no root"))
+                })?,
+            }),
+        };
         Ok(Some(KeyReferences {
             tenant,
             default_workarea,
             crew,
+            user,
         }))
     }
 
@@ -2876,7 +2938,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
-                        up.depth + 1 \
+                        w.user_root, w.namespace_root_id, up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
@@ -2910,7 +2972,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.crew, w.crew_id, \
-                        down.depth + 1 \
+                        w.user_root, w.namespace_root_id, down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"

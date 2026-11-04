@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, Request, StatusCode, header};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::{HeldBy, Role};
@@ -117,14 +118,17 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
                     node: boot.root_workarea_id.into(),
                     role: Role::Writer,
                     deny: Vec::new(),
+                    covers: Covers::Subtree,
                 },
                 GrantRequest {
                     node: boot.root_workarea_id.into(),
                     role: Role::Reader,
                     deny: Vec::new(),
+                    covers: Covers::Subtree,
                 },
             ],
             connect_code: connector,
+            user: None,
         },
     )
     .await

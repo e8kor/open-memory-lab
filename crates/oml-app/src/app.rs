@@ -15,14 +15,14 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::access::{
-    AccessRefusal, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
+    AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
     admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
-    assign_names, unresolved_value,
+    assign_names, unresolved_qualified, unresolved_value,
 };
 use oml_domain::oauth::{
     ATTEMPTS_PER_PAGE, AUTHORIZATION_REQUEST_SECONDS, AuthorizationCodeInvalid,
@@ -56,11 +56,11 @@ use crate::types::{
     ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
     CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
     IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
-    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamingRefusal, OAuthClientRecord,
-    PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow,
-    TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
+    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
+    OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
     VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
 };
 
@@ -166,6 +166,16 @@ impl Caller {
     fn denied(&self, ancestry: &[Uuid]) -> bool {
         self.denials.iter().any(|d| ancestry.contains(&d.node))
     }
+}
+
+/// The user root an issuance names: its id, found or minted, its name, the
+/// tenant's `universe` it sits under, and whether this issuance creates it
+/// (ADR-0044 d2).
+struct UserRoot {
+    id: Uuid,
+    name: Name,
+    universe: Uuid,
+    created: bool,
 }
 
 /// An admin verb: checked on the key's own role, never on grants
@@ -815,6 +825,18 @@ where
             .key_access(key.tenant_id, key.key_id)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        // A user key whose row names a node that is not a user root is
+        // served nothing (ADR-0044 d14).
+        if let Some(root) = key.user {
+            let is_root = self
+                .journal
+                .workarea(key.tenant_id, root)
+                .await?
+                .is_some_and(|w| w.user_root);
+            if !is_root {
+                return Err(AppError::UserRootInvalid);
+            }
+        }
         Ok(Some(access))
     }
 
@@ -832,10 +854,22 @@ where
         kind: NamedKind,
         reference: &Reference,
     ) -> Result<Uuid, AppError> {
-        let name = match reference {
-            Reference::Id(id) => return Ok(*id),
-            Reference::Name(name) => name,
-        };
+        self.resolve_as(key, key.user, kind, reference).await
+    }
+
+    /// [`Self::resolve`] with the workarea namespace of `user`, a user root,
+    /// or the shared one for `None`: a user key's bare workarea name
+    /// resolves in its own user namespace, and otherwise only as `universe`
+    /// or its own root's name; a tenant key's in the shared namespace; and a
+    /// qualified name `<user>.<name>` in the named user root's namespace,
+    /// for every key, so resolution still confirms nothing (ADR-0044 d5).
+    async fn resolve_as(
+        &self,
+        key: &KeyRecord,
+        user: Option<Uuid>,
+        kind: NamedKind,
+        reference: &Reference,
+    ) -> Result<Uuid, AppError> {
         // A tenant's key resolves every name in its tenant; an operator
         // key, a tenant name in the deployment and any other in the
         // provider's namespace, which no tenant read consults.
@@ -844,11 +878,51 @@ where
             (true, NamedKind::Tenant) => Namespace::Deployment,
             (true, _) => Namespace::Provider,
         };
-        Ok(self
-            .journal
-            .resolve_name(key.tenant_id, kind, name)
-            .await?
-            .unwrap_or_else(|| unresolved_value(namespace, kind, name)))
+        let tenant_id = key.tenant_id;
+        let name = match reference {
+            Reference::Id(id) => return Ok(*id),
+            Reference::Qualified { user, name } => {
+                let resolved = match kind {
+                    NamedKind::Workarea => match self
+                        .journal
+                        .resolve_name(tenant_id, NamedKind::Workarea, user)
+                        .await?
+                    {
+                        Some(root) => {
+                            self.journal
+                                .resolve_user_workarea(tenant_id, root, name)
+                                .await?
+                        }
+                        None => None,
+                    },
+                    _ => None,
+                };
+                return Ok(
+                    resolved.unwrap_or_else(|| unresolved_qualified(namespace, kind, user, name))
+                );
+            }
+            Reference::Name(name) => name,
+        };
+        let found = match (kind, user) {
+            (NamedKind::Workarea, Some(root)) => {
+                match self
+                    .journal
+                    .resolve_user_workarea(tenant_id, root, name)
+                    .await?
+                {
+                    Some(id) => Some(id),
+                    // Of the shared namespace a user key resolves only
+                    // `universe` and its own root (ADR-0044 d5).
+                    None => self
+                        .journal
+                        .resolve_name(tenant_id, kind, name)
+                        .await?
+                        .filter(|&id| id == root || name.as_str() == UNIVERSE),
+                }
+            }
+            _ => self.journal.resolve_name(tenant_id, kind, name).await?,
+        };
+        Ok(found.unwrap_or_else(|| unresolved_value(namespace, kind, name)))
     }
 
     /// [`Self::resolve`] over an optional reference.
@@ -974,24 +1048,41 @@ where
     /// those reads once per served row, against ADR-0024 d4 ("never N+1").
     /// Only the rows themselves hydrate set-wise (`JournalStore::memories`).
     /// The cost is unmeasured (FR-7, FR-25).
+    ///
+    /// A version in `universe` is served to every key outside its authoring
+    /// key set without its source: no principal, no `derives_from`, its
+    /// author and lineage fields blanked, and `replaces` only where it names
+    /// a version in `universe` (ADR-0044 d9). The authoring key set is the
+    /// calling key alone until rotation is built (roles-and-keys.md#own).
     async fn served(
         &self,
         caller: &Caller,
         mut memory: MemoryRecord,
     ) -> Result<ServedMemory, AppError> {
         let tenant_id = caller.key.tenant_id;
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, memory.workarea_id)
+            .await?;
+        // `universe` is the one node with no parent.
+        let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
+            && memory.author_key_id != caller.key.key_id;
+        let workarea_path = ancestry.map(|ancestry| derived_path(&ancestry));
         let mut derives_from = Vec::with_capacity(memory.derives_from.len());
-        for ancestor in memory.derives_from {
-            if let Some(m) = self.journal.memory(tenant_id, ancestor).await?
-                && self.readable(caller, &m).await?
-            {
-                derives_from.push(ancestor);
+        if !anonymous {
+            for ancestor in &memory.derives_from {
+                if let Some(m) = self.journal.memory(tenant_id, *ancestor).await?
+                    && self.readable(caller, &m).await?
+                {
+                    derives_from.push(*ancestor);
+                }
             }
         }
         memory.derives_from = derives_from;
         let mut replaces = None;
         if let Some(id) = memory.replaces
             && let Some(m) = self.journal.memory(tenant_id, id).await?
+            && (!anonymous || m.workarea_id == memory.workarea_id)
             && self.readable(caller, &m).await?
         {
             replaces = Some(VersionRef {
@@ -999,15 +1090,17 @@ where
                 version: m.version,
             });
         }
-        let workarea_path = self
-            .journal
-            .workarea_ancestry(tenant_id, memory.workarea_id)
-            .await?
-            .map(|ancestry| derived_path(&ancestry));
+        if anonymous {
+            memory.author_principal = String::new();
+            memory.author_key_id = Uuid::nil();
+            memory.lineage_principals.clear();
+            memory.lineage_key_ids.clear();
+        }
         Ok(ServedMemory {
             memory,
             replaces,
             workarea_path,
+            anonymous,
         })
     }
 
@@ -1165,6 +1258,7 @@ where
         req: &IssueKeyRequest,
         default_workarea: Option<Uuid>,
         crew_id: Option<Uuid>,
+        user: Option<Uuid>,
         issued_by: Option<Uuid>,
     ) -> (KeyRecord, String) {
         // A connector key has no value and so no hash (ADR-0031 d7).
@@ -1189,6 +1283,7 @@ where
                 .then(|| sha256_digest_string(value.as_bytes())),
             name: Some(req.name.clone()),
             crew_id,
+            user,
             revoked_at: None,
         };
         (record, value)
@@ -1209,6 +1304,8 @@ where
             "name": record.name.as_ref().map(Name::as_str),
             "crew_id": record.crew_id.map(|c| c.to_string()),
             "credential": record.credential.as_str(),
+            // The user root's id, null for a tenant key (ADR-0044 d2).
+            "user": record.user.map(|u| u.to_string()),
         })
     }
 
@@ -1266,6 +1363,7 @@ where
                     .iter()
                     .map(|d| json!({ "subtree_node_id": d.to_string() }))
                     .collect::<Vec<_>>(),
+                "covers": grant.covers.as_str(),
                 "epoch": epoch,
             }),
         )
@@ -1325,6 +1423,166 @@ where
             .await
     }
 
+    /// The user root an issuance names in `user`: `user` is admitted on a
+    /// reader, writer or dreamer key held by an agent or a human, and never
+    /// names `universe`; a user root holding the name is joined, a shared
+    /// workarea holding it is `name.taken`, and otherwise the root is to be
+    /// created, under a fresh id (ADR-0044 d2, d14). Nothing is journalled
+    /// here.
+    async fn user_root_for(
+        &self,
+        issuer: &KeyRecord,
+        req: &IssueKeyRequest,
+        user: &Name,
+    ) -> Result<UserRoot, AppError> {
+        if matches!(req.role, Role::Admin | Role::Operator) {
+            return Err(AppError::UserRefused(
+                "user is refused on an admin or operator key, whose authority sits in no one's root",
+            ));
+        }
+        if req.held_by == Some(HeldBy::Service) {
+            return Err(AppError::UserRefused(
+                "user is refused on a held_by service key, which acts for a process and not a person",
+            ));
+        }
+        if user.as_str() == UNIVERSE {
+            return Err(AppError::UserRefused(
+                "user may not be universe, the tenant's root",
+            ));
+        }
+        let tenant_id = issuer.tenant_id;
+        let universe = self.universe(tenant_id).await?;
+        let held = self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .await?;
+        let (id, created) = match held {
+            None => (self.ids.new_id(), true),
+            Some(id) => {
+                let root = self.journal.workarea(tenant_id, id).await?;
+                if !root.is_some_and(|w| w.user_root) {
+                    return Err(AppError::NameTaken {
+                        kind: NamedKind::Workarea,
+                        name: user.clone(),
+                    });
+                }
+                (id, false)
+            }
+        };
+        Ok(UserRoot {
+            id,
+            name: user.clone(),
+            universe,
+            created,
+        })
+    }
+
+    /// A workarea reference of an issuance, in the namespace of the user
+    /// it names, the user's own name naming its root even before the
+    /// issuance creates it (ADR-0044 d5, d11); with no user, the issuer's.
+    async fn resolve_for(
+        &self,
+        issuer: &KeyRecord,
+        user: Option<&UserRoot>,
+        reference: &Reference,
+    ) -> Result<Uuid, AppError> {
+        match (user, reference) {
+            (Some(u), Reference::Name(name)) if *name == u.name => Ok(u.id),
+            (Some(u), _) => {
+                self.resolve_as(issuer, Some(u.id), NamedKind::Workarea, reference)
+                    .await
+            }
+            (None, _) => self.resolve(issuer, NamedKind::Workarea, reference).await,
+        }
+    }
+
+    /// A node's ancestry as an issuance sees it: a user root it is to
+    /// create sits directly under `universe` (ADR-0044 d1).
+    async fn issuance_ancestry(
+        &self,
+        tenant_id: Uuid,
+        user: Option<&UserRoot>,
+        node: Uuid,
+    ) -> Result<Vec<Uuid>, AppError> {
+        match user {
+            Some(u) if u.created && node == u.id => Ok(vec![u.id, u.universe]),
+            _ => self.ancestry(tenant_id, node).await,
+        }
+    }
+
+    /// Journal `workarea.create` of a user root under `universe`, the
+    /// issuing admin as actor, `user_root: true` in its payload (ADR-0044
+    /// d1, d2).
+    async fn create_user_root(&self, issuer: &KeyRecord, user: &UserRoot) -> Result<(), AppError> {
+        let workarea = WorkareaRecord {
+            workarea_id: user.id,
+            tenant_id: issuer.tenant_id,
+            parent_id: Some(user.universe),
+            name: user.name.clone(),
+            crew: None,
+            crew_id: None,
+            user_root: true,
+            namespace: None,
+        };
+        let prev = self.head_event(issuer.tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            issuer.tenant_id,
+            event_types::WORKAREA_CREATE,
+            &issuer.principal,
+            Some(issuer.key_id),
+            Self::workarea_create_payload(&workarea),
+        )?;
+        self.commit(event, MetadataFold::WorkareaCreated(workarea), None)
+            .await?;
+        Ok(())
+    }
+
+    /// The catalog payload of `workarea.create` (event-catalog.md), with
+    /// `user_root` (ADR-0044 d1).
+    fn workarea_create_payload(workarea: &WorkareaRecord) -> Value {
+        json!({
+            "workarea_id": workarea.workarea_id.to_string(),
+            "parent_id": workarea.parent_id.map(|p| p.to_string()),
+            "name": workarea.name.as_str(),
+            "status": workarea.status(),
+            "crew_id": workarea.crew_id.map(|c| c.to_string()),
+            "prefix": Value::Null,
+            "user_root": workarea.user_root,
+        })
+    }
+
+    /// A key's user root by id and name; `None` for a tenant key (ADR-0044
+    /// d11).
+    async fn user_ref(
+        &self,
+        tenant_id: Uuid,
+        user: Option<Uuid>,
+    ) -> Result<Option<NamedRef>, AppError> {
+        let Some(root) = user else {
+            return Ok(None);
+        };
+        let workarea = self
+            .journal
+            .workarea(tenant_id, root)
+            .await?
+            .ok_or_else(|| StoreError::Backend(format!("user root {root} is not held")))?;
+        Ok(Some(NamedRef {
+            id: root,
+            name: workarea.name,
+        }))
+    }
+
+    /// The tenant's `universe` root (ADR-0026 d6).
+    async fn universe(&self, tenant_id: Uuid) -> Result<Uuid, AppError> {
+        let universe_name = Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)");
+        Ok(self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workarea, &universe_name)
+            .await?
+            .ok_or_else(|| StoreError::Backend(format!("tenant {tenant_id} has no universe")))?)
+    }
+
     // -- use-cases ----------------------------------------------------------
 
     /// The operator ceremony: genesis event, the `universe` root workarea,
@@ -1367,6 +1625,8 @@ where
             name: Name::parse(UNIVERSE).expect("universe is a name (ADR-0026 d6)"),
             crew: None,
             crew_id: None,
+            user_root: false,
+            namespace: None,
         };
         let event = self.seal(
             Some(&prev),
@@ -1397,9 +1657,11 @@ where
             default_workarea: Some(root_workarea_id.into()),
             crew: None,
             grants: Vec::new(),
+            user: None,
             connect_code: false,
         };
-        let (record, value) = self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None);
+        let (record, value) =
+            self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None, None);
         let key_id = record.key_id;
         let event = self.seal(
             Some(&prev),
@@ -1425,6 +1687,7 @@ where
                 default_workarea: Some(root_workarea_id),
                 name: issue.name,
                 crew_id: None,
+                user: None,
                 access: KeyAccess {
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
@@ -1473,37 +1736,48 @@ where
             });
         }
         let tenant_id = issuer.tenant_id;
-        let mut grants = Vec::with_capacity(req.grants.len());
+        // The person the key acts for, and the root its references resolve
+        // in, found or to be created (ADR-0044 d2, d5).
+        let user = match &req.user {
+            Some(user) => Some(self.user_root_for(&issuer, req, user).await?),
+            None => None,
+        };
+        let mut grants = Vec::with_capacity(req.grants.len() + 1);
         for g in &req.grants {
-            let node = self.resolve(&issuer, NamedKind::Workarea, &g.node).await?;
+            let node = self.resolve_for(&issuer, user.as_ref(), &g.node).await?;
             let mut deny = Vec::with_capacity(g.deny.len());
             for d in &g.deny {
-                deny.push(self.resolve(&issuer, NamedKind::Workarea, d).await?);
+                deny.push(self.resolve_for(&issuer, user.as_ref(), d).await?);
             }
             grants.push(Grant {
                 grant_id: self.ids.new_id(),
                 node,
                 role: g.role,
                 deny,
+                covers: g.covers,
             });
         }
-        let default_workarea = self
-            .resolve_opt(&issuer, NamedKind::Workarea, req.default_workarea.as_ref())
-            .await?;
+        let default_workarea = match &req.default_workarea {
+            Some(sent) => Some(self.resolve_for(&issuer, user.as_ref(), sent).await?),
+            None => None,
+        };
         let crew_id = self
             .resolve_opt(&issuer, NamedKind::Crew, req.crew.as_ref())
             .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         check_issuance(issuer.role, req.role, &grants).map_err(issuance_refusal)?;
         // Step 4: every grant node and deny node is the tenant's, and so is
-        // the crew record.
+        // the crew record. A user root this issuance is to create sits
+        // directly under `universe` (ADR-0044 d1).
         let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
         for node in grants
             .iter()
             .flat_map(|g| std::iter::once(g.node).chain(g.deny.iter().copied()))
         {
             if let Entry::Vacant(slot) = ancestries.entry(node) {
-                let ancestry = self.ancestry(tenant_id, node).await?;
+                let ancestry = self
+                    .issuance_ancestry(tenant_id, user.as_ref(), node)
+                    .await?;
                 if ancestry.is_empty() {
                     return Err(AppError::NotFound);
                 }
@@ -1515,9 +1789,27 @@ where
         {
             return Err(AppError::NotFound);
         }
-        // Step 5: each deny node lies inside its own grant's subtree; the
-        // refusal echoes the deny as the request spelled it.
+        // A user key's every grant lies in its user's root (ADR-0044 d3).
+        if let Some(u) = &user
+            && let Some((grant_index, outside)) = grants
+                .iter()
+                .enumerate()
+                .find(|(_, g)| !ancestries[&g.node].contains(&u.id))
+        {
+            return Err(AppError::GrantOutsideUserRoot {
+                role: outside.role,
+                admissible: admissible_grant_roles(req.role),
+                grant_index,
+                user: u.name.clone(),
+            });
+        }
+        // Step 5: each deny node lies inside its own grant's subtree, and a
+        // node grant takes none (ADR-0044 d4); the refusal echoes the deny
+        // as the request spelled it.
         for (grant_index, grant) in grants.iter().enumerate() {
+            if grant.covers == Covers::Node && !grant.deny.is_empty() {
+                return Err(AppError::NodeGrantDeny { grant_index });
+            }
             if let Some(outside) = grant
                 .deny
                 .iter()
@@ -1529,15 +1821,28 @@ where
                 });
             }
         }
-        // Step 6: a sent default lies in some grant's subtree and outside
+        // A user key reads `universe`'s own claims through one reader grant
+        // on that node alone, which the request did not send (ADR-0044 d3).
+        if let Some(u) = &user {
+            grants.push(Grant {
+                grant_id: self.ids.new_id(),
+                node: u.universe,
+                role: Role::Reader,
+                deny: Vec::new(),
+                covers: Covers::Node,
+            });
+        }
+        // Step 6: a sent default lies in some grant's reach and outside
         // that grant's denies; absent, it is the first grant's node, and
         // never the issuer's (workareas.md per-grant attenuation).
         let default_workarea = match (default_workarea, &req.default_workarea) {
             (Some(workarea_id), Some(sent)) => {
-                let ancestry = self.ancestry(tenant_id, workarea_id).await?;
-                let covered = grants.iter().any(|g| {
-                    ancestry.contains(&g.node) && !g.deny.iter().any(|d| ancestry.contains(d))
-                });
+                let ancestry = self
+                    .issuance_ancestry(tenant_id, user.as_ref(), workarea_id)
+                    .await?;
+                let covered = grants
+                    .iter()
+                    .any(|g| g.reaches(&ancestry) && !g.deny.iter().any(|d| ancestry.contains(d)));
                 if !covered {
                     return Err(AppError::DefaultUncovered {
                         workarea: sent.clone(),
@@ -1567,6 +1872,19 @@ where
             None
         };
 
+        // The first key naming a user creates its root, in a commit of its
+        // own before `key.issued`; an issuance refused after it leaves the
+        // root, empty, for the next one to join (ADR-0044 d2; R4).
+        if let Some(u) = &user
+            && u.created
+        {
+            self.create_user_root(&issuer, u).await?;
+        }
+        let user_ref = user.as_ref().map(|u| NamedRef {
+            id: u.id,
+            name: u.name.clone(),
+        });
+
         // Step 8, the name, is the unique index's, at the commit of
         // `key.issued` below.
         let (record, value) = self.mint_key(
@@ -1574,6 +1892,7 @@ where
             req,
             default_workarea,
             crew_id,
+            user.as_ref().map(|u| u.id),
             Some(issuer.key_id),
         );
         let key_id = record.key_id;
@@ -1622,6 +1941,7 @@ where
                 default_workarea,
                 name: req.name.clone(),
                 crew_id,
+                user: user_ref.clone(),
                 access: KeyAccess {
                     issued_seq,
                     grants: stored,
@@ -1659,6 +1979,7 @@ where
             default_workarea,
             name: req.name.clone(),
             crew_id,
+            user: user_ref.clone(),
             access: KeyAccess {
                 issued_seq: receipt.seq,
                 grants: stored,
@@ -1740,9 +2061,13 @@ where
     /// the workarea read serves the record from the store (event-catalog.md
     /// `workarea.create`; ADR-0025 d14). The answer carries the node's path
     /// derived from the parent's stored ancestry, as the read derives it. A
-    /// name the tenant already holds, `universe` included, is checked last,
-    /// by the store's unique index: `name.taken`, and nothing is journalled
-    /// (ADR-0026 d5, d6).
+    /// name the namespace already holds, `universe` included, is checked
+    /// last, by the store's unique index: `name.taken`, and nothing is
+    /// journalled (ADR-0026 d5, d6). A writer user key creates too, under a
+    /// parent inside its own root where its effective access confers
+    /// writer, the root itself when `parent` is omitted, by the refusal
+    /// order on the parent; the node's name lands in that root's namespace
+    /// (ADR-0044 d5, d6).
     pub async fn create_workarea(
         &self,
         api_key: &str,
@@ -1750,13 +2075,36 @@ where
         parent: Option<Reference>,
         crew: Option<Reference>,
     ) -> Result<CreatedWorkarea, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "create_workarea")?;
-        let parent_id = self
-            .resolve_opt(&key, NamedKind::Workarea, parent.as_ref())
-            .await?;
+        let caller = self.authenticate(api_key).await?;
+        let key = &caller.key;
+        // A user key with the writer role creates inside its own root, by
+        // its effective access on the parent; every other key by the admin
+        // key role (ADR-0044 d6).
+        let parent_id = match key.user {
+            Some(root) if key.role == Role::Writer => {
+                // Crew metadata stays a governed admin act (ADR-0044 d6).
+                if crew.is_some() {
+                    return Err(AppError::VerbCeiling {
+                        role: key.role,
+                        verb: "set_workarea_crew",
+                    });
+                }
+                let parent_id = match &parent {
+                    Some(parent) => self.resolve(key, NamedKind::Workarea, parent).await?,
+                    None => root,
+                };
+                self.require_access(&caller, parent_id, Role::Writer, "create_workarea")
+                    .await?;
+                Some(parent_id)
+            }
+            _ => {
+                require_role(key, Role::Admin, "create_workarea")?;
+                self.resolve_opt(key, NamedKind::Workarea, parent.as_ref())
+                    .await?
+            }
+        };
         let crew_id = self
-            .resolve_opt(&key, NamedKind::Crew, crew.as_ref())
+            .resolve_opt(key, NamedKind::Crew, crew.as_ref())
             .await?;
         let ancestors = match parent_id {
             Some(parent) => self
@@ -1775,6 +2123,20 @@ where
             ),
             None => None,
         };
+        // A node beneath a user root takes its name in that root's
+        // namespace, where `universe` and the user's own name are reserved
+        // (ADR-0044 d5).
+        let namespace = ancestors.first().and_then(WorkareaRecord::user);
+        if let Some(root) = namespace
+            && ancestors
+                .iter()
+                .any(|w| w.workarea_id == root && &w.name == name)
+        {
+            return Err(AppError::NameTaken {
+                kind: NamedKind::Workarea,
+                name: name.clone(),
+            });
+        }
         let workarea = WorkareaRecord {
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -1782,6 +2144,8 @@ where
             name: name.clone(),
             crew: None,
             crew_id,
+            user_root: false,
+            namespace,
         };
         let prev = self.head_event(key.tenant_id).await?;
         let event = self.seal(
@@ -1790,14 +2154,7 @@ where
             event_types::WORKAREA_CREATE,
             &key.principal,
             Some(key.key_id),
-            json!({
-                "workarea_id": workarea.workarea_id.to_string(),
-                "parent_id": parent_id.map(|p| p.to_string()),
-                "name": workarea.name.as_str(),
-                "status": workarea.status(),
-                "crew_id": crew_id.map(|c| c.to_string()),
-                "prefix": Value::Null,
-            }),
+            Self::workarea_create_payload(&workarea),
         )?;
         self.commit(event, MetadataFold::WorkareaCreated(workarea.clone()), None)
             .await?;
@@ -2128,8 +2485,10 @@ where
                 .into());
             }
         };
+        let user = self.user_ref(tenant_id, record.user).await?;
         Ok(KeyDetail {
             key: record,
+            user,
             held_by,
             access,
         })
@@ -2149,6 +2508,7 @@ where
                 tenant: None,
                 default_workarea: None,
                 crew: None,
+                user: None,
                 grants: Vec::new(),
             });
         };
@@ -2164,6 +2524,7 @@ where
             tenant: Some(references.tenant),
             default_workarea: references.default_workarea,
             crew: references.crew,
+            user: references.user,
             grants: access.grants,
         })
     }
@@ -2508,8 +2869,21 @@ where
         // before the record is looked up, so either spelling is one request
         // (ADR-0026 d4).
         let workarea_id = self.target_workarea(key, req.workarea.as_ref()).await?;
-        self.require_access(&caller, workarea_id, Role::Writer, "submit")
-            .await?;
+        if let Err(refusal) = self
+            .require_access(&caller, workarea_id, Role::Writer, "submit")
+            .await
+        {
+            // A user key reads `universe` and never writes it: it is told
+            // universe is curated, `submission.universe_refused`, in place
+            // of step 3's `access.grant_refused` (ADR-0044 d7, d14).
+            if matches!(refusal, AppError::GrantRefused { .. })
+                && key.user.is_some()
+                && workarea_id == self.universe(key.tenant_id).await?
+            {
+                return Err(AppError::UniverseRefused);
+            }
+            return Err(refusal);
+        }
 
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
@@ -3063,7 +3437,12 @@ where
         // The scope's ancestry runs node to root, so each ancestor's own
         // ancestry is its suffix; the store is handed the readable ones root
         // first, the order of their depth.
-        let ancestry = self.ancestry(key.tenant_id, scope).await?;
+        let scope_ancestry = self
+            .journal
+            .workarea_ancestry(key.tenant_id, scope)
+            .await?
+            .unwrap_or_default();
+        let ancestry: Vec<Uuid> = scope_ancestry.iter().map(|w| w.workarea_id).collect();
         let applicable: Vec<Uuid> = (0..ancestry.len())
             .rev()
             .filter(|&i| caller.effective(&ancestry[i..]).contains(&Role::Reader))
@@ -3086,13 +3465,24 @@ where
             .collect();
 
         let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
+        // A scope inside a user root also searches `universe`'s own claims
+        // where the key reads that node, ranked with the scope's own; own
+        // held rows never include them (ADR-0044 d10).
+        let mut hit_nodes = readable.clone();
+        if scope_ancestry.iter().any(|w| w.user_root)
+            && let Some(&universe) = ancestry.last()
+            && caller.effective(&[universe]).contains(&Role::Reader)
+            && !hit_nodes.contains(&universe)
+        {
+            hit_nodes.push(universe);
+        }
         let kinds: Vec<MemoryKind> = HIT_KINDS
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
         let mut candidates = self
             .journal
-            .recall_fts(key.tenant_id, &readable, &query, &kinds, req.k)
+            .recall_fts(key.tenant_id, &hit_nodes, &query, &kinds, req.k)
             .await?;
         if req.include_unreviewed {
             // The own key set is the calling key alone until rotation is
@@ -3154,15 +3544,15 @@ where
             // d4, d8). Each hit names only the ancestors the caller can read
             // (d3).
             let admitted = match m.status {
-                MemoryStatus::Promoted => m.is_tip,
-                MemoryStatus::Held => req.include_unreviewed && m.author_key_id == key.key_id,
+                MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
+                MemoryStatus::Held => {
+                    req.include_unreviewed
+                        && m.author_key_id == key.key_id
+                        && readable.contains(&m.workarea_id)
+                }
                 _ => false,
             };
-            if admitted
-                && !m.retirement
-                && kinds.contains(&m.kind)
-                && readable.contains(&m.workarea_id)
-            {
+            if admitted && !m.retirement && kinds.contains(&m.kind) {
                 served_ids.push(m.memory_id);
                 hits.push(RecallHit {
                     served: self.served(&caller, m).await?,

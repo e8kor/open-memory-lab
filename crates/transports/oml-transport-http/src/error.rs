@@ -262,6 +262,40 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             )
             .with_details(details)
         }
+        AppError::GrantOutsideUserRoot {
+            role,
+            admissible,
+            grant_index,
+            user,
+        } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.issuer_ceiling",
+            "A key is issued with a role no higher than the issuer's (D9).",
+            format!(
+                "grant {grant_index} lies outside the root of user {}: a user key's every grant lies in its own root",
+                user.as_str()
+            ),
+        )
+        .with_details(json!({
+            "role": role.as_str(),
+            "admissible": admissible.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            "grant_index": grant_index,
+            "user": user.as_str(),
+        })),
+        AppError::UserRefused(why) => {
+            ApiError::validation(why).with_details(json!({ "field": "/user" }))
+        }
+        AppError::NodeGrantDeny { grant_index } => ApiError::validation(format!(
+            "grant {grant_index} covers its node alone, so it takes no deny entry"
+        ))
+        .with_details(json!({ "field": format!("/grants/{grant_index}/deny") })),
+        AppError::UniverseRefused => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.universe_refused",
+            "Universe holds only curated claims: a curator writes there and a second identity reviews it; a user key reads it and never writes it (ADR-0044 d7).",
+            "universe is curated: a user key never writes there",
+        ),
+        AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.role_exclusive",
