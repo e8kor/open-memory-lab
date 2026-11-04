@@ -4773,15 +4773,13 @@ where
         for memory in &endpoints {
             let ancestry = self.ancestry(key.tenant_id, memory.workarea_id).await?;
             let access = effective_access(&grants, &caller.denials, &ancestry);
-            // reading: workarea edge authority asks reader on both ends;
-            // a claim endpoint is a row, so the row must also be one the
-            // key may see there: promoted, its own, or held in a workarea
-            // where it holds dreamer and so reviews held rows. Anything
-            // else is outside read scope and indistinguishable from absent.
-            let in_scope = access.roles.contains(&Role::Reader)
-                && (memory.status == MemoryStatus::Promoted
-                    || memory.author_key_id == key.key_id
-                    || access.roles.contains(&Role::Dreamer));
+            // Edge authority asks reader on both ends, and a claim endpoint
+            // is a row, so the row must also be in the key's read scope: its
+            // own in any state, or promoted (roles-and-keys.md footnote 5;
+            // `readable`). Another author's held, rejected, demoted or
+            // erased row is outside it and indistinguishable from absent.
+            let in_scope =
+                access.roles.contains(&Role::Reader) && self.readable(&caller, memory).await?;
             if !in_scope {
                 return Err(AppError::NotFound);
             }
@@ -4836,11 +4834,7 @@ where
             ratifier_key_id: None,
             created_at: event.envelope.at.clone(),
         };
-        let proposal = ClaimEdgeProposal {
-            edge_id,
-            state: EdgeState::Pending.as_str().to_owned(),
-            journal_seq: event.envelope.seq,
-        };
+        let proposal = ClaimEdgeProposal::from(&edge);
         let idempotency = match &scope {
             Some(scope) => Some(IdempotencyPut {
                 scope: scope.clone(),
