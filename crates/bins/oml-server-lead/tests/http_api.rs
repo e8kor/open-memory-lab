@@ -2360,6 +2360,8 @@ async fn get_v2_keys_by_name_answers_the_key() {
             // A bearer key, which holds no connection (ADR-0031 d7, d11).
             "credential": "bearer",
             "connections": [],
+            // Sent none, the issuance default (proposed ADR-0037 d4).
+            "guardrail_scope": "ancestors",
         })
     );
     let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
@@ -6885,6 +6887,8 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             "crew": { "id": crew_record["crew_id"], "name": "metals-crew" },
             "user": null,
             "grants": whoami_grants(&issued),
+            // Sent none, the issuance default (proposed ADR-0037 d4, d5).
+            "guardrail_scope": "ancestors",
         })
     );
 
@@ -7203,8 +7207,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        42,
-        "the 29 routed operations, whoami, the six OAuth operations and the six web routes"
+        43,
+        "the 29 routed operations, whoami, the guardrail read, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
