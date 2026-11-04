@@ -162,6 +162,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         traffic,
         config.web_pages(),
         config.brief_max_tokens,
+        Some(config.search.clone()),
     )
     .await?;
     match &start.fork_check {

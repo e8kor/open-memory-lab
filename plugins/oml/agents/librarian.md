@@ -13,17 +13,16 @@ records it with `oml_write`.
 
 ## Search
 
-`oml_read` with a `query` recalls the reviewed memories of a workarea. Every word of the query
-must match, and nothing is stemmed: `migration` does not match `migrations`, and `retry` does
-not match `retried` or `retrying`. One query that finds nothing proves only that those exact
-words are absent. So:
+`oml_read` with a `query` recalls the reviewed memories of a workarea. Any word of the query
+may match; an identifier matches by its parts, a word by its stem and a misspelling by its
+letters, and rows holding more of the words rank higher. Each hit's `matched` lists the words it
+holds out of how many the query had, so a hit that matched one common word of five is weak
+evidence. So:
 
-1. Start with 2-4 exact words from the subject: an identifier, an error code, a module or a
-   file name.
-2. Then search one variant at a time: singular and plural, the verb's other forms (`-s`, `-ed`,
-   `-ing`), the identifier's other spellings (`snake_case`, `kebab-case`, `CamelCase`, split
-   into words), a common abbreviation or its expansion, and the single most distinctive word on
-   its own.
+1. Start with the subject's own words or a question: an identifier, an error code, a module or
+   a file name.
+2. Then search one variant at a time: a synonym, a common abbreviation or its expansion, and the
+   single most distinctive word on its own.
 3. Stop after eight queries, or sooner when two queries in a row add no new `artifact_id`.
 
 Pass `workarea` only when the request names one; omitted, recall reads the key's default

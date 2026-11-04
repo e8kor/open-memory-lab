@@ -21,6 +21,7 @@
 pub mod error;
 pub mod mcp;
 pub mod oauth;
+mod search;
 pub mod time;
 pub mod traffic;
 pub mod web;
@@ -55,6 +56,7 @@ use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
     Signer, StoreError, WebStore,
 };
+use oml_app::search::MatchMode;
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal, ClaimEdgeQuery,
     ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
@@ -117,6 +119,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/emails/remove"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
+    ("GET", "/v2/search"),
+    ("POST", "/v2/search/default"),
 ];
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
@@ -318,6 +322,8 @@ where
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
+            ("GET", "/v2/search") => get(Self::search_settings),
+            ("POST", "/v2/search/default") => post(Self::set_search_default),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
     }
@@ -435,6 +441,12 @@ where
             // start, or null where the pages are off: doctor's web line
             // reads it (ADR-0045 d18).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
+            // The served search pipelines and the deployment's default:
+            // doctor's search line reads them (ADR-0049 d8).
+            "search": {
+                "enabled": st.app.search_config().enabled().iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                "default": st.app.search_config().default_pipeline().as_str(),
+            },
         });
         let status = if ready {
             StatusCode::OK
@@ -674,6 +686,16 @@ where
             ));
         }
         let include_text = req.include_text.unwrap_or(true);
+        let match_mode = match req.match_mode.as_deref() {
+            None | Some("any") => MatchMode::Any,
+            Some("all") => MatchMode::All,
+            Some(other) => {
+                return Err(ApiError::validation(format!(
+                    "match must be any or all, not {other:?}"
+                ))
+                .with_details(json!({ "field": "/match" })));
+            }
+        };
         let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
         let result = st
             .app
@@ -687,6 +709,8 @@ where
                     include_text,
                     include_unreviewed: req.include_unreviewed.unwrap_or(false),
                     max_tokens: req.max_tokens,
+                    search: req.search.clone(),
+                    match_mode,
                 },
             )
             .await
@@ -705,13 +729,26 @@ where
                 json!({
                     "memory": memory_json(&hit.served, include_text),
                     "score": hit.score,
+                    "matched": {
+                        "terms": hit.matched,
+                        "of": result.terms.len(),
+                        "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+                    },
                 })
             })
             .collect();
+        // What ran and what the query was read as (ADR-0049 d5, d6).
         let mut response = json!({
             "steering": steering,
             "hits": hits,
             "query_digest": result.query_digest,
+            "search": {
+                "pipeline": result.pipeline.as_str(),
+                "match": if match_mode == MatchMode::All { "all" } else { "any" },
+                "terms": result.terms,
+                "fallback": result.fallback.then_some("any_term"),
+                "did_you_mean": result.did_you_mean,
+            },
         });
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).
@@ -2141,6 +2178,12 @@ struct RecallBody {
     terms: Option<Vec<String>>,
     /// Parsed only to be refused while the vocabulary filter is unbuilt.
     expand_terms: Option<String>,
+    /// The search pipeline by name; omitted, the tenant's default or the
+    /// deployment's (ADR-0049 d4).
+    search: Option<String>,
+    /// `any` (the default) or `all` (ADR-0049 d5).
+    #[serde(rename = "match")]
+    match_mode: Option<String>,
 }
 
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission

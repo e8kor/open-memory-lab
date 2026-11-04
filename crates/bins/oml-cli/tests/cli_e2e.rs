@@ -2074,8 +2074,8 @@ const REMEMBER: &str = "To record a durable fact or decision, call oml_write wit
                         checkable claim, its source and date and an idempotency_key such as \
                         <task>/<date>/<topic>, and no claim_key; never a secret.";
 const RECALL: &str = "Before non-trivial work, on a project term you do not know and after a \
-                      failed command, call oml_read with 2-4 exact keywords; try other words \
-                      before concluding OML holds nothing.";
+                      failed command, call oml_read with the words a note would use or a \
+                      question; try other words before concluding OML holds nothing.";
 const COMPACTED: &str = "The conversation was just compacted. Before continuing, record with \
                          oml_write the durable facts and decisions from the summary that are \
                          not in OML yet.";

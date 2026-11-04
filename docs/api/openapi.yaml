@@ -75,6 +75,7 @@ tags:
   - name: oauth
   - name: web
   - name: admin
+  - name: search
   - name: health
 
 paths:
@@ -191,8 +192,8 @@ paths:
       tags: [memories]
       operationId: recallMemories
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
-      summary: Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-      description: 'Requires: reader effective access on the subtree. The scope is the subtree of the body''s workarea, by id or name, else of the key''s default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.'
+      summary: Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked.
+      description: 'Requires: reader effective access on the subtree. The scope is the subtree of the body''s workarea, by id or name, else of the key''s default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body''s search names, else the tenant''s default, else the deployment''s (ADR-0049 d4); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).'
       requestBody:
         required: true
         content:
@@ -1708,6 +1709,67 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/search:
+    get:
+      tags: [search]
+      operationId: searchSettings
+      summary: The search pipelines served, the deployment's default, the tenant's and the one in effect.
+      description: 'Requires: admin key role (ADR-0049 d4). Since v0.5.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The settings.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                enabled: [keyword-any, bm25, bm25-trigram]
+                deployment_default: bm25-trigram
+                tenant_default: null
+                effective: bm25-trigram
+              schema: { $ref: '#/components/schemas/SearchSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/search/default:
+    post:
+      tags: [search]
+      operationId: setSearchDefault
+      summary: Set the tenant's default search pipeline, or clear it with null; in force from the next request.
+      description: 'Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else request.validation with details.field /search. Journalled as search.default_set with the name and the admin key; setting the default the tenant already has journals nothing. Since v0.5.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              pipeline: bm25
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                pipeline: { type: [string, 'null'], description: 'A served pipeline, or null to follow the deployment''s default.' }
+      responses:
+        '200':
+          description: The settings as they now are.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
   /web:
     get:
       tags: [web]
@@ -2460,10 +2522,24 @@ components:
             integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut;
             hits are the longest rank prefix that fits. Refused with include_text false. Rules:
             docs/architecture/retrieval.md, Token budgets.
+        search:
+          type: string
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram]
+          description: >-
+            The search pipeline, among those the deployment serves (search.enabled); omitted, the
+            tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not
+            serve is request.validation with details.field /search and details.served.
+        match:
+          type: string
+          enum: [any, all]
+          default: any
+          description: >-
+            all keeps only rows holding every query word; when none does, the any-word hits are
+            served and search.fallback is any_term (ADR-0049 d5).
 
     RecallResponse:
       type: object
-      required: [steering, hits]
+      required: [steering, hits, query_digest, search]
       properties:
         steering:
           type: array
@@ -2473,14 +2549,48 @@ components:
           type: array
           items:
             type: object
-            required: [memory, score]
+            required: [memory, score, matched]
             properties:
               memory: { $ref: '#/components/schemas/Memory' }
-              score: { type: number, description: The store rank; ties break by artifact_id ascending. }
+              score: { type: number, description: 'The pipeline''s score, comparable within one answer only; ties break by artifact_id ascending.' }
+              matched: { $ref: '#/components/schemas/RecallMatched' }
         budget:
           $ref: '#/components/schemas/RecallBudget'
           description: Present if and only if max_tokens was sent.
         query_digest: { $ref: '#/components/schemas/Digest' }
+        search: { $ref: '#/components/schemas/RecallSearch' }
+
+    RecallMatched:
+      type: object
+      additionalProperties: false
+      description: Why a hit matched (ADR-0049 d6).
+      required: [terms, of, via]
+      properties:
+        terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
+        of: { type: integer, minimum: 0, description: How many words the query had. }
+        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram] }, description: The retrievers whose lists held the row. }
+
+    RecallSearch:
+      type: object
+      additionalProperties: false
+      description: What ran and how the query was read (ADR-0049 d5, d6).
+      required: [pipeline, match, terms, fallback, did_you_mean]
+      properties:
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram] }
+        match: { type: string, enum: [any, all] }
+        terms: { type: array, items: { type: string } }
+        fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
+        did_you_mean: { type: array, items: { type: string }, description: 'Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty.' }
+
+    SearchSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, deployment_default, tenant_default, effective]
+      properties:
+        enabled: { type: array, items: { type: string } , description: The pipelines the deployment serves (search.enabled). }
+        deployment_default: { type: string, description: search.default. }
+        tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
+        effective: { type: string, description: The pipeline a recall naming none runs now. }
 
     RecallBudget:
       type: object

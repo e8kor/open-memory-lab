@@ -68,6 +68,9 @@ struct Observed {
     workarea_id: Option<Uuid>,
     store: Duration,
     store_calls: u64,
+    /// The search pipeline a recall ran, and whether `match: all` fell
+    /// back (ADR-0049 d4).
+    search: Option<(&'static str, bool)>,
 }
 
 impl Scope {
@@ -147,6 +150,12 @@ pub fn workarea(workarea_id: Uuid) {
     in_scope(|scope| scope.update(|o, _| _ = o.workarea_id.get_or_insert(workarea_id)));
 }
 
+/// The request's recall ran `pipeline`; `fallback` when `match: all` fell
+/// back to any term (ADR-0049 d4, d5).
+pub fn search(pipeline: &'static str, fallback: bool) {
+    in_scope(|scope| scope.update(|o, _| o.search = Some((pipeline, fallback))));
+}
+
 /// One call into the store port took `elapsed`: summed into the request's
 /// `store_ms` and counted in `store_calls` (ADR-0042 d14). Outside a
 /// request, as the startup and the hourly sweep are, nothing is recorded.
@@ -171,6 +180,10 @@ impl RequestObserver for ScopeObserver {
 
     fn workarea(&self, workarea_id: Uuid) {
         workarea(workarea_id);
+    }
+
+    fn search(&self, pipeline: &'static str, fallback: bool) {
+        search(pipeline, fallback);
     }
 }
 
@@ -423,6 +436,10 @@ pub(crate) async fn layer(
         idempotency_replay: replay.then_some(true),
         client,
         user_agent: agent.as_deref(),
+        search: observed.search.map(|(pipeline, _)| pipeline),
+        search_fallback: observed
+            .search
+            .and_then(|(_, fallback)| fallback.then_some(true)),
     };
     if status.is_server_error() {
         line.write_error();
@@ -437,6 +454,9 @@ pub(crate) async fn layer(
         resolved.error_code.as_deref(),
         resolved.grant_type,
     );
+    if let Some((pipeline, fallback)) = observed.search {
+        traffic.metrics.recall(pipeline, fallback);
+    }
     response
 }
 
@@ -457,6 +477,9 @@ struct Line<'a> {
     idempotency_replay: Option<bool>,
     client: Option<(IpAddr, ClientIpSource)>,
     user_agent: Option<&'a str>,
+    /// The search pipeline a recall ran (ADR-0049 d4).
+    search: Option<&'static str>,
+    search_fallback: Option<bool>,
 }
 
 /// The line at one level: the event macros take their level as a constant.
@@ -504,6 +527,8 @@ macro_rules! write_line {
             user_agent = line.user_agent,
             web_action = web.and_then(|w| w.action),
             web_provider = web.and_then(|w| w.provider),
+            search = line.search,
+            search_fallback = line.search_fallback,
         );
     }};
 }

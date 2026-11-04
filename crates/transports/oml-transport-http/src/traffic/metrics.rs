@@ -37,6 +37,12 @@ struct McpLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct RecallLabels {
+    pipeline: String,
+    fallback: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -51,6 +57,7 @@ pub struct Metrics {
     replays: Counter,
     conflicts: Counter,
     oauth_tokens: Family<TokenLabels, Counter>,
+    recalls: Family<RecallLabels, Counter>,
 }
 
 impl Default for Metrics {
@@ -65,6 +72,7 @@ impl Default for Metrics {
         let replays = Counter::default();
         let conflicts = Counter::default();
         let oauth_tokens = Family::<TokenLabels, Counter>::default();
+        let recalls = Family::<RecallLabels, Counter>::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -91,6 +99,13 @@ impl Default for Metrics {
             "POST /oauth/token by grant_type and RFC outcome",
             oauth_tokens.clone(),
         );
+        // The pipeline label is from the build's closed set of pipeline
+        // names (ADR-0049 d4).
+        registry.register(
+            "oml_recalls",
+            "recalls by the search pipeline that ranked them and whether match all fell back",
+            recalls.clone(),
+        );
         Self {
             registry,
             http,
@@ -98,6 +113,7 @@ impl Default for Metrics {
             replays,
             conflicts,
             oauth_tokens,
+            recalls,
         }
     }
 }
@@ -143,6 +159,16 @@ impl Metrics {
                 })
                 .inc();
         }
+    }
+
+    /// One recall, by the pipeline that ranked it (ADR-0049 d4).
+    pub(crate) fn recall(&self, pipeline: &'static str, fallback: bool) {
+        self.recalls
+            .get_or_create(&RecallLabels {
+                pipeline: pipeline.to_owned(),
+                fallback: fallback.to_string(),
+            })
+            .inc();
     }
 
     /// One `/mcp` call, by the closed values of its `mcp_call` line.

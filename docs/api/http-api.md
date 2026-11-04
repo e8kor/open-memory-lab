@@ -564,6 +564,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
+| `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *planned for v0.5.3* ([search settings](#search-settings)) | served |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -697,10 +698,10 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 ### Recall — `POST /v1/memories/recall`
 
-*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` planned for v0.5.3 · [releases](../product/releases.md)*
 
-Ranked retrieval over **promoted** rows in scope: FTS + vector, served from Postgres, never from
-the lake (D12; [retrieval.md](../architecture/retrieval.md)). The scope is the subtree of the
+Ranked retrieval over **promoted** rows in scope by a named search pipeline, served from Postgres,
+never from the lake (D12; [retrieval.md](../architecture/retrieval.md#search-pipelines)). The scope is the subtree of the
 body's `workarea`, an id or a name within the key's grants, else of the key's `default_workarea`;
 neither answers `request.workarea_unresolved`, and there is no tenant-wide fallback
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4). Request: `query`, `workarea`,
@@ -713,6 +714,13 @@ and:
 - `max_tokens` — a budget in budget tokens; steering is never cut, and the hits served are the
   longest rank prefix that fits. Refused with `include_text: false`
   ([retrieval.md — token budgets](../architecture/retrieval.md#token-budgets)).
+- `search` — the pipeline: `keyword-all`, `keyword-any`, `bm25` or `bm25-trigram`, among those
+  the deployment serves (`search.enabled`); omitted, the tenant's default, else the
+  deployment's. A name the deployment does not serve is `request.validation` with
+  `details.field: "/search"` and `details.served`
+  ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4).
+- `match` ∈ `any` (default) | `all` — `all` keeps only rows holding every query word; when none
+  does, the any-word hits are served and `search.fallback` is `any_term` (d5).
 
 v0.3.0's `include_bodies` and `include_own_held` are refused with `request.validation`, naming
 `/include_text` and `/include_unreviewed` in `details.renamed_to`
@@ -741,12 +749,20 @@ ADR-0021). Response separates what is ranked from what is not:
 ```json
 {
   "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
-  "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.83} ],
+  "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.032,
+              "matched": {"terms": ["deploy", "window"], "of": 3, "via": ["bm25", "trigram"]}} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
-  "query_digest": "sha256:…"
+  "query_digest": "sha256:…",
+  "search": {"pipeline": "bm25-trigram", "match": "any", "terms": ["deploy", "the", "window"],
+             "fallback": null, "did_you_mean": []}
 }
 ```
+
+`search` names the pipeline that ran, the query's words as it read them, a fallback, and
+spellings from readable rows when no hit holds every word; each hit's `matched` names the words
+it holds, out of `of`, and the retrievers that found it. The score is the pipeline's and compares
+within one answer only (ADR-0049 d6).
 
 Steering rows precede hits and carry no score — the recall-ordering contract: the gate changes
 visibility, not ranking (R3/D12). Which steering applies, the total order of hits and the budget
@@ -756,8 +772,27 @@ The read is logged with the ids served after truncation and the canonical reques
 ([retrieval.md](../architecture/retrieval.md#the-read-log)). *Since v0.5.0
 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):* a scope inside a user root also searches the
 `universe` node's own claims, ranked with the scope's hits
-([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)). Recall quality and latency are
-unmeasured — [FR-4](../product/roadmap.md).
+([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)). Recall quality is
+measured per pipeline by the recall eval in CI (`eval/recall/`, ADR-0049 d9); latency at scale
+is [FR-84](../product/roadmap.md).
+
+### Search settings
+
+*Planned for v0.5.3 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4*
+
+- `GET /v2/search` answers `{enabled, deployment_default, tenant_default, effective}`: the
+  pipelines the deployment serves, its default, the tenant's journalled default (`null` when it
+  follows the deployment's) and the pipeline a recall naming none runs now.
+- `POST /v2/search/default` takes `{pipeline}` with an `Idempotency-Key` and answers the same
+  object. `pipeline` is a served pipeline, or `null` to follow the deployment's default again.
+  It is journalled as `search.default_set` with the name and the admin key, folded into the
+  tenant's row, and in force from the next request with no restart; setting the default the
+  tenant already has journals nothing. A pipeline the deployment does not serve is
+  `request.validation` with `details.field: "/search"`.
+
+Both are admin by key role, as `oml search show` and `oml search set-default` call them. A
+tenant default the deployment later stops serving stays journalled and is not effective: the
+deployment's applies, and `oml doctor` warns.
 
 ### Search — `GET /v1/memories`
 

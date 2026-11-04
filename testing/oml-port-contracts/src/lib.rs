@@ -33,15 +33,18 @@ use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Scanner, Signer, StoreError, SubjectRow,
+    Retriever, Scanner, Signer, StoreError, SubjectRow,
+};
+use oml_app::search::{
+    Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved, RetrieverKind,
 };
 use oml_app::types::{
     AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
     ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
     ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
     GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts, RefreshOutcome, SweepReport,
+    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
     WorkareaRecord,
 };
 use serde_json::{Value, json};
@@ -455,7 +458,7 @@ pub fn held_memory(
 }
 
 /// Commits `memory` held through the rig, enqueued for review.
-async fn hold<S: JournalStore>(
+pub async fn hold<S: JournalStore>(
     rig: &mut ChainRig,
     store: &S,
     memory: MemoryRecord,
@@ -850,7 +853,11 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
 
 /// Holds `memory`, a claim's first version, and promotes it through the
 /// rig: the claim's served tip until a ratified successor takes it.
-async fn hold_and_promote<S: JournalStore>(rig: &mut ChainRig, store: &S, memory: MemoryRecord) {
+pub async fn hold_and_promote<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    memory: MemoryRecord,
+) {
     let id = memory.memory_id;
     hold(rig, store, memory).await.expect("hold");
     promote(rig, store, id).await.expect("promote");
@@ -888,8 +895,80 @@ fn successor_of(
     }
 }
 
+/// The v0.5.0 recall reads, as the `keyword-all` retriever serves them: the
+/// promoted list over `readable`, and the own held list of `author_key_ids`
+/// over `readable` (ADR-0049 d7). The laws written against them hold of
+/// every adapter's `keyword-all`.
+pub trait KeywordAllReads: Retriever {
+    fn recall_fts(
+        &self,
+        tenant_id: Uuid,
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
+        let scope = CandidateScope {
+            promoted_nodes: readable.to_vec(),
+            kinds: kinds.to_vec(),
+            own_held: None,
+        };
+        let query = query.to_owned();
+        async move {
+            self.retrieve(
+                tenant_id,
+                RetrieverKind::KeywordAll,
+                &scope,
+                RetrievalQuery {
+                    query: &query,
+                    match_mode: MatchMode::All,
+                    k,
+                },
+            )
+            .await
+            .map(|r| r.candidates)
+        }
+    }
+
+    fn recall_own_held(
+        &self,
+        tenant_id: Uuid,
+        author_key_ids: &[Uuid],
+        readable: &[Uuid],
+        query: &str,
+        kinds: &[MemoryKind],
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
+        let scope = CandidateScope {
+            promoted_nodes: Vec::new(),
+            kinds: kinds.to_vec(),
+            own_held: Some(OwnHeldScope {
+                author_key_ids: author_key_ids.to_vec(),
+                nodes: readable.to_vec(),
+            }),
+        };
+        let query = query.to_owned();
+        async move {
+            self.retrieve(
+                tenant_id,
+                RetrieverKind::KeywordAll,
+                &scope,
+                RetrievalQuery {
+                    query: &query,
+                    match_mode: MatchMode::All,
+                    k,
+                },
+            )
+            .await
+            .map(|r| r.candidates)
+        }
+    }
+}
+
+impl<R: Retriever + ?Sized> KeywordAllReads for R {}
+
 /// The ids of recall candidates, in the order served.
-fn hit_ids(hits: &[RecallCandidate]) -> Vec<Uuid> {
+fn hit_ids(hits: &[Candidate]) -> Vec<Uuid> {
     hits.iter().map(|c| c.memory_id).collect()
 }
 
@@ -1024,7 +1103,7 @@ pub async fn hits_that_tie_on_score_are_ordered_by_artifact_id<S: JournalStore>(
         }),
         "score descending, then artifact_id ascending: {hits:?}"
     );
-    let tied: Vec<&RecallCandidate> = hits
+    let tied: Vec<&Candidate> = hits
         .iter()
         .filter(|c| ties.contains(&c.memory_id))
         .collect();
@@ -9206,4 +9285,478 @@ pub fn clock_and_idgen_contract<C: Clock, I: IdGen>(clock: &C, ids: &I) {
             "secrets never repeat"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The retriever laws (ADR-0049 d7): run against every adapter, for every
+// retriever it serves, so a pipeline means the same thing on every store.
+// ---------------------------------------------------------------------------
+
+/// The fixture the retriever laws share: plain lower-case words only, so
+/// the in-memory store's tokenizer and PostgreSQL's parser read them alike.
+/// Returns (readable promoted ids, own held ids, the readable node, the
+/// own key).
+async fn retriever_fixture<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    with_outsiders: bool,
+) -> (
+    Vec<(Uuid, &'static str)>,
+    Vec<(Uuid, &'static str)>,
+    Uuid,
+    Uuid,
+) {
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let elsewhere = Uuid::from_u128(0xE3);
+    let own = Uuid::from_u128(0xE4);
+    let other = Uuid::from_u128(0xE5);
+    let row = |id: u128, node: Uuid, key: Uuid, body: &str| {
+        held_memory(tenant, node, Uuid::from_u128(id), "rita", key, body)
+    };
+    let promoted: Vec<(Uuid, &'static str)> = vec![
+        (
+            Uuid::from_u128(0xF01),
+            "deploy the billing service on friday",
+        ),
+        (Uuid::from_u128(0xF02), "the billing service owns invoices"),
+        (Uuid::from_u128(0xF03), "never deploy on friday evenings"),
+        (Uuid::from_u128(0xF04), "invoices are numbered per tenant"),
+        (
+            Uuid::from_u128(0xF05),
+            "rollback the release with one command",
+        ),
+    ];
+    for (id, body) in &promoted {
+        hold_and_promote(rig, store, row(id.as_u128(), wa, other, body)).await;
+    }
+    let held: Vec<(Uuid, &'static str)> =
+        vec![(Uuid::from_u128(0xF11), "billing deploy notes held")];
+    for (id, body) in &held {
+        hold(rig, store, row(id.as_u128(), wa, own, body))
+            .await
+            .expect("hold own");
+    }
+    hold(
+        rig,
+        store,
+        row(0xF12, wa, other, "billing deploy held by another key"),
+    )
+    .await
+    .expect("hold another's");
+    hold_and_promote(
+        rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..row(0xF13, wa, other, "billing deploy steering")
+        },
+    )
+    .await;
+    if with_outsiders {
+        for (i, body) in [
+            "billing billing billing deploy deploy",
+            "friday friday friday invoices",
+            "service service rollback release",
+            "deploy billing",
+        ]
+        .iter()
+        .enumerate()
+        {
+            hold_and_promote(rig, store, row(0xF20 + i as u128, elsewhere, other, body)).await;
+        }
+    }
+    (promoted, held, wa, own)
+}
+
+fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
+    CandidateScope {
+        promoted_nodes: vec![wa],
+        kinds: HIT_KINDS.to_vec(),
+        own_held: own.map(|key| OwnHeldScope {
+            author_key_ids: vec![key],
+            nodes: vec![wa],
+        }),
+    }
+}
+
+async fn run<S: Retriever>(
+    store: &S,
+    tenant: Uuid,
+    kind: RetrieverKind,
+    scope: &CandidateScope,
+    query: &str,
+    match_mode: MatchMode,
+) -> Retrieved {
+    store
+        .retrieve(
+            tenant,
+            kind,
+            scope,
+            RetrievalQuery {
+                query,
+                match_mode,
+                k: 50,
+            },
+        )
+        .await
+        .expect("retrieve")
+}
+
+const LAW_QUERIES: [&str; 6] = [
+    "billing deploy",
+    "friday",
+    "invoices tenant",
+    "rollback zebra",
+    "zebra quartz",
+    "deploy the billing service on friday",
+];
+
+/// No retriever returns a row outside the scope the core hands it: never
+/// another node's row, another key's held row, a steering row, or a held
+/// row when the scope names no own held keys, and an empty scope ranks
+/// nothing (ADR-0049 d2; ADR-0025 d1, d4, d8).
+pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(401);
+    rig.seed_chain(store, 0).await;
+    let (promoted, held, wa, own) = retriever_fixture(&mut rig, store, true).await;
+    let promoted_ids: Vec<Uuid> = promoted.iter().map(|(id, _)| *id).collect();
+    let held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES {
+            for mode in [MatchMode::Any, MatchMode::All] {
+                let without =
+                    run(store, rig.tenant_id, kind, &scope_of(wa, None), query, mode).await;
+                for c in &without.candidates {
+                    assert!(
+                        promoted_ids.contains(&c.memory_id),
+                        "{kind:?} {query:?}: {} is outside the promoted scope",
+                        c.memory_id
+                    );
+                }
+                let with = run(
+                    store,
+                    rig.tenant_id,
+                    kind,
+                    &scope_of(wa, Some(own)),
+                    query,
+                    mode,
+                )
+                .await;
+                for c in &with.candidates {
+                    assert!(
+                        promoted_ids.contains(&c.memory_id) || held_ids.contains(&c.memory_id),
+                        "{kind:?} {query:?}: {} is outside the scope with own held rows",
+                        c.memory_id
+                    );
+                }
+                let empty = CandidateScope {
+                    promoted_nodes: Vec::new(),
+                    kinds: HIT_KINDS.to_vec(),
+                    own_held: None,
+                };
+                assert!(
+                    run(store, rig.tenant_id, kind, &empty, query, mode)
+                        .await
+                        .candidates
+                        .is_empty(),
+                    "{kind:?}: an empty scope ranks nothing"
+                );
+            }
+        }
+    }
+}
+
+/// Every retriever answers equal input with equal output, in the total
+/// order of hits: score descending, then id ascending (ADR-0049 d7).
+pub async fn a_retriever_orders_deterministically_by_score_then_id<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(402);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, own) = retriever_fixture(&mut rig, store, false).await;
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES {
+            let scope = scope_of(wa, Some(own));
+            let first = run(store, rig.tenant_id, kind, &scope, query, MatchMode::Any).await;
+            let again = run(store, rig.tenant_id, kind, &scope, query, MatchMode::Any).await;
+            assert_eq!(
+                first, again,
+                "{kind:?} {query:?}: equal input, equal output"
+            );
+            for pair in first.candidates.windows(2) {
+                let ordered = pair[0].score > pair[1].score
+                    || (pair[0].score.total_cmp(&pair[1].score).is_eq()
+                        && pair[0].memory_id < pair[1].memory_id);
+                assert!(ordered, "{kind:?} {query:?}: {pair:?} out of order");
+            }
+        }
+    }
+}
+
+/// A row outside the scope never changes a candidate's score: a ranking
+/// statistic is computed over the scope alone, so a key cannot learn of
+/// rows it cannot read from the ranks of rows it can (ADR-0048 d3;
+/// ADR-0049 d2).
+pub async fn a_row_outside_the_scope_never_changes_a_candidates_score<S, F, Fut>(new_store: F)
+where
+    S: JournalStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    let alone = new_store().await;
+    let mut rig = ChainRig::new(403);
+    rig.seed_chain(&alone, 0).await;
+    let (_, _, wa, own) = retriever_fixture(&mut rig, &alone, false).await;
+    let crowded = new_store().await;
+    let mut rig2 = ChainRig::new(404);
+    rig2.seed_chain(&crowded, 0).await;
+    let _ = retriever_fixture(&mut rig2, &crowded, true).await;
+    for kind in alone.retrievers() {
+        for query in LAW_QUERIES {
+            let scope = scope_of(wa, Some(own));
+            let a = run(&alone, rig.tenant_id, kind, &scope, query, MatchMode::Any).await;
+            let b = run(
+                &crowded,
+                rig2.tenant_id,
+                kind,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert_eq!(
+                a, b,
+                "{kind:?} {query:?}: rows outside the scope moved a score"
+            );
+        }
+    }
+}
+
+/// The keyword retrievers mean the same on every store (ADR-0049 d7):
+/// `keyword_all` keeps a row holding every query word, `keyword_any` a row
+/// holding any, `match: all` narrows `keyword_any` to every word, and
+/// `matched` names the words a row holds. Independent expected sets, so
+/// two stores passing this law agree with each other.
+pub async fn the_keyword_retrievers_match_all_or_any_word_on_every_store<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(405);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, own) = retriever_fixture(&mut rig, store, false).await;
+    let ids = |list: &Retrieved| {
+        let mut v: Vec<u128> = list
+            .candidates
+            .iter()
+            .map(|c| c.memory_id.as_u128())
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let scope = scope_of(wa, Some(own));
+    let cases: [(&str, Vec<u128>, Vec<u128>); 5] = [
+        (
+            "billing deploy",
+            vec![0xF01, 0xF11],
+            vec![0xF01, 0xF02, 0xF03, 0xF11],
+        ),
+        ("friday", vec![0xF01, 0xF03], vec![0xF01, 0xF03]),
+        ("invoices tenant", vec![0xF04], vec![0xF02, 0xF04]),
+        ("rollback zebra", vec![], vec![0xF05]),
+        ("zebra quartz", vec![], vec![]),
+    ];
+    for (query, all, any) in cases {
+        let got_all = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::KeywordAll,
+            &scope,
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(ids(&got_all), all, "keyword_all {query:?}");
+        let got_any = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::KeywordAny,
+            &scope,
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(ids(&got_any), any, "keyword_any {query:?}");
+        let narrowed = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::KeywordAny,
+            &scope,
+            query,
+            MatchMode::All,
+        )
+        .await;
+        assert_eq!(ids(&narrowed), all, "keyword_any under match all {query:?}");
+        let mut terms: Vec<String> = query.split(' ').map(ToOwned::to_owned).collect();
+        terms.sort();
+        assert_eq!(got_any.terms, terms, "terms of {query:?}");
+        for c in &got_any.candidates {
+            assert!(
+                !c.matched.is_empty(),
+                "an any-word hit names a matched word"
+            );
+            for word in &c.matched {
+                assert!(terms.contains(word), "{word} is a query term");
+            }
+        }
+    }
+    // A row holding more of the words ranks above one holding fewer.
+    let ranked = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::KeywordAny,
+        &scope,
+        "deploy billing friday",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(
+        ranked.candidates.first().map(|c| c.memory_id.as_u128()),
+        Some(0xF01),
+        "the row with all three words ranks first"
+    );
+}
+
+/// The bm25 retriever finds an identifier by its parts and a word by its
+/// stem, where the store serves it (ADR-0048 d3; ADR-0049 d7).
+pub async fn bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25) {
+        return;
+    }
+    let mut rig = ChainRig::new(406);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    let row = |id: u128, body: &str| {
+        held_memory(
+            rig_tenant(406),
+            wa,
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            body,
+        )
+    };
+    hold_and_promote(
+        &mut rig,
+        store,
+        row(0xF31, "the hook lives in useInvoiceFilters.ts"),
+    )
+    .await;
+    hold_and_promote(&mut rig, store, row(0xF32, "we deployed twice on monday")).await;
+    hold_and_promote(&mut rig, store, row(0xF33, "unrelated note about lunch")).await;
+    let scope = scope_of(wa, None);
+    for (query, expected) in [("invoice filters", 0xF31_u128), ("deployments", 0xF32)] {
+        let got = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Bm25,
+            &scope,
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(
+            got.candidates.first().map(|c| c.memory_id.as_u128()),
+            Some(expected),
+            "bm25 {query:?}: {got:?}"
+        );
+    }
+}
+
+/// The trigram retriever finds a misspelled word's memory, where the store
+/// serves it, and returns nothing under `match: all` (ADR-0048 d4).
+pub async fn trigram_finds_a_misspelled_words_memory<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Trigram) {
+        return;
+    }
+    let mut rig = ChainRig::new(407);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    let row = |id: u128, body: &str| {
+        held_memory(
+            rig_tenant(407),
+            wa,
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            body,
+        )
+    };
+    hold_and_promote(
+        &mut rig,
+        store,
+        row(0xF41, "pgbouncer runs in transaction mode"),
+    )
+    .await;
+    hold_and_promote(&mut rig, store, row(0xF42, "unrelated note about lunch")).await;
+    let scope = scope_of(wa, None);
+    let got = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Trigram,
+        &scope,
+        "pgbouncr",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(
+        got.candidates.first().map(|c| c.memory_id.as_u128()),
+        Some(0xF41),
+        "trigram: {got:?}"
+    );
+    let all = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Trigram,
+        &scope,
+        "pgbouncr",
+        MatchMode::All,
+    )
+    .await;
+    assert!(
+        all.candidates.is_empty(),
+        "trigram serves no list under match all"
+    );
+    let suggested = store
+        .suggest(rig.tenant_id, &scope, &["pgbouncr".to_owned()], 3)
+        .await
+        .expect("suggest");
+    assert_eq!(suggested, vec!["pgbouncer".to_owned()], "did you mean");
+    let outside = store
+        .suggest(
+            rig.tenant_id,
+            &scope_of(Uuid::from_u128(0xE3), None),
+            &["pgbouncr".to_owned()],
+            3,
+        )
+        .await
+        .expect("suggest");
+    assert!(
+        outside.is_empty(),
+        "did you mean offers only words of rows in the scope"
+    );
+}
+
+/// Every retriever law, against a fresh store per law.
+pub async fn run_retriever_suite<S, F, Fut>(new_store: F)
+where
+    S: JournalStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    a_retriever_never_returns_a_row_outside_the_scope(&new_store().await).await;
+    a_retriever_orders_deterministically_by_score_then_id(&new_store().await).await;
+    a_row_outside_the_scope_never_changes_a_candidates_score(&new_store).await;
+    the_keyword_retrievers_match_all_or_any_word_on_every_store(&new_store().await).await;
+    bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem(&new_store().await).await;
+    trigram_finds_a_misspelled_words_memory(&new_store().await).await;
 }

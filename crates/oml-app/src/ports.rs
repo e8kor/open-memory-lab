@@ -16,7 +16,7 @@ use oml_domain::access::{Grant, KeyDenial};
 use oml_domain::name::{Name, NamedKind, Naming};
 use oml_domain::oauth::{RefreshDecision, RevokedCause, TokenKind};
 use oml_domain::{
-    ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
+    ChainHead, EventTime, Sha256Hash, SignedEnvelope, WorkareaStatus, key_fingerprint,
 };
 
 use crate::types::{
@@ -24,11 +24,13 @@ use crate::types::{
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RecallCandidate, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkareaRecord,
+    PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows, WebEntry,
+    WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
+
+use crate::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -409,6 +411,11 @@ pub enum MetadataFold {
         edge_id: Uuid,
         ratifier_key_id: Uuid,
     },
+    /// `search.default_set`: the tenant's default search pipeline, by name,
+    /// or `None` to follow the deployment's again (ADR-0049 d4).
+    SearchDefaultSet {
+        pipeline: Option<String>,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -526,8 +533,58 @@ pub struct TailScan {
     pub events: Vec<TailEvent>,
 }
 
-/// The journal-and-metadata store port (workspace-plan.md row 1).
-pub trait JournalStore: Send + Sync {
+/// The retriever port (ADR-0049 d2): ranked candidate lists over a scope
+/// the core computes. An adapter ranks and never decides visibility — the
+/// core hands it the readable nodes, the kinds and the own held keys, an SQL
+/// adapter additionally runs under row security, and the core re-checks
+/// every row it serves (R3). No ranking input reads a verdict, a reviewer or
+/// `promoted_at` (ADR-0001 d3). The laws every adapter passes are in
+/// `oml-port-contracts` (`retriever_*`).
+pub trait Retriever: Send + Sync {
+    /// The retrievers this adapter serves; a deployment enabling a pipeline
+    /// that needs another is refused at start (ADR-0049 d4).
+    fn retrievers(&self) -> Vec<RetrieverKind>;
+
+    /// One ranked list: at most `query.k` candidates of `scope`, promoted
+    /// served tips and the own held rows alike under one score, in the
+    /// total order of hits — score descending, then `artifact_id`
+    /// ascending. Never a steering row, a vocabulary kind or a retirement
+    /// version; an empty scope ranks nothing (ADR-0025 d1, d4, d8). With
+    /// `MatchMode::All` only rows holding every term are candidates. A kind
+    /// this adapter does not serve answers [`StoreError::Backend`].
+    fn retrieve(
+        &self,
+        tenant_id: Uuid,
+        kind: RetrieverKind,
+        scope: &CandidateScope,
+        query: RetrievalQuery<'_>,
+    ) -> impl Future<Output = Result<Retrieved, StoreError>> + Send;
+
+    /// Spellings for `words` taken from the words of rows in `scope` alone,
+    /// at most `limit`, for `explain.did_you_mean` (ADR-0049 d6); an
+    /// adapter with no trigram list answers none.
+    fn suggest(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        words: &[String],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
+}
+
+/// The journal-and-metadata store port (workspace-plan.md row 1). It is a
+/// [`Retriever`] too: the keyword retrievers read the same PostgreSQL rows
+/// (ADR-0013 d1), so the core reaches both through one handle; a retriever
+/// on another store, as an embedder's index would be, gets its own (ADR-0049
+/// d2).
+pub trait JournalStore: Retriever + Send + Sync {
+    /// The tenant's journalled default search pipeline, by name, or `None`
+    /// when it follows the deployment's (ADR-0049 d4).
+    fn tenant_search_default(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+
     /// The one-transaction commit point. The store refuses a commit whose
     /// `seq`/`prev_hash` do not extend the current head — chain assignment
     /// is serialized per tenant, and the conflict is typed, never silent.
@@ -606,46 +663,6 @@ pub trait JournalStore: Send + Sync {
         tenant_id: Uuid,
         memory_ids: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
-
-    /// Full-text recall: each matched hit as a candidate with its score, at
-    /// most `k`, in the total order of hits — score descending, then
-    /// `artifact_id` ascending (retrieval.md, the recall-ordering contract;
-    /// ADR-0025 d8). Hits are served tips (tip and state promoted) of kind
-    /// `memory` or `derived_fact` that `kinds` names, never retirement
-    /// versions, so neither a replaced version nor any version of a retired
-    /// claim is a hit; steering never is, whatever `kinds` names. The search
-    /// covers exactly the `readable` workarea nodes — subtree(scope) ∩ the
-    /// nodes where reader is effective, computed by the use-case. An empty
-    /// set searches nothing: there is no tenant-wide fallback (ADR-0025 d1).
-    fn recall_fts(
-        &self,
-        tenant_id: Uuid,
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
-
-    /// Own held recall: the held rows whose author is one of
-    /// `author_key_ids`, of kind `memory` or `derived_fact` that `kinds`
-    /// names, never retirement versions and never steering, on exactly the
-    /// `readable` nodes, matched by the query and scored as
-    /// [`recall_fts`](Self::recall_fts) scores, at most `k` in the same
-    /// total order (retrieval.md, own held rows in recall; ADR-0025 d4). The
-    /// state and the author predicate are the store's own, never a filter
-    /// the caller may forget, so no other key's held text is ever matched.
-    /// The designed form reads a `held_fts` table fenced by an author policy
-    /// instead; the PoC stores bodies inline and reads them here (retrieval.md,
-    /// held text containment; ADR-0025 d5).
-    fn recall_own_held(
-        &self,
-        tenant_id: Uuid,
-        author_key_ids: &[Uuid],
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send;
 
     /// Applicable steering over `nodes`, the scope's ancestors the key reads,
     /// listed from the `universe` root down: every promoted served tip of
@@ -1474,6 +1491,13 @@ pub trait RequestObserver: Send + Sync {
 
     /// The request's verb targets `workarea_id`.
     fn workarea(&self, workarea_id: Uuid);
+
+    /// A recall ran `pipeline`, and `fallback` says whether `match: all`
+    /// fell back to any term (ADR-0049 d4, d5). Telling no one is the
+    /// default.
+    fn search(&self, pipeline: &'static str, fallback: bool) {
+        let _ = (pipeline, fallback);
+    }
 }
 
 /// The observer of a composition that logs no request.

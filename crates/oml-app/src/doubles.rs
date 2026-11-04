@@ -27,12 +27,16 @@ use oml_domain::{
     WorkareaStatus, event_types, ratifier_is_proposer,
 };
 
+use crate::ports::Retriever;
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyRecord,
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
     ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
     WebStore, claim_subject,
+};
+use crate::search::{
+    Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
 };
 use crate::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -41,9 +45,8 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
     KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
     OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
-    RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
-    WorkareaRef,
+    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -72,29 +75,47 @@ fn words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The rows that match `query`, as candidates in the total order of hits,
-/// at most `k`: this store's score is the count of distinct query terms
-/// matched (retrieval.md, the recall-ordering contract; ADR-0025 d8).
-fn ranked<'a>(
+/// The keyword retrievers over `rows`, with PostgreSQL's semantics on the
+/// `simple` index for plain words (ADR-0049 d7): `KeywordAll` keeps a row
+/// holding every query term, `KeywordAny` one holding any, and `match: all`
+/// narrows either to every term. The score is the count of distinct query
+/// terms the row holds; PostgreSQL's is `ts_rank`, so the two stores agree
+/// on the set and on the tie order, not on every rank. The tokenizer is a
+/// stand-in for PostgreSQL's parser: it splits on every non-alphanumeric,
+/// where the parser keeps a path, a version or a hyphenated word whole.
+fn keyword_ranked<'a>(
     rows: impl Iterator<Item = &'a MemoryRecord>,
-    query: &str,
-    k: usize,
-) -> Vec<RecallCandidate> {
-    let terms = words(query);
-    let mut hits: Vec<RecallCandidate> = rows
+    kind: RetrieverKind,
+    query: RetrievalQuery<'_>,
+) -> Retrieved {
+    let terms: Vec<String> = words(query.query).into_iter().collect();
+    let require_all = kind == RetrieverKind::KeywordAll || query.match_mode == MatchMode::All;
+    let mut candidates: Vec<Candidate> = rows
         .filter_map(|m| {
             let body = words(&m.body);
-            let matched = terms.iter().filter(|t| body.contains(*t)).count();
-            (matched > 0).then_some(RecallCandidate {
+            let matched: Vec<String> = terms
+                .iter()
+                .filter(|t| body.contains(*t))
+                .cloned()
+                .collect();
+            let keep = if require_all {
+                !terms.is_empty() && matched.len() == terms.len()
+            } else {
+                !matched.is_empty()
+            };
+            #[allow(clippy::cast_precision_loss, reason = "a query has few terms")]
+            let score = matched.len() as f32;
+            keep.then_some(Candidate {
                 memory_id: m.memory_id,
                 body_bytes: m.body_bytes,
-                score: matched as f32,
+                score,
+                matched,
             })
         })
         .collect();
-    hit_order(&mut hits, |c| (c.score, c.memory_id));
-    hits.truncate(k);
-    hits
+    hit_order(&mut candidates, |c| (c.score, c.memory_id));
+    candidates.truncate(query.k);
+    Retrieved { terms, candidates }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +181,8 @@ struct TenantState {
     claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
     /// Brief edges by id (ADR-0046 d7).
     brief_edges: BTreeMap<Uuid, BriefEdgeRecord>,
+    /// The tenant's journalled default search pipeline (ADR-0049 d4).
+    search_default: Option<String>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -951,6 +974,7 @@ fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
         MetadataFold::WorkareaCreated(workarea) => {
             require_universe_root(&workarea)?;
             // Unique in its namespace: the shared one, or its user root's,
@@ -1712,6 +1736,69 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
     Ok(receipt)
 }
 
+impl Retriever for MemStore {
+    /// The two keyword retrievers; this store has no BM25 statistics and no
+    /// trigrams, so a composition over it serves `keyword-all` and
+    /// `keyword-any` alone (ADR-0049 d7).
+    fn retrievers(&self) -> Vec<RetrieverKind> {
+        vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+    }
+
+    async fn retrieve(
+        &self,
+        tenant_id: Uuid,
+        kind: RetrieverKind,
+        scope: &CandidateScope,
+        query: RetrievalQuery<'_>,
+    ) -> Result<Retrieved, StoreError> {
+        if !self.retrievers().contains(&kind) {
+            return Err(StoreError::Backend(format!(
+                "the in-memory store serves no {} retriever",
+                kind.as_str()
+            )));
+        }
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Retrieved {
+                terms: words(query.query).into_iter().collect(),
+                candidates: Vec::new(),
+            });
+        };
+        let state = tenant.lock().expect("tenant lock");
+        // The scope is the core's: promoted served tips on its nodes, and
+        // the own held rows of its keys on theirs; the state and author
+        // predicates are this read's own, never the caller's to forget
+        // (ADR-0025 d4, d5, d8).
+        let admitted = |m: &&MemoryRecord| {
+            if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
+                return false;
+            }
+            if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+                return true;
+            }
+            scope.own_held.as_ref().is_some_and(|own| {
+                m.status == MemoryStatus::Held
+                    && own.author_key_ids.contains(&m.author_key_id)
+                    && own.nodes.contains(&m.workarea_id)
+            })
+        };
+        Ok(keyword_ranked(
+            state.memories.values().filter(admitted),
+            kind,
+            query,
+        ))
+    }
+
+    async fn suggest(
+        &self,
+        _tenant_id: Uuid,
+        _scope: &CandidateScope,
+        _words: &[String],
+        _limit: usize,
+    ) -> Result<Vec<String>, StoreError> {
+        Ok(Vec::new())
+    }
+}
+
 impl JournalStore for MemStore {
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         {
@@ -1920,56 +2007,10 @@ impl JournalStore for MemStore {
             .collect())
     }
 
-    async fn recall_fts(
-        &self,
-        tenant_id: Uuid,
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> Result<Vec<RecallCandidate>, StoreError> {
-        let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok(Vec::new());
-        };
-        let state = tenant.lock().expect("tenant lock");
-        Ok(ranked(
-            state
-                .memories
-                .values()
-                .filter(|m| served_tip(m) && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
-                .filter(|m| readable.contains(&m.workarea_id)),
-            query,
-            k,
-        ))
-    }
-
-    async fn recall_own_held(
-        &self,
-        tenant_id: Uuid,
-        author_key_ids: &[Uuid],
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> Result<Vec<RecallCandidate>, StoreError> {
-        let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok(Vec::new());
-        };
-        let state = tenant.lock().expect("tenant lock");
-        // The state and the author predicate are this read's own, never the
-        // caller's to forget (ADR-0025 d5).
-        Ok(ranked(
-            state
-                .memories
-                .values()
-                .filter(|m| {
-                    m.status == MemoryStatus::Held && author_key_ids.contains(&m.author_key_id)
-                })
-                .filter(|m| !m.retirement && HIT_KINDS.contains(&m.kind) && kinds.contains(&m.kind))
-                .filter(|m| readable.contains(&m.workarea_id)),
-            query,
-            k,
-        ))
+    async fn tenant_search_default(&self, tenant_id: Uuid) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .and_then(|t| t.lock().expect("tenant lock").search_default.clone()))
     }
 
     async fn steering_in_force(
