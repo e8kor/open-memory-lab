@@ -9,7 +9,7 @@ use std::time::Instant;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{DESIGNED_TOOLS, SERVED_TOOLS, alias};
+use super::{DESIGNED_TOOLS, SERVED_TOOLS};
 use crate::traffic::{RequestIds, user_agent};
 
 /// The stable `event` of the line (observability.md, the MCP call line).
@@ -57,7 +57,6 @@ pub(crate) struct McpCall {
     started: Instant,
     pub(crate) rpc_method: &'static str,
     pub(crate) tool: Option<&'static str>,
-    pub(crate) alias_of: Option<&'static str>,
     pub(crate) mode: Option<&'static str>,
     pub(crate) outcome: Outcome,
     pub(crate) error_code: Option<String>,
@@ -73,13 +72,12 @@ fn rpc_method(method: &str) -> &'static str {
         .unwrap_or(UNKNOWN)
 }
 
-/// The tool's name as the line logs it: served, a v0.3.0 alias or
-/// designed, else `unknown`.
+/// The tool's name as the line logs it: served or designed, else
+/// `unknown`.
 fn tool(name: &str) -> &'static str {
     SERVED_TOOLS
         .into_iter()
         .chain(DESIGNED_TOOLS)
-        .chain(alias::ALIASES.into_iter().map(|(alias, _)| alias))
         .find(|t| *t == name)
         .unwrap_or(UNKNOWN)
 }
@@ -106,7 +104,6 @@ impl McpCall {
             started,
             rpc_method: UNKNOWN,
             tool: None,
-            alias_of: None,
             mode: None,
             outcome: Outcome::Result,
             error_code: None,
@@ -134,7 +131,6 @@ impl McpCall {
     pub(crate) fn tool_call(&mut self, name: &str, arguments: Option<&Value>) {
         let logged = tool(name);
         self.tool = Some(logged);
-        self.alias_of = alias::successor(name);
         self.mode = mode(logged, arguments);
     }
 
@@ -169,7 +165,6 @@ impl McpCall {
             key_id = %key_id,
             rpc_method = self.rpc_method,
             tool = self.tool,
-            alias_of = self.alias_of,
             mode = self.mode,
             outcome = self.outcome.as_str(),
             error_code = self.error_code.as_deref(),

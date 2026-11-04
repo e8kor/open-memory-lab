@@ -69,7 +69,7 @@ For your own server, your administrator gives you two things: the server's addre
 key. With those, and Claude Code on your machine, three lines connect your agent:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.1/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```
@@ -123,7 +123,7 @@ assigned to it yet ([releases](docs/product/releases.md)).
 
 | Capability | What it will add | Release |
 | --- | --- | --- |
-| **Guardrails** | Reviewed rules loaded at every session start and checked before each tool call. | Planned for v0.5.1 |
+| **Guardrails** | Reviewed rules every agent session loads at its start, in their own frame with who set and approved them, and a check before each matching tool call that asks or refuses, never allows; an export and a prompt for tools without the plugin's hooks. Unverified: no recorded Claude Code session shows the hooks running yet. | Since v0.5.1 |
 | **Workarea lifecycle** | A workarea that moves from development to committed to validated, each step proposed by one identity and confirmed by another; a validated workarea stays readable and takes no new writes. | Planned for v0.5.2 |
 | **Links between memories** | Labelled links, such as "supports" or "contradicts". | Planned for v0.5.2 |
 | **In-progress workareas** | Teammates see each other's unreviewed work at once inside a development workarea that opts in, and nothing leaves it until it is committed. | Planned for v0.6.0 |

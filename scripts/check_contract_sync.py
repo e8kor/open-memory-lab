@@ -42,7 +42,7 @@ This script extracts each surface and fails with a diff on any disagreement:
     replaces it, and a page that still runs it contradicts the reference
     (ADR-0039 d15)
   * a v0.3.0 spelling from d10's table on a start page: the eight tool names
-    (ALIASES in crates/transports/oml-transport-http/src/mcp/alias.rs),
+    (V0_3_0_TOOLS below, removed in v0.5.1),
     `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
     `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
     `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
@@ -112,23 +112,19 @@ MEMORY_READ_RE = re.compile(r"(?<!//)\bmemory\??\.([a-z_]+)\b")
 CONTRACT_MARKS = {"served", "designed"}
 RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")
 RETIRED_VERB_EXEMPT = [ROOT / "docs" / "adr", ROOT / "docs" / "atlas", ROOT / "docs" / "changelog.md"]
-ALIAS_RS = MCP_RS.parent / "mcp" / "alias.rs"
-
-
-def v0_3_0_tools() -> list[str]:
-    """The eight v0.3.0 tool names, the first of each pair of `ALIASES` in alias.rs."""
-    match = re.search(r"ALIASES: \[\(&str, &str\); \d+\] = \[(.*?)\];",
-                      ALIAS_RS.read_text(encoding="utf-8"), re.S)
-    if not match:
-        sys.exit(f"ALIASES not found in {ALIAS_RS.relative_to(ROOT)}")
-    return re.findall(r'\(\s*"([^"]+)"\s*,', match.group(1))
+# The eight tool names v0.3.0 served, removed in v0.5.1 (ADR-0039 d12), which
+# no start page teaches.
+V0_3_0_TOOLS = [
+    "oml_remember", "oml_learn", "oml_recall", "oml_get",
+    "oml_supersede", "oml_my_work", "oml_workarea_info", "oml_events_tail",
+]
 
 
 # d10's v0.3.0 column: the tool names, the header, the recall flag, the
 # variables, the flags, the CLI verbs, and the release 0.3.2 the rewrite
 # replaced with v0.4.0, spelled with or without a "v" and at a sentence's end.
 RETIRED_NAME_RE = re.compile(
-    "|".join(rf"\b{re.escape(tool)}\b" for tool in v0_3_0_tools())
+    "|".join(rf"\b{re.escape(tool)}\b" for tool in V0_3_0_TOOLS)
     + r"|X-OML-Workarea|\binclude_own_held\b|\bOML_CLI_(?:SERVER|KEY)\b"
     r"|(?<![-\w])--(?:token|server|key)(?![-\w])"
     r"|\boml (?:submit|recall|supersede|review verdict)\b"

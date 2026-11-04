@@ -7,7 +7,7 @@ answers: why the one API surface gains two stability rings — /v1 memory provid
 
 # ADR-0022 — The two-ring API: v1 memory provider, v2 memory lab
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** introduced in v0.1.0 ([releases](../product/releases.md#decisions))
 

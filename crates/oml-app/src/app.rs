@@ -25,6 +25,10 @@ use oml_domain::access::{
     tail_visible,
 };
 use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::guardrail::{
+    self, GuardrailScope, LOAD_WARNING, OWN_HELD_MAX_LINES, SET_CAP, Severity, conflicts,
+    guardrail_order, set_digest,
+};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_qualified, unresolved_value,
@@ -59,11 +63,12 @@ use crate::types::{
     CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
     ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
     ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest, CrewPage, CrewRecord,
-    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, HIT_KINDS, IssueKeyRequest, IssuedKey,
-    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition,
-    ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts,
-    RefreshForm, RegisteredClient, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    CrewUpdate, DenialRecord, ExchangeForm, GrantRecord, GuardrailFields, GuardrailRequest,
+    GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
+    KeyDetail, KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, MemoryPage,
+    MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OwnHeldGuardrail,
+    PROVIDER_TENANT, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
     SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
     TenantRow, TokenPair, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest,
     VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
@@ -349,7 +354,79 @@ fn submit_request_digest(
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "workarea_id": workarea_id.to_string(),
     });
+    let doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// A request digest's document with a guardrail's `severity` and `rule`
+/// when sent, and unchanged otherwise, so the digest of every request of
+/// another kind is the one it was before guardrails (proposed ADR-0037
+/// d10).
+fn with_guardrail_fields(
+    mut doc: Value,
+    severity: Option<Severity>,
+    rule: Option<&Value>,
+) -> Value {
+    if let Some(members) = doc.as_object_mut() {
+        if let Some(severity) = severity {
+            members.insert("severity".to_owned(), Value::from(severity.as_str()));
+        }
+        if let Some(rule) = rule {
+            members.insert("rule".to_owned(), rule.clone());
+        }
+    }
+    doc
+}
+
+/// A version's guardrail fields, checked as proposed ADR-0037 d10 states:
+/// `severity` and `rule` are refused on every other kind and on a
+/// retirement, `severity` is required on every other guardrail version
+/// (`request.validation`), and then the scan's two guardrail classes run
+/// over the NFC body and the rule (`submission.scan_veto`, its finding
+/// `guardrail.too_long` or `guardrail.rule_unparsable`). `None` for a
+/// version that carries neither.
+fn guardrail_fields(
+    kind: MemoryKind,
+    retirement: bool,
+    severity: Option<Severity>,
+    rule: Option<&Value>,
+    body: &str,
+) -> Result<Option<Box<GuardrailFields>>, AppError> {
+    if kind != MemoryKind::Guardrail || retirement {
+        if severity.is_some() {
+            return Err(AppError::GuardrailFieldRefused { field: "severity" });
+        }
+        if rule.is_some() {
+            return Err(AppError::GuardrailFieldRefused { field: "rule" });
+        }
+        return Ok(None);
+    }
+    let severity = severity.ok_or(AppError::GuardrailSeverityRequired)?;
+    guardrail::admit(severity, body, rule)
+        .map_err(|refusal| AppError::ScanVeto(refusal.code().to_owned()))?;
+    Ok(Some(Box::new(GuardrailFields {
+        severity,
+        rule: rule.cloned(),
+    })))
+}
+
+/// The submission payload's guardrail members: the severity in clear and
+/// the rule's digest, never the rule, which the row holds (proposed
+/// ADR-0037 d14). A version with no guardrail fields journals neither.
+fn guardrail_payload(
+    payload: &mut Value,
+    fields: Option<&GuardrailFields>,
+) -> Result<(), AppError> {
+    let (Some(fields), Some(members)) = (fields, payload.as_object_mut()) else {
+        return Ok(());
+    };
+    let rule_digest = match &fields.rule {
+        Some(rule) => Value::from(sha256_digest_string(&canonical_bytes(rule)?)),
+        None => Value::Null,
+    };
+    members.insert("severity".to_owned(), Value::from(fields.severity.as_str()));
+    members.insert("rule_digest".to_owned(), rule_digest);
+    Ok(())
 }
 
 /// The request digest of a supersession: SHA-256 over the RFC 8785 JSON of
@@ -369,6 +446,10 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
             "reason": req.reason,
         },
     });
+    let mut doc = doc;
+    if let Some(body) = doc.get_mut("body") {
+        *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
+    }
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
 
@@ -1133,11 +1214,15 @@ where
             memory.lineage_principals.clear();
             memory.lineage_key_ids.clear();
         }
+        let load_warning = (memory.kind == MemoryKind::Guardrail
+            && memory.status == MemoryStatus::Held)
+            .then_some(LOAD_WARNING);
         Ok(ServedMemory {
             memory,
             replaces,
             workarea_path,
             anonymous,
+            load_warning,
         })
     }
 
@@ -1323,6 +1408,9 @@ where
             user,
             revoked_at: None,
             session_user: None,
+            guardrail_scope: req
+                .guardrail_scope
+                .unwrap_or(GuardrailScope::ISSUANCE_DEFAULT),
         };
         (record, value)
     }
@@ -1342,6 +1430,7 @@ where
             "name": record.name.as_ref().map(Name::as_str),
             "crew_id": record.crew_id.map(|c| c.to_string()),
             "credential": record.credential.as_str(),
+            "guardrail_scope": record.guardrail_scope.as_str(),
             // The user root's id, null for a tenant key (ADR-0044 d2).
             "user": record.user.map(|u| u.to_string()),
         });
@@ -1703,10 +1792,12 @@ where
             grants: Vec::new(),
             user: None,
             connect_code: false,
+            guardrail_scope: None,
         };
         let (record, value) =
             self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None, None);
         let key_id = record.key_id;
+        let guardrail_scope = record.guardrail_scope;
         let event = self.seal(
             Some(&prev),
             tenant_id,
@@ -1732,6 +1823,7 @@ where
                 name: issue.name,
                 crew_id: None,
                 user: None,
+                guardrail_scope,
                 access: KeyAccess {
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
@@ -1968,6 +2060,7 @@ where
             value = String::new();
         }
         let key_id = record.key_id;
+        let guardrail_scope = record.guardrail_scope;
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -2014,6 +2107,7 @@ where
                 name: req.name.clone(),
                 crew_id,
                 user: user_ref.clone(),
+                guardrail_scope,
                 access: KeyAccess {
                     issued_seq,
                     grants: stored,
@@ -2052,6 +2146,7 @@ where
             name: req.name.clone(),
             crew_id,
             user: user_ref.clone(),
+            guardrail_scope,
             access: KeyAccess {
                 issued_seq: receipt.seq,
                 grants: stored,
@@ -2263,7 +2358,7 @@ where
     /// footnote 6; ADR-0026 d15). The node, by id or name, or else the key's
     /// journalled default, is resolved only after step 1 of the refusal
     /// order, as recall resolves it (roles-and-keys.md refusal order;
-    /// mcp-plugin.md `oml_workarea_info`; ADR-0026 d4).
+    /// mcp-plugin.md `oml_workarea`; ADR-0026 d4).
     pub async fn workarea_info(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -2575,10 +2670,19 @@ where
             }
         };
         let user = self.user_ref(tenant_id, record.user).await?;
+        let guardrail_scope =
+            GuardrailScope::of_issuance(issued.envelope.payload.get("guardrail_scope"))
+                .ok_or_else(|| {
+                    StoreError::Backend(format!(
+                        "key {key_id}'s key.issued journals guardrail_scope {}",
+                        issued.envelope.payload["guardrail_scope"]
+                    ))
+                })?;
         Ok(KeyDetail {
             key: record,
             user,
             held_by,
+            guardrail_scope,
             access,
         })
     }
@@ -3045,6 +3149,9 @@ where
         // Capture normalizes first: the digest, the scan and the byte count
         // all see the NFC text (admission.md capture; ADR-0025 d6).
         let body = nfc(&req.body);
+        // A guardrail's fields, then its two scan classes, before the
+        // scanner port: a veto journals nothing (proposed ADR-0037 d10).
+        let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -3115,6 +3222,7 @@ where
             lineage_key_ids: key_ids.into_iter().collect(),
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
+            guardrail,
         };
 
         // The catalog payload of submission.remember: digest-only, body
@@ -3122,7 +3230,7 @@ where
         // The PoC stores the body inline and unencrypted, so there is no
         // ciphertext digest, and it pins no scan rule set, so there is no
         // scanner version (admission.md rule-set registry).
-        let payload = json!({
+        let mut payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
             "claim_key": claim_key,
@@ -3143,6 +3251,7 @@ where
                 "finding": scan_finding,
             },
         });
+        guardrail_payload(&mut payload, memory.guardrail.as_deref())?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -3690,6 +3799,202 @@ where
         })
     }
 
+    /// The guardrail read (proposed ADR-0037 d3, d4, d5, d7): reader on the
+    /// scope node by the refusal order, as recall is, the node the key's
+    /// default or the request's workarea within its grants. The set is
+    /// d4's: the promoted served guardrail tips, never a retirement version,
+    /// on the scope node and, under the key's `guardrail_scope`
+    /// `ancestors`, on each ancestor of it, each only where the key's
+    /// reader effective access covers that node; `workarea` keeps the scope
+    /// node alone. The scope is the key's own, set at issuance; nothing in
+    /// the request changes it. The set is ordered by severity, depth,
+    /// `promoted_at` and `artifact_id`, never by a query; rows of one
+    /// `claim_key` with different severities each name the others in
+    /// `conflict`; over [`SET_CAP`] the set is served whole with
+    /// `over_cap`. Held guardrails are never served as rules: the caller's
+    /// own held ones in the same chain are listed by `claim_key` and version
+    /// alone, at most [`OWN_HELD_MAX_LINES`] (d3). Each served row carries
+    /// its approving verdicts' `held_by` and `at`, never a reviewer's key
+    /// name (d5); they are read from the journal, one pass over the tenant's
+    /// chain per read whose cost is unmeasured. The result names the served
+    /// ids, the read log's input as recall's does (ADR-0025 d9).
+    pub async fn guardrails(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &GuardrailRequest,
+    ) -> Result<GuardrailSet, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        require_admissible(key, Role::Reader, "guardrails")?;
+        let scope_node = self.target_workarea(key, req.workarea.as_ref()).await?;
+        self.require_access(&caller, scope_node, Role::Reader, "guardrails")
+            .await?;
+        let tenant_id = key.tenant_id;
+        let guardrail_scope = key.guardrail_scope;
+
+        // The chain runs node to root, so each node's own ancestry is its
+        // suffix and its depth from the root is the suffix's length less
+        // one; the scope bounds it before access does.
+        let chain = self
+            .journal
+            .workarea_ancestry(tenant_id, scope_node)
+            .await?
+            .unwrap_or_default();
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workarea_id).collect();
+        let scope_path = derived_path(&chain);
+        let bound = match guardrail_scope {
+            GuardrailScope::Workarea => ids.len().min(1),
+            GuardrailScope::Ancestors => ids.len(),
+        };
+        let mut nodes: BTreeMap<Uuid, (u32, bool, String)> = BTreeMap::new();
+        for i in 0..bound {
+            let depth = u32::try_from(ids.len() - 1 - i).unwrap_or(u32::MAX);
+            let reads = caller.effective(&ids[i..]).contains(&Role::Reader);
+            if reads || !caller.denied(&ids[i..]) {
+                nodes.insert(ids[i], (depth, reads, derived_path(&chain[i..])));
+            }
+        }
+        let listed: Vec<Uuid> = nodes.keys().copied().collect();
+        let rows = self
+            .journal
+            .guardrail_rows(tenant_id, &listed, key.key_id)
+            .await?;
+
+        // R3 defense in depth: a served rule is a readable promoted tip in
+        // force with its fields; a held row is listed to its author alone
+        // and never served as a rule, inside an in-progress workarea too
+        // (d3).
+        let mut in_force = Vec::new();
+        let mut own_held = Vec::new();
+        for m in rows {
+            if m.kind != MemoryKind::Guardrail {
+                continue;
+            }
+            let Some(&(depth, reads, _)) = nodes.get(&m.workarea_id) else {
+                continue;
+            };
+            match m.status {
+                MemoryStatus::Promoted if m.is_tip && !m.retirement && reads => {
+                    if let (Some(fields), Some(at)) = (m.guardrail.clone(), m.promoted_at.clone()) {
+                        in_force.push((depth, *fields, at, m));
+                    }
+                }
+                MemoryStatus::Held if m.author_key_id == key.key_id => {
+                    own_held.push(OwnHeldGuardrail {
+                        claim_key: m.claim_key,
+                        version: m.version,
+                    });
+                }
+                _ => {}
+            }
+        }
+        guardrail_order(&mut in_force, |(depth, fields, at, m)| {
+            (fields.severity, *depth, at, m.memory_id)
+        });
+        let conflict = conflicts(&in_force, |(_, fields, _, m)| {
+            (m.claim_key.as_str(), fields.severity, m.memory_id)
+        });
+        own_held.sort_by(|a, b| {
+            a.claim_key
+                .cmp(&b.claim_key)
+                .then_with(|| a.version.cmp(&b.version))
+        });
+        own_held.truncate(OWN_HELD_MAX_LINES);
+
+        let verdicts = self
+            .approvals(tenant_id, in_force.iter().map(|(_, _, _, m)| m.memory_id))
+            .await?;
+        let served_ids: Vec<Uuid> = in_force.iter().map(|(_, _, _, m)| m.memory_id).collect();
+        let versions: Vec<(Uuid, u32)> = in_force
+            .iter()
+            .map(|(_, _, _, m)| (m.memory_id, m.version))
+            .collect();
+        let over_cap = in_force.len() > SET_CAP;
+        let guardrails = in_force
+            .into_iter()
+            .zip(conflict)
+            .map(
+                |((depth, fields, promoted_at, m), conflict)| ServedGuardrail {
+                    artifact_id: m.memory_id,
+                    workarea_path: nodes.get(&m.workarea_id).map(|(_, _, path)| path.clone()),
+                    verdicts: verdicts.get(&m.memory_id).cloned().unwrap_or_default(),
+                    tokens: budget_tokens(m.body_bytes),
+                    claim_key: m.claim_key,
+                    version: m.version,
+                    workarea_id: m.workarea_id,
+                    depth,
+                    severity: fields.severity,
+                    body: m.body,
+                    rule: fields.rule,
+                    promoted_at,
+                    conflict,
+                },
+            )
+            .collect();
+        Ok(GuardrailSet {
+            scope_node,
+            scope_path,
+            guardrail_scope,
+            set_digest: set_digest(&versions),
+            over_cap,
+            guardrails,
+            own_held,
+            served_ids,
+        })
+    }
+
+    /// The approving verdicts on each of `memory_ids`, in journal order: the
+    /// reviewing key's `held_by` and the verdict's `at` (proposed ADR-0037
+    /// d5). A verdict whose key the tenant does not hold fails closed.
+    async fn approvals(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: impl Iterator<Item = Uuid>,
+    ) -> Result<BTreeMap<Uuid, Vec<GuardrailVerdict>>, AppError> {
+        let wanted: BTreeSet<Uuid> = memory_ids.collect();
+        let mut out: BTreeMap<Uuid, Vec<GuardrailVerdict>> = BTreeMap::new();
+        if wanted.is_empty() {
+            return Ok(out);
+        }
+        let mut held_by: BTreeMap<Uuid, HeldBy> = BTreeMap::new();
+        for event in self.whole_chain(tenant_id).await? {
+            let envelope = event.envelope;
+            if envelope.event_type != event_types::REVIEW_APPROVE {
+                continue;
+            }
+            let Some(memory_id) = payload_id(&envelope.payload, "artifact_id") else {
+                continue;
+            };
+            if !wanted.contains(&memory_id) {
+                continue;
+            }
+            let reviewer = envelope.api_key_id.ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "review.approve at seq {} names no key",
+                    envelope.seq
+                ))
+            })?;
+            let attested = match held_by.get(&reviewer) {
+                Some(attested) => *attested,
+                None => {
+                    let record = self.journal.key(tenant_id, reviewer).await?.ok_or_else(|| {
+                        StoreError::Backend(format!(
+                            "review.approve at seq {} names key {reviewer}, which the tenant does not hold",
+                            envelope.seq
+                        ))
+                    })?;
+                    held_by.insert(reviewer, record.held_by);
+                    record.held_by
+                }
+            };
+            out.entry(memory_id).or_default().push(GuardrailVerdict {
+                held_by: attested,
+                at: envelope.at,
+            });
+        }
+        Ok(out)
+    }
+
     /// Get one memory: the authoring key sees its own rows in every state,
     /// with no grant needed and global denials still masking them; everyone
     /// else sees promoted rows, replaced versions included, with reader
@@ -3729,7 +4034,7 @@ where
     /// (step 3), or a dreamer's dreamer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
-    /// and from `oml_supersede` the vocabulary-kind check (step 5); then the
+    /// and from `oml_write` the vocabulary-kind check (step 5); then the
     /// checks every submit runs. The successor takes the next ordinal of the
     /// claim_key and journals `submission.remember` (`submission.learn` for
     /// a `derived_fact`) naming what it replaces, with the idempotency record
@@ -3806,7 +4111,7 @@ where
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
-        // on oml_supersede the target is of no vocabulary kind (ADR-0025 d12).
+        // on oml_write the target is of no vocabulary kind (ADR-0025 d12).
         if let (Some(workarea_id), Some(sent)) = (header, &req.workarea)
             && workarea_id != target.workarea_id
         {
@@ -3830,11 +4135,20 @@ where
         {
             return Err(AppError::VocabularyTarget(target.kind));
         }
+        // A guardrail is superseded on the HTTP API only (proposed ADR-0037
+        // d10).
+        if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
+            return Err(AppError::GuardrailTarget);
+        }
 
         // The checks every submit runs: NFC first, then the scan, whose veto
         // journals nothing, then every declared ancestor readable
-        // (admission.md capture; ADR-0025 d3, d6).
+        // (admission.md capture; ADR-0025 d3, d6). A guardrail successor
+        // re-sends its fields, which run their checks first (proposed
+        // ADR-0037 d10).
         let body = nfc(&req.body);
+        let guardrail =
+            guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
@@ -3917,6 +4231,7 @@ where
             lineage_key_ids: key_ids.into_iter().collect(),
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
+            guardrail,
         };
 
         // The catalog payload of the submission, digest-only, plus what it
@@ -3927,7 +4242,7 @@ where
         } else {
             event_types::SUBMISSION_REMEMBER
         };
-        let payload = json!({
+        let mut payload = json!({
             "artifact_id": successor_id.to_string(),
             "workarea_id": target.workarea_id.to_string(),
             "claim_key": target.claim_key,
@@ -3951,6 +4266,7 @@ where
                 "finding": scan_finding,
             },
         });
+        guardrail_payload(&mut payload, successor.guardrail.as_deref())?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,

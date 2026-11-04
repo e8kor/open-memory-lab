@@ -162,7 +162,7 @@ conversation. See the
 your `PATH`. One line installs it for you alone and checks the download:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.1/scripts/install/install.sh | sh
 ```
 
 v0.4.0 is the first release to carry the installer. Windows, the inspect-first form and the
@@ -226,6 +226,24 @@ first. The cost is that the error's words go to your server. A per-session file 
 `~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
 the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
+
+## Guardrails
+
+*Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
+When the `oml` CLI is on your `PATH`, the plugin also runs `oml hook guardrails` at every session
+start, after a compaction and when Claude starts a subagent. It loads the reviewed rules in force
+for your key's workarea, and for the workareas above it when the key's guardrail scope is
+`ancestors`, which an admin sets when issuing the key. Claude sees them as instructions, each with
+where it was set and how many reviewers approved it. At session start it also writes the rules
+that carry a check to a file only you can read, under `~/.local/state/oml/guardrails`, and the
+PreToolUse hook, `oml hook pre-tool-use`, checks each matching tool call against that file before
+it runs: a match denies the call or asks you, and nothing is ever allowed by a rule. The check
+sends nothing to the server. Without the file, after a server outage at session start, the check
+decides nothing and says so once per call; restart the session to load the rules. A text rule is
+an instruction to Claude, not a guarantee, and a checked rule holds only where this plugin's hooks
+run. See the
+[CLI reference](../../docs/cli/reference.md#oml-hook-guardrails-and-oml-hook-pre-tool-use).
 
 ## The librarian
 

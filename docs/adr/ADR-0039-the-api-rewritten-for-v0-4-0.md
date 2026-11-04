@@ -7,7 +7,7 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 # ADR-0039 — The API is rewritten for v0.4.0 while OML is pre-release: three task-shaped MCP tools, a contract that declares only what is served, one URL and one key to start, and nothing lost
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
 
@@ -229,6 +229,12 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
       `oml_read` and `oml_workarea`. v0.5.1 rewrites those tests on the three tools and then
       removes the eight names, the four verbs, `--server`, `--key` and a v0.3.0 credentials file's
       `server` and `key` (d15) together.
+    - **Removed in v0.5.1 (2026-11-04).** The facade tests drive `oml_write`, `oml_read` and
+      `oml_workarea`, and then the window closed: each of the eight names answers JSON-RPC -32602
+      with the `Unknown tool` message, as any tool not served does; `mcp_alias_called` and the
+      `mcp_call` line's `alias_of` field are gone; the four verbs, `--server` and `--key` are the
+      CLI's usage errors, exit 2, with nothing sent; and a v0.3.0 credentials file's `server`
+      and `key` are not read.
 
 - **d13 — The breaking changes are these, and each has its migration.**
 

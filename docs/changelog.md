@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design and 0.5.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design and 0.5.1-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.1-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,194 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.5.1-design
+
+Opened for release v0.5.1, which carries this revision: guardrails, reviewed rules every agent
+session loads and each matching tool call is checked against
+([ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)),
+and the removal of the hidden v0.3.0 names ([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
+d12). `info.version` moved to `0.5.1-design` once, at the release, one step past v0.5.0's, as
+ADR-0037 d18 Q9 decided: the provider ring gained `GET /v1/guardrails` and the guardrail fields of
+`POST /v1/memories`. The entries below were kept apart until this release, newest first.
+
+### 2026-11-04 — Release v0.5.1: ADR-0037 accepted
+
+The maintainer accepted [ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+on 2026-11-04 with release v0.5.1. Each record on its Amends line gains "amended by ADR-0037";
+its register row, the [releases](product/releases.md) page, which moves v0.5.1 from planned to
+shipped, `llms.txt`, the roadmap's FR-50 to FR-54, and the README's "What works today" read
+"introduced in v0.5.1" or "since v0.5.1", as do the markers on the HTTP API, the MCP plugin page,
+the CLI reference, the plugin README, the administering guide and the use cases. The export's
+refusal inside an in-progress workarea and the time-boxed freeze stay unbuilt until ADR-0030 and
+ADR-0036 are accepted.
+
+### 2026-11-04 — The workspace, the chart, the plugins and the installers' default name 0.5.1, and the spec is 0.5.1-design
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.1; every reader page fetches the
+installer at `v0.5.1`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.1-design`.
+
+### 2026-11-04 — The hidden v0.3.0 names are removed (ADR-0039 d12)
+
+The eight v0.3.0 MCP tool names answer as unknown tools, the old CLI verbs and the `--server` and
+`--key` flags as unknown subcommands and arguments, and a v0.3.0 credentials file's `server` and
+`key` are no longer read. The `mcp_alias_called` log line and the request line's `alias_of` field
+are gone. The facade's end-to-end tests drive MCP through `oml_write`, `oml_read` and
+`oml_workarea` alone. Pages: [mcp-plugin](api/mcp-plugin.md), [upgrading](guides/upgrading.md),
+the [CLI reference](cli/reference.md), [upgrades](operations/upgrades.md) and
+[observability](operations/observability.md).
+
+### 2026-11-04 — Guardrails under user roots and on the pages (implementation, ADR-0037 S6)
+
+`ancestors` reaches `universe` through ADR-0044's node grant, and no other root; a user key cannot
+write a guardrail into `universe`; a `universe` guardrail is served with its verdicts and no
+source. The user page shows the set in force at the person's root, read-only; review shows a held
+guardrail's load warning; a page-issued key takes the default scope; and a page supersede or
+retirement of a guardrail is refused.
+
+### 2026-11-04 — Guardrails S3, S4 and S5: the hooks, the export and the prompt (implementation, ADR-0037, proposed)
+
+An implementation milestone on the v0.5.1 branch; the record stays proposed and binds nothing,
+and `info.version` is unchanged (d18 Q9).
+
+- **The leaf crate** (d18 Q10). `oml-guardrail` holds the `oml-gr/1` grammar, the matcher, the
+  check, the rule cache's codec and the frame renderer; `oml-domain` re-exports it and `oml-cli`
+  links it and no other inward crate ([workspace plan](engineering/workspace-plan.md)).
+- **S3** (d6, d7). `oml hook guardrails` on SessionStart and SubagentStart: one `GET
+  /v1/guardrails`, the set in its own frame with provenance, conflicts and the caller's held
+  rows, nothing over the cap and the user told, the key redacted, every failure a
+  `systemMessage`; at SessionStart alone the 30-day sweep and the 0600 rule cache. `GET
+  /v1/guardrails` also names `scope_path`, the header's workarea.
+- **S4** (d8, d9). `oml hook pre-tool-use`: deny or ask from the cache, never allow, no request;
+  a broken cache denies every call; no cache decides nothing and warns; a bad `session_id`
+  exits 2. The plugin's `hooks.json` carries both entries, and `check_plugin.py` holds them.
+- **S5** (d7, d11). `oml guardrails show` and `oml guardrails export --format agents-md|claude-md
+  [--check]`; the MCP prompt `guardrails` beside the three tools. Recall refuses `kinds:
+  ["guardrail"]` naming `/kinds` (d18 Q7). The SDKs' generated layers are regenerated.
+- **Not built:** S6 (user roots and the pages, after v0.5.0); the export's refusal inside an
+  in-progress subtree (ADR-0030) and the freeze (d12, ADR-0036); rotation's scope and the
+  simulation refusal; no recorded Claude Code session yet shows the hooks running (FR-51).
+
+### 2026-11-04 — ADR-0037's ten open questions answered by the maintainer
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+stays proposed; d18 now records the maintainer's answers and the "reading to confirm" marks go.
+The scope defaults to `ancestors`, changes only by rotation and folds as `ancestors` for older
+keys; a guardrail never self-signs; a user-page key takes the default; a `universe` guardrail is
+served with its verdicts; the listings serve the kind and recall refuses `kinds: ["guardrail"]`;
+`oml write` takes the guardrail fields; `info.version` moves once at release; and the rule
+grammar, matcher, check and cache codec move into a leaf crate, `oml-guardrail`, that
+`oml-domain` and `oml-cli` both link, amending ADR-0006 d6 by that leaf. The rejected options are
+in the record's rejected alternatives.
+
+- **Pages:** the record, its register row, the [workspace plan](engineering/workspace-plan.md)
+  and this entry.
+
+### 2026-11-04 — Guardrails S1 and S2 on the wire, and the CLI's flags (implementation, ADR-0037, proposed)
+
+An implementation milestone on the v0.5.1 branch, on top of v0.4.1; no decision changes, and the
+record stays proposed. The build takes d18's readings in brackets: `guardrail_scope` defaults to
+`ancestors`, a key issued before it folds as `ancestors`, a guardrail never self-signs, and `oml
+write` takes the guardrail fields.
+
+- **The kind** (d1, d2, d10). `POST /v1/memories` and its supersede take `kind: guardrail` with a
+  required `severity` and an optional `rule`, each refused on any other kind and on a retirement
+  (`request.validation`, `details.field`); the scan's `guardrail.rule_unparsable` and
+  `guardrail.too_long` veto as `submission.scan_veto`; R2 holds and nothing self-signs; a claim item
+  of kind guardrail carries its `severity` and `rule`, and a held one its `load_warning`.
+  `oml_write`, and its hidden aliases, refuse `kind: guardrail` and a `replaces` naming one.
+- **The key's scope** (d4). `POST /v2/keys` takes `guardrail_scope`, `workarea` or `ancestors`,
+  journals it in `key.issued` and stores it in `api_keys`; `GET /v2/keys/{key}` and
+  `GET /v2/whoami` serve it; `oml keys issue` and `issue-agent` take `--guardrail-scope`.
+- **The read** (d3, d4, d5, d7). `GET /v1/guardrails`, `workarea` its one parameter, serves the
+  promoted set at the scope node under the key's reader access and scope, ordered by severity,
+  depth, `promoted_at` and `artifact_id`, with conflicts, verdicts by attestation and time,
+  `over_cap` past twelve and the caller's own held guardrails by key and version; recall never
+  serves the kind. Declared in [openapi.yaml](api/openapi.yaml) and the
+  [HTTP API](api/http-api.md#guardrails-get-v1guardrails).
+- **The store.** Migration `0016_guardrails.sql`, numbered behind v0.5.0's `0014` and `0015`, adds
+  `memories.severity`, `memories.rule` and `api_keys.guardrail_scope`
+  ([Postgres schema](data/postgres-schema.md#guardrail-columns)).
+- **Not built:** the hooks (S3, S4), which wait for d18 Q10; the export and the MCP prompt (S5);
+  user roots and the pages (S6), which wait for v0.5.0; rotation and simulation writes; the
+  regenerated SDKs, owed by `scripts/generate_sdks.py`. `info.version` is unchanged (d18 Q9).
+
+### 2026-11-04 — ADR-0037 rebased onto the v0.4.0 API, user roots and the web pages, and planned for v0.5.1
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+stays proposed and gains a Release line, planned for v0.5.1, as ADR-0045 d20 (g) moved it. No
+decision of the maintainer's is reopened; the record now speaks the API it will ship on and the
+two records v0.5.0 builds first.
+
+- **The v0.4.0 API** ([ADR-0039](adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)): `oml_write`
+  refuses `kind: guardrail` and a `replaces` naming a guardrail (`request.validation`, amending
+  its d3); the read takes the `workarea` query field, not `X-OML-Workarea`; the item says `text`;
+  `GET /v2/whoami` serves `guardrail_scope` (its d15); the MCP prompt sits beside three tools.
+- **User roots, d16** ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):
+  `ancestors` walks from the scope node through `universe.<user>` to `universe` under the same
+  reader test, which ADR-0044 d3's node grant satisfies, and reaches no other root; a person's
+  agents propose guardrails only in their root, which `<user>-review` may ratify; `universe`'s
+  guardrails are written by curator keys alone and served under ADR-0044 d9.
+- **The web pages, d17** ([ADR-0045](adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)):
+  session keys load nothing; the user page may show the set in force at the person's root;
+  a held guardrail on review carries the load warning; no page writes one.
+- **Open, d18:** ten questions the maintainer's decisions do not settle, each with the reading
+  the build takes until answered. **The build, d15:** six steps; S6 waits for ADR-0044 and
+  ADR-0045 W3.
+- **Pages:** the record, its register row, this entry, and the two v0.5.0 mentions of guardrails
+  on [releases](product/releases.md#decisions) and [administering](guides/administering.md).
+
+### 2026-10-31 — Guardrails: reviewed rules loaded at session start and checked at the tool call (ADR-0037, proposed)
+
+[ADR-0037](adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), proposed on 2026-10-31, answers the user's request of that day: load
+guardrails, a special kind of claim, at session start from the workarea or from the workarea and
+all its ancestors as a setting chooses. It was revised the same day to the maintainer's four
+decisions, which it records as decided and not reopened, with each replaced reading moved to its
+rejected alternatives: no reach-down past a key's own read access; the scope is set on the key by
+an admin and applied by the server, never on the client; the review policy decides, with no
+human-verdict floor; and with no rule cache the check allows and warns. Its number follows those
+that records on other branches hold. It binds nothing before its acceptance, and no accepted
+record changes until then.
+
+- **Proposed, not built:** kind `guardrail`, which reuses steering's applicability and differs
+  from it in content, delivery, frame, ratification, budget and tool calls (d1); severity
+  `never`, `must` or `should`, which says how binding a line is and orders the set first,
+  and decides no inheritance (d2); promoted guardrails only, held ones listed to their author
+  alone (d3); applicability under the key's own reader access, ADR-0008 d4 unchanged, and its
+  `guardrail_scope`, `workarea` or `ancestors` (default `ancestors`, the maintainer's reading to
+  confirm), set by an admin with `--guardrail-scope` on `oml keys issue` and
+  `oml keys issue-agent`, journalled in `key.issued` and changed only by rotation, the
+  maintainer's reading to confirm, with no client setting and no `off` value; severity-first order and shown conflicts
+  (d4);
+  `GET /v1/guardrails`, amending ADR-0022 d2's `/v1` verb list, never in recall, with
+  reviewer counts and no reviewer key names (d5); `oml hook guardrails` on SessionStart, after a
+  compaction and on SubagentStart, in its own frame with provenance on every line (d6); a cap
+  and no partial set (d7); the `oml-gr/1` rule, deny or ask only (d8); `oml hook pre-tool-use`,
+  its 0600 per-session cache with a digest line, a cache that cannot be checked denying and no
+  cache at all allowing with a one-line warning (d9); `POST /v1/memories` with kind `guardrail`, written and superseded on the HTTP API only, two
+  scan classes, ratification under the workarea's review policy with R2, and never a
+  self-signature, the maintainer's reading to confirm (d10); `oml guardrails export` and an MCP
+  prompt for other harnesses (d11); a change freeze through proposed ADR-0036's valid time
+  (d12); what the hooks never do (d13); the wire and four vocabulary rows (d14); the build on
+  main after v0.3.0 (d15).
+- **Pages touched:** the record, its register row and nav entry, `llms.txt`, a new engineering
+  page, [session claims](engineering/session-claims.md), which catalogues the other claim kinds
+  the same hook points could carry, proposed and not decided, with its sources quoted, and
+  FR-50 to FR-59 on the roadmap, each marked proposed. On 2026-11-02 the catalogue took the
+  maintainer's design for workarea context at session start, proposed and not decided: a
+  workarea brief of existing claims joined by a ratified brief edge and scoped by a separate key
+  attribute, `brief_scope`, defaulting to the workarea; a workarea digest, a crew's reviewed
+  `derived_fact` summary with its sources, after GraphRAG's community summaries and RAPTOR's
+  recursive ones; session-start recall over the session's own workarea, queried by repository,
+  branch and changed files with a match on any word; and the layering of guardrails, steering,
+  brief, digest and corpus, with no new kind; FR-60 to FR-62 on the roadmap track them. No
+  contract page changes, so `info.version` stays `0.3.0-design`.
+- **Amends, on acceptance:** ADR-0001 (d5), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2),
+  ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11, d12), ADR-0026 (d9), ADR-0028 (d1) and ADR-0029 (d7); their
+  Status lines gain the back-pointer then, and proposed ADR-0036 (d2, d4) and ADR-0030 (d8) take
+  d12 and d3 when each is accepted. ADR-0008 d4 and ADR-0012 d3 are no longer amended.
 
 ## 0.5.0-design
 

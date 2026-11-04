@@ -38,7 +38,7 @@ fn out_with_connect_code_is_refused_with_exit_2_before_anything_is_sent() {
         .env("OML_CLI_CREDENTIALS", dir.join("credentials.toml"))
         .env_remove("OML_CLI_KEY")
         .env_remove("OML_CLI_SERVER")
-        .args(["--server", &server, "--key", "oml_test_admin"])
+        .args(["--url", &server, "--api-key", "oml_test_admin"])
         .args([
             "keys",
             "issue-agent",
@@ -140,7 +140,7 @@ fn issue_against_fixture(test: &str, answer: Value, replay: bool) -> (Output, Ve
         .env("OML_CLI_CREDENTIALS", dir.join("credentials.toml"))
         .env_remove("OML_CLI_KEY")
         .env_remove("OML_CLI_SERVER")
-        .args(["--server", &server, "--key", "oml_test_admin"])
+        .args(["--url", &server, "--api-key", "oml_test_admin"])
         .args([
             "keys",
             "issue-agent",

@@ -7,7 +7,7 @@ answers: how the oml agent plugin starts every Claude Code session from what OML
 
 # ADR-0029 — The agent plugin starts every session from what OML holds for its key, through `oml hook session-start`
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0038](ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) (d6, d7), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](ADR-0040-plugin-setup-in-claude-code.md)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0038](ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) (d6, d7), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](ADR-0040-plugin-setup-in-claude-code.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** introduced in v0.2.2 ([releases](../product/releases.md#decisions))
 

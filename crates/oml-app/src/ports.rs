@@ -540,6 +540,20 @@ pub trait JournalStore: Send + Sync {
         nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
+    /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
+    /// promoted served tip of kind `guardrail` whose workarea is one of them,
+    /// never a retirement version, and every held version of kind
+    /// `guardrail` on them that `author_key_id` authored, never another
+    /// key's. Unordered: the read orders the set (d4). The state and the
+    /// author predicate are the store's own, as for
+    /// [`recall_own_held`](Self::recall_own_held).
+    fn guardrail_rows(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        author_key_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
     /// One listing page (http-api.md search; ADR-0025 d13): the rows the
     /// filter's scope admits — the own key set's rows in every state off the
     /// masked nodes, or the promoted served tips on the given nodes — that

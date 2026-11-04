@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 
 from ..models.memory_summary_kind import MemorySummaryKind
 from ..models.memory_summary_provenance import MemorySummaryProvenance
+from ..models.memory_summary_severity import MemorySummarySeverity
 from ..models.memory_summary_state import MemorySummaryState
 from ..types import UNSET, Unset
 
@@ -49,6 +50,10 @@ class Memory:
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
+        severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
+        rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
+        load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
+            workarea will load the rule once it binds (ADR-0037 d10).
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
             its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
             source (ADR-0044 d9).
@@ -79,6 +84,9 @@ class Memory:
     created_at: datetime.datetime
     promoted_at: datetime.datetime | None
     retirement: bool = False
+    severity: MemorySummarySeverity | Unset = UNSET
+    rule: Any | Unset = UNSET
+    load_warning: str | Unset = UNSET
     principal: None | str | Unset = UNSET
     provenance: MemorySummaryProvenance | Unset = UNSET
     simulation_id: None | str | Unset = UNSET
@@ -134,6 +142,14 @@ class Memory:
         else:
             promoted_at = self.promoted_at
 
+        severity: str | Unset = UNSET
+        if not isinstance(self.severity, Unset):
+            severity = self.severity.value
+
+        rule = self.rule
+
+        load_warning = self.load_warning
+
         principal: None | str | Unset
         if isinstance(self.principal, Unset):
             principal = UNSET
@@ -187,6 +203,12 @@ class Memory:
                 "promoted_at": promoted_at,
             }
         )
+        if severity is not UNSET:
+            field_dict["severity"] = severity
+        if rule is not UNSET:
+            field_dict["rule"] = rule
+        if load_warning is not UNSET:
+            field_dict["load_warning"] = load_warning
         if principal is not UNSET:
             field_dict["principal"] = principal
         if provenance is not UNSET:
@@ -289,6 +311,17 @@ class Memory:
 
         promoted_at = _parse_promoted_at(d.pop("promoted_at"))
 
+        _severity = d.pop("severity", UNSET)
+        severity: MemorySummarySeverity | Unset
+        if isinstance(_severity, Unset):
+            severity = UNSET
+        else:
+            severity = MemorySummarySeverity(_severity)
+
+        rule = d.pop("rule", UNSET)
+
+        load_warning = d.pop("load_warning", UNSET)
+
         def _parse_principal(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -346,6 +379,9 @@ class Memory:
             held_expires_at=held_expires_at,
             created_at=created_at,
             promoted_at=promoted_at,
+            severity=severity,
+            rule=rule,
+            load_warning=load_warning,
             principal=principal,
             provenance=provenance,
             simulation_id=simulation_id,

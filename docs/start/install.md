@@ -14,7 +14,7 @@ tag to carry them ([releases](../product/releases.md))
 
 Two scripts install the `oml` CLI for the current user, write one file and print the next command
 ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d5). The lines
-below fetch them at the tag `v0.5.0`. Before that release the scripts
+below fetch them at the tag `v0.5.1`. Before that release the scripts
 were run against v0.3.1 on Linux x86_64, with cosign, without it and with `latest`
 (ADR-0041, "Where each item stands"), and `install.ps1` runs only in CI's `install-smoke` job.
 
@@ -23,13 +23,13 @@ were run against v0.3.1 on Linux x86_64, with cosign, without it and with `lates
 Linux and macOS:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.1/scripts/install/install.sh | sh
 ```
 
 Windows, in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.1/scripts/install/install.ps1 | iex
 ```
 
 **What a piped install trusts** (ADR-0041 d5):
@@ -40,7 +40,7 @@ irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/insta
   before it runs, download it, read it, then run it:
 
     ```sh
-    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.0/scripts/install/install.sh
+    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.1/scripts/install/install.sh
     less install.sh
     sh install.sh
     ```
@@ -80,7 +80,7 @@ throws rather than exits, so `| iex` never closes your shell.
 
 | `install.sh` | `install.ps1` | Variable | Default |
 |---|---|---|---|
-| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.5.0 at `v0.5.0` (ADR-0041 d3) |
+| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.5.1 at `v0.5.1` (ADR-0041 d3) |
 | `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
 | `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 

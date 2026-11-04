@@ -235,6 +235,7 @@ verify-chain` exists and is refused while the server serves no chain export.
 - **No other tenant.** No verb reads another tenant, and the tenant is read off the key, never
   the request.
 
-Guardrails, the reviewed rules every session loads and each tool call is checked against, are
-planned for v0.5.1 ([ADR-0037](../product/releases.md#planned-releases), proposed); no guardrail
-setting exists in v0.4.0.
+Guardrails, the reviewed rules every session loads and each tool call is checked against, arrived
+in v0.5.1 ([ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)). An admin sets a key's guardrail scope at issuance with
+`--guardrail-scope workarea|ancestors`, `ancestors` when omitted; a key's scope changes only by
+reissuing it.

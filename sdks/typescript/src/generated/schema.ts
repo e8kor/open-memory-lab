@@ -88,6 +88,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/guardrails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The guardrails in force at the scope node, under the key's reader access and guardrail scope; never in recall.
+         * @description Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance, and any parameter other than workarea, guardrail_scope included, is request.validation naming it (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+         */
+        get: operations["getGuardrails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/workareas": {
         parameters: {
             query?: never;
@@ -820,10 +840,13 @@ export interface components {
             /** @description Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6). */
             claim_key?: string;
             /**
+             * @description guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
              * @default memory
              * @enum {string}
              */
-            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            severity?: components["schemas"]["Severity"];
+            rule?: components["schemas"]["GuardrailRule"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
             /** @description The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea (ADR-0039 d4, d7). */
@@ -873,9 +896,18 @@ export interface components {
             /** @description Derived at read time; grants bind to node ids. Null wherever workarea_id is. */
             workarea_path: string | null;
             /** @enum {string} */
-            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+            kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
+            /**
+             * @description On kind guardrail alone, except a retirement version (ADR-0037 d2).
+             * @enum {string}
+             */
+            severity?: "never" | "must" | "should";
+            /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8). */
+            rule?: unknown;
+            /** @description On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10). */
+            load_warning?: string;
             /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
             /** @enum {string} */
@@ -993,10 +1025,12 @@ export interface components {
              * @description Omitted, the successor takes the target's kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target's kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).
              * @enum {string}
              */
-            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @description The superseded target is included implicitly. */
             derives_from?: string[];
             reason?: string;
+            severity?: components["schemas"]["Severity"];
+            rule?: components["schemas"]["GuardrailRule"];
         };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
         Crew: {
@@ -1204,6 +1238,7 @@ export interface components {
             label?: string;
             /** @description Who acts — the attribution identity, shared across one identity's keys; free text. */
             principal?: string;
+            guardrail_scope?: components["schemas"]["GuardrailScope"];
             /**
              * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
@@ -1242,8 +1277,79 @@ export interface components {
              * @enum {string}
              */
             credential?: "bearer" | "connection" | "session";
+            guardrail_scope?: components["schemas"]["GuardrailScope"];
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
+        };
+        /**
+         * @description A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
+         * @enum {string}
+         */
+        Severity: "never" | "must" | "should";
+        /** @description A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1). */
+        GuardrailRule: {
+            /** @enum {string} */
+            rule: "oml-gr/1";
+            /** @enum {string} */
+            tool: "shell" | "edit" | "read" | "fetch" | "mcp";
+            /** @description shell: word globs matched against each segment of a command. */
+            command?: string[];
+            /** @description edit and read: a path glob. */
+            path?: string;
+            /** @description fetch: an exact host or a *. suffix, in its WHATWG serialisation. */
+            host?: string;
+            /** @description mcp: a glob against the tool name. */
+            name?: string;
+            /** @enum {string} */
+            effect: "deny" | "ask";
+        };
+        /**
+         * @description Which applicable guardrails the key loads: workarea, the scope node's alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted, journalled in key.issued; no request changes it, and any other value is request.validation, details.field /guardrail_scope (ADR-0037 d4; since v0.5.1).
+         * @enum {string}
+         */
+        GuardrailScope: "workarea" | "ancestors";
+        /** @description The guardrails in force at the scope node under the key's reader access and guardrail scope (ADR-0037 d3, d4, d5, d7). */
+        GuardrailSet: {
+            scope_node: string;
+            /** @description The scope node's derived path, root first; the hook's header names it. */
+            scope_path: string;
+            guardrail_scope: components["schemas"]["GuardrailScope"];
+            /** @description Opaque; a client only compares it. */
+            set_digest: string;
+            /** @description More than twelve apply; the set is still served whole. */
+            over_cap: boolean;
+            /** @description Ordered by severity, depth from the root, promoted_at and artifact_id; never by a query. */
+            guardrails: components["schemas"]["ServedGuardrail"][];
+            /** @description The caller's own held guardrails in the chain, by key and version, never by text. */
+            own_held: {
+                claim_key: string;
+                version: number;
+            }[];
+        };
+        ServedGuardrail: {
+            artifact_id: string;
+            claim_key: string;
+            version: number;
+            workarea_id: string;
+            workarea_path: string | null;
+            /** @description The node's depth from the root, the root at 0. */
+            depth: number;
+            severity: components["schemas"]["Severity"];
+            text: string;
+            /** @description Its oml-gr/1 rule, or null. */
+            rule: unknown;
+            tokens: number;
+            /** Format: date-time */
+            promoted_at: string;
+            /** @description Each approving verdict's reviewer attestation and time, never the reviewer's key (ADR-0025 d15). */
+            verdicts: {
+                /** @enum {string} */
+                held_by: "agent" | "human" | "service";
+                /** Format: date-time */
+                at: string;
+            }[];
+            /** @description The artifact_ids of the served rows of this claim_key with another severity; empty when none. */
+            conflict: string[];
         };
         /** @description A row the calling key's record references, by its id and its name (ADR-0039 d15). */
         WhoamiRef: {
@@ -1294,6 +1400,7 @@ export interface components {
             user: components["schemas"]["WhoamiRef"] | null;
             /** @description The key's stored grants, each with its epoch and without its deny masks. */
             grants: components["schemas"]["WhoamiGrant"][];
+            guardrail_scope?: components["schemas"]["GuardrailScope"];
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -1944,6 +2051,40 @@ export interface operations {
             };
             409: components["responses"]["Conflict"];
             415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getGuardrails: {
+        parameters: {
+            query?: {
+                /** @description The scope node, by id or name, within the key's grants; omitted, the key's default workarea. */
+                workarea?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The set, its digest and the caller's own held guardrails. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuardrailSet"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             default: components["responses"]["Error"];
         };
     };

@@ -7,7 +7,7 @@ answers: why the implementation is pure Rust; what named trigger would admit Sca
 
 # ADR-0006 — Pure Rust, with Scala/Spark behind a named trigger outside the TCB
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 

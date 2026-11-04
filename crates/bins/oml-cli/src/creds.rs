@@ -11,14 +11,15 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// The stored pair. Either field may be absent in a hand-edited file; the
-/// caller refuses a file that sets one alone. A v0.3.0 file's `server` and
-/// `key` are read as `url` and `api_key` through v0.5.0, and its `key_id`,
-/// `tenant_id` and `root_workarea_id` are ignored (ADR-0039 d15).
+/// caller refuses a file that sets one alone. A v0.3.0 file's `server`,
+/// `key`, `key_id`, `tenant_id` and `root_workarea_id` are not read: its
+/// `server` and `key` were read through v0.5.0, and v0.5.1 removed them
+/// (ADR-0039 d12, d15).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Credentials {
-    #[serde(alias = "server", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(alias = "key", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
 }
 
@@ -161,21 +162,17 @@ mod tests {
     }
 
     #[test]
-    fn a_v0_3_0_credentials_file_is_read_for_its_server_and_key_only() {
+    fn a_v0_3_0_credentials_files_server_and_key_are_not_read() {
+        // Read through v0.5.0 and removed in v0.5.1 with the other v0.3.0
+        // spellings: the file still parses, and sets no pair, so the CLI
+        // asks for `oml login` (ADR-0039 d12, d15).
         let v0_3_0 = "server = \"https://oml.example.com\"\nkey = \"oml_admin\"\n\
                       key_id = \"0b7e9d5c-0000-4000-8000-000000000001\"\n\
                       tenant_id = \"0b7e9d5c-0000-4000-8000-000000000002\"\n\
                       root_workarea_id = \"0b7e9d5c-0000-4000-8000-000000000003\"\n";
         let read: Credentials = toml::from_str(v0_3_0).expect("a v0.3.0 file parses");
-        assert_eq!(read.url.as_deref(), Some("https://oml.example.com"));
-        assert_eq!(read.api_key.as_deref(), Some("oml_admin"));
-        let written = toml::to_string(&read).expect("serializes");
-        let fields: toml::Table = toml::from_str(&written).expect("parses back");
-        assert_eq!(
-            fields.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["api_key", "url"],
-            "only the pair is written: {written}"
-        );
+        assert_eq!(read.url, None);
+        assert_eq!(read.api_key, None);
     }
 
     #[test]

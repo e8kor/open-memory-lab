@@ -7,7 +7,7 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 # ADR-0026 — Workareas, crews, keys and tenants are named by unique, immutable keys that every surface accepts in place of their ids
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
 **Release:** partly in v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
 

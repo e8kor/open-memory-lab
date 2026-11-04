@@ -31,6 +31,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
+oml-guardrail.workspace = true
 tower.workspace = true
 
 [lints]

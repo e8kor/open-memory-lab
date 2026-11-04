@@ -16,6 +16,7 @@ use core::task::Poll;
 
 use oml_app::domain::Sha256Hash;
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
+use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, DOCUMENT_KEPT_SECONDS, Issuer, KeyState,
@@ -35,9 +36,9 @@ use oml_app::ports::{
 use oml_app::types::{
     AuthorizationRecord, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
-    GrantRecord, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope, MemoryRecord,
-    MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
+    GrantRecord, GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RecallCandidate, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, UnnamedRows, WorkareaRecord,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -381,6 +382,7 @@ pub fn held_memory(
         lineage_key_ids: vec![author_key_id],
         scan_finding: None,
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
+        guardrail: None,
     }
 }
 
@@ -517,6 +519,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         revoked_at: None,
         user: None,
         session_user: None,
+        guardrail_scope: GuardrailScope::Ancestors,
     }
 }
 
@@ -1464,6 +1467,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         revoked_at: None,
         user: None,
         session_user: None,
+        guardrail_scope: GuardrailScope::Ancestors,
     };
     rig.commit(
         store,
@@ -4137,6 +4141,83 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
     );
 }
 
+/// The guardrail rows over the nodes named: every promoted served tip of
+/// kind guardrail, never a retirement version nor a version it replaced,
+/// and the held guardrails the named key authored, never another key's; no
+/// row of another kind and none off the named nodes (proposed ADR-0037 d3,
+/// d4).
+pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(47);
+    rig.seed_chain(store, 0).await;
+    let [wa, elsewhere] = [0xB470_u128, 0xB471].map(Uuid::from_u128);
+    let (author, other) = (Uuid::from_u128(0xD470), Uuid::from_u128(0xD471));
+    let rail = |wa: Uuid, id: u128, key: Uuid| MemoryRecord {
+        kind: MemoryKind::Guardrail,
+        guardrail: Some(Box::new(GuardrailFields {
+            severity: Severity::Must,
+            rule: Some(json!({
+                "rule": "oml-gr/1", "tool": "shell", "command": ["git", "push", "*"],
+                "effect": "deny",
+            })),
+        })),
+        ..held_memory(
+            rig_tenant(47),
+            wa,
+            Uuid::from_u128(id),
+            "wanda",
+            key,
+            "run the tests first",
+        )
+    };
+    let in_force = rail(wa, 0xC470, other);
+    let retired = rail(wa, 0xC471, other);
+    let retirement = MemoryRecord {
+        guardrail: None,
+        ..successor_of(&retired, Uuid::from_u128(0xC472), "retired", true)
+    };
+    let own_held = rail(wa, 0xC473, author);
+    let others_held = rail(wa, 0xC474, other);
+    let off_node = rail(elsewhere, 0xC475, other);
+    let memory = MemoryRecord {
+        kind: MemoryKind::Memory,
+        guardrail: None,
+        ..rail(wa, 0xC476, other)
+    };
+    for row in [&in_force, &retired, &off_node, &memory] {
+        hold_and_promote(&mut rig, store, row.clone()).await;
+    }
+    hold_and_ratify(&mut rig, store, retirement).await;
+    for row in [&own_held, &others_held] {
+        hold(&mut rig, store, row.clone()).await.expect("hold");
+    }
+
+    let mut rows = store
+        .guardrail_rows(rig.tenant_id, &[wa], author)
+        .await
+        .expect("guardrail rows");
+    rows.sort_by_key(|m| m.memory_id);
+    assert_eq!(
+        rows.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![in_force.memory_id, own_held.memory_id]
+    );
+    assert_eq!(
+        rows[0].guardrail, in_force.guardrail,
+        "the fields round-trip"
+    );
+    assert!(
+        store
+            .guardrail_rows(rig.tenant_id, &[], author)
+            .await
+            .expect("guardrail rows")
+            .is_empty(),
+        "no node, no row"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
@@ -4156,6 +4237,7 @@ where
     retired_claims_are_absent_from_recall_and_steering(&new_store().await).await;
     steering_in_force_is_ordered_by_depth_then_promoted_at_then_artifact_id(&new_store().await)
         .await;
+    guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await).await;
     recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await).await;
     memories_reads_the_named_rows_in_the_order_named(&new_store().await).await;
     journal_review_claim_laws(&new_store().await).await;

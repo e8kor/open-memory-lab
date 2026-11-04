@@ -203,7 +203,10 @@ pub fn resolve_pair(var: &dyn Fn(&str) -> Option<String>) -> Result<Pair, String
 /// [`resolve_pair`] for a hook whose refusal line ends `so {nothing}`:
 /// every hook reads the same pair from the same source (ADR-0040 d3,
 /// ADR-0038 d4).
-fn resolve_pair_for(var: &dyn Fn(&str) -> Option<String>, nothing: &str) -> Result<Pair, String> {
+pub(crate) fn resolve_pair_for(
+    var: &dyn Fn(&str) -> Option<String>,
+    nothing: &str,
+) -> Result<Pair, String> {
     let set = |name: &str| var(name).filter(|v| !v.is_empty());
     let (option_url, option_key) = (set(OPTION_URL), set(OPTION_API_KEY));
     let (url, key, url_var, key_var) = if option_url.is_some() || option_key.is_some() {
@@ -468,7 +471,7 @@ fn one_line(text: &str) -> String {
 
 /// A failed request in one clause: a refusal by its code, anything else by
 /// the client's own words, none of which carry a success body.
-fn describe(e: CliError) -> String {
+pub(crate) fn describe(e: CliError) -> String {
     match e {
         CliError::Refused { status, code, .. } => format!("the server refused ({status} {code})"),
         CliError::Local(why) | CliError::Unanswered(why) => why,
@@ -1535,8 +1538,8 @@ mod tests {
     }
 
     /// The session-start line and the server's instructions ask for recall
-    /// through `oml_read`, the v0.4.0 tool, and never name `oml_recall`
-    /// (ADR-0038 d3, ADR-0039 d2).
+    /// through `oml_read`, the v0.4.0 tool, and never name `oml_recall`,
+    /// the v0.3.0 name removed in v0.5.1 (ADR-0038 d3, ADR-0039 d2, d12).
     #[test]
     fn the_session_start_recall_line_names_oml_read() {
         assert!(

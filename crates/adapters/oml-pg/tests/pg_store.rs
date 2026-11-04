@@ -2381,14 +2381,18 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
             // finds (ADR-0044 d12); 0015 adds session_for, null for every
-            // key it finds (ADR-0045 d6).
+            // key it finds (ADR-0045 d6); 0016 adds guardrail_scope, folded
+            // as ancestors (proposed ADR-0037 d4).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
-                 - 'session_for'"
+                 - 'session_for' - 'guardrail_scope'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
             (true, "grants") => "to_jsonb(t) - 'covers'",
+            // 0016 adds a guardrail's severity and rule, null on every other
+            // kind (proposed ADR-0037 d10).
+            (true, "memories") => "to_jsonb(t) - 'severity' - 'rule'",
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
         };

@@ -12,14 +12,15 @@ use serde_json::json;
 use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
+use oml_app::domain::guardrail::{FrameOptions, render_frame};
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{
-    AdminState, AppError, Bearer, HIT_KINDS, ListRequest, NamedServe, RecallRequest, ServedMemory,
-    SubmitRequest, SubmitVerb, SupersedeRequest, Verdict, VerdictRequest, WebEmailRequest,
-    WebSessionRecord,
+    AdminState, AppError, Bearer, GuardrailRequest, HIT_KINDS, ListRequest, NamedServe,
+    RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, Verdict,
+    VerdictRequest, WebEmailRequest, WebSessionRecord,
 };
 
 use super::page::{attr, form, hidden, input, select, shell, short, state_tag, text, textarea};
@@ -116,6 +117,7 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
         ("/web?view=setup", "Set up"),
         ("/web?view=memories", "Memories"),
         ("/web?view=workarea", "Workareas"),
+        ("/web?view=guardrails", "Guardrails"),
         ("/web?view=review", "Review"),
     ];
     if admin {
@@ -184,6 +186,7 @@ where
                 self.workarea_view(&web, session, &csrf).await?,
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
+            "guardrails" => ("/web?view=guardrails", self.guardrails_view(&web).await?),
             _ => ("/web", self.keys_view(&web, session, &csrf).await?),
         };
         Ok(shell(
@@ -194,6 +197,40 @@ where
             query.get("done"),
             &body,
         ))
+    }
+
+    /// The guardrails in force at the person's root, read-only: the read
+    /// `GET /v1/guardrails` serves, as `<user>-web` at its default
+    /// workarea, rendered by the hook's renderer with no line marked
+    /// checked; the page writes, supersedes and retires none (proposed
+    /// ADR-0037 d17).
+    async fn guardrails_view(&self, web: &oml_app::app::Caller) -> Result<String, ApiError> {
+        let request = GuardrailRequest::default();
+        let set = self
+            .app
+            .guardrails(Bearer::Session(web), &request)
+            .await
+            .map_err(app_error)?;
+        let frame = render_frame(
+            &crate::guardrail_set_json(&set),
+            &FrameOptions {
+                origin: "this server",
+                checked: false,
+                whole_over_cap: true,
+            },
+        )
+        .map_err(ApiError::internal)?;
+        let mut lines = frame.text.lines();
+        let header = lines.next().unwrap_or_default();
+        let mut body = format!(
+            r#"<p class="label">Guardrails</p><h1>Guardrails</h1><p class="lede">The reviewed rules your agents load at every session start, here and above your workarea. Write and change them through the API or the command line; this page only shows them.</p><p class="dim">{}</p><ul>"#,
+            text(header)
+        );
+        for line in lines {
+            let _ = write!(body, "<li>{}</li>", text(line.trim_start_matches("- ")));
+        }
+        body.push_str("</ul>");
+        Ok(body)
     }
 
     async fn keys_view(
@@ -995,6 +1032,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                         Name::parse(oml_app::domain::name::UNIVERSE).expect("a name"),
                     )),
                     derives_from: vec![source],
+                    severity: None,
+                    rule: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1013,6 +1052,15 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 let read = retry_chain(|| self.app.admin_read(Bearer::Session(&admin), target))
                     .await
                     .map_err(app_error)?;
+                // No page supersedes or retires a guardrail: it is written
+                // with its severity and rule on the API or the command line
+                // (proposed ADR-0037 d17).
+                if read.memory.kind == MemoryKind::Guardrail {
+                    return Err(ApiError::validation(
+                        "a guardrail is superseded and retired on the API or the command line, with its severity and rule, never on this page",
+                    )
+                    .with_details(json!({"field": "memory"})));
+                }
                 let curate = self.caller(session, Capacity::Curate).await.ok();
                 let acting = match curate {
                     Some(c) if read.memory.author_key_id == c.key().key_id => c,
@@ -1030,6 +1078,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     reason: None,
                     workarea: None,
                     refuse_vocabulary_target: false,
+                    severity: None,
+                    rule: None,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await
@@ -1286,15 +1336,21 @@ fn memory_card(m: &ServedMemory) -> String {
     } else {
         short(&m.memory.author_principal)
     };
-    format!(
-        r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p></div>"#,
-        state_tag(memory_state(m)),
-        short(m.workarea_path.as_deref().unwrap_or("")),
-        m.memory.version,
-        text(&m.memory.body),
-        short(&m.memory.claim_key),
-        from
-    )
+    // A held guardrail tells every reader what approving it does (proposed
+    // ADR-0037 d10, d17).
+    let warning = m.load_warning.map_or_else(String::new, |w| {
+        format!(r#"<p class="lede">Guardrail: {}.</p>"#, text(w))
+    });
+    warning
+        + &format!(
+            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p></div>"#,
+            state_tag(memory_state(m)),
+            short(m.workarea_path.as_deref().unwrap_or("")),
+            m.memory.version,
+            text(&m.memory.body),
+            short(&m.memory.claim_key),
+            from
+        )
 }
 
 fn author_line(m: &AdminMemory) -> String {
