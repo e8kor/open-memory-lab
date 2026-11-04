@@ -34,8 +34,8 @@ tenant's `universe`. Inclusion is single-parent: every workarea except the
 universe has exactly one parent, so cycles are impossible by construction, and
 every node has one derivable path from the root. Every workarea has a
 [name](../api/http-api.md#names-and-ids), unique in its tenant across the whole
-tree (within the shared namespace or one user's root once
-[user roots](#user-roots-planned) are built) and never changed, and the root's is `universe` in every tenant: tenant
+tree (since v0.5.0, within the shared namespace or one user's root:
+[user roots](#user-roots)) and never changed, and the root's is `universe` in every tenant: tenant
 creation creates the root under that name, so no other workarea can take it
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d6).
 
@@ -48,11 +48,11 @@ The universe root is special in three ways, all of them refusals:
   universe exists so that paths, subtree grants, and subtree denies have a
   well-defined top, not so that anything is stored at the top.
 
-*Planned for v0.5.0, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), proposed):* the third
+*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):* the third
 refusal becomes a curation rule. `universe` holds only the claims curators place
 there — tenant writer keys an admin granted writer on the `universe` node — each
 held and reviewed by a second identity like every write; no user key can write or
-propose to it ([user roots](#user-roots-planned)).
+propose to it ([user roots](#user-roots)).
 
 Cross-tenant mapping — relating workareas of different tenants into one "whole
 world" — does not exist in this design. It is an explicitly future federation
@@ -93,9 +93,9 @@ Note that `lit-review` is `validated` while its parent `research-crew` is
 child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 `experiments` is legal because `experiments` is not frozen.
 
-## User roots (planned)
+## User roots
 
-*Planned for v0.5.0, not built · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed) · [releases](../product/releases.md)*
+*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
 
 Every user — a person an admin attests a key acts for — has a **user root**: a
 direct child of `universe` named after the user, `universe.<user>`, marked
@@ -122,9 +122,9 @@ flowchart TD
 
 - **A user key reaches its own root and the `universe` node, nothing else.** Its
   grants must lie inside its user's root, and issuance adds one reader grant on
-  `universe` with `covers: node` ([below](#node-grants-planned)), so it reads
+  `universe` with `covers: node` ([below](#node-grants)), so it reads
   universe's own claims and never another user's root or a shared workarea beneath
-  `universe` ([roles and keys](roles-and-keys.md#user-keys-planned)).
+  `universe` ([roles and keys](roles-and-keys.md#user-keys)).
 - **Names.** `alice.project` and `bob.project` coexist: a name is unique within
   one user's root, or within the shared namespace that holds `universe`, every
   user root's name and every shared workarea's name. The qualified name
@@ -204,8 +204,8 @@ that states its own staleness window there.
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
 
-<a id="node-grants-planned"></a>*Planned for v0.5.0, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-d4, proposed):* a grant gains `covers`, `subtree` (the default, every grant
+<a id="node-grants"></a>*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
+d4):* a grant gains `covers`, `subtree` (the default, every grant
 today) or `node`. A `node` grant covers its own node and no descendant, carries no
 deny entries, and otherwise enters the formula below like every grant, so "covers"
 in step 1 means "N is the grant's node or, for a `subtree` grant, a descendant of

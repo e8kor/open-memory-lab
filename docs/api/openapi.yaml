@@ -1634,12 +1634,26 @@ components:
 
     WorkareaRef:
       description: >-
-        A workarea, by its node id or its name. Resolved server-side before any check that reads
-        state; an unknown name answers exactly what an unknown id answers. A derived path is
-        neither, and is refused (request.validation).
+        A workarea, by its node id, its name or its qualified name. Resolved server-side before
+        any check that reads state; an unknown name answers exactly what an unknown id answers.
+        A user key resolves a bare name in its own user root's namespace, plus universe and its
+        root's name; every other key in the shared namespace (ADR-0044 d5). A derived path, a
+        value of three or more labels or one whose first label is universe, is neither, and is
+        refused (request.validation).
       anyOf:
         - { $ref: '#/components/schemas/Id' }
         - { $ref: '#/components/schemas/NameRef' }
+        - { $ref: '#/components/schemas/QualifiedName' }
+
+    QualifiedName:
+      type: string
+      maxLength: 127
+      pattern: '^(?!universe\.)[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\.[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+      description: >-
+        <user>.<name>: the workarea named name in the namespace of the user root named user,
+        unique in the tenant and never changed, since nothing crosses a user root's boundary;
+        exactly two reference-grammar labels joined by one '.', the first not universe
+        (docs/api/http-api.md, Names and ids; ADR-0044 d5).
 
     CrewRef:
       description: A crew record, by its id or its name, resolved server-side like every reference (ADR-0026 d4).
@@ -1804,7 +1818,7 @@ components:
         workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
-        principal: { type: string }
+        principal: { type: [string, 'null'], description: "The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9)." }
         provenance: { type: string, enum: [agent, human, connector, simulation] }
         simulation_id: { type: [string, 'null'] }
         self_signed: { type: boolean, description: Marked rows under the bounded development exception; never promote beyond their workarea. }
@@ -1997,6 +2011,7 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/Crew' }
             - { type: 'null' }
+        user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
@@ -2039,9 +2054,9 @@ components:
     WorkareaCreate:
       type: object
       additionalProperties: false
-      required: [parent, name]
+      required: [name]
       properties:
-        parent: { $ref: '#/components/schemas/WorkareaRef' }
+        parent: { $ref: '#/components/schemas/WorkareaRef', description: "The parent. Omitted, a user key's own root; every other key sends it (request.workarea_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6)." }
         name: { $ref: '#/components/schemas/Name' }
         crew: { $ref: '#/components/schemas/CrewRef' }
 
@@ -2126,7 +2141,8 @@ components:
             additionalProperties: false
             properties:
               workarea: { $ref: '#/components/schemas/WorkareaRef' }
-          description: Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise).
+          description: Per-grant masks; each masks a subtree within this grant only and must lie inside it (request.validation otherwise). A node grant takes none (request.validation, details.field /grants/<i>/deny).
+        covers: { type: string, enum: [subtree, node], default: subtree, description: "subtree covers the node and every descendant; node covers the node alone (ADR-0044 d4)." }
 
     Grant:
       type: object
@@ -2142,6 +2158,7 @@ components:
             type: object
             properties:
               subtree_node_id: { type: string }
+        covers: { type: string, enum: [subtree, node], description: "The node's subtree, or the node alone (ADR-0044 d4)." }
         epoch: { type: integer, description: "The journal seq of this grant's grant.issued event." }
 
     DenialRequest:
@@ -2168,7 +2185,8 @@ components:
       properties:
         role: { $ref: '#/components/schemas/Role' }
         name: { $ref: '#/components/schemas/Name', description: "The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9)." }
-        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent: the server adds no grant (ADR-0025 d2). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2)." }
+        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2)." }
+        user: { $ref: '#/components/schemas/Name', description: "The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workarea references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workarea holds is 409 name.taken. Refused on admin and operator keys, on held_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3)." }
         default_workarea: { $ref: '#/components/schemas/WorkareaRef', description: "The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md." }
         held_by: { type: string, enum: [agent, human, service], description: "The issuing admin's journalled attestation (ADR-0021); never verified as fact." }
         crew: { $ref: '#/components/schemas/CrewRef', description: "The key's crew record, by id or name, journalled as crew_id and fixed for the key's life; one that names no crew record of the tenant answers access.not_found at step 4 of the issuance order (ADR-0026 d8)." }
@@ -2185,6 +2203,11 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         principal: { type: string }
         crew_id: { type: [string, 'null'], description: "The key's crew record, as key.issued journals it; null when none was named (ADR-0026 d8)." }
+        user:
+          description: "The key's user root, by id and name; null for a tenant key (ADR-0044 d11)."
+          oneOf:
+            - { $ref: '#/components/schemas/WhoamiRef' }
+            - { type: 'null' }
         default_workarea_id: { type: [string, 'null'], description: "The key's default workarea; for an issued key, as key.issued journals it — the one sent, else the first grant's node, null for a zero-grant key (docs/architecture/roles-and-keys.md, issuance order; ADR-0025 d2). The provider-ring target when a request names no workarea (ADR-0039 d4)." }
         held_by: { type: [string, 'null'], enum: [agent, human, service, null], description: "The issuing admin's attestation; for an issued key, as key.issued journals it, null when none was sent (ADR-0025 d2)." }
         label: { type: string }
@@ -2225,6 +2248,7 @@ components:
         grant_id: { type: string }
         workarea_node_id: { type: string, description: "Node id, never a path." }
         role: { type: string, enum: [reader, writer, dreamer] }
+        covers: { type: string, enum: [subtree, node], description: "The node's subtree, or the node alone (ADR-0044 d4)." }
         epoch: { type: integer, description: "The journal seq of this grant's grant.issued event." }
 
     Whoami:
@@ -2232,7 +2256,7 @@ components:
       description: >-
         The calling key's own record (GET /v2/whoami): everything a client derives from its URL
         and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15).
-      required: [key_id, name, role, principal, held_by, tenant, default_workarea, crew, grants]
+      required: [key_id, name, role, principal, held_by, tenant, default_workarea, crew, user, grants]
       additionalProperties: false
       properties:
         key_id: { type: string }
@@ -2252,6 +2276,11 @@ components:
             - { type: 'null' }
         crew:
           description: The key's crew record, fixed for its life; null when none was named.
+          oneOf:
+            - { $ref: '#/components/schemas/WhoamiRef' }
+            - { type: 'null' }
+        user:
+          description: The key's user root, from which a client learns its root; null for a tenant key (ADR-0044 d11).
           oneOf:
             - { $ref: '#/components/schemas/WhoamiRef' }
             - { type: 'null' }

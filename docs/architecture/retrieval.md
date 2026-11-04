@@ -247,8 +247,8 @@ Membership and order of both segments are fixed
   the candidate list for a given query is part of FR-4's measurement, not a
   property this page claims.
 
-*Planned for v0.5.0, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10, proposed):*
-when the scope node lies inside a [user root](workareas.md#user-roots-planned),
+*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):*
+when the scope node lies inside a [user root](workareas.md#user-roots),
 the hits also include the served tips of the `universe` node itself where the key's
 reader access covers it — every user key's node grant does — ranked with the
 scope's own hits in the one total order above. Applicable steering needs no change:

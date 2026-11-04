@@ -34,6 +34,41 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — User roots, node grants, curation into universe and its served view, built for v0.5.0 (ADR-0044, implementation)
+
+[ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), still proposed, is built as its d15 lays out, in four steps. **S1:** a grant
+carries `covers`, `subtree` or `node`; a key carries `user`, and the first key naming a user
+creates `universe.<user>`, journalled as `workarea.create` with `user_root: true` before
+`key.issued`; a user key's grants lie in its root, and issuance adds a reader grant on the
+`universe` node. **S2:** names are unique in the shared namespace or within one user root, the
+qualified name `<user>.<name>` resolves for every key, and a writer user key creates workareas in
+its root, `parent` defaulting to it. **S3:** a curator's write into `universe` is held and
+reviewed like every write; a user key's is `submission.universe_refused`, which no code answered
+before; the reviewer exclusion stays per key and principal. **S4:** a `universe` version is
+served to every key outside its authoring key set with `principal` null and no `derives_from`;
+recall in a user root joins `universe`'s own claims; `oml doctor` and `oml login` print the key's
+user root, and doctor warns when a user key does not read `universe`. Migration
+`0014_user_roots` adds `workareas.user_root`, `workareas.namespace_root_id`,
+`api_keys.user_root_id` and `grants.covers`, splits the workarea name constraint in two, and
+rewrites and journals nothing: every existing key is a tenant key and every workarea shared (d12).
+
+- **Wire:** `POST /v2/keys` takes `user` and `grants[].covers`; `Key`, `KeyIssued` and `Whoami`
+  serve `user`; `Grant` and `WhoamiGrant` serve `covers`; `Workarea` serves `user_root`;
+  `WorkareaCreate.parent` is optional for a user key; every workarea reference takes a
+  `QualifiedName`; `MemorySummary.principal` is nullable. `info.version` is left for the release.
+- **CLI:** `--user` on `oml keys issue` and `oml keys issue-agent`, whose `--workarea` then
+  defaults to the user's root; `--grant <workarea>:<role>:node`.
+- **Not built:** the review-availability doctor line for `universe` (d14), since review
+  availability itself is not built; the lineage read's universe cut (d9), since the lineage read
+  is not built; grant acts after issuance (d3), since none is built.
+- **Pages:** the markers ADR-0044 placed on [concepts](concepts.md),
+  [workareas](architecture/workareas.md), [roles and keys](architecture/roles-and-keys.md),
+  [retrieval](architecture/retrieval.md), the [HTTP API](api/http-api.md),
+  [errors](api/errors.md), the [CLI reference](cli/reference.md), [releases](product/releases.md),
+  the [roadmap](product/roadmap.md) and [llms.txt](llms.txt) read "since v0.5.0"; the
+  [event catalog](data/event-catalog.md) and [Postgres schema](data/postgres-schema.md) carry the
+  new fields and columns.
+
 ### 2026-11-04 — ADR-0043 proposed: the maintainer's public server as the default, planned for v0.4.1
 
 [ADR-0043](adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), proposed:

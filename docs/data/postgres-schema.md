@@ -324,13 +324,25 @@ CREATE TABLE workareas (
     status     text        NOT NULL
         CHECK (status IN ('development', 'committed', 'validated')),
     crew_id    uuid,                   -- the crew record this workarea names, or NULL
+    user_root  boolean     NOT NULL DEFAULT false,
+                                       -- universe.<user>, created by the first key naming its
+                                       -- user; fixed at creation (ADR-0044 d1)
+    namespace_root_id uuid,            -- the user root whose namespace holds the name; NULL in
+                                       -- the shared namespace, user roots included (ADR-0044 d5)
     created_at timestamptz NOT NULL,
-    UNIQUE (tenant_id, name),          -- one flat namespace across the whole tree
+    UNIQUE (tenant_id, namespace_root_id, name),  -- unique within one user root's namespace
     UNIQUE (tenant_id, id),            -- target of the tenant-scoped grant and denial references
     FOREIGN KEY (tenant_id, parent_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
-    CHECK ((parent_id IS NULL) = (name = 'universe'))   -- the root, and only the root, is universe
+    FOREIGN KEY (tenant_id, namespace_root_id) REFERENCES workareas (tenant_id, id),
+    CHECK ((parent_id IS NULL) = (name = 'universe')),  -- the root, and only the root, is universe
+    CHECK (NOT user_root OR (parent_id IS NOT NULL AND namespace_root_id IS NULL))
 );
+
+-- unique within the shared namespace: universe, every user root and every
+-- shared workarea (ADR-0044 d5; migrations/0014_user_roots.sql).
+CREATE UNIQUE INDEX workareas_shared_name ON workareas (tenant_id, name)
+    WHERE namespace_root_id IS NULL;
 
 -- exactly one universe root per tenant; it is permanently 'committed'.
 CREATE UNIQUE INDEX workareas_universe ON workareas (tenant_id)
@@ -393,6 +405,8 @@ CREATE TABLE api_keys (
     rotated_from uuid,                  -- successor link; predecessor revoked at grace end
     name       oml_name    NOT NULL,      -- the key's name; never changed, never released
     crew_id    uuid,                      -- the crew record named at issuance; fixed for life
+    user_root_id uuid,                    -- the user root of a user key; NULL for a tenant key;
+                                          -- fixed for life (ADR-0044 d2)
     held_by    text        NOT NULL DEFAULT 'agent'
         CHECK (held_by IN ('agent', 'human', 'service')),
                                           -- issuance-time attestation by the issuing admin
@@ -414,6 +428,7 @@ CREATE TABLE api_keys (
     FOREIGN KEY (tenant_id, rotated_from) REFERENCES api_keys (tenant_id, id),
     FOREIGN KEY (tenant_id, default_workarea_id) REFERENCES workareas (tenant_id, id),
     FOREIGN KEY (tenant_id, crew_id) REFERENCES crews (tenant_id, id),
+    FOREIGN KEY (tenant_id, user_root_id) REFERENCES workareas (tenant_id, id),
     CHECK (credential = 'bearer' OR hash IS NULL)  -- a connector key never has a hash
 );
 
@@ -426,10 +441,14 @@ CREATE TABLE grants (
                                           -- roles-and-keys Grant admissibility (ADR-0025 d1)
     workarea_node_id uuid   NOT NULL,               -- node id, never a path
     deny             jsonb  NOT NULL DEFAULT '[]',  -- subtree masks inside THIS grant only
+    covers           text   NOT NULL DEFAULT 'subtree'
+        CHECK (covers IN ('subtree', 'node')),      -- the node's subtree, or the node alone
+                                                    -- (ADR-0044 d4)
     epoch            bigint NOT NULL,               -- journal seq of this grant's grant.issued,
                                                     -- or of the key.rotated that reproduced it
     FOREIGN KEY (tenant_id, key_id) REFERENCES api_keys (tenant_id, id),
-    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id)
+    FOREIGN KEY (tenant_id, workarea_node_id) REFERENCES workareas (tenant_id, id),
+    CHECK (covers = 'subtree' OR deny = '[]'::jsonb)  -- a node grant masks nothing
 );
 
 CREATE TABLE key_denials (          -- global per-key deny: deny-wins across all grants
@@ -497,6 +516,8 @@ constraint (ADR-0034 d12). The keys built this way:
 | `workareas.parent_id` | `(tenant_id, parent_id)` | `workareas (tenant_id, id)` |
 | `api_keys.default_workarea_id` | `(tenant_id, default_workarea_id)` | `workareas (tenant_id, id)` |
 | `api_keys.rotated_from` | `(tenant_id, rotated_from)` | `api_keys (tenant_id, id)` |
+| `api_keys.user_root_id` | `(tenant_id, user_root_id)` | `workareas (tenant_id, id)` |
+| `workareas.namespace_root_id` | `(tenant_id, namespace_root_id)` | `workareas (tenant_id, id)` |
 | `memories.created_event_id` | `(tenant_id, created_event_id)` | `journal (tenant_id, event_id)` |
 | `review_queue.memory_id` | `(tenant_id, memory_id)` | `memories (tenant_id, id)` |
 

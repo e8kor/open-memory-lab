@@ -30,9 +30,9 @@ deployment.
 ## Names
 
 Workareas, crews, keys and tenants each carry a **name** beside their id: unique in its namespace,
-given at creation, never changed and never released. Once user roots are built, a workarea's name is unique
+given at creation, never changed and never released. Since v0.5.0 a workarea's name is unique
 within one user's root or within the shared rest of the tree, and `alice.project` is the
-qualified name that is unique in the tenant (planned for v0.5.0, ADR-0044). A name is accepted everywhere the row's id
+qualified name that is unique in the tenant (ADR-0044). A name is accepted everywhere the row's id
 is — an agent can target `metals-crew` rather than a UUID — and the server resolves it to the id
 before any check that reads state, so a name the caller
 may not see answers exactly as its id would, and everything stored still binds to ids
@@ -88,7 +88,7 @@ subtree grants a top: it is permanently `committed`, cannot be deleted or re-par
 direct claim writes. Claims live in the workareas beneath it. A workarea's path is the names from
 `universe` down to it, joined with `.`.
 
-*Planned for v0.5.0, not built* ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), proposed): every
+*Since v0.5.0* ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)): every
 **user** — a person an admin attests a key acts for — gets a **user root**, `universe.<user>`, a
 child of `universe` created when the first key naming that user is issued; the tree stays one
 tree. A **user key** names its user, reaches only its own root and `universe`'s own claims, and
@@ -96,7 +96,7 @@ addresses workareas relative to its root: alice's key naming `project` means
 `universe.alice.project`, and bob may have a `project` of his own. `universe` then holds only
 **curated** claims, which curators an admin designates place there through held writes that a
 second identity reviews; a reader sees such a claim's origin as `universe` and nothing of its
-source ([user roots](architecture/workareas.md#user-roots-planned)).
+source ([user roots](architecture/workareas.md#user-roots)).
 
 A workarea exists to mirror an externally managed AI crew. OML keeps a **crew** record — name,
 charter, external manager — that workareas and keys name, but never operates the crew: it admits
@@ -169,10 +169,10 @@ wins over every grant. Effective access is the union of attenuated grants minus 
 computed on every request; the permission epoch labels the journalled state it was computed
 against — so every access answer is reproducible from journalled records.
 
-*Planned for v0.5.0, not built:* a key may name the **user** it acts for, making it a user key
+*Since v0.5.0:* a key may name the **user** it acts for, making it a user key
 confined to that user's root, and a grant may cover its node alone (`covers: node`), which is how
 every user key reads `universe` without reading anyone else's root; the reviewer exclusion stays
-per key, so a person may review their own agents' work through a separate key ([user keys](architecture/roles-and-keys.md#user-keys-planned),
+per key, so a person may review their own agents' work through a separate key ([user keys](architecture/roles-and-keys.md#user-keys),
 [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
 
 Keys are shown once at issuance, expire, and rotate by minting a journalled **successor key**
@@ -299,7 +299,7 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | The constitution (R1–R4, the development exception) | [architecture/overview.md](architecture/overview.md) §5 | [ADR-0001](adr/ADR-0001-the-constitution.md) |
 | Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
 | Workarea tree, grants, denies, edges, crews | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md), [ADR-0026](adr/ADR-0026-names-are-keys.md) |
-| Users, user roots, curation into universe (planned) | [architecture/workareas.md](architecture/workareas.md#user-roots-planned), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys-planned) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed) |
+| Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (proposed) |
 | Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
 | Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
