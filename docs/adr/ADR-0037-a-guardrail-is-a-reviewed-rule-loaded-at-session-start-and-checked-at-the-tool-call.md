@@ -127,7 +127,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
 - **d5 — One provider-ring read serves the set: `GET /v1/guardrails`,** which amends ADR-0022
   d2's `/v1` verb list by this read, under the key at its default workarea or the `workarea`
   query field ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) and its
-  `guardrail_scope` (d4). It answers `{scope_node, guardrail_scope, set_digest, over_cap,
+  `guardrail_scope` (d4). It answers `{scope_node, scope_path, guardrail_scope, set_digest, over_cap,
   guardrails: [{artifact_id, claim_key, version, workarea_path, depth, severity, text, rule,
   tokens, promoted_at, verdicts: [{held_by, at}], conflict}], own_held:
   [{claim_key, version}]}`; `set_digest`, over the served ids and versions, is opaque to clients,

@@ -1342,6 +1342,8 @@ pub struct OwnHeldGuardrail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardrailSet {
     pub scope_node: Uuid,
+    /// The scope node's derived path, which the hook's header names (d6).
+    pub scope_path: String,
     /// The scope the server applied: the key's, as its issuance journalled
     /// it.
     pub guardrail_scope: GuardrailScope,
