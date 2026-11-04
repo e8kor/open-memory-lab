@@ -22,6 +22,11 @@
 //! holds the guardrail kind's fields and caps, the `oml-gr/1` rule grammar,
 //! its tool classes, glob and check, the set's order and conflicts, and the
 //! rule cache's codec (proposed ADR-0037 d2, d4, d7, d8, d9, d10).
+//! `vocab` holds the CURIE grammar, the prefix registry, `term_status` and
+//! the `oml:` register (ADR-0021 d1, d2; ADR-0027 d7); `vocab_edges` holds
+//! claim-edge states, classification validation, cycle refusal, the lineage
+//! closure without `oml:about`, retirement and the recall terms match
+//! (ADR-0021 d5; ADR-0027 d6–d11).
 
 #![forbid(unsafe_code)]
 
@@ -36,6 +41,8 @@ pub mod ladder;
 pub mod model;
 pub mod name;
 pub mod oauth;
+pub mod vocab;
+pub mod vocab_edges;
 pub mod web;
 
 pub use chain::{
