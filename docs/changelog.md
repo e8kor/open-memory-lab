@@ -171,6 +171,41 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build did. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one. Release v0.4.0 of 2026-11-04 carries this revision.
 
+### 2026-11-04 — v0.5.2 built: the lifecycle, claim edges and the brief served, ADR-0046's answers recorded (implementation)
+
+The maintainer answered ADR-0046's nine questions on 2026-11-04 by taking each recommendation;
+[ADR-0046](adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) records them as decisions and stays proposed. The build serves what the replay
+left unrouted. The lab ring's `/v2` contract grows and the provider ring's does not, so
+`info.version` stays `0.4.0-design`.
+
+- **The lifecycle on HTTP and the CLI** (d1–d3). `POST /v2/workareas/{workarea}/transitions` and
+  its ratify route; the workarea read and `oml_workarea` serve `policy` and
+  `pending_transitions`; `oml workareas status propose|ratify|pending`. A user root is refused
+  `validated` with reason `user_root`, and a ratification event carries `same_user`; both read
+  facts ADR-0044 adds, so neither fires on this branch.
+- **Edges** (d4–d6). `GET` and `POST /v2/edges` and `POST /v2/edges/{edge_id}/ratify` for `kind`
+  `claim` and `brief`; `kind: workarea` is refused naming `/kind`. `oml edges
+  propose|ratify|list`. No agent tool proposes an edge.
+- **The brief** (d7–d9). A brief edge joins one promoted claim to one workarea, in
+  `0019_brief_edges.sql`, journalled `brief_edge.proposed` and ratified as `review.ratify` with
+  `subject_kind: "brief_edge"` by a key that did not propose it. The workarea read, `oml_workarea`
+  and the session-start hook serve the ratified members the key reads that are still served
+  tips, in ratification order, cut by `brief.max_tokens` (default 400, unmeasured, FR-77).
+- **Reject in a validated area** (d10): admitted; approve stays refused.
+- **Doctor.** `oml doctor` names an empty brief on the default workarea and the transitions
+  waiting there.
+- **Contract.** The five operations move from `openapi-designed.yaml` to `openapi.yaml`, and both
+  SDKs' generated layers are regenerated from it.
+- **Not built:** workarea edges; the `oml_write` `links` field; the user-root and user-key checks,
+  which wait on ADR-0044's build.
+- **Pages touched:** ADR-0046, the register, [http-api](api/http-api.md),
+  [mcp-plugin](api/mcp-plugin.md), [errors](api/errors.md),
+  [event catalog](data/event-catalog.md), [postgres-schema](data/postgres-schema.md),
+  [configuration](operations/configuration.md), [workareas](architecture/workareas.md),
+  [CLI reference](cli/reference.md), [roadmap](product/roadmap.md) (FR-77),
+  [releases](product/releases.md), [use cases](product/use-cases.md), the use-case call map,
+  [llms.txt](llms.txt) and this page.
+
 ### 2026-11-04 — The status ladder and claim edges replayed for v0.5.2, and ADR-0046 proposed (implementation)
 
 An implementation milestone and one proposed record. The status ladder of

@@ -711,6 +711,10 @@ How it works: [ontologies](../architecture/ontologies.md).
   is open; be asked to meet the area's agreed definition of done before ending a turn; and load
   instructions for particular files only when touching them (these three not scheduled). Today
   the nearest is the standing instructions and the session-start context.
+- **How it plays out:** a reviewer proposes a reviewed memory into the area's brief and a second
+  reviewer confirms it. Each session that starts in the area then sees the brief first, before
+  the standing instructions, and an agent that moves to another area reads that area's brief
+  with `oml_workarea`. The brief is kept short by a size limit the server sets.
 
 ## Files and deliverables
 
