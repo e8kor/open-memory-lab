@@ -27,6 +27,31 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased — search pipelines (v0.5.5, planned)
+
+*2026-11-04 ·* [ADR-0049](adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) *(proposed).* Recall ranks through a named search
+pipeline behind a `Retriever` port; the deployment enables pipelines (`search.enabled`,
+`search.default`), a tenant's admin picks the tenant's default (`GET /v2/search`, `POST
+/v2/search/default`, `oml search show|set-default`, journalled as `search.default_set`), and a
+recall may name one with `search`. Pages: retrieval, HTTP API, MCP plugin and `mcp-tools.json`,
+`openapi.yaml`, configuration, CLI reference, observability, postgres-schema (migration 0020),
+event catalog, releases. **Breaks**, each with its migration:
+
+- The default recall matches any word (`bm25-trigram`), where v0.5.0 required every word. To keep
+  the old behaviour per request send `match: "all"`, or `search: "keyword-all"` where the
+  deployment enables it.
+- The recall answer gains `search` and each hit `matched`; a client refusing unknown members must
+  accept them. The SDKs' generated layers are regenerated.
+- `query_digest` digests `search` and `match`, so a digest from before the upgrade does not match
+  one after.
+- The shipped `search.enabled` includes `bm25-trigram`, which needs `pg_trgm`: migration 0020
+  creates it as the owner role where it owns the database; elsewhere create it once as a role with
+  `CREATE` on the database, or set `search.enabled` without it. The lead refuses to start
+  otherwise, naming both.
+- The store port's `recall_fts` and `recall_own_held` are replaced by `Retriever::retrieve`.
+- The server instructions, the `oml_read` description, the `oml-memory` skill, the librarian and
+  the session-start line no longer ask for "2-4 exact keywords".
+
 ## 0.5.2-design
 
 Opened for release v0.5.2, which carries this revision: the workarea lifecycle, labelled links

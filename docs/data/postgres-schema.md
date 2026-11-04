@@ -1284,6 +1284,36 @@ ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant i
 - **Stays open** (FR-45): each partition's `reltuples`, bound and name give every role one
   tenant's row count and id.
 
+### search (ADR-0049)
+
+**Status:** planned for v0.5.3, built in `migrations/0020_search.sql`
+([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md)).
+
+```sql
+-- one normaliser for the indexed text and the query: the text, then its identifier parts
+CREATE FUNCTION oml_search_text(t text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE RETURN t || ' ' || <CamelCase and . _ / : # @ - split>;
+-- simple and english lexemes together, so the exact form and the stem both match
+CREATE FUNCTION oml_search_vector(t text) RETURNS tsvector
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    RETURN to_tsvector('simple', oml_search_text(t)) || to_tsvector('english', oml_search_text(t));
+CREATE INDEX memories_search_vector ON memories USING gin (oml_search_vector(claim));
+-- where pg_trgm exists (created by the owner role, which holds CREATE where it owns the database):
+CREATE INDEX memories_search_trgm ON memories USING gin (oml_search_text(claim) gin_trgm_ops);
+ALTER TABLE tenants ADD COLUMN search_default text;   -- folded from search.default_set
+```
+
+Both indexes are on the partitioned parent, so each tenant's partition holds its own and a new
+partition inherits them through `LIKE … INCLUDING ALL`. Both functions are `SECURITY INVOKER`,
+so the role split's definer check holds. `memories_claim_fts` stays: the `keyword-all` and
+`keyword-any` pipelines read it. The `bm25` statement computes its row count, average length and
+document frequencies per query over the rows the candidate scope admits, never from a stored
+statistic, so no table holds tenant-wide term counts. `pg_trgm` is a trusted extension; where the
+owner role cannot create it, 0020 goes on without it and the trigram index, the lead serves no
+trigram pipeline, and a configuration enabling one stops the start naming the extension; the
+lead's start creates the index once the extension exists. `tenants.search_default` is the
+tenant's default pipeline by name, `NULL` for the deployment's.
+
 ## upload_sessions
 
 Resumable attachment uploads (D3, declared in [storage](../architecture/storage.md)).
@@ -1435,7 +1465,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `memories` | submission, review, lifecycle, simulation events |
 | `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
-| `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |

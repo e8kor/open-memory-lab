@@ -125,6 +125,7 @@ credential to configure, which is the custody design, not an omission
 | `oauth.issuer` | yes; written into `lead_lease` when it takes the lease | no value of its own: the lead's, from `lead_lease` ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)) | no | no | no | no |
 | `server.trusted_proxies`, `server.metrics_listen`, `server.otlp_endpoint` | yes | not decided | not decided | not decided | not decided | no |
 | `web.*` (since v0.5.0) | yes | no: a follower routes no web page | no | no | no | no |
+| `search.enabled`, `search.default` (planned for v0.5.3) | yes | not decided | no | no | no | no |
 | `reconciler.*` | no | no | no | yes | no | no |
 
 The standalone profile does not accept `server.role` at all — a standalone
@@ -162,12 +163,15 @@ design states no number it has not committed to
 | `web.google.client_id`, `web.google.client_secret` (`OML_WEB__GOOGLE__CLIENT_ID`, `OML_WEB__GOOGLE__CLIENT_SECRET`) | deployment | unset — Google sign-in off | *Since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d17).* The OAuth client of the operator's Google application, registered with the redirect URI `<oauth.issuer>/web/callback/google` exactly. Google sign-in is on when both are set. One without the other, or either while `oauth.issuer` is unset, stops the process at start. The secret is never logged; `oml settings show` prints it as set or unset ([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)) |
 | `web.github.client_id`, `web.github.client_secret` (`OML_WEB__GITHUB__CLIENT_ID`, `OML_WEB__GITHUB__CLIENT_SECRET`) | deployment | unset — GitHub sign-in off | *Since v0.5.0 (ADR-0045 d17).* The same for a GitHub OAuth app, callback `<oauth.issuer>/web/callback/github`. The web pages are routed when `oauth.issuer` and at least one provider are set; their origin is the issuer's, with no setting of its own. The providers' endpoints are constants, not settings |
 
+| `search.enabled` (`OML_SEARCH__ENABLED`) | deployment | `keyword-any`, `bm25`, `bm25-trigram` | *Planned for v0.5.3 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4).* The search pipelines the lead serves, in the file a TOML array (`["keyword-any", "bm25"]`) and in the environment comma-separated. The build knows `keyword-all` (every word, exact: v0.5.0's recall, kept for comparison), `keyword-any`, `bm25` and `bm25-trigram`. A request or a tenant default may name only these. An unknown name, an empty list, or a pipeline whose retriever the database cannot run stops the process at start, naming it: `bm25-trigram` needs `pg_trgm`, which migration 0020 creates as the owner role where it holds `CREATE` on the database; elsewhere `CREATE EXTENSION pg_trgm` once as a role that can, then restart ([retrieval](../architecture/retrieval.md#search-pipelines)) |
+| `search.default` (`OML_SEARCH__DEFAULT`) | deployment | `bm25-trigram` | *Planned for v0.5.3 (ADR-0049 d4, d9).* The pipeline a recall runs when neither the request's `search` nor the tenant's journalled default names one. It must be in `search.enabled`, or the process stops at start. The shipped default is the pipeline with the highest success@5 among those that pass their recall-eval gate in CI. A tenant's admin changes the tenant's own default without a restart with `oml search set-default` |
+
 ### Journalled deployment settings (`oml settings apply` → `system.settings_applied`)
 
 | Key | Scope | Default | Semantics |
 |---|---|---|---|
 | `plugins.scanner`, `plugins.embedder`, `plugins.exporter` | deployment | stated at [FR-22](../product/roadmap.md) | Which compiled-in implementation is active behind each port; journalled so the answer is always in the journal ([ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md) d4) |
-| `search.fts_config` | deployment | `simple` | The Postgres text-search configuration `tsvector` rows are built with. `simple` is the v1 default because it stems nothing and so lies about nothing; the multilingual recall cost, and the reindex a change implies, are stated where search owns them ([retrieval](../architecture/retrieval.md)) |
+| `search.fts_config` | deployment | `simple` | Designed, not built. The Postgres text-search configuration `tsvector` rows are built with. Since v0.5.3 the `bm25` pipelines index `simple` and `english` together, so the exact form always matches and an English word also matches its stem (ADR-0049); a per-workarea language stays RS-15 ([retrieval](../architecture/retrieval.md)) |
 | `idempotency.retention` | deployment | floor **24 hours** — committed | How long a `committed` idempotency record replays its stored response. The setting may only **raise** the floor; a replay after expiry is processed fresh, and that expiry-then-reprocess behavior is documented, not an anomaly ([HTTP API](../api/http-api.md)) |
 | `api.cursor_ttl` | deployment | stated at [FR-22](../product/roadmap.md) | List cursors are positional and expire; a stale cursor answers `request.validation` ([HTTP API](../api/http-api.md)) |
 | `api.page_limit_max` | deployment | **200** — shipped default (request default 50) | Ceiling on the list page `limit` ([HTTP API](../api/http-api.md#limits)) |
@@ -195,6 +199,7 @@ design states no number it has not committed to
 | Review policy per workarea — `k`, `required_roles`, `human_required_classes`, `independence_axis`, `held_item_expiry`, `vocabulary_policy` | tenant / workarea | [Admission](../architecture/admission.md) |
 | Quota and rate-limit grants | tenant | Journalled grant attributes; enforcement is write-exact on the lead and limit-over-N across followers, with the accuracy bound tracked as [FR-8](../product/roadmap.md) ([security](../architecture/security.md), [commitments](../product/commitments.md)) |
 | Read-log retention window | tenant | [Retrieval](../architecture/retrieval.md) |
+| Default search pipeline | tenant | *Planned for v0.5.3.* One of `search.enabled`, set by an admin key with `oml search set-default`, journalled as `search.default_set`; a pipeline the deployment stops serving is not applied and `oml doctor` warns ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4) |
 
 ### Postgres settings OML verifies but does not set
 
