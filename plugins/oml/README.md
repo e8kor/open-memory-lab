@@ -201,6 +201,19 @@ chooses to record leaves for the server unseen. What it chooses is shaped by the
 hook adds at session start, which other writers in the workarea can influence. Every write is
 still held until a different identity reviews it, so nothing it records is shared before then.
 
+## Recall after a failed command (opt-in)
+
+Set `OML_FAILURE_RECALL=1` and, when a Bash command fails, the plugin's PostToolUseFailure hook
+runs `oml hook tool-failure`: it searches with up to three distinctive words of the error, such
+as an error code or an identifier, with keys and tokens removed first, and adds at most three
+matching memories, marked as possibly irrelevant. It skips `grep`, `test`, `[` and `diff`, an
+error it already searched for in the session, and every search after one that failed; a miss adds
+nothing. It reads its server and key as the session-start hook does, the plugin's two settings
+first. The cost is that the error's words go to your server. A per-session file under
+`~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
+the SessionEnd hook deletes it. See the
+[CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
+
 ## Other MCP clients
 
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape

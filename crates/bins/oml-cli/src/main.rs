@@ -180,6 +180,13 @@ enum HookCommand {
     /// submissions, the matching memories — or nothing; always exits 0
     /// (ADR-0029, ADR-0040 d3).
     SessionStart,
+    /// Print memories matching a failed Bash command's error, from the
+    /// plugin's url and api_key options, else OML_URL and OML_API_KEY, only
+    /// with OML_FAILURE_RECALL=1; always exits 0 (ADR-0038, ADR-0040 d3).
+    ToolFailure,
+    /// Delete this session's failure-recall cache; prints nothing and
+    /// always exits 0 (ADR-0038).
+    SessionEnd,
 }
 
 #[derive(Subcommand)]
@@ -786,14 +793,34 @@ fn main() -> ExitCode {
     reason = "one flat dispatch arm per CLI verb; splitting it would only scatter the verb table"
 )]
 fn run(cli: &Cli) -> Result<ExitCode, CliError> {
-    // The hook reads the plugin's options or OML_URL and OML_API_KEY itself,
-    // so it runs before the stored admin credentials are loaded, and ignores
-    // --url and --api-key (ADR-0029 d4, ADR-0040 d3).
-    if let Command::Hook {
-        command: HookCommand::SessionStart,
-    } = &cli.command
-    {
-        return Ok(run_session_start());
+    // The hooks read the plugin's options or OML_URL and OML_API_KEY
+    // themselves, so they run before the stored admin credentials are loaded,
+    // and ignore --url and --api-key (ADR-0029 d4, ADR-0040 d3).
+    if let Command::Hook { command } = &cli.command {
+        return Ok(match command {
+            HookCommand::SessionStart => run_hook(
+                "session-start",
+                hook::DEADLINE,
+                "no context was loaded",
+                |var, stdin| hook::session_start(var, stdin),
+            ),
+            HookCommand::ToolFailure => run_hook(
+                "tool-failure",
+                hook::FAILURE_DEADLINE,
+                "nothing was recalled",
+                |var, stdin| hook::tool_failure(var, stdin),
+            ),
+            HookCommand::SessionEnd => run_hook(
+                "session-end",
+                hook::SESSION_END_DEADLINE,
+                "the session cache was left",
+                |var, stdin| {
+                    hook::session_end(var, stdin)
+                        .map(|()| String::new())
+                        .map_err(Some)
+                },
+            ),
+        });
     }
     let stored = creds::load();
     match &cli.command {
@@ -1163,36 +1190,49 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
     }
 }
 
-/// `oml hook session-start`: the hook document on stdout, or nothing, and at
-/// most one line on stderr; exit 0 whatever happened, so a session always
-/// starts (ADR-0029 d5). The hook runs on its own thread under
-/// `hook::DEADLINE`: returning from `main` ends the process even while that
-/// thread is stuck where no timeout reaches, as in a DNS lookup.
-fn run_session_start() -> ExitCode {
+/// One `oml hook` verb: the variables and stdin in, the hook document or
+/// why there is none out (`None` is silent).
+type HookVerb =
+    fn(&dyn Fn(&str) -> Option<String>, &mut dyn std::io::Read) -> Result<String, Option<String>>;
+
+/// `oml hook <verb>`: the hook document on stdout, or nothing, and at most
+/// one line on stderr; exit 0 whatever happened, so a session always starts
+/// and a failed command is never followed by a hook error (ADR-0029 d5,
+/// ADR-0038 d7). The hook runs on its own thread under `deadline`:
+/// returning from `main` ends the process even while that thread is stuck
+/// where no timeout reaches, as in a DNS lookup.
+fn run_hook(
+    verb: &'static str,
+    deadline: std::time::Duration,
+    nothing: &'static str,
+    hook: HookVerb,
+) -> ExitCode {
     use std::io::Write as _;
     let (done, outcome) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let var = |name: &str| std::env::var(name).ok();
-        let _ = done.send(hook::session_start(&var, &mut std::io::stdin().lock()));
+        let _ = done.send(hook(&var, &mut std::io::stdin().lock()));
     });
-    let reason = match outcome.recv_timeout(hook::DEADLINE) {
+    let reason = match outcome.recv_timeout(deadline) {
         Ok(Ok(document)) => {
             // A closed stream is not a reason to exit non-zero: writes are
             // not unwrapped, as println! would.
-            let _ = writeln!(std::io::stdout(), "{document}");
+            if !document.is_empty() {
+                let _ = writeln!(std::io::stdout(), "{document}");
+            }
             None
         }
         Ok(Err(reason)) => reason,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(format!(
-            "no answer within {} seconds, so no context was loaded",
-            hook::DEADLINE.as_secs()
+            "no answer within {} seconds, so {nothing}",
+            deadline.as_secs()
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Some("the hook stopped before it finished, so no context was loaded".to_owned())
+            Some(format!("the hook stopped before it finished, so {nothing}"))
         }
     };
     if let Some(reason) = reason {
-        let _ = writeln!(std::io::stderr(), "oml hook session-start: {reason}");
+        let _ = writeln!(std::io::stderr(), "oml hook {verb}: {reason}");
     }
     ExitCode::SUCCESS
 }

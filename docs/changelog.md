@@ -34,6 +34,49 @@ records. `info.version` moved to `0.4.0-design` with the contract split below; e
 here as the build does. ADR-0031's own move to `0.4.0-design` is the same bump, so it lands in
 this section rather than a second one.
 
+### 2026-11-04 — Turn context on the rewritten surface: the agent recalls with `oml_read`, and a failed command recalls when opted in (ADR-0038, rebased onto ADR-0039 d2 and ADR-0040 d3)
+
+The proposed [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md)
+was built on v0.3.0's tools in PR #24; this change merges it into v0.4.0 and fits it to the
+rewrite, as ADR-0039's consequences owe. It amends [ADR-0029](adr/ADR-0029-session-start-hook.md)
+d6 and d7; the pointer on ADR-0029 is added on acceptance, not before.
+
+- **Decided and built:** `initialize` answers with server instructions under 4,096 characters
+  that ask for `oml_read` with a query within their first 1,024 and name `oml_write` for a record,
+  with no `claim_key` and no v0.3.0 tool name (d1); `oml_read`'s description in
+  `docs/api/mcp-tools.json` and the `oml-memory` skill open with when to recall and with which
+  words (d2); one recall line in the session-start context naming `oml_read` (d3);
+  `oml hook tool-failure`, off unless `OML_FAILURE_RECALL=1`, which reads its server and key as
+  the session-start hook does, the plugin's `url` and `api_key` options before `OML_URL` and
+  `OML_API_KEY` as one pair (ADR-0040 d3), recalls with at most three distinctive words of a
+  failed Bash command's error, secrets removed, skips `grep`, `test`, `[` and `diff`, an error the
+  session already recalled and any session whose earlier request failed, and sends one `POST
+  /v1/memories/recall` of `k` 3 under 200 budget tokens with `include_text`, never
+  `include_unreviewed`, a 1-second timeout and a 2-second deadline (d4–d7); its context prints
+  each hit's `text` under the data frame and a may-be-irrelevant line, at most 1,600 bytes,
+  nothing on a miss (d8); the per-session cache of ids and digests, 0600, seeded by session start
+  and deleted by `oml hook session-end`, and the two guarded hook entries (d9).
+- **The catalog an agent reads** grows from 8,130 to 8,488 characters with `oml_read`'s opening
+  sentence, against 18,893 for v0.3.0's twelve entries, measured as before.
+- **Checks:** `crates/bins/oml-cli/tests/cli_e2e.rs` runs both verbs against the real lead behind
+  the request recorder, one with the plugin's options beside an environment pair that names
+  another server, and against stubs for a failing and a silent server; `hook.rs`'s unit tests hold
+  the request body, the hit's `text`, the recall line and the pair refusals;
+  `crates/bins/oml-server-lead/tests/mcp_facade.rs` holds the instructions; and
+  `scripts/check_plugin.py` holds all three hook entries and that no line of `hook.rs` names a
+  tool `tools/list` does not offer.
+- **Not verified here:** that Claude Code runs the two new hooks and adds the failure context;
+  whether `session_id` survives `/clear`. The [roadmap](product/roadmap.md) moves FR-57 and opens
+  FR-63 and FR-64.
+- **No HTTP surface change:** no operation, field, error code or event type is added, and
+  `info.version` stays `0.4.0-design`.
+- **Pages touched:** [ADR-0038](adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md), the [decision register](adr/index.md) (row and the D14
+  cell), `mkdocs.yml`, [llms.txt](llms.txt), [CLI reference](cli/reference.md),
+  [agent plugin](api/mcp-plugin.md), [mcp-tools.json](api/mcp-tools.json), the
+  [roadmap](product/roadmap.md) (FR-57, FR-63, FR-64) and this page; outside `docs/`,
+  `plugins/oml/README.md`, `plugins/oml/skills/oml-memory/SKILL.md`,
+  `plugins/oml/hooks/hooks.json` and `scripts/check_plugin.py`.
+
 ### 2026-11-04 — The 0.4.0 breaks, each with its migration (ADR-0039 d13, d14 step 5, implementation)
 
 This entry is the break list a v0.3 user reads before upgrading; the entries below record each
@@ -64,7 +107,7 @@ at all. HTTP and the SDKs have none. `OML_CLI_SERVER` and `OML_CLI_KEY` are not 
 missing start setting names the variable to rename.
 
 **The catalog an agent reads.** The three served entries of
-[mcp-tools.json](api/mcp-tools.json) come to 8,130 characters, against 18,893 for v0.3.0's
+[mcp-tools.json](api/mcp-tools.json) come to 8,488 characters, against 18,893 for v0.3.0's
 twelve, each counted as the length of the entry's JSON from Python's `json.dumps` with its
 default separators, the measure that gives the 18,893 ADR-0039 records.
 
