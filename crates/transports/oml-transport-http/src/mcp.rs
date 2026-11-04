@@ -324,8 +324,9 @@ where
             .store
             .key_by_hash(&sha256_digest_string(token.as_bytes()))
             .await
-            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?
-            .ok_or_else(|| ApiError::auth_invalid("unknown"))?;
+            .map_err(|e| map_app_error(AppError::Store(e), ErrorContext::Write))?;
+        crate::traffic::credential(key.as_ref(), None);
+        let key = key.ok_or_else(|| ApiError::auth_invalid("unknown"))?;
         Ok((token, key, None))
     }
 

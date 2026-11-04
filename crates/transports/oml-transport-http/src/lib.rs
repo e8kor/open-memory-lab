@@ -102,7 +102,7 @@ pub const ROUTES: &[(&str, &str)] = &[
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
 /// assigned (http-api.md "Health").
-const PROBES: [&str; 2] = ["/healthz", "/readyz"];
+pub(crate) const PROBES: [&str; 2] = ["/healthz", "/readyz"];
 
 /// The unversioned OAuth operations outside both rings, as `(METHOD, path)`
 /// in docs/api/openapi.yaml's spelling, which [`ApiState::into_router`]
@@ -187,6 +187,8 @@ pub struct ApiState<J, S, C, I, Sc> {
     sealer: Arc<dyn HandleSealer>,
     /// The authorize page's client document fetcher (ADR-0031 d5).
     documents: oauth::Documents,
+    /// The traffic layer's configuration (ADR-0042).
+    traffic: traffic::Traffic,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -201,6 +203,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             build: Arc::clone(&self.build),
             sealer: Arc::clone(&self.sealer),
             documents: self.documents.clone(),
+            traffic: self.traffic.clone(),
         }
     }
 }
@@ -221,6 +224,7 @@ where
     /// outside both rings ([`oauth`]); only the probes while names are not
     /// assigned.
     pub fn into_router(self) -> Router {
+        let traffic = self.traffic.clone();
         let mut probes = Router::new();
         let mut rings = Router::new();
         for &(method, path) in ROUTES {
@@ -241,7 +245,10 @@ where
         };
         // Outside every route, the fallback and axum's own 404 and 405
         // included (ADR-0042 d1, d4).
-        router.layer(axum::middleware::from_fn(traffic::layer))
+        router.layer(axum::middleware::from_fn_with_state(
+            traffic,
+            traffic::layer,
+        ))
     }
 
     /// The handler of one [`ROUTES`] entry. A table entry with no handler
@@ -308,6 +315,7 @@ where
             build: Arc::new(BuildInfo::unknown()),
             sealer: Arc::new(oauth::seal::AeadSealer::generate()),
             documents: oauth::Documents::default(),
+            traffic: traffic::Traffic::default(),
         }
     }
 
@@ -318,6 +326,15 @@ where
     #[must_use]
     pub fn with_document_fetcher<F: ClientDocumentFetcher + 'static>(mut self, fetcher: F) -> Self {
         self.documents = oauth::Documents::new(fetcher);
+        self
+    }
+
+    /// The traffic layer's configuration: the trusted proxies the request
+    /// line reads the client address through (ADR-0042 d7). Without it no
+    /// proxy is trusted.
+    #[must_use]
+    pub fn with_traffic(mut self, traffic: traffic::Traffic) -> Self {
+        self.traffic = traffic;
         self
     }
 
@@ -1955,14 +1972,29 @@ pub(crate) fn new_request_id() -> String {
 
 /// Every response carries `X-Request-Id`; error bodies already repeat it as
 /// `request_id` (http-api.md conventions).
+/// The response carries what the handler resolved, its key, target
+/// workarea and refusal code, for the request line (ADR-0042 d2).
 fn finish(request_id: &str, result: Result<Response, ApiError>) -> Response {
-    let mut response = match result {
-        Ok(response) => response,
-        Err(e) => e.into_response(request_id),
+    let (response, code) = match result {
+        Ok(response) => (response, None),
+        Err(e) => {
+            let code = e.code;
+            (e.into_response(request_id), Some(code))
+        }
     };
+    finish_coded(request_id, response, code)
+}
+
+/// [`finish`] for a response the handler already built, refused under
+/// `error_code` or not: the OAuth endpoints, whose refusals carry the RFC
+/// `error` (ADR-0042 d2).
+fn finish_coded(request_id: &str, mut response: Response, error_code: Option<&str>) -> Response {
     if let Ok(value) = HeaderValue::from_str(request_id) {
         response.headers_mut().insert("x-request-id", value);
     }
+    response
+        .extensions_mut()
+        .insert(traffic::Resolved::now(error_code));
     response
 }
 
@@ -1977,6 +2009,15 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
 }
 
 fn bearer(headers: &HeaderMap) -> Result<String, ApiError> {
+    let token = bearer_value(headers);
+    if token.is_err() {
+        // Refused before any lookup: no key resolved (ADR-0042 d14).
+        traffic::credential(None, None);
+    }
+    token
+}
+
+fn bearer_value(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers
         .get(header::AUTHORIZATION)
         .ok_or_else(ApiError::auth_missing)?;

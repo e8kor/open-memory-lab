@@ -257,6 +257,7 @@ async fn the_leads_authorize_page_fetches_a_document_client_through_its_composed
         SigningKey::from_bytes(&OsIds.new_secret()),
         Some(Issuer::parse(ISSUER).expect("a public origin")),
         recording.clone(),
+        oml_transport_http::traffic::Traffic::default(),
     )
     .await
     .expect("the start reads the store");

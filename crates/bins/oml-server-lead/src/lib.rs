@@ -7,6 +7,8 @@
 //! startup naming and names check (ADR-0026 d11), and the start and state
 //! constructors the integration tests share with `main`.
 
+pub mod timed;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,7 +32,10 @@ use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
 };
+use oml_transport_http::traffic::{ScopeObserver, Traffic, TrustedProxies};
 use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
+
+use crate::timed::Timed;
 
 // ---------------------------------------------------------------------------
 // Configuration: defaults < file < environment (configuration.md)
@@ -53,6 +58,10 @@ pub struct Config {
     /// unset, the OAuth routes do not exist and no connect code is minted
     /// (ADR-0031 d1).
     pub oauth_issuer: Option<Issuer>,
+    /// `server.trusted_proxies`: the peers whose `X-Forwarded-For` the
+    /// request line reads the client address from; empty, none
+    /// (ADR-0042 d7).
+    pub trusted_proxies: TrustedProxies,
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -72,6 +81,7 @@ const KEY_LISTEN: &str = "server.listen";
 const KEY_KMS_ADAPTER: &str = "kms.adapter";
 const KEY_KEYRING_PATH: &str = "kms.keyring_path";
 const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
+const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -140,12 +150,46 @@ impl Config {
             .map(|value| Issuer::parse(&value))
             .transpose()
             .map_err(|e| ConfigError::Invalid(e.to_string()))?;
+        // A TOML array in the file, comma-separated in the environment; an
+        // entry that does not parse stops the start (configuration.md,
+        // server.trusted_proxies; ADR-0042 d7).
+        let proxies: Vec<String> = match env(&env_name(KEY_TRUSTED_PROXIES)) {
+            Some(list) => list
+                .split(',')
+                .map(str::trim)
+                .filter(|e| !e.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+            None => match doc
+                .as_ref()
+                .and_then(|d| file_lookup(d, KEY_TRUSTED_PROXIES))
+            {
+                None => Vec::new(),
+                Some(toml::Value::Array(entries)) => entries
+                    .iter()
+                    .map(|e| {
+                        e.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                            ConfigError::Invalid(format!(
+                                "{KEY_TRUSTED_PROXIES} entries are strings (configuration.md)"
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+                Some(_) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "{KEY_TRUSTED_PROXIES} is an array of addresses and CIDR ranges (configuration.md)"
+                    )));
+                }
+            },
+        };
+        let trusted_proxies = TrustedProxies::parse(&proxies).map_err(ConfigError::Invalid)?;
         Ok(Self {
             postgres_url,
             postgres_owner_url,
             listen,
             keyring_path,
             oauth_issuer,
+            trusted_proxies,
         })
     }
 
@@ -611,8 +655,11 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
 // The composed state
 // ---------------------------------------------------------------------------
 
-pub type LeadApp = App<PgStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
-pub type LeadState = ApiState<PgStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
+/// The store the lead composes: the Postgres adapter, every port call timed
+/// into the running request (ADR-0042 d14).
+pub type LeadStore = Timed<PgStore>;
+pub type LeadApp = App<LeadStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
+pub type LeadState = ApiState<LeadStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
 
 /// A `/readyz` probe over the composition's own pool.
 #[must_use]
@@ -628,12 +675,13 @@ pub fn pg_ping(pool: PgPool) -> DbPing {
 #[must_use]
 pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
     App::new(
-        store.clone(),
+        Timed::new(store.clone()),
         LeadSigner::new(signing_key),
         SystemClock,
         OsIds,
         MarkerScanner,
     )
+    .with_observer(Arc::new(ScopeObserver))
 }
 
 /// The lead composition: one store handle drives the app and the transport's
@@ -653,6 +701,7 @@ pub fn lead_state(
         fork_check_ok,
         enrollment_token,
         PinnedFetcher,
+        Traffic::default(),
     )
 }
 
@@ -667,16 +716,18 @@ fn composed<F: DocumentFetcher + 'static>(
     fork_check_ok: bool,
     enrollment_token: Option<String>,
     fetcher: F,
+    traffic: Traffic,
 ) -> LeadState {
     ApiState::new(
         Arc::new(app),
-        store.clone(),
+        Timed::new(store.clone()),
         db_ping,
         fork_check_ok,
         enrollment_token,
     )
     .with_build(build_info())
     .with_document_fetcher(CappedFetcher::new(fetcher))
+    .with_traffic(traffic)
 }
 
 /// What the lead's start decided before it serves: the boot order after the
@@ -710,17 +761,26 @@ pub async fn start_lead(
     signing_key: SigningKey,
     oauth_issuer: Option<Issuer>,
 ) -> Result<LeadStart, String> {
-    start_lead_with(store, signing_key, oauth_issuer, PinnedFetcher).await
+    start_lead_with(
+        store,
+        signing_key,
+        oauth_issuer,
+        PinnedFetcher,
+        Traffic::default(),
+    )
+    .await
 }
 
 /// [`start_lead`] with `fetcher` as the outbound adapter under the fetch
 /// caps in place of [`PinnedFetcher`], so a test sees what the composed
-/// page asks of the network without reaching it.
+/// page asks of the network without reaching it, and the request line
+/// configured by `traffic` (ADR-0042 d7), as `main` starts it.
 pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     store: &PgStore,
     signing_key: SigningKey,
     oauth_issuer: Option<Issuer>,
     fetcher: F,
+    traffic: Traffic,
 ) -> Result<LeadStart, String> {
     let tenants = enumerate_tenants(store.pool())
         .await
@@ -749,6 +809,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         fork_check.is_ok(),
         enrollment_token.clone(),
         fetcher,
+        traffic,
     )
     .with_names_assigned(names.is_ok())
     .into_router();
@@ -759,6 +820,23 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         enrollment_token,
         router,
     })
+}
+
+/// The lead's subscriber: every line `tracing-subscriber`'s JSON format,
+/// `timestamp` (RFC 3339, UTC), `level`, `target`, then the event's fields
+/// at the top level, and no span fields, on `writer`, which `main` sets to
+/// stderr: stdout is the show-once enrollment token's (ADR-0042 d1).
+pub fn log_subscriber<W>(writer: W) -> impl tracing::Subscriber + Send + Sync
+where
+    W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
+{
+    tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_current_span(false)
+        .with_span_list(false)
+        .with_writer(writer)
+        .finish()
 }
 
 /// This binary's build, as `build.rs` captured it (http-api.md "Health").
@@ -892,6 +970,79 @@ mod tests {
             assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
             assert!(err.to_string().contains("oauth.issuer"), "{err}");
         }
+    }
+
+    #[test]
+    fn trusted_proxies_are_a_toml_array_in_the_file_a_comma_list_in_the_environment_and_a_bad_entry_stops_the_start()
+     {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("no proxies loads");
+        assert_eq!(cfg.trusted_proxies, TrustedProxies::default());
+        let file = "[server]\ntrusted_proxies = [\"127.0.0.1/32\", \"::1/128\"]\n";
+        let cfg = Config::from_sources(Some(file), &|k| env_of(&base).get(k).cloned())
+            .expect("a TOML array loads");
+        assert_eq!(
+            cfg.trusted_proxies,
+            TrustedProxies::parse(&["127.0.0.1/32", "::1/128"]).expect("parses")
+        );
+        let mut env = env_of(&base);
+        env.insert(
+            "OML_SERVER__TRUSTED_PROXIES".to_owned(),
+            "10.0.0.0/8, 192.0.2.1".to_owned(),
+        );
+        let cfg = Config::from_sources(Some(file), &|k| env.get(k).cloned())
+            .expect("the environment's list wins");
+        assert_eq!(
+            cfg.trusted_proxies,
+            TrustedProxies::parse(&["10.0.0.0/8", "192.0.2.1"]).expect("parses")
+        );
+        env.insert(
+            "OML_SERVER__TRUSTED_PROXIES".to_owned(),
+            "localhost".to_owned(),
+        );
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("an entry that does not parse");
+        assert!(err.to_string().contains("server.trusted_proxies"), "{err}");
+    }
+
+    /// Every line is one JSON object: `timestamp`, `level`, `target`, then
+    /// the event's fields at the top level (ADR-0042 d1).
+    #[test]
+    fn the_lead_logs_tracing_subscribers_json_with_the_event_fields_at_the_top_level() {
+        #[derive(Clone, Default)]
+        struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("unpoisoned").extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Buf::default();
+        let sink = buf.clone();
+        tracing::subscriber::with_default(log_subscriber(move || sink.clone()), || {
+            let span = tracing::info_span!("http_request", oml.request_id = "r1");
+            let _entered = span.enter();
+            tracing::info!(event = "connection_sweep", tenants = 3_u64);
+        });
+        let text = String::from_utf8(buf.0.lock().expect("unpoisoned").clone()).expect("UTF-8");
+        let line: serde_json::Value = serde_json::from_str(text.trim()).expect("one JSON line");
+        assert_eq!(line["event"], "connection_sweep");
+        assert_eq!(line["tenants"], 3);
+        assert_eq!(line["level"], "INFO");
+        assert!(line["target"].is_string());
+        let at = line["timestamp"].as_str().expect("a timestamp");
+        assert!(at.ends_with('Z') && at.contains('T'), "RFC 3339 UTC: {at}");
+        assert!(
+            line.get("span").is_none() && line.get("spans").is_none(),
+            "{line}"
+        );
     }
 
     #[tokio::test]

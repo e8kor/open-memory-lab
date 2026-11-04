@@ -45,7 +45,7 @@ use oml_app::types::{
 
 use crate::error::{ApiError, ErrorContext, OAuthError, map_app_error, map_oauth_error};
 use crate::traffic::Rid;
-use crate::{ApiState, OAUTH_ROUTES, finish, json_response, retry_chain};
+use crate::{ApiState, OAUTH_ROUTES, finish, finish_coded, json_response, retry_chain};
 use page::{CodeForm, page_response, secure};
 
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -114,10 +114,7 @@ where
         body: Bytes,
     ) -> Response {
         let result = Self::register_inner(&st, &headers, &body).await;
-        finish(
-            &rid,
-            Ok(no_store(result.unwrap_or_else(OAuthError::into_response))),
-        )
+        oauth_finish(&rid, result)
     }
 
     async fn register_inner(
@@ -144,10 +141,7 @@ where
     /// pair and each refusal, carries `Cache-Control: no-store`.
     async fn token(State(st): State<Self>, rid: Rid, headers: HeaderMap, body: Bytes) -> Response {
         let result = Self::token_inner(&st, &headers, &body).await;
-        finish(
-            &rid,
-            Ok(no_store(result.unwrap_or_else(OAuthError::into_response))),
-        )
+        oauth_finish(&rid, result)
     }
 
     /// The form is parsed here, once, so that a repeated parameter is seen;
@@ -627,6 +621,19 @@ fn same_origin(headers: &HeaderMap, issuer: &Issuer) -> bool {
     } else {
         single(header::ORIGIN.as_str()) == Some(issuer.as_str().as_bytes())
     }
+}
+
+/// An OAuth endpoint's answer, `Cache-Control: no-store` on every one, its
+/// refusal logged under the RFC `error` (ADR-0042 d2).
+fn oauth_finish(rid: &str, result: Result<Response, OAuthError>) -> Response {
+    let (response, code) = match result {
+        Ok(response) => (response, None),
+        Err(e) => {
+            let code = e.error;
+            (e.into_response(), Some(code))
+        }
+    };
+    finish_coded(rid, no_store(response), code)
 }
 
 /// One log line per authorization-page request: its id, method, status

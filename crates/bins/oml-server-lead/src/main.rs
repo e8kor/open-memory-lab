@@ -15,10 +15,12 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oml_app::ports::{KeyringStore as _, Signer as _};
+use oml_fetch::PinnedFetcher;
 use oml_pg::{PgStore, RoleSplitReason};
 use oml_server_lead::{
-    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead,
+    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead_with,
 };
+use oml_transport_http::traffic::Traffic;
 
 /// The stable `event` of the line `main` logs when the role split refuses
 /// the boot, beside `code` `postgres.role_split` and the d5 `reason`
@@ -128,7 +130,15 @@ async fn run() -> Result<(), BootError> {
         "deployment signing key loaded (kms-file)"
     );
 
-    let start = start_lead(&store, signing_key, config.oauth_issuer.clone()).await?;
+    let traffic = Traffic::new(config.trusted_proxies.clone());
+    let start = start_lead_with(
+        &store,
+        signing_key,
+        config.oauth_issuer.clone(),
+        PinnedFetcher,
+        traffic,
+    )
+    .await?;
     match &start.fork_check {
         Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
         // ADR-0002 d7: never sign on top of a fork. Writes are refused
@@ -166,10 +176,17 @@ async fn run() -> Result<(), BootError> {
         .await
         .map_err(|e| format!("bind {}: {e}", config.listen))?;
     tracing::info!(addr = %config.listen, "serving both rings");
-    axum::serve(listener, start.router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| format!("serve: {e}"))?;
+    // The socket peer is the request line's client address, or the proxy
+    // it reads `X-Forwarded-For` through (ADR-0042 d7).
+    axum::serve(
+        listener,
+        start
+            .router
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| format!("serve: {e}"))?;
     tracing::info!("graceful shutdown complete");
     Ok(())
 }
@@ -197,15 +214,11 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Tracing to stderr: stdout is reserved for the show-once ceremony.
-    // ANSI only on a terminal: docker, kubectl and journald read stderr
-    // through a pipe, where the stable fields must come out as plain
-    // `key="value"` tokens (observability.md, structured logging;
-    // ADR-0034 d5).
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .init();
+    // JSON lines on stderr, the whole process: stdout is reserved for the
+    // show-once ceremony (observability.md, structured logging; ADR-0042
+    // d1).
+    let _ =
+        tracing::subscriber::set_global_default(oml_server_lead::log_subscriber(std::io::stderr));
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(BootError::RoleSplit(Refusal::Reason(reason))) => {

@@ -1093,3 +1093,27 @@ pub enum KeyringError {
 pub trait KeyringStore: Send + Sync {
     fn load_or_create(&self) -> impl Future<Output = Result<SigningKey, KeyringError>> + Send;
 }
+
+/// What a request resolved, told as it resolves to the transport that logs
+/// the request: the key a credential named, or that none did, and the
+/// workarea a verb targets, by id (ADR-0042 d2, d14). It decides nothing,
+/// and nothing it is told is a name or a credential's value; the app works
+/// the same with [`NoObserver`], which tells no one.
+pub trait RequestObserver: Send + Sync {
+    /// A credential resolved to `key`, through `connection` when it was a
+    /// connection's access token, or, with `None`, resolved to no key.
+    fn credential(&self, key: Option<&KeyRecord>, connection: Option<Uuid>);
+
+    /// The request's verb targets `workarea_id`.
+    fn workarea(&self, workarea_id: Uuid);
+}
+
+/// The observer of a composition that logs no request.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoObserver;
+
+impl RequestObserver for NoObserver {
+    fn credential(&self, _key: Option<&KeyRecord>, _connection: Option<Uuid>) {}
+
+    fn workarea(&self, _workarea_id: Uuid) {}
+}

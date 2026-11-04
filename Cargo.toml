@@ -33,6 +33,9 @@ oml-fetch = { path = "crates/adapters/oml-fetch" }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"
+# The request body counter of the traffic layer (ADR-0042 d2): the trait
+# axum's body implements, already in the graph through axum and hyper.
+http-body = "1"
 # The authorization request's sealed handle (ADR-0031 d9): ChaCha20-Poly1305
 # under a key held in memory. Already in the graph through sqlx's
 # tls-rustls-ring.
