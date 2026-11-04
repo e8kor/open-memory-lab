@@ -4,6 +4,7 @@
 
 use oml_domain::claim_edges::{
     EdgeField, LabelRefusal, Ratifier, RatifyRefusal, check_label, check_ratifier,
+    check_term_curies,
 };
 use oml_domain::vocab::OmlLabel;
 use oml_domain::{LineageClosure, MemoryKind, Role};
@@ -172,4 +173,31 @@ fn a_writer_ratifier_is_refused_by_role_before_any_r2_check() {
     let refusal = ratify(&r, &closure).unwrap_err();
     assert_eq!(refusal, RatifyRefusal::NotDreamer(Role::Writer));
     assert_eq!(refusal.code(), "access.verb_ceiling");
+}
+
+#[test]
+fn an_oml_term_relation_whose_endpoint_claim_key_is_not_a_curie_is_refused_naming_that_endpoint() {
+    for label in [OmlLabel::IsA, OmlLabel::PartOf] {
+        let label = label.as_str();
+        assert_eq!(check_term_curies(label, "acme:x", "acme:y"), Ok(()));
+        let from = check_term_curies(label, "claim-x", "acme:y").unwrap_err();
+        assert_eq!(
+            from,
+            LabelRefusal::EndpointNotCurie {
+                field: EdgeField::From
+            }
+        );
+        assert_eq!(from.field().as_str(), "from_artifact_id");
+        assert_eq!(from.code(), "request.validation");
+        let to = check_term_curies(label, "acme:x", "claim-y").unwrap_err();
+        assert_eq!(to.field(), EdgeField::To);
+        assert_eq!(to.field().as_str(), "to_artifact_id");
+        assert_eq!(to.code(), "request.validation");
+    }
+    // An open label carries no term invariant, so its endpoints' keys are
+    // the claims' own.
+    assert_eq!(
+        check_term_curies("acme:supports", "claim-x", "claim-y"),
+        Ok(())
+    );
 }
