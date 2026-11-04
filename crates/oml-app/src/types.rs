@@ -1408,7 +1408,7 @@ pub struct ClaimEdgeRecord {
     pub created_at: EventTime,
 }
 
-/// `GET /v2/claim-edges`'s predicates, re-applied on every page; `None`
+/// `GET /v2/edges?kind=claim`'s predicates, re-applied on every page; `None`
 /// narrows nothing, and two present predicates both hold (http-api.md,
 /// claim edges).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1452,7 +1452,7 @@ pub struct ClaimEdgePosition {
     pub edge_id: Uuid,
 }
 
-/// `GET /v2/claim-edges`'s query as the use case takes it: the workarea by
+/// `GET /v2/edges?kind=claim`'s query as the use case takes it: the workarea by
 /// id or name (ADR-0026), resolved to the [`ClaimEdgeFilter`] every page
 /// re-applies.
 #[derive(Debug, Clone, Default)]
@@ -1607,7 +1607,7 @@ pub struct SupersedeReceipt {
     pub body_digest: String,
 }
 
-/// `POST /v2/claim-edges` as the use-case takes it: a labelled edge from
+/// `POST /v2/edges` with `kind: claim` as the use-case takes it: a labelled edge from
 /// one of the tenant's versions to another (http-api.md, claim edges;
 /// ADR-0008 d5).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1658,7 +1658,7 @@ pub struct ClaimEdgeProposalOutcome {
     pub replayed: bool,
 }
 
-/// `POST /v2/claim-edges/{edge_id}/ratify` as the use-case answers it: the
+/// `POST /v2/edges/{edge_id}/ratify` as the use-case answers it: the
 /// ratified edge as openapi.yaml's `ClaimEdge` serves it, which is also its
 /// stored idempotent response (http-api.md, claim edges and idempotency).
 #[derive(Debug, Clone)]
