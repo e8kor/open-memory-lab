@@ -564,7 +564,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
-| `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *planned for v0.5.3* ([search settings](#search-settings)) | served |
+| `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *planned for v0.5.5* ([search settings](#search-settings)) | served |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -698,7 +698,7 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 
 ### Recall — `POST /v1/memories/recall`
 
-*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` planned for v0.5.3 · [releases](../product/releases.md)*
+*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` planned for v0.5.5 · [releases](../product/releases.md)*
 
 Ranked retrieval over **promoted** rows in scope by a named search pipeline, served from Postgres,
 never from the lake (D12; [retrieval.md](../architecture/retrieval.md#search-pipelines)). The scope is the subtree of the
@@ -750,19 +750,22 @@ ADR-0021). Response separates what is ranked from what is not:
 {
   "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
   "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.032,
-              "matched": {"terms": ["deploy", "window"], "of": 3, "via": ["bm25", "trigram"]}} ],
+              "matched": {"terms": ["deploy", "window"], "of": 2, "via": ["bm25"]}} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
   "query_digest": "sha256:…",
-  "search": {"pipeline": "bm25-trigram", "match": "any", "terms": ["deploy", "the", "window"],
+  "search": {"pipeline": "bm25", "match": "any", "terms": ["deploy", "window"],
              "fallback": null, "did_you_mean": []}
 }
 ```
 
-`search` names the pipeline that ran, the query's words as it read them, a fallback, and
-spellings from readable rows when no hit holds every word; each hit's `matched` names the words
-it holds, out of `of`, and the retrievers that found it. The score is the pipeline's and compares
-within one answer only (ADR-0049 d6).
+`search` names the pipeline that ran, the query's words as it read them (under `bm25` and
+`bm25-trigram`, without English stop words when the query has other words), a fallback, and
+`did_you_mean`: when the recall found fewer than three hits (or fewer than `k`, when `k` is
+smaller), spellings for the words no hit holds, taken from the words of the promoted memories in
+the workareas the key may read, under every pipeline but `keyword-all`; else `[]`. Each hit's
+`matched` names the words it holds, out of `of`, and the retrievers that found it. The score is
+the pipeline's and compares within one answer only (ADR-0049 d6, d12).
 
 Steering rows precede hits and carry no score — the recall-ordering contract: the gate changes
 visibility, not ranking (R3/D12). Which steering applies, the total order of hits and the budget
@@ -773,12 +776,13 @@ The read is logged with the ids served after truncation and the canonical reques
 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):* a scope inside a user root also searches the
 `universe` node's own claims, ranked with the scope's hits
 ([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)). Recall quality is
-measured per pipeline by the recall eval in CI (`eval/recall/`, ADR-0049 d9); latency at scale
-is [FR-84](../product/roadmap.md).
+measured per pipeline by the recall eval in CI (`eval/recall/`, ADR-0049 d9), and quality and
+latency on public benchmarks, at 5,000 and 50,000 rows, are on the generated
+[benchmark pages](benchmarks/index.md).
 
 ### Search settings
 
-*Planned for v0.5.3 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4*
+*Planned for v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4*
 
 - `GET /v2/search` answers `{enabled, deployment_default, tenant_default, effective}`: the
   pipelines the deployment serves, its default, the tenant's journalled default (`null` when it

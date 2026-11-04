@@ -1,8 +1,9 @@
 name: Docs checks
 
 # PR gate for the documentation set: the site must build clean under --strict,
-# the three API contract surfaces (errors.md, openapi.yaml, http-api.md) must
-# agree, and openapi.yaml must be a valid OpenAPI document. Deploy stays in
+# the generated benchmark pages must match the committed results, the three
+# API contract surfaces (errors.md, openapi.yaml, http-api.md) must agree, and
+# openapi.yaml must be a valid OpenAPI document. Deploy stays in
 # pages.yml; this workflow never publishes anything.
 
 on:
@@ -30,6 +31,18 @@ jobs:
       - run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
+
+  bench-pages:
+    name: benchmark pages match their results
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Standard library only: the pages are generated from the committed
+      # oml-bench/1 results, and differ only when someone edited one side.
+      - run: python scripts/gen_bench_pages.py --check
 
   contract-sync:
     name: contract surfaces agree

@@ -103,6 +103,14 @@ nav:
       - MCP plugin: api/mcp-plugin.md
       - Errors: api/errors.md
       - Reviewer crews: api/reviewer-crews.md
+      - Benchmarks:
+          - Overview: api/benchmarks/index.md
+          - Synthetic recall set: api/benchmarks/recall-synthetic.md
+          - BEIR SciFact: api/benchmarks/beir-scifact.md
+          - BEIR NFCorpus: api/benchmarks/beir-nfcorpus.md
+          - LoCoMo: api/benchmarks/locomo.md
+          - SciFact ×10: api/benchmarks/beir-scifact-x10.md
+          - Latency at scale: api/benchmarks/scale.md
   - CLI:
       - Reference: cli/reference.md
       - Sessions: cli/sessions.md
