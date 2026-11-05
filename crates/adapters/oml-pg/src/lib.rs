@@ -3759,7 +3759,7 @@ fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> 
 }
 
 /// The statement a filtered list chooses its plan by: the readable anchored
-/// ids of the candidate scope, `$1`..`$5` as [`SEARCH_SCOPE`] binds them,
+/// ids of the candidate scope, `$1`..`$5` as the search scope binds them,
 /// then the repository, the prefix's two bounds, and the limit. Exported so
 /// the suite plans the statement the adapter runs.
 #[must_use]
