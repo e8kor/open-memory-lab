@@ -1315,3 +1315,81 @@ async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
         "{refused:?}"
     );
 }
+
+/// d9's R2 per key and per principal, clause by clause: rows built through
+/// the store so that each carries the curator in exactly one place — its
+/// authoring key, its author's principal, its lineage keys or its lineage
+/// principals — and each is refused to the curator on its own.
+#[tokio::test]
+async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let template_id = w.write(&w.ann, "t0", "the canary template", w.proj).await;
+    let template = w
+        .store
+        .memory(w.boot.tenant_id, template_id)
+        .await
+        .expect("read")
+        .expect("the row");
+    let other = w
+        .write(&w.bob, "b1", "the canary never drains", w.proj)
+        .await;
+    let cora = "cora".to_owned();
+    let cases: [(&str, Uuid, String, Vec<Uuid>, Vec<String>); 4] = [
+        (
+            "authoring key",
+            w.curator.key_id,
+            "x".to_owned(),
+            vec![],
+            vec![],
+        ),
+        (
+            "author principal",
+            w.ann.key_id,
+            cora.clone(),
+            vec![],
+            vec![],
+        ),
+        (
+            "lineage key",
+            w.ann.key_id,
+            "ann".to_owned(),
+            vec![w.curator.key_id],
+            vec![],
+        ),
+        (
+            "lineage principal",
+            w.ann.key_id,
+            "ann".to_owned(),
+            vec![],
+            vec![cora],
+        ),
+    ];
+    for (n, (case, author_key_id, author_principal, lineage_key_ids, lineage_principals)) in
+        cases.into_iter().enumerate()
+    {
+        let n = u128::try_from(n).expect("small");
+        let memory_id = Uuid::from_u128(0xC0DE_0000 + n);
+        let memory = oml_app::types::MemoryRecord {
+            memory_id,
+            claim_key: format!("r2-clause-{n}"),
+            author_key_id,
+            author_principal,
+            lineage_key_ids,
+            lineage_principals,
+            ..template.clone()
+        };
+        seal_onto(
+            &w,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory,
+                enqueue: false,
+            },
+        )
+        .await;
+        let err = w.flag(&w.curator, memory_id, other).await.unwrap_err();
+        assert!(matches!(err, AppError::AuthorInLineage), "{case}: {err:?}");
+    }
+}
