@@ -370,7 +370,7 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
     | synthetic (recall eval, 121 queries) | **0.909** | 0.894 | 0.912 / 0.897 |
     | SciFact (300) | 0.730 | **0.731** | 0.730 / 0.727 |
     | NFCorpus (323) | **0.350** | 0.344 | 0.353 / 0.346 |
-    | LoCoMo, categories 1–4 (1,540) | **0.550** | 0.534 | 0.552 / 0.535 |
+    | LoCoMo, categories 1–4 (1,535) | **0.550** | 0.534 | 0.552 / 0.535 |
 
     CC leads on three of four sets by 0.006 to 0.016 and trails on SciFact by 0.001, inside the
     run-to-run spread a fresh load's tie order gives; R@100 is within 0.007 everywhere. Convex
