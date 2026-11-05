@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25",
  "date": "2026-11-05",
- "commit": "ac57cd8",
+ "commit": "66979b4",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "17.9",
@@ -26,9 +26,9 @@
  },
  "per_category": {},
  "latency_ms": {
-  "p50": 87.25,
-  "p95": 116.19,
-  "p99": 126.79
+  "p50": 86.125,
+  "p95": 115.61,
+  "p99": 129.62
  },
  "reference": {
   "source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",

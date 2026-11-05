@@ -40,10 +40,10 @@ Entries kept apart until the release that carries them, newest first. `info.vers
 - **Recall reads an index, so its cost no longer follows every row a key can read.** A new
   pipeline, `bm25-postings`, keeps each memory's search words a second time as integer postings,
   which row security lets PostgreSQL serve from an index, and ranks by the same BM25 as `bm25`. At
-  99,721 readable memories, a recall over the whole tree answered in 29.9 ms p95 where `bm25`
-  took 493 ms, and a recall inside one project in 12.1 ms where `bm25` took 218 ms
+  99,721 readable memories, a recall over the whole tree answered in 25.5 ms p95 where `bm25`
+  took 485 ms, and a recall inside one project in 15.9 ms where `bm25` took 248 ms
   ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
-  On BEIR SciFact and NFCorpus and on LoCoMo it scores within 0.0005 nDCG@10 of `bm25` at about
+  On BEIR SciFact and NFCorpus and on LoCoMo it scores what `bm25` scores at about
   half the served latency ([benchmarks](api/benchmarks/index.md)).
 - **`bm25-postings` is the default search**, chosen by ADR-0052 d9's evidence on one build; `bm25`
   stays served as its fallback and for comparison, and a tenant or a request can still name it.
@@ -64,12 +64,17 @@ Entries kept apart until the release that carries them, newest first. `info.vers
   exactly `bm25`'s, so a memory holding only common words is found again. On LoCoMo this restores
   R@100 from 0.767 to 0.813 and R@20 from 0.6935 to 0.6971, `bm25`'s own
   ([benchmark report](https://github.com/e8kor/open-memory-lab/blob/main/eval/bench/REPORT.md)).
-- **`oml doctor` checks the postings.** It warns when the scan answered more than 5% of
-  `bm25-postings`'s recalls since the server started, and, with an admin key, when a tenant's
+- **`oml doctor` checks the postings.** With `OML_METRICS_URL` naming the metrics listener, it
+  warns when the scan answered more than 5% of `bm25-postings`'s recalls since the server
+  started; the counts stay off the public `/readyz`. With an admin key it warns when a tenant's
   postings are missing, behind, or their counts drift, naming the repair:
-  `oml_search_postings_refill` run by the owner ([observability](operations/observability.md#the-doctor-contract)).
-  `/readyz` gains `search.access`, each pipeline's recalls by how they were read, and `GET
-  /v2/search` gains `postings`.
+  `oml_search_postings_refill`, which only the owner may run and which holds that tenant's
+  writes alone ([observability](operations/observability.md#the-doctor-contract)). `GET
+  /v2/search` gains `postings`. A tenant that a lead built before 0021 created gets its postings
+  partition at the next start, so its writes resume.
+- **`search.pruned` names every word that may have cost a hit.** A common word is left out of what
+  a recall reads whole, every form of it, so an empty `pruned` means the hits are exactly
+  `bm25`'s.
 - **Erasure, when it is built, removes postings and counts** with the version's other copies;
   until then nothing deletes them, and replaced, demoted, rejected and retired versions keep
   theirs, flipped off.

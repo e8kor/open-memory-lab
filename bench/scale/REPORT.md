@@ -27,7 +27,20 @@ The first rule left out every frequent form whatever the budget, which cost LoCo
 | first rule (earlier run) | 9.2 | 12.1 | 29.9 | 0.921 | 0.975 |
 | **budget first** | **14.6** | **24.0** | **41.7** | **0.942** | **0.979** |
 
-The universe p95 stays under ADR-0052 d9's 50 ms. Leaf and project scopes now read every form of
+The universe p95 stays under ADR-0052 d9's 50 ms.
+
+Then words were pruned whole, every form together (review F1), each recall's statements read one
+REPEATABLE READ snapshot, and the served index was re-measured, on `66979b4`, load average 2.3 to
+4.7 (`results/postings-165k-whole-words.json`):
+
+| rule | leaf p95 | project p95 | universe p95 | same list as bm25 | top-10 overlap |
+|---|---:|---:|---:|---:|---:|
+| bm25, same run | 22.3 | 248 | 485 | – | – |
+| **whole words, budget first** | **5.9** | **15.9** | **25.5** | **0.927** | **0.971** |
+| `(kind, token_id)` instead of the served index | 223 | 175 | 154 | – | – |
+
+A key holding 1,000 own held rows: universe p95 62.0 ms; 10,000: 274 ms (`bm25`: 641 and 510).
+The 0021 fill took 64.9 s; a promotion 7.4 ms p50 with the trigger, 1.2 without. Leaf and project scopes now read every form of
 a query whose postings fit the budget, so they cost more and match `bm25` more often. The tables
 below are the first rule's.
 

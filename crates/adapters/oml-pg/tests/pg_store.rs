@@ -7897,8 +7897,16 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     .await
     .expect("statistics targets");
     assert_eq!(targets.len(), 2, "{targets:?}");
-    assert_eq!(targets[0].1, Some(0), "the parent gathers none: {targets:?}");
-    assert_ne!(targets[1].1, Some(0), "the partition keeps its own: {targets:?}");
+    assert_eq!(
+        targets[0].1,
+        Some(0),
+        "the parent gathers none: {targets:?}"
+    );
+    assert_ne!(
+        targets[1].1,
+        Some(0),
+        "the partition keeps its own: {targets:?}"
+    );
     drop_dbs(&created).await;
 }
 

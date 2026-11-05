@@ -51,8 +51,8 @@ CEILING = ("**The latency ceiling.** Under row security no text index serves a r
            "more per row than that match, so on abstract-length text it crosses the line far "
            "sooner, as the tables show. Latency at scale is not solved by stored lexemes. "
            "`bm25-postings` (ADR-0052) reads integer postings, which row security lets an "
-           "index serve, so its cost follows the postings it reads: 29.9 ms p95 at 99,721 "
-           "readable rows against `bm25`'s 493 ms (`bench/scale/REPORT.md`).\n")
+           "index serve, so its cost follows the postings it reads: 25.5 ms p95 at 99,721 "
+           "readable rows against `bm25`'s 485 ms (`bench/scale/REPORT.md`).\n")
 
 
 def load_results():

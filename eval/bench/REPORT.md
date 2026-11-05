@@ -75,7 +75,12 @@ postings pass `POSTING_BUDGET`; below it every form is read and the list is `bm2
 | NFCorpus | 0.1840 | 0.1836 → 0.1840 | 0.245 → 0.248 | 0.3203 → 0.3208 | 62.7 → 53.0 |
 | LoCoMo | 0.6971 | 0.6935 → 0.6971 | 0.767 → 0.813 | 0.5029 → 0.5034 | 29.9 → 37.9 |
 
-After the change all three lists equal `bm25`'s on every measure. R@20 is what a reranker reading
+After the change all three lists equal `bm25`'s on every measure. A review then found that
+pruning by form, not by word, could drop a stem while keeping the word's exact form, losing rows
+with `search.pruned` empty; words are now pruned whole (`66979b4`). Re-measured on that build
+(load average 5): SciFact, NFCorpus and LoCoMo again equal `bm25` on nDCG@10, R@20 (0.8656 /
+0.1839 / 0.6968) and R@100 (0.928 / 0.247 / 0.813), at p95 65.9 / 54.8 / 37.1 ms against
+`bm25`'s 117 / 83.8 / 39.3. R@20 is what a reranker reading
 the first 10 to 20 hits sees; it had lost 0.0027 on LoCoMo and 0.0004 on NFCorpus. Raw numbers:
 `results/budget-first.json`; the scale lane's latency for the same rule is in
 `bench/scale/REPORT.md`.

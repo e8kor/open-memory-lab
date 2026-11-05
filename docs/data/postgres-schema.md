@@ -1396,7 +1396,8 @@ CREATE TABLE search_term_rows (tenant_id, workarea_id, kind, memory_kind, token_
 CREATE TABLE search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows, total_len,
     PRIMARY KEY (tenant_id, workarea_id, kind, memory_kind));
 -- each ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the
--- serving role; the two count tables SET STATISTICS 0 on every column (FR-45)
+-- serving role; the two count tables SET STATISTICS 0 on every column, and the postings parent
+-- (ONLY) on token_id, memory_id and workarea_id, each partition keeping its own (FR-45)
 CREATE TRIGGER memories_search_postings AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim,
     search_vector, workarea_id, kind OR DELETE ON memories
     FOR EACH ROW EXECUTE FUNCTION oml_search_postings_fold();
@@ -1418,7 +1419,10 @@ lexemes. A version whose lexemes, workarea or kind change gives its postings bac
 ones. The trigger function is `SECURITY INVOKER` with `search_path` pinned.
 
 The owner creates each tenant's postings partition in the same transaction as its memories
-partition, first, so the tenant's first write finds it; 0021 creates one for every existing
+partition, first, so the tenant's first write finds it; a lead built before 0021 creates the
+memories partition alone, which leaves that tenant's writes failing, so every start, after
+migrating, creates and fills the postings partition of any tenant that lacks one, and doctor names
+the gap until then; 0021 creates one for every existing
 tenant, then creates the trigger, then fills every existing version's postings and the served
 versions' counts from the stored lexemes under each tenant's row security, with
 `oml_search_postings_refill(tenant)` for each. Writes wait for the fill, since the trigger's
@@ -1426,12 +1430,16 @@ lock on `memories` is held to its end; a batched, resumable fill is FR-103.
 
 The same function is the repair doctor names when a tenant's postings are incomplete or their
 counts drift (ADR-0052 d12; [observability](../operations/observability.md#the-doctor-contract)).
-The owner runs it in a transaction whose `oml.tenant_id` is that tenant, which it checks:
+Only the owner may run it (`EXECUTE` is revoked from `PUBLIC`; `oml_search_count`, which the
+trigger calls as the writing role, is granted to the serving role alone). It takes that tenant's
+chain advisory lock, the one every memory write of the tenant takes first, so the tenant's writes
+wait for it and no other tenant's do. The owner runs it in a transaction whose `oml.tenant_id` is
+that tenant, which it checks:
 
 ```sql
 BEGIN;
 SELECT set_config('oml.tenant_id', '<tenant id>', true);
-SELECT oml_search_postings_refill('<tenant id>');   -- takes memories' write lock to the commit
+SELECT oml_search_postings_refill('<tenant id>');   -- holds this tenant's writes to the commit
 COMMIT;
 ```
 

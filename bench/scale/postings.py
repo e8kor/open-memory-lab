@@ -56,7 +56,7 @@ DRIVER = os.environ.get("SEARCH_SCALE", str(REPO / "target/release/examples/sear
 QUERIES = 330
 # Candidate prune constants (frequent share, posting budget); "off" is
 # PruneLimits::NONE.
-SWEEP = [(0.1, 5000), (0.1, 20000)]
+SWEEP = [(0.1, 5000)]
 
 
 def dsn(user: str, db: str) -> str:

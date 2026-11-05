@@ -98,11 +98,12 @@ pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 3] =
     [Pipeline::KeywordAny, Pipeline::Bm25, Pipeline::Bm25Postings];
 
 /// `search.default`'s default: `bm25-postings`, moved from `bm25` by
-/// ADR-0052 d9's evidence, measured on one build on 2026-11-05: it passes
-/// `bm25`'s recall-eval gate (success@1 0.826, success@5 0.934), its
-/// nDCG@10 is within 0.0005 of `bm25`'s on SciFact, NFCorpus and LoCoMo,
-/// and its p95 at 99,721 readable rows, universe scope, is 29.9 ms against
-/// `bm25`'s 492.7 ms (bench/scale/REPORT.md; eval/bench/REPORT.md).
+/// ADR-0052 d9's evidence, measured on the build that ships it (66979b4,
+/// 2026-11-05): `bm25`'s recall-eval gate passes with `bm25`'s own
+/// success@1 0.826 and success@5 0.934; nDCG@10, R@20 and R@100 equal
+/// `bm25`'s on SciFact, NFCorpus and LoCoMo; and the p95 at 99,721 readable
+/// rows, universe scope, is 25.5 ms against `bm25`'s 485 ms
+/// (bench/scale/REPORT.md; eval/bench/REPORT.md).
 pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25Postings;
 
 /// The search settings of a deployment that sets none.

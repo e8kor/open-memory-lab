@@ -14,7 +14,7 @@ answers: how recall latency grows with the rows in a recall's scope, per search 
 
 Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all conversations together, though each query reads one) and the client's p50 and p95 in milliseconds. The line is 50 ms.
 
-**The latency ceiling.** Under row security no text index serves a recall: `@@`, `%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but `bm25-postings` reads the stored lexemes of every row the key may read, and its cost grows with those rows. Storing the lexemes made a row several times cheaper, not free: the scale lane measured an every-word match over a stored `simple` vector past 50 ms near 70,000 readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads more per row than that match, so on abstract-length text it crosses the line far sooner, as the tables show. Latency at scale is not solved by stored lexemes. `bm25-postings` (ADR-0052) reads integer postings, which row security lets an index serve, so its cost follows the postings it reads: 29.9 ms p95 at 99,721 readable rows against `bm25`'s 493 ms (`bench/scale/REPORT.md`).
+**The latency ceiling.** Under row security no text index serves a recall: `@@`, `%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but `bm25-postings` reads the stored lexemes of every row the key may read, and its cost grows with those rows. Storing the lexemes made a row several times cheaper, not free: the scale lane measured an every-word match over a stored `simple` vector past 50 ms near 70,000 readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads more per row than that match, so on abstract-length text it crosses the line far sooner, as the tables show. Latency at scale is not solved by stored lexemes. `bm25-postings` (ADR-0052) reads integer postings, which row security lets an index serve, so its cost follows the postings it reads: 25.5 ms p95 at 99,721 readable rows against `bm25`'s 485 ms (`bench/scale/REPORT.md`).
 
 | method | rows | suite | p50 ms | p95 ms | p95 under 50 ms |
 |---|---:|---|---:|---:|---|
@@ -29,9 +29,9 @@ Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all c
 | keyword-any | 5,882 | locomo | 62.2 | 86.4 | no |
 | keyword-any | 51,830 | beir-scifact-x10 | 4,278 | 4,670 | no |
 | bm25 | 200 | recall-synthetic | 16.3 | 21.2 | yes |
-| bm25 | 3,633 | beir-nfcorpus | 54.3 | 83.5 | no |
-| bm25 | 5,183 | beir-scifact | 87.2 | 116 | no |
-| bm25 | 5,882 | locomo | 28.9 | 39.0 | yes |
+| bm25 | 3,633 | beir-nfcorpus | 51.8 | 83.8 | no |
+| bm25 | 5,183 | beir-scifact | 86.1 | 116 | no |
+| bm25 | 5,882 | locomo | 31.6 | 39.2 | yes |
 | bm25 | 51,830 | beir-scifact-x10 | 604 | 849 | no |
 | bm25-trigram | 200 | recall-synthetic | 30.4 | 41.9 | yes |
 | bm25-trigram | 3,633 | beir-nfcorpus | 2,172 | 3,047 | no |
@@ -39,9 +39,9 @@ Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all c
 | bm25-trigram | 5,882 | locomo | 89.1 | 112 | no |
 | bm25-trigram | 51,830 | beir-scifact-x10 | 13,271 | 19,248 | no |
 | bm25-postings | 200 | recall-synthetic | 13.0 | 16.4 | yes |
-| bm25-postings | 3,633 | beir-nfcorpus | 30.9 | 53.0 | no |
-| bm25-postings | 5,183 | beir-scifact | 46.2 | 65.0 | no |
-| bm25-postings | 5,882 | locomo | 24.0 | 37.2 | yes |
+| bm25-postings | 3,633 | beir-nfcorpus | 38.0 | 54.8 | no |
+| bm25-postings | 5,183 | beir-scifact | 46.2 | 65.6 | no |
+| bm25-postings | 5,882 | locomo | 29.9 | 37.0 | yes |
 | bm25-k10 | 5,183 | beir-scifact | 70.5 | 98.5 | no |
 | bm25-k10 | 51,830 | beir-scifact-x10 | 572 | 804 | no |
 | bm25-trigram-k10 | 5,183 | beir-scifact | 3,664 | 5,334 | no |

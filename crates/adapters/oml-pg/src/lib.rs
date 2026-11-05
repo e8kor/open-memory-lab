@@ -950,16 +950,17 @@ pub fn token_id(lexeme: &str) -> i64 {
     i64::from_be_bytes(first)
 }
 
-/// The share of the readable rows above which a form is frequent and
-/// pruned from the postings read (ADR-0052 d6): at 0.1 the external sets
-/// lost at most 0.0005 nDCG@10 (eval/bench/results/prune-sweep.json;
-/// ADR-0052 open question 2).
+/// The share of the readable rows above which a word with a form held by
+/// more is frequent, and pruned whole once the query's postings pass
+/// [`POSTING_BUDGET`] (ADR-0052 d6); the sweep that set it is
+/// eval/bench/results/prune-sweep.json (ADR-0052 open question 2).
 pub const FREQUENT_SHARE: f64 = 0.1;
 
-/// The most postings the kept forms may hold among the readable rows; past
-/// it the most frequent kept form is pruned too (ADR-0052 d6): at 10,000 a
-/// universe recall over 99,721 readable rows measured 29.9 ms p95
-/// (bench/scale/REPORT.md; ADR-0052 open question 2).
+/// The most postings the kept words may hold among the readable rows; past
+/// it the kept word with the most postings is pruned too, and below it
+/// nothing is (ADR-0052 d6): at 10,000 a universe recall over 99,721
+/// readable rows measured 25.5 ms p95 (bench/scale/REPORT.md; ADR-0052
+/// open question 2).
 pub const POSTING_BUDGET: u64 = 10_000;
 
 /// The candidates rescored with every form after a pruned read, as a

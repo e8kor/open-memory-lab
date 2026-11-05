@@ -244,9 +244,11 @@ Before it reads a posting it sums the served versions' counts over the readable 
 the caller's own held rows when it asked for them: the row count, the mean length and each query
 form's document frequency are the readable rows', never the tenant's. While the query forms'
 readable postings together fit `POSTING_BUDGET`, every form is read and the list is `bm25`'s.
-Past it, a form held by more than `FREQUENT_SHARE` of the readable rows is **frequent** and left
-out of the postings read; then, while the kept forms' frequencies sum above the budget, the most
-frequent kept one is left out too. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
+Past it, a word with a form held by more than `FREQUENT_SHARE` of the readable rows is
+**frequent** and left out of the postings read, every form of it; then, while the kept words'
+postings sum above the budget, the kept word with the most is left out too. A word is pruned
+whole, so `search.pruned` names every word whose rows may be missing, and `pruned: []` means the
+list is `bm25`'s. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
 returned row's score is its full BM25 score. Candidates come only from the forms read, so what
 pruning loses is a row that holds only frequent words, a loss in the long tail of the list: it is
 why the budget, not the share, decides when to prune (ADR-0052 d6, amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
@@ -273,9 +275,9 @@ misspellings at many times the latency, needs `pg_trgm`, and is served only wher
 enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
 role's reads (ADR-0034 d13), so 0020 builds none and `bm25`'s cost grows with the rows in its
 scope; the scale page shows by how much. *Unreleased:* `bm25-postings` is the default once
-ADR-0052 d9's evidence held on one build: `bm25`'s gate passed (success@1 0.826, success@5 0.934),
-nDCG@10 within 0.0005 of `bm25`'s on SciFact, NFCorpus and LoCoMo, and a p95 of 29.9 ms at
-99,721 readable rows, universe scope, against `bm25`'s 492.7 ms
+ADR-0052 d9's evidence held on the build that ships it: `bm25`'s gate passed (success@1 0.826,
+success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
+a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
 ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
 `bm25` stays served as its fallback and comparison.
 

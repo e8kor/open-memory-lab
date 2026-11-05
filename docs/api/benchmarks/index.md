@@ -14,7 +14,7 @@ answers: which search pipeline is the default and what each pipeline measured on
 
 Every number below went through the served path: memories written over HTTP by an agent key, promoted by reviewer keys of other principals, and recalled through `oml_read` over `/mcp`, one query at a time. Reference rows are offline and have no latency. Latency is the client's wall time per call, in milliseconds.
 
-**The latency ceiling.** Under row security no text index serves a recall: `@@`, `%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but `bm25-postings` reads the stored lexemes of every row the key may read, and its cost grows with those rows. Storing the lexemes made a row several times cheaper, not free: the scale lane measured an every-word match over a stored `simple` vector past 50 ms near 70,000 readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads more per row than that match, so on abstract-length text it crosses the line far sooner, as the tables show. Latency at scale is not solved by stored lexemes. `bm25-postings` (ADR-0052) reads integer postings, which row security lets an index serve, so its cost follows the postings it reads: 29.9 ms p95 at 99,721 readable rows against `bm25`'s 493 ms (`bench/scale/REPORT.md`).
+**The latency ceiling.** Under row security no text index serves a recall: `@@`, `%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but `bm25-postings` reads the stored lexemes of every row the key may read, and its cost grows with those rows. Storing the lexemes made a row several times cheaper, not free: the scale lane measured an every-word match over a stored `simple` vector past 50 ms near 70,000 readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads more per row than that match, so on abstract-length text it crosses the line far sooner, as the tables show. Latency at scale is not solved by stored lexemes. `bm25-postings` (ADR-0052) reads integer postings, which row security lets an index serve, so its cost follows the postings it reads: 25.5 ms p95 at 99,721 readable rows against `bm25`'s 485 ms (`bench/scale/REPORT.md`).
 
 ## [Synthetic recall set](recall-synthetic.md)
 
@@ -30,15 +30,15 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [BEIR SciFact](beir-scifact.md)
 
-5,183 memories, 300 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,183 memories, 300 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 300 | 0.013 | 0.013 | 0.013 | 0.987 | 629 | 672 |
 | keyword-any | 300 | 0.515 | 0.603 | 0.781 | 0.000 | 815 | 1,075 |
-| bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 87.2 | 116 |
+| bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 86.1 | 116 |
 | bm25-trigram | 100 (sampled) | 0.611 | 0.710 | 0.906 | 0.000 | 3,707 | 5,454 |
-| bm25-postings | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 46.2 | 65.0 |
+| bm25-postings | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 46.2 | 65.6 |
 | bm25-k10 | 300 | 0.685 | 0.783 | 0.822 | 0.000 | 70.5 | 98.5 |
 | bm25-trigram-k10 | 100 (sampled) | 0.612 | 0.720 | 0.754 | 0.000 | 3,664 | 5,334 |
 | keyword-any-k10 | 300 | 0.515 | 0.603 | 0.632 | 0.000 | 630 | 1,090 |
@@ -48,30 +48,30 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [BEIR NFCorpus](beir-nfcorpus.md)
 
-3,633 memories, 323 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+3,633 memories, 323 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 323 | 0.187 | 0.362 | 0.092 | 0.511 | 477 | 513 |
 | keyword-any | 323 | 0.274 | 0.560 | 0.210 | 0.081 | 586 | 1,016 |
-| bm25 | 323 | 0.321 | 0.656 | 0.248 | 0.046 | 54.3 | 83.5 |
+| bm25 | 323 | 0.321 | 0.656 | 0.247 | 0.046 | 51.8 | 83.8 |
 | bm25-trigram | 100 (sampled) | 0.267 | 0.600 | 0.245 | 0.000 | 2,172 | 3,047 |
-| bm25-postings | 323 | 0.321 | 0.656 | 0.248 | 0.046 | 30.9 | 53.0 |
+| bm25-postings | 323 | 0.321 | 0.656 | 0.247 | 0.046 | 38.0 | 54.8 |
 | reference-bm25s-k1-0.9-b-0.4 | 323 | 0.318 | 0.647 | 0.246 | 0.046 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 323 | 0.318 | 0.644 | 0.247 | 0.046 | offline | offline |
 | BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields), published | | 0.325 | | | | | |
 
 ## [LoCoMo](locomo.md)
 
-5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 1,535 | 0.001 | 0.001 | 0.001 | 0.996 | 31.4 | 41.3 |
 | keyword-any | 1,535 | 0.345 | 0.437 | 0.744 | 0.000 | 62.2 | 86.4 |
-| bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 28.9 | 39.0 |
+| bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 31.6 | 39.2 |
 | bm25-trigram | 1,535 | 0.483 | 0.587 | 0.822 | 0.000 | 89.1 | 112 |
-| bm25-postings | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 24.0 | 37.2 |
+| bm25-postings | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 29.9 | 37.0 |
 | reference-bm25s-k1-0.9-b-0.4 | 1,535 | 0.468 | 0.585 | 0.812 | 0.000 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 1,535 | 0.446 | 0.566 | 0.806 | 0.000 | offline | offline |
 
