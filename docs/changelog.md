@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design and 0.5.8-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design, 0.5.8-design and the unreleased 0.6.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.8-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.6.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,24 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## Unreleased
+
+### 2026-11-05 — Chat memory and origin kinds (ADR-0063, proposed)
+
+What changes for someone using OML: every memory says what kind of source it came from, recall
+can be narrowed to what a person said or to what documents say, and an opted-in agent writes the
+facts a conversation settled into the person's own chat workarea, held until they review them.
+
+- `info.version` is `0.6.0-design`. `SubmitRequest` and `SupersedeRequest` gain `origin`;
+  `RecallRequest` and `GET /v1/memories` gain `origin_kinds`; `MemorySummary` gains `origin`; the
+  `Anchor` schema admits a `chat://` uri and the `oml-turn/1` hasher. No error code is added.
+- `oml_write` gains `origin`, `oml_read` gains `origin_kinds`; the catalog stays three tools.
+- `submission.remember` and `submission.learn` carry `origin`. Migration 0030 adds
+  `memories.origin_kind` and `memories_origin_kind`.
+- The CLI gains `oml chat init`, `--origin-kind` on `oml write` and `oml read`, and the hook verbs
+  `user-prompt`, `stop` and `pre-compact`; the plugin gains their three hooks, the
+  `oml-chat-capture` skill and the `chat_workarea` option.
 
 ## 0.5.8-design
 
@@ -111,22 +129,6 @@ MCP tool documents are `0.5.8-design`. ADR-0057 is accepted, introduced in v0.5.
 introduced in v0.5.8, and ADR-0052's fused pipelines (`bm25-sparse`) read capped lists from it.
 ADR-0047 stays proposed, except the parts ADR-0057 took over (its anchor, the import of
 repository files, its anchor rule and its answered questions, as ADR-0057 records).
-
-### 2026-11-05 — Chat memory and origin kinds (ADR-0063, proposed)
-
-What changes for someone using OML: every memory says what kind of source it came from, recall
-can be narrowed to what a person said or to what documents say, and an opted-in agent writes the
-facts a conversation settled into the person's own chat workarea, held until they review them.
-
-- `info.version` is `0.6.0-design`. `SubmitRequest` and `SupersedeRequest` gain `origin`;
-  `RecallRequest` and `GET /v1/memories` gain `origin_kinds`; `MemorySummary` gains `origin`; the
-  `Anchor` schema admits a `chat://` uri and the `oml-turn/1` hasher. No error code is added.
-- `oml_write` gains `origin`, `oml_read` gains `origin_kinds`; the catalog stays three tools.
-- `submission.remember` and `submission.learn` carry `origin`. Migration 0030 adds
-  `memories.origin_kind` and `memories_origin_kind`.
-- The CLI gains `oml chat init`, `--origin-kind` on `oml write` and `oml read`, and the hook verbs
-  `user-prompt`, `stop` and `pre-compact`; the plugin gains their three hooks, the
-  `oml-chat-capture` skill and the `chat_workarea` option.
 
 ### 2026-11-05 — Source anchors and the expected version (ADR-0057, ADR-0049 d13)
 
