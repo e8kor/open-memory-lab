@@ -1760,7 +1760,7 @@ against 0.17 ms at 45,000 held
 d9).
 
 
-### Origin kind (0030)
+### Origin kind (0030, 0031)
 
 ```sql
 ALTER TABLE memories ADD COLUMN origin_kind text;  -- repo, doc, code, lake, chat, web, manual
@@ -1771,7 +1771,9 @@ CREATE INDEX memories_origin_kind ON memories (tenant_id, origin_kind)
 `origin_kind` holds the kind the version's submission event signed, written at capture and never
 updated; a check keeps it to the closed set. Versions written before 0030 hold `NULL` and are never
 backfilled, so every kind filter leaves them out. The filter is one more predicate of the origin
-filters, in the candidate statement before ranking's cut ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1-d3). The number
+filters, in the candidate statement before ranking's cut. 0030 adds the column and the check
+`NOT VALID` in one transaction; 0031 runs outside any transaction, validating the check under SHARE
+UPDATE EXCLUSIVE and building the empty partial index, so reads and writes go on during the scan ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1-d3). The number
 0030 skips the 0026 to 0029 the parallel v0.6.0 lanes use.
 
 ### Source anchors and source checks (0025)

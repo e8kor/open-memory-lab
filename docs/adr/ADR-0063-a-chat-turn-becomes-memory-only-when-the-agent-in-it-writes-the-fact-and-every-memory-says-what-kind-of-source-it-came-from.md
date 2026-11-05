@@ -108,9 +108,14 @@ a use case, and a capability is a parameter before it is a tool.
   lower-case hex digits; nothing follows it, and no user, port, query or `rev` is admitted. The
   fragment is required with `chat://` and is `turn=<n>` or `turn=<n>-<m>`, `1 <= n <= m <=
   100000`, the 1-based number of the person's prompt in the session; it is refused elsewhere.
-  `hash` and `hasher` are required with `chat://`: `oml-turn/1` is the SHA-256 of the prompt's
-  text as the harness passed it to `UserPromptSubmit`, UTF-8, after NFC, so the turn can be
-  recognised again by whoever holds the transcript, and by nobody else. `oml-turn/1` is refused
+  `hash` and `hasher` are required with `chat://`: `oml-turn/1` is the HMAC-SHA-256 of the
+  prompt's text as the harness passed it to `UserPromptSubmit`, UTF-8, after NFC, keyed by the
+  person's chat salt (d5). Whoever holds the transcript and the salt can recognise the turn
+  again; whoever holds only the signed anchor, the operator and every reviewer included, cannot
+  confirm or search a guessed prompt against it, and erasure leaving the anchor in place (ADR-0057
+  d2) leaves no unkeyed digest of what the person said. *Amended 2026-11-05 from the PR #78
+  review (H2): an unkeyed SHA-256 of a short prompt is a guessable fingerprint that outlives
+  erasure.* `oml-turn/1` is refused
   with any other anchor. The scan of ADR-0057 d2 runs over the `uri` and the fragment as over any
   anchor. The cost: a turn's hash proves nothing to the server, which never sees the turn, as no
   anchor is verified (ADR-0057 d2).
@@ -118,7 +123,9 @@ a use case, and a capability is a parameter before it is a tool.
 - **d5 — The session in a chat anchor is pseudonymous, and the transcript is not stored.**
   The plugin derives `<session>` as the first 32 hex digits of SHA-256(salt ‖ the harness's
   session id), where the salt is 32 random bytes the CLI writes once to
-  `oml/chat-salt` under `XDG_CONFIG_HOME` (or `HOME/.config`), 0600. The server cannot link a
+  `oml/chat-salt` under `XDG_CONFIG_HOME` (or `HOME/.config`), 0600 in a 0700 directory. The salt
+  is the person's secret: no hook, request or anchor carries it, and it keys both the pseudonym
+  and every turn hash (d4). The server cannot link a
   chat anchor to a harness transcript file, and two machines of one person produce different
   sessions. Because Claude Code's ids are UUIDs, the grammar's 32 hex digits without hyphens
   refuses a raw id sent by mistake. No turn text is sent by any hook (d6) and no transcript is
@@ -126,8 +133,12 @@ a use case, and a capability is a parameter before it is a tool.
   capture skill may add one quoted excerpt of at most 280 characters of what the person said
   under the fact, prefixed `> `. It is part of the body, so the server's deterministic scanner
   runs over it as over every body, and a finding refuses the write with `submission.scan_veto`;
-  crypto-shredding erases it with the body (ADR-0005). Off by default because an excerpt is the
-  person's words, kept.
+  crypto-shredding erases it with the body (ADR-0005). What the scanner finds is its rule set's
+  to say: the PoC's rules are two literal markers, and lane `feat/scan` builds `oml-scan/1`'s
+  secret shapes. So nothing here promises that a secret is refused: the skill tells the agent
+  never to quote one, and the excerpt test runs every rule the lead's scanner declares, so it
+  covers `oml-scan/1` once that lands. Off by default because an excerpt is the person's words,
+  kept; it should stay off until the release serves a scanner with secret rules.
 
 - **d6 — Capture is asked of the running agent at `Stop`, under budgets, and the server calls no
   model.** Three hook verbs, each a no-op unless `OML_CHAT_CAPTURE=1` (or `OML_TURN_RECALL=1` for
@@ -152,8 +163,13 @@ a use case, and a capability is a parameter before it is a tool.
     the last one, or a compaction was recorded and at least one turn is uncaptured. The loop
     guards: nothing when `stop_hook_active` is true, so a capture never triggers another; nothing
     when no turn is uncaptured; at most 4 capture requests per session; at most 6 facts per
-    request and 24 per session, stated in the reason; the cache records the last captured turn
-    before the reason is printed, so a capture the agent skips is not asked again. Each fact is
+    request and 24 per session, stated in the reason and counted in the hook's state, so no
+    request asks past the session's budget (the agent is asked for at most that many; the
+    server does not count chat facts); the cache records the last captured turn before the
+    reason is printed, so a capture the agent skips is not asked again. A resumed session
+    numbers on: `oml hook session-end` deletes the turn digests but keeps the session's turn
+    count, one number in `<id>.chat-turns`, pruned after 30 idle days, so a turn's anchor and
+    idempotency key never repeat when the harness resumes a session under the same id. Each fact is
     one `oml_write` with `idempotency_key` `chat-<session>-t<n>-<i>`, so a repeated capture
     replays instead of writing twice. The agent extracts with its own model, in its own context,
     which already holds the turns: no turn text leaves the machine except as the facts the agent
@@ -173,15 +189,18 @@ a use case, and a capability is a parameter before it is a tool.
 
 - **d8 — A person's chat memory lives in `chat` under their user root, created only by a key a
   person holds.** The chat workarea is the child named `chat` of a user root (ADR-0044), so
-  its path is `universe.<user>.chat` and the name is in that root's namespace. Creating a
-  workarea named `chat` directly under a user root requires a key `held_by: human`; any other
-  key, an agent's writer key in that root included, is refused with `access.verb_ceiling`,
-  `details.reason: chat_scope_is_human_only`, before anything is journalled. `oml chat init`
-  creates it with the CLI's stored credentials, prints the `OML_CHAT_WORKAREA` value, and, once
+  its path is `universe.<user>.chat`. The name `chat` is reserved in every user root's namespace
+  for a key `held_by: human`, at any depth: creating a workarea named `chat` anywhere under a user
+  root with any other key, an agent's writer key in that root included, is refused with
+  `access.verb_ceiling`, `details.reason: chat_scope_is_human_only`, before anything is
+  journalled, so an agent cannot take the name first (the namespace is one per root, ADR-0044 d5).
+  `oml chat init` creates it with the CLI's stored credentials; when the name is taken it adopts
+  only `universe.<user>.chat` and otherwise refuses with `chat_scope_not_the_persons`; it prints the `OML_CHAT_WORKAREA` value, and, once
   the server serves ADR-0030's mode, sets it `in_progress`, so the person's other agent keys
   read each other's chat facts labelled unreviewed (ADR-0030 d3, d4). Until then an agent reads
   its own held chat facts, as every key reads its own (ADR-0025 d4). No MCP tool or argument
-  creates it.
+  creates it. The cost, as for bulk review (ADR-0055 d1): `held_by` is the issuer's label, so an
+  agent with a shell and the person's stored CLI credentials can run `oml chat init` itself.
 
 - **d9 — Curation inside the chat workarea is ADR-0030's curator, narrow only.** A curator key
   on the chat workarea rejects the newer of two near-duplicates found by ADR-0050's MinHash
@@ -199,7 +218,10 @@ a use case, and a capability is a parameter before it is a tool.
   `max_tokens` 150; the injected context is at most 1,600 bytes, each hit at most 400. The
   latency budget is `OML_TURN_RECALL_BUDGET_MS`, default 300 and at most 1,000: one deadline
   for both requests, and when it passes nothing is injected and the turn goes on. Three misses
-  of the deadline in a session stop recall for that session. A hit is a line naming its
+  of the deadline in a session stop recall for that session; a miss is counted before a request is
+  sent and taken back by an answer in time, so a refused connection or a hook ended by its
+  deadline counts too. Outside the opted-in chat workarea, per-turn recall reads promoted rows
+  only, a law its tests hold by the request bodies. A hit is a line naming its
   artifact id, its `origin.kind`, its workarea and its time, with `[unreviewed]` when its state
   is held, under ADR-0029 d6's framing line and the line `Recalled from OML for this prompt; it
   may be irrelevant — ignore it if so.`; an artifact already injected in the session is not
@@ -229,10 +251,10 @@ a use case, and a capability is a parameter before it is a tool.
        in the result, never defaulted, so two runs name what they compared. It needs an API key;
        without one it stops after the proxy and says so.
 
-    Turn-level ingestion is the floor the agent's own extraction must beat: when an API key is
-    present, `--extract` replays d7's skill with the fixed answering model as the extractor over
-    each session, and those facts are ingested instead. Results are generated into
-    `docs/engineering/benchmarks` pages by `scripts/gen_bench_pages.py`, never edited by hand.
+    Turn-level ingestion is the floor the agent's own extraction must beat. Replaying the
+    capture skill over a dataset needs a model run per session and is not built here; FR-160
+    tracks the comparison. Results are written in `oml-bench/1` and enter the bench pages only
+    when `scripts/gen_bench_pages.py` is taught their suites.
 
 - **d13 — Privacy, telemetry and doctor lines.** Opt-in switches, each off by default:
   `OML_CHAT_CAPTURE`, `OML_CHAT_EXCERPT`, `OML_TURN_RECALL`. The session cache keeps turn numbers
@@ -242,9 +264,10 @@ a use case, and a capability is a parameter before it is a tool.
   `oml_recall_hits_by_origin_total{origin_kind}`, eight closed values (the seven kinds and
   `none`), no workarea or key label (ADR-0054 d1's series budget). `oml doctor` names: chat
   capture or turn recall switched on with no chat workarea named; a named chat workarea that does
-  not resolve, or that is not under the key's user root; a server that does not accept
-  `origin` (before v0.6.0); a chat salt file that is not 0600; and turn recall that missed its
-  deadline in the last session it ran.
+  not resolve, or that is not `universe.<user>.chat`; a server that does not accept
+  `origin_kinds` (before v0.6.0), by one listing filtered by it; a chat salt file that is not
+  0600; a switch set to a value it does not take; and per-turn recall that missed its budget in
+  an open session.
 
 - **d14 — Each new call traces to a use case, and no MCP tool is added.**
 
@@ -270,7 +293,7 @@ a use case, and a capability is a parameter before it is a tool.
   generated SDKs, the [HTTP API](../api/http-api.md), the [CLI reference](../cli/reference.md),
   the [event catalog](../data/event-catalog.md) (`submission.remember` and `submission.learn`
   carry `origin`) and the [Postgres schema](../data/postgres-schema.md) (`memories.origin_kind`,
-  migration 0030, numbered past the parallel lanes' 0026 to 0029) change in the same change as the code. The error enum is unchanged:
+  migrations 0030 and 0031, numbered past the parallel lanes' 0026 to 0029; 0031 validates and indexes outside any transaction) change in the same change as the code. The error enum is unchanged:
   `request.validation`, `submission.scan_veto` and `access.verb_ceiling` carry the new refusals.
 - The plugin gains three hook entries and one skill; `scripts/check_plugin.py` holds them. The
   plugin README names the three switches.

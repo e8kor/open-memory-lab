@@ -2701,11 +2701,12 @@ where
             ),
             None => None,
         };
-        // A person's chat workarea, `chat` directly under a user root, is
-        // opened only by a key a person holds, before anything is
-        // journalled (ADR-0063 d8).
+        // `chat` is reserved in every user root's namespace for a key a
+        // person holds, at any depth, so an agent never takes the name
+        // before the person opens their chat workarea; refused before
+        // anything is journalled (ADR-0063 d8).
         if let Some(parent) = ancestors.first()
-            && parent.user_root
+            && parent.user().is_some()
             && name.as_str() == CHAT_WORKAREA
             && key.held_by != HeldBy::Human
         {
@@ -4836,6 +4837,17 @@ where
             shape,
             started.elapsed().as_secs_f64(),
         );
+        let kinds: Vec<&'static str> = result
+            .hits
+            .iter()
+            .map(|h| {
+                h.served
+                    .memory
+                    .origin_kind
+                    .map_or("none", OriginKind::as_str)
+            })
+            .collect();
+        self.observer.recall_hits_by_origin(&kinds);
         if let Some(telemetry) = &self.telemetry {
             telemetry.offer(TelemetryItem::Recall(Box::new(RecallEvent {
                 tenant_id: caller.key.tenant_id,

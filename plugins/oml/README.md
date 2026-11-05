@@ -238,10 +238,12 @@ plugin's `chat_workarea` setting, or `OML_CHAT_WORKAREA`, and set `OML_CHAT_CAPT
 fifth turn (`OML_CHAT_CAPTURE_EVERY`), and at once after a compaction, the Stop hook asks Claude
 to use the `oml-chat-capture` skill: Claude itself picks out the preferences, decisions and
 corrections those turns settled and writes each as one held memory, with the turn it came from.
-No other model reads the conversation and no transcript leaves your machine; the hooks keep a
-fingerprint of each prompt in the session file, never its text. A session asks at most four
+No other model reads the conversation and no transcript leaves your machine. Each fact names its
+turn by a fingerprint keyed with a secret salt kept owner-only in `~/.config/oml/chat-salt` and never
+sent, so the fingerprint cannot be checked against a guessed prompt by anyone without that file. A session asks at most four
 times and for at most 24 facts, and never while a Stop hook is already continuing. The cost is
-the tokens Claude spends on those short continuations, and the last turns of a session that ends
+the tokens Claude spends on those short continuations (Claude is asked for at most 24 facts, and
+the server does not count them), and the last turns of a session that ends
 between two captures are not kept. `OML_CHAT_EXCERPT=1` lets Claude quote up to 280 characters of
 what you said under a fact.
 
@@ -250,7 +252,8 @@ prompt, in your chat workarea and the key's default workarea, and adds at most s
 each marked `[unreviewed]` when no one has reviewed it yet. It waits at most
 `OML_TURN_RECALL_BUDGET_MS` (300 ms by default, at most 1,000) and adds nothing when the server is
 slower; after three slow answers it stops for the session. The cost is that your prompt's words
-go to your server on every turn. Nothing you or Claude writes leaves the chat workarea until you
+go to your server on every turn, and a short secret typed as plain words, such as a password, is
+not recognised as one and goes with them. Nothing you or Claude writes leaves the chat workarea until you
 review it.
 
 ## Guardrails

@@ -3097,7 +3097,7 @@ components:
         path: { type: string, minLength: 1, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
         fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person''s prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4).' }
         hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "Digest of the fragment's text, or the file's, under hasher." }
-        hasher: { type: string, enum: [oml-md/1, oml-turn/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: SHA-256 of the person''s prompt as the harness passed it, UTF-8 after NFC; with a chat uri alone (ADR-0063 d4).' }
+        hasher: { type: string, enum: [oml-md/1, oml-turn/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person''s prompt as the harness passed it, UTF-8 after NFC, keyed by the person''s chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).' }
 
     Origin:
       type: object

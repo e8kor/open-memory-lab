@@ -55,8 +55,9 @@ One `oml_write` per fact, with:
 
 Stay within the number of facts the request allows. When it says excerpts are allowed
 (`OML_CHAT_EXCERPT=1`), you may add one line under the fact starting with `> `, quoting at
-most 280 characters of what the person said. The server scans it like any text and
-refuses the write if it finds a secret.
+most 280 characters of what the person said. Never quote a secret, a credential or anything
+private about someone else: the server runs its scanner over the excerpt as over any text, but
+what that scanner catches depends on its rules, so do not rely on it.
 
 ## After writing
 

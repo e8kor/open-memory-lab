@@ -1663,6 +1663,12 @@ pub trait RequestObserver: Send + Sync {
         let _ = (pipeline, result, seconds);
     }
 
+    /// The `origin.kind` of each hit a recall served, `none` for a version
+    /// written before kinds (ADR-0063 d13). Telling no one is the default.
+    fn recall_hits_by_origin(&self, kinds: &[&'static str]) {
+        let _ = kinds;
+    }
+
     /// A verdict `approve` or `reject` committed `waited_seconds` after its
     /// memory was submitted (ADR-0054 d1, d12). Telling no one is the
     /// default.

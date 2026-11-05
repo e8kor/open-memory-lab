@@ -97,7 +97,42 @@ pub struct ChatCache {
     pub facts_asked: u32,
 }
 
+/// The turn counter a session keeps past `SessionEnd`, beside the cache:
+/// `<id>.chat-turns`, the number of turns it numbered, so a resumed session
+/// numbers on and its anchors and idempotency keys never repeat (ADR-0063
+/// d6). It holds one number; files idle for 30 days are pruned.
+fn counter_path(cache: &Path) -> PathBuf {
+    cache.with_extension("chat-turns")
+}
+
+/// How long an idle turn counter is kept.
+const COUNTER_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
 impl ChatCache {
+    /// The stored cache, or for a session that ended and resumed, an empty
+    /// one numbering on from the turns it already numbered.
+    #[must_use]
+    pub fn load_or_resume(path: &Path) -> Self {
+        if path.exists() {
+            return Self::load(path);
+        }
+        let base = std::fs::read_to_string(counter_path(path))
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        Self {
+            base,
+            captured_through: base,
+            ..Self::default()
+        }
+    }
+
+    /// The number of the session's latest turn.
+    #[must_use]
+    pub fn last_turn(&self) -> u64 {
+        self.base + self.turns.len() as u64
+    }
+
     /// The stored cache, empty when there is none; one that does not parse
     /// reads as spent, so a damaged file stops requests, never repeats them.
     #[must_use]
@@ -197,11 +232,39 @@ pub fn pseudonym(salt: &[u8], session_id: &str) -> String {
     hex::encode(hasher.finalize())[..32].to_owned()
 }
 
-/// `oml-turn/1`: SHA-256 of the prompt, UTF-8 after NFC (ADR-0063 d4).
+/// `oml-turn/1`: HMAC-SHA-256 of the prompt, UTF-8 after NFC, keyed by the
+/// person's chat salt, which stays owner-only on this machine and is never
+/// sent (ADR-0063 d4, d5).
 #[must_use]
-pub fn turn_hash(_salt: &[u8], prompt: &str) -> String {
+pub fn turn_hash(salt: &[u8], prompt: &str) -> String {
     let nfc: String = prompt.nfc().collect();
-    format!("sha256:{}", hex::encode(Sha256::digest(nfc.as_bytes())))
+    format!("sha256:{}", hex::encode(hmac_sha256(salt, nfc.as_bytes())))
+}
+
+/// HMAC-SHA-256 (RFC 2104), so a turn's hash is keyed by the person's
+/// salt and nobody without it can confirm or search a guessed prompt
+/// against a signed anchor (ADR-0063 d4).
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut block = [0_u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let (mut inner_pad, mut outer_pad) = ([0x36_u8; 64], [0x5c_u8; 64]);
+    for i in 0..64 {
+        inner_pad[i] ^= block[i];
+        outer_pad[i] ^= block[i];
+    }
+    let inner = Sha256::new()
+        .chain_update(inner_pad)
+        .chain_update(data)
+        .finalize();
+    Sha256::new()
+        .chain_update(outer_pad)
+        .chain_update(inner)
+        .finalize()
+        .into()
 }
 
 /// A switch: unset, empty or `0` is off; `1` is on; anything else is off
@@ -299,8 +362,9 @@ pub fn on_user_prompt(
     let path = chat_cache_path(var, session_id).ok_or_else(|| {
         Some("the session id is not a file name, or no cache directory is set".to_owned())
     })?;
-    let mut cache = ChatCache::load(&path);
-    cache.turns.push(turn_hash(&[], prompt));
+    let salt = salt(var).map_err(Some)?;
+    let mut cache = ChatCache::load_or_resume(&path);
+    cache.turns.push(turn_hash(&salt, prompt));
     cache
         .store(&path)
         .map_err(|e| Some(format!("the chat cache could not be written: {e}")))?;
@@ -338,6 +402,10 @@ fn turn_recall(
     }
     scopes.push((None, false));
     let mut hits: Vec<Value> = Vec::new();
+    // A miss is counted before anything is sent and taken back by an
+    // answer in time, so a failed, refused or killed request counts (L3).
+    cache.misses += 1;
+    let _ = cache.store(path);
     for (workarea, unreviewed) in scopes {
         let Some(left) = budget
             .checked_sub(started.elapsed())
@@ -371,7 +439,11 @@ fn turn_recall(
                 if started.elapsed() >= budget {
                     return miss(cache, path, budget);
                 }
-                return Err(Some(format!("the turn recall: {}", describe(e))));
+                return Err(Some(format!(
+                    "the turn recall: {}, so nothing was injected ({} of {MISSES_MAX} misses this session)",
+                    describe(e),
+                    cache.misses
+                )));
             }
         }
     }
@@ -386,6 +458,7 @@ fn turn_recall(
                 .is_some_and(|id| !cache.served.contains(id))
         })
         .collect();
+    cache.misses = cache.misses.saturating_sub(1);
     let mut seen = std::collections::BTreeSet::new();
     let fresh: Vec<&Value> = fresh
         .into_iter()
@@ -406,9 +479,7 @@ fn turn_recall(
     Ok(render_turn(&fresh, &redact))
 }
 
-fn miss(cache: &mut ChatCache, path: &Path, budget: Duration) -> Result<String, Quiet> {
-    cache.misses += 1;
-    let _ = cache.store(path);
+fn miss(cache: &ChatCache, _path: &Path, budget: Duration) -> Result<String, Quiet> {
     Err(Some(format!(
         "the turn recall missed its {} ms budget, so nothing was injected ({} of {MISSES_MAX} misses this session)",
         budget.as_millis(),
@@ -530,20 +601,25 @@ pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<
     };
     let path = chat_cache_path(var, session_id).ok_or(None)?;
     let mut cache = ChatCache::load(&path);
-    let turns = cache.turns.len() as u64;
-    let uncaptured = turns.saturating_sub(cache.captured_through);
-    let due =
-        uncaptured > 0 && cache.captures < CAPTURES_MAX && (uncaptured >= every || cache.compacted);
+    let last = cache.last_turn();
+    let uncaptured = last.saturating_sub(cache.captured_through);
+    // The facts asked so far are counted here, so no request asks past the
+    // session's budget (ADR-0063 d6).
+    let facts = FACTS_PER_CAPTURE.min(FACTS_PER_SESSION.saturating_sub(cache.facts_asked));
+    let due = uncaptured > 0
+        && facts > 0
+        && cache.captures < CAPTURES_MAX
+        && (uncaptured >= every || cache.compacted);
     if !due {
         return Err(None);
     }
     let session = pseudonym(&salt(var).map_err(Some)?, session_id);
     let from = cache.captured_through + 1;
-    let facts = FACTS_PER_CAPTURE.min(FACTS_PER_SESSION - cache.captures * FACTS_PER_CAPTURE);
     let excerpt = switch(var, EXCERPT_SWITCH).unwrap_or(false);
     let reason = capture_reason(&CaptureRequest {
         session: &session,
         from,
+        base: cache.base,
         turns: &cache.turns,
         workarea: &workarea,
         facts,
@@ -552,8 +628,9 @@ pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<
     });
     // Recorded before it is printed: a capture the agent skips is not
     // asked again (d6).
-    cache.captured_through = turns;
+    cache.captured_through = last;
     cache.captures += 1;
+    cache.facts_asked += facts;
     cache.compacted = false;
     cache
         .store(&path)
@@ -565,6 +642,8 @@ pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<
 pub struct CaptureRequest<'a> {
     pub session: &'a str,
     pub from: u64,
+    /// The turns numbered before a resume: `turns[i]` is turn `base + i + 1`.
+    pub base: u64,
     pub turns: &'a [String],
     pub workarea: &'a str,
     pub facts: u32,
@@ -576,7 +655,7 @@ pub struct CaptureRequest<'a> {
 /// `from..=turns.len()`, with each turn's anchor (d6, d7).
 #[must_use]
 pub fn capture_reason(r: &CaptureRequest<'_>) -> String {
-    let to = r.turns.len() as u64;
+    let to = r.base + r.turns.len() as u64;
     let uri = format!("chat://{HARNESS}/{}", r.session);
     let mut lines = vec![
         format!(
@@ -599,16 +678,18 @@ pub fn capture_reason(r: &CaptureRequest<'_>) -> String {
             "The conversation was compacted since the last capture: use only what the summary still states.".to_owned(),
         );
     }
-    let first = usize::try_from(r.from - 1).unwrap_or(usize::MAX);
+    // Indexes into `turns`; turn numbers add `base`.
+    let first = usize::try_from(r.from.saturating_sub(r.base + 1)).unwrap_or(usize::MAX);
     let listed = r.turns.len().saturating_sub(TURNS_LISTED).max(first);
     if listed > first {
+        let older = r.base + listed as u64;
         lines.push(format!(
-            "Turns {}..{listed} are older than the turns listed; anchor a fact from them with fragment turn={}-{listed} and the hash of turn {listed}.",
+            "Turns {}..{older} are older than the turns listed; anchor a fact from them with fragment turn={}-{older} and the hash of turn {older}.",
             r.from, r.from
         ));
     }
     for (i, hash) in r.turns.iter().enumerate().skip(listed) {
-        lines.push(format!("turn={} {hash}", i + 1));
+        lines.push(format!("turn={} {hash}", r.base + i as u64 + 1));
     }
     lines.join("\n")
 }
@@ -700,15 +781,28 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
 /// The doctor line for a named chat workarea at `path`: a warning unless it
 /// is `universe.<user>.chat` (ADR-0063 d8, d13).
 #[must_use]
-pub fn chat_scope_line(_path: Option<&str>, _user: Option<&str>) -> Option<String> {
-    None
+pub fn chat_scope_line(path: Option<&str>, user: Option<&str>) -> Option<String> {
+    let path = path?;
+    let user = user?;
+    let theirs = format!("universe.{user}.chat");
+    (path != theirs).then(|| {
+        format!(
+            "warn chat: the chat workarea is {path}, not {theirs}, the one oml chat init opens with your own key; point {WORKAREA_VAR} at {theirs}"
+        )
+    })
 }
 
 /// The doctor line for the server's answer to a listing filtered by
 /// `origin_kinds`: a warning when it does not take the filter (ADR-0063 d13).
 #[must_use]
-pub fn origin_probe_line(_status: u16, _body: &Value) -> Option<String> {
-    None
+pub fn origin_probe_line(status: u16, body: &Value) -> Option<String> {
+    let refused = status == 400
+        && body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("origin_kinds"));
+    refused.then(|| {
+        "warn chat: the server does not accept origin (it is older than v0.6.0), so chat facts are refused; upgrade the server".to_owned()
+    })
 }
 
 /// Whether `oml chat init` may use an existing `chat` at `path` for
@@ -717,14 +811,47 @@ pub fn origin_probe_line(_status: u16, _body: &Value) -> Option<String> {
 /// # Errors
 ///
 /// The named reason it may not.
-pub fn adopt(_path: &str, _user: &str) -> Result<(), String> {
-    Ok(())
+pub fn adopt(path: &str, user: &str) -> Result<(), String> {
+    let theirs = format!("universe.{user}.chat");
+    if path == theirs {
+        Ok(())
+    } else {
+        Err(format!(
+            "chat_scope_not_the_persons: the workarea named chat is {path}, not {theirs}, so it is not the chat workarea a person opens; oml chat init does not adopt it"
+        ))
+    }
 }
 
 /// Deletes a session's chat cache, for `oml hook session-end`.
 pub fn forget_session(var: &dyn Fn(&str) -> Option<String>, session_id: &str) {
-    if let Some(path) = chat_cache_path(var, session_id) {
-        let _ = std::fs::remove_file(path);
+    let Some(path) = chat_cache_path(var, session_id) else {
+        return;
+    };
+    // The digests go; the turn count stays, so a resume numbers on (M3).
+    if path.exists() {
+        let last = ChatCache::load(&path).last_turn();
+        let _ = write_owner_only(&counter_path(&path), last.to_string().as_bytes());
+    }
+    let _ = std::fs::remove_file(&path);
+    prune_counters(&path);
+}
+
+/// Removes turn counters idle past [`COUNTER_TTL`].
+fn prune_counters(path: &Path) {
+    let Some(dir) = path.parent() else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let idle = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > COUNTER_TTL);
+        if idle && entry.file_name().to_string_lossy().ends_with(".chat-turns") {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -1121,6 +1248,7 @@ mod tests {
         let reason = capture_reason(&CaptureRequest {
             session: "0123456789abcdef0123456789abcdef",
             from: 3,
+            base: 0,
             turns: &turns,
             workarea: "chat",
             facts: 6,

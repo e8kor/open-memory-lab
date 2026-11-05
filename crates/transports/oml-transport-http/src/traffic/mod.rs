@@ -76,6 +76,8 @@ struct Observed {
     search: Option<(&'static str, bool, &'static str)>,
     /// A recall's answer shape and its seconds, by pipeline (ADR-0054 d1).
     answered: Option<(&'static str, &'static str, f64)>,
+    /// Each served hit's origin kind (ADR-0063 d13).
+    origins: Vec<&'static str>,
     /// A verdict and the seconds its memory waited for it (ADR-0054 d1).
     verdict: Option<(&'static str, f64)>,
 }
@@ -176,6 +178,11 @@ pub fn recall_answered(pipeline: &'static str, result: &'static str, seconds: f6
     in_scope(|scope| scope.update(|o, _| o.answered = Some((pipeline, result, seconds))));
 }
 
+/// The request's recall served hits of these origin kinds (ADR-0063 d13).
+pub fn recall_hits_by_origin(kinds: &[&'static str]) {
+    in_scope(|scope| scope.update(|o, _| o.origins.extend_from_slice(kinds)));
+}
+
 /// The request's verdict committed `waited` seconds after its memory was
 /// submitted (ADR-0054 d1).
 pub fn verdict(verdict: &'static str, waited: f64) {
@@ -220,6 +227,10 @@ impl RequestObserver for ScopeObserver {
 
     fn recall_answered(&self, pipeline: &'static str, result: &'static str, seconds: f64) {
         recall_answered(pipeline, result, seconds);
+    }
+
+    fn recall_hits_by_origin(&self, kinds: &[&'static str]) {
+        recall_hits_by_origin(kinds);
     }
 
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
@@ -505,6 +516,9 @@ pub(crate) async fn layer(
     }
     if let Some((pipeline, result, seconds)) = observed.answered {
         traffic.metrics.recall_answered(pipeline, result, seconds);
+    }
+    for kind in &observed.origins {
+        traffic.metrics.recall_hit_origin(kind);
     }
     if let Some((verdict, waited)) = observed.verdict {
         traffic.metrics.verdict(verdict, waited);

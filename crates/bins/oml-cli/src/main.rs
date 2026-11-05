@@ -1881,8 +1881,22 @@ fn run_chat_init(
     let created = match client.post("/v2/workareas", &body, &write_opts()) {
         Ok((_, response)) => response,
         Err(CliError::Refused { code, .. }) if code == "name.taken" => {
+            // The name is reserved for a person's key (d8), but an existing
+            // `chat` is adopted only where a person's chat workarea sits:
+            // directly under this key's user root, never elsewhere.
+            let (_, existing) = client.get(&format!(
+                "/v2/workareas/{}",
+                segment(oml_cli::chat::CHAT_WORKAREA)?
+            ))?;
+            let me = client.whoami()?;
+            let user = me["user"]["name"].as_str().unwrap_or_default();
+            let path = existing["path"].as_str().unwrap_or_default();
+            if let Err(why) = oml_cli::chat::adopt(path, user) {
+                return Err(CliError::local(format!("oml chat init: {why}")));
+            }
             println!(
-                "a workarea named chat already exists here; set OML_CHAT_WORKAREA to its id (oml workareas tree)"
+                "your chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
+                field(&existing, "id")
             );
             return Ok(ExitCode::SUCCESS);
         }
@@ -1917,6 +1931,31 @@ fn run_chat_init(
     println!("  OML_CHAT_CAPTURE=1      # ask the agent to write chat facts at Stop");
     println!("  OML_TURN_RECALL=1       # optional: recall on every prompt");
     Ok(ExitCode::SUCCESS)
+}
+
+/// The chat lines only the server answers (ADR-0063 d13): whether it takes
+/// `origin_kinds`, and whether the named chat workarea resolves and is the
+/// key's user's own.
+fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    match client.get("/v1/memories?own=true&limit=1&origin_kinds=manual") {
+        Err(CliError::Refused {
+            status, envelope, ..
+        }) => out.extend(oml_cli::chat::origin_probe_line(status, &envelope)),
+        Ok(_) | Err(_) => {}
+    }
+    let var = |name: &str| std::env::var(name).ok();
+    if let Some(named) = oml_cli::chat::chat_workarea(&var) {
+        let user = me.and_then(|m| m["user"]["name"].as_str());
+        match segment(&named).and_then(|s| client.get(&format!("/v2/workareas/{s}"))) {
+            Ok((_, node)) => out.extend(oml_cli::chat::chat_scope_line(node["path"].as_str(), user)),
+            Err(_) => out.push(format!(
+                "warn chat: {} names {named}, which this key cannot resolve; run oml chat init and use the id it prints",
+                oml_cli::chat::WORKAREA_VAR
+            )),
+        }
+    }
+    out
 }
 
 fn one_line_error(e: &CliError) -> String {
@@ -4223,6 +4262,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
+    // The chat workarea's path and whether the server takes origin_kinds
+    // (ADR-0063 d13).
+    let mut chat_server: Vec<String> = Vec::new();
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -4230,6 +4272,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            chat_server = chat_doctor(&client, me.as_ref().and_then(|m| m.as_ref().ok()));
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
@@ -4307,7 +4350,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
     // The chat hooks' local state (ADR-0063 d13).
-    let chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
+    let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
+    chat.extend(chat_server);
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),

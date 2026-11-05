@@ -16,7 +16,7 @@ conversations, about 1,990 questions). Both are read from BENCH_CACHE
 load: each turn is one `POST /v1/memories` by the writer (agent) key with
 `origin: {kind: chat}` and a chat anchor, `chat://bench/<session>#turn=<n>`,
 whose session is the first 32 hex digits of SHA-256 of the dataset's session
-id and whose hash is `oml-turn/1` of the turn's text (ADR-0063 d4, d5). The
+id and whose hash is `oml-turn/1` of the turn's text keyed by a random salt per run (ADR-0063 d4, d5). The
 rows stay held, as a person's chat workarea holds them before review, and
 are recalled by their author with `include_unreviewed` (ADR-0025 d4). Each
 LongMemEval question is its own workarea, `bench-chat-lme-<qid>`; each
@@ -48,6 +48,7 @@ import argparse
 import concurrent.futures as cf
 import datetime
 import hashlib
+import hmac
 import json
 import os
 import random
@@ -75,9 +76,14 @@ def pseudonym(session_id):
     return hashlib.sha256(session_id.encode()).hexdigest()[:32]
 
 
+# oml-turn/1 is keyed by the person's salt (ADR-0063 d4); the bench keys it
+# by a random salt per run, as a person's never-sent salt would.
+BENCH_SALT = os.urandom(32)
+
+
 def turn_hash(text):
     nfc = unicodedata.normalize("NFC", text)
-    return "sha256:" + hashlib.sha256(nfc.encode()).hexdigest()
+    return "sha256:" + hmac.new(BENCH_SALT, nfc.encode(), hashlib.sha256).hexdigest()
 
 
 def safe(s):

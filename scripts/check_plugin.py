@@ -166,7 +166,7 @@ USER_CONFIG = {
     "chat_workarea": {
         "type": "string",
         "title": "Chat workarea",
-        "description": "Your chat workarea's id, as oml chat init prints it. Leave empty to keep chat capture and per-turn recall off.",
+        "description": "Your chat workarea's id, as oml chat init prints it. Chat capture needs it; per-turn recall without it reads only the key's default workarea.",
         "default": "",
     },
 }

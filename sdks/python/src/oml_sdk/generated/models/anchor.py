@@ -36,8 +36,8 @@ class Anchor:
                 (ADR-0063 d4).
             hash_ (str | Unset): Digest of the fragment's text, or the file's, under hasher.
             hasher (AnchorHasher | Unset): oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).
-                oml-turn/1: SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC; with a chat uri alone
-                (ADR-0063 d4).
+                oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's
+                chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).
     """
 
     repo: str | Unset = UNSET
