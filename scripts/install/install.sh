@@ -26,7 +26,7 @@ REPO="e8kor/open-memory-lab"
 # The release installed when no version is named: the workspace version of
 # the commit this script is served from (scripts/check_release.py holds the
 # two equal).
-DEFAULT_VERSION="0.5.5"
+DEFAULT_VERSION="0.5.6"
 ISSUER="https://token.actions.githubusercontent.com"
 DOCS="https://e8kor.github.io/open-memory-lab"
 

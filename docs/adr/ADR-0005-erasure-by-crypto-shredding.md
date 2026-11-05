@@ -7,7 +7,7 @@ answers: how an append-only chain coexists with the right to erasure; what crypt
 
 # ADR-0005 — Erasure by crypto-shredding, with a named inventory and an honest boundary
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
 
 **Release:** not scheduled ([releases](../product/releases.md#decisions))
 

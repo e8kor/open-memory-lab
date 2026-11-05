@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.5.5-design`), from which moment the covenant — and this section's definition of
+(currently `0.5.6-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -714,8 +714,8 @@ and:
 - `max_tokens` — a budget in budget tokens; steering is never cut, and the hits served are the
   longest rank prefix that fits. Refused with `include_text: false`
   ([retrieval.md — token budgets](../architecture/retrieval.md#token-budgets)).
-- `search` — the pipeline: `keyword-all`, `keyword-any`, `bm25`, `bm25-trigram` or, unreleased,
-  `bm25-postings` ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)),
+- `search` — the pipeline: `keyword-all`, `keyword-any`, `bm25`, `bm25-trigram`, `bm25-postings` ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md))
+  or `bm25-rerank` ([ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)), both since v0.5.6,
   among those the deployment serves (`search.enabled`); omitted, the tenant's default, else the
   deployment's. A name the deployment does not serve is `request.validation` with
   `details.field: "/search"` and `details.served`
@@ -773,9 +773,9 @@ hits were read: `postings` when `bm25-postings` read them from its integer posti
 the rows in scope were scanned, as every other pipeline does and as `bm25-postings` does when every
 query word is frequent among the rows the key may read; `pruned` names the words `bm25-postings`
 left out of the postings it read because they are that frequent, which still count in each hit's
-score, so a memory holding only them is not found (unreleased; ADR-0052 d6, d11).
+score, so a memory holding only them is not found (since v0.5.6; ADR-0052 d6, d11).
 
-*Proposed ([ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)), served where a deployment enables `bm25-rerank`:* a local cross-encoder
+*Since v0.5.6 ([ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)), served where a deployment enables `bm25-rerank`:* a local cross-encoder
 reorders the best `search.rerank.depth` candidates of `bm25` after the core has admitted them.
 `search.rerank` is `"applied"`, `"skipped"` (the reranker was busy, late or failed, and `bm25`'s
 order was served; `search.rerank_reason` says which) or `null` (the pipeline does not rerank).

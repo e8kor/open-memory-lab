@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-05
 answers: why no text index serves a recall under row security and what does; the postings table's shape, partitioning, indexes and fence; how token ids are made, whether a tenant's words reach another tenant, and why no dictionary table exists; one table for term frequencies and learned sparse weights; how the row count, mean length and document frequencies stay those of the readable rows; which words are pruned, by what rule, and when the scan answers instead; how postings follow write, promotion, supersession, demotion, retirement and erasure; what a write costs and how a live database is filled; the retriever kinds and pipelines it adds, and the evidence that moves the default; what a hit says about its matched words; what it costs at 1,000,000 memories; the rejected roads; the open questions; the test plan
 -->
 
 # ADR-0052 — Text search reads integer postings, which row security lets an index serve, and says when it pruned a word or scanned
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** not assigned ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's

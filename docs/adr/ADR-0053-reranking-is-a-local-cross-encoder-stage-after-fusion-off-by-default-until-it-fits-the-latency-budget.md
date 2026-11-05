@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-05
 answers: where reranking sits in a recall and what the core hands it; which runtime runs the model (candle, tract or ort) and why; which model, on measured evidence and licences; how the model reaches an install, online and offline; how deep it reranks; the concurrency cap, the deadline and what a skipped rerank answers; how a relevance floor is defined, what an answer below it says, and whether it is on by default; the pipeline and setting names; the metric, request-line fields and doctor lines; the laws and tests; the rejected alternatives; and what stays open
 -->
 
 # ADR-0053 — Reranking is a local cross-encoder stage after fusion, off by default until it fits the latency budget
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** not assigned ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (d4: a fifth pipeline name, `bm25-rerank`; d6: the answer's `search` gains
 `rerank`, `rerank_reason`, `floor` and `below_floor`, and each hit's `matched` gains `rerank` and

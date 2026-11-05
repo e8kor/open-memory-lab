@@ -405,9 +405,10 @@ naming it in `details.field`:
   `state: "held"`; it is the one flag for unreviewed rows (d4).
 - **recall's search** *(since v0.5.5, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
   `search` names the pipeline (`keyword-all`, `keyword-any`, `bm25`,
-  `bm25-trigram`, and, unreleased, `bm25-postings`) among those the server
+  `bm25-trigram`, and, since v0.5.6, `bm25-postings` and the opt-in
+  `bm25-rerank`) among those the server
   serves; omitted, the
-  organisation's default runs, `bm25` as v0.5.5 shipped and, unreleased,
+  organisation's default runs, `bm25` as v0.5.5 shipped and, since v0.5.6,
   `bm25-postings`. Any word may match: an
   identifier matches by its parts and a word by its stem; English stop words
   are not read when the query has other words; `bm25-trigram` also matches a
@@ -416,7 +417,7 @@ naming it in `details.field`:
   `search.fallback: "any_term"`. The answer's `search` names the pipeline,
   the query's words as read and, when fewer than three hits are found,
   `did_you_mean` spellings for the words no hit holds, from the words of
-  promoted memories the key may read, and, unreleased, `access` (`postings`
+  promoted memories the key may read, and, since v0.5.6, `access` (`postings`
   or `scan`) and `pruned` (the frequent words `bm25-postings` left out of
   what it read, still scored in each hit); each hit carries
   `matched` (`terms`, `of`, `via`). A pipeline the server does not serve is
