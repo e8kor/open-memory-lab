@@ -47,11 +47,11 @@ class SupersedeRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
-            on_similar (SupersedeRequestOnSimilar | Unset): What the write does when the similar check names a row the key
-                may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in
-                similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no
-                idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the
-                request digest. Since v0.5.9. Default: SupersedeRequestOnSimilar.HOLD.
+            on_similar (SupersedeRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names
+                a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+                rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+                no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the
+                request digest. Since v0.5.9.
     """
 
     body: str
@@ -62,7 +62,7 @@ class SupersedeRequest:
     reason: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
-    on_similar: SupersedeRequestOnSimilar | Unset = SupersedeRequestOnSimilar.HOLD
+    on_similar: SupersedeRequestOnSimilar | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body

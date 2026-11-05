@@ -56,8 +56,9 @@ class RecallRequest:
                 the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
-            timings (bool | Unset): true serves the answer's per-stage timings; refused with request.validation,
-                details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9. Default: False.
+            timings (bool | Unset): Omitted, false. true serves the answer's per-stage timings; refused with
+                request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since
+                v0.5.9.
     """
 
     query: str
@@ -70,7 +71,7 @@ class RecallRequest:
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
     feedback: Feedback | Unset = UNSET
-    timings: bool | Unset = False
+    timings: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query

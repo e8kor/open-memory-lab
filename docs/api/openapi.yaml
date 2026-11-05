@@ -2607,7 +2607,7 @@ components:
           type: array
           items: { type: string }
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
-        on_similar: { type: string, enum: [hold, refuse], default: hold, description: "What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
 
     SubmitAccepted:
       type: object
@@ -2776,7 +2776,7 @@ components:
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
-        timings: { type: boolean, default: false, description: "true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9." }
+        timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9." }
 
     Feedback:
       type: object
@@ -3024,7 +3024,7 @@ components:
         reason: { type: string }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
-        on_similar: { type: string, enum: [hold, refuse], default: hold, description: "What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
 
     Crew:
       type: object

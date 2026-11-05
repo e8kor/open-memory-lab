@@ -54,10 +54,10 @@ class SubmitRequest:
                 namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
                 is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
-            on_similar (SubmitRequestOnSimilar | Unset): What the write does when the similar check names a row the key may
-                read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar;
-                refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency
-                record. Not part of the request digest. Since v0.5.9. Default: SubmitRequestOnSimilar.HOLD.
+            on_similar (SubmitRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names a
+                row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+                rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+                no idempotency record. Not part of the request digest. Since v0.5.9.
     """
 
     body: str
@@ -68,7 +68,7 @@ class SubmitRequest:
     rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
-    on_similar: SubmitRequestOnSimilar | Unset = SubmitRequestOnSimilar.HOLD
+    on_similar: SubmitRequestOnSimilar | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

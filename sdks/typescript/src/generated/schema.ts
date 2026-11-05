@@ -1082,8 +1082,7 @@ export interface components {
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
             /**
-             * @description What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9.
-             * @default hold
+             * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9.
              * @enum {string}
              */
             on_similar?: "hold" | "refuse";
@@ -1249,10 +1248,7 @@ export interface components {
              */
             match?: "any" | "all";
             feedback?: components["schemas"]["Feedback"];
-            /**
-             * @description true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9.
-             * @default false
-             */
+            /** @description Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9. */
             timings?: boolean;
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
@@ -1486,8 +1482,7 @@ export interface components {
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
             /**
-             * @description What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
-             * @default hold
+             * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
              * @enum {string}
              */
             on_similar?: "hold" | "refuse";
