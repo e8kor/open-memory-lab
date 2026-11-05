@@ -155,11 +155,13 @@ use. Decided here and built on the same branch; the measurements below are this 
       d1's reason for integers). It reads at most 200 rows: those that start inside the window
       first, equal among themselves, then those that started before it, nearest first; ties by
       id.
-    - **Its order, in the core.** The core orders the leg's rows by the text list's rank where
-      the text list holds them, then by the leg's own order, and cuts it at 50, the depth
-      ADR-0049 d3 reads a fused list to. So a row that matches both the words and the window
-      ranks first in both lists, and a row in the window that no word matches can enter only
-      below every one that does, and only 50 deep: the cap.
+    - **Its order, in the core.** The core keeps the leg's rows that the text list holds, read
+      50 deep, orders them by the leg's own score (inside the window first, then earlier
+      starts, nearest first) and then by the text list's rank, and cuts the list at 50, the
+      depth ADR-0049 d3 reads a fused list to: the cap. So the leg lifts a memory the words
+      found and whose time fits, and never adds one the words did not find. This is the third
+      of three orderings measured (Measurements below); the first two, which let rows no word
+      matched enter or ordered by the text rank alone, measured lower.
     - **Fusion.** `bm25-postings-time` fuses `bm25_postings`, read 50 deep, and `time` by
       reciprocal rank, k 60 (ADR-0049 d3). A query with no window gives an empty `time` list, and
       reciprocal rank over one list keeps that list's order, so the pipeline answers as
@@ -223,8 +225,53 @@ use. Decided here and built on the same branch; the measurements below are this 
 
 ## Measurements
 
-Filled by this branch's run (`eval/bench`, release build, PostgreSQL 18 on the 8-core host, one
-client on loopback); see [Consequences](#consequences) for what they decide.
+Measured 2026-11-05 on this branch's release build, PostgreSQL 18 on the shared 8-core host
+under other load, one client on loopback, `k` 100, through `oml_read` over `/mcp`
+(`eval/bench/run.sh`). The loaders declare each memory's `valid_from` from the date the dataset
+states as metadata and never from its text (d10): a LoCoMo turn its session's day, a
+LongMemEval turn its session's instant. No `valid_until` is declared, so nothing is expired and
+`bm25-postings` ranks exactly as on main. Each question is asked at a `now`: LoCoMo the day after
+the conversation's last session, LongMemEval the question's own date. LongMemEval is
+`longmemeval_s_cleaned` (MIT, 277 MB, not committed), its 133 temporal-reasoning questions, a
+seeded 30 (seed 20261104), 14,826 turns, one workarea per question, the `has_answer` turns as
+qrels; no answer is generated.
+
+| Set (queries) | Pipeline | nDCG@10 | S@1 | S@5 | p50 ms | p95 ms |
+|---|---|---:|---:|---:|---:|---:|
+| synthetic (121) | `bm25-postings` | 0.874 | 0.835 | 0.926 | 9.3 | 15.4 |
+| synthetic, temporal (11) | `bm25-postings` | 0.769 | 0.455 | 0.818 | 8.8 | 9.8 |
+| synthetic, every category | `bm25-postings-time`, `-recent` | equal to `bm25-postings` | | | 9.6–9.9 | 15.8–16.1 |
+| LoCoMo headline (1,535) | `bm25-postings` | 0.504 | 0.384 | 0.628 | 19.5 | 33.0 |
+| LoCoMo headline | `bm25-postings-time` | 0.496 | 0.377 | 0.620 | 25.9 | 38.6 |
+| LoCoMo headline | `bm25-postings-time-recent` | 0.461 | 0.304 | 0.613 | 20.4 | 29.9 |
+| LoCoMo temporal (320) | `bm25-postings` / `-time` / `-time-recent` | 0.594 / 0.596 / 0.537 | 0.478 / – / 0.347 | 0.691 / 0.694 / 0.684 | | |
+| LoCoMo single-hop (841) | the same three | 0.571 / 0.557 / 0.525 | | 0.673 / 0.656 / 0.655 | | |
+| LoCoMo multi-hop (282) | the same three | 0.289 / 0.289 / 0.262 | | 0.507 / 0.511 / 0.482 | | |
+| LoCoMo open-domain (92) | the same three | 0.233 / 0.222 / 0.224 | | 0.370 / 0.359 / 0.380 | | |
+| LoCoMo adversarial (446) | the same three | 0.562 / 0.550 / 0.524 | | 0.668 / 0.655 / 0.650 | | |
+| LongMemEval temporal-reasoning (30) | `bm25-postings` | 0.642 | 0.600 | 0.733 | 35.7 | 50.5 |
+| LongMemEval temporal-reasoning | `bm25-postings-time` | 0.628 | 0.600 | 0.733 | 44.3 | 72.9 |
+| LongMemEval temporal-reasoning | `bm25-postings-time-recent` | 0.626 | 0.600 | 0.733 | 40.3 | 50.5 |
+
+The parser read a window in 3 of 121 synthetic queries (no synthetic memory declares a date, so
+each time list was empty), 285 of 1,981 LoCoMo questions (151 single-hop, 68 adversarial, 45
+temporal, 13 multi-hop, 8 open-domain; mostly "in August 2023", "on 31 October 2022") and 11
+of 30 LongMemEval questions. The `-time-recent` rows of LoCoMo and LongMemEval were measured
+with the first ordering of d7; the `-time` rows with the ordering d7 decides. The two earlier
+orderings of the leg measured 0.494 (rows no word matched admitted, ordered by text rank) and
+0.494 (words' rows only, ordered by text rank) on the LoCoMo headline, and 0.614 on LongMemEval.
+
+What it decides: neither time pipeline passes ADR-0049 d9's gate against `bm25-postings`, which
+stays the default. On LoCoMo the leg moves the temporal category by +0.002 nDCG@10 and costs
+single-hop 0.014; on LongMemEval it costs 0.014. LoCoMo's temporal questions mostly ask when
+something happened and name no date, so the leg cannot reach them; the questions that do name a
+date are single-hop ones about a session, where the window holds a whole session of turns that
+equal-scored text matches already rank. Recency lowers every set (LoCoMo S@1 0.384 to 0.304):
+in a conversation the latest turn is no likelier to be the evidence. The value this slice ships
+is the visibility rule: an ended fact is hidden from recall (d3), which no benchmark here
+declares, so none measures it; its laws are the tests of d13. The latency cost of the leg is
+one extra statement when the query names a window: p50 +0.6 to +6.4 ms on these runs, on a
+loaded host.
 
 ## Consequences
 

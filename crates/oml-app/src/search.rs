@@ -824,10 +824,12 @@ pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
     (kept, withheld)
 }
 
-/// Orders the `time` list by the text list's rank where the text list
-/// holds a row, then by the leg's own order (nearest start, then id), and
-/// cuts it at [`TIME_DEPTH`] (proposed ADR-0058 d7). Pure: it reads the two
-/// lists' orders and nothing else.
+/// Keeps the `time` list's rows the text list holds, orders them by the
+/// leg's score (the rows the window holds first, then those that began
+/// before it, nearest first), then by the text list's rank, and cuts it at
+/// [`TIME_DEPTH`] (proposed ADR-0058 d7): the leg lifts a row the words
+/// found and never adds one they did not. Pure: it reads the two lists and
+/// nothing else.
 #[must_use]
 pub fn order_time_list(time: Retrieved, text: &Retrieved) -> Retrieved {
     let rank_in_text: BTreeMap<Uuid, usize> = text
@@ -840,15 +842,20 @@ pub fn order_time_list(time: Retrieved, text: &Retrieved) -> Retrieved {
         .candidates
         .into_iter()
         .enumerate()
-        .map(|(own, c)| {
-            let text_rank = rank_in_text
-                .get(&c.memory_id)
-                .copied()
-                .unwrap_or(usize::MAX);
-            (text_rank, own, c)
+        .filter_map(|(own, c)| {
+            let text_rank = rank_in_text.get(&c.memory_id).copied()?;
+            Some((text_rank, own, c))
         })
         .collect();
-    ranked.sort_by_key(|(text_rank, own, _)| (*text_rank, *own));
+    // The rows the window holds first (the leg scores them 1), then the
+    // ones that began before it, nearest first; within each, the text
+    // list's order.
+    ranked.sort_by(|(ta, oa, a), (tb, ob, b)| {
+        b.score
+            .total_cmp(&a.score)
+            .then(ta.cmp(tb))
+            .then(oa.cmp(ob))
+    });
     ranked.truncate(TIME_DEPTH);
     Retrieved {
         candidates: ranked.into_iter().map(|(_, _, c)| c).collect(),
@@ -1109,6 +1116,32 @@ mod tests {
         let plain = SearchConfig::new(&[Pipeline::Bm25Postings], Pipeline::Bm25Postings).unwrap();
         assert!(!plain.needs_sparse());
         assert_eq!(plain.require_sparse(false), Ok(()));
+    }
+
+    #[test]
+    fn the_time_list_keeps_the_words_rows_the_window_holds_first_in_the_words_order() {
+        let text = list(vec![
+            cand(1, 9.0, &["a"]),
+            cand(2, 8.0, &["a"]),
+            cand(3, 7.0, &["a"]),
+        ]);
+        // The leg: 3 and 2 inside the window, 1 before it, 4 matched no word.
+        let time = list(vec![
+            cand(2, 1.0, &[]),
+            cand(3, 1.0, &[]),
+            cand(4, 1.0, &[]),
+            cand(1, 0.5, &[]),
+        ]);
+        let ids: Vec<u128> = order_time_list(time, &text)
+            .candidates
+            .iter()
+            .map(|c| c.memory_id.as_u128())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![2, 3, 1],
+            "inside first, in the words' order; no row the words missed"
+        );
     }
 
     #[test]

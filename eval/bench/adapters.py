@@ -291,6 +291,9 @@ class LongMemEvalTemporal:
 
     name = "longmemeval-tr"
 
+    def __init__(self):
+        self.groups = None
+
     def path(self, cache):
         p = Path(cache) / "longmemeval" / "longmemeval_s_cleaned.json"
         if not p.exists():
@@ -306,7 +309,8 @@ class LongMemEvalTemporal:
         items = random.Random(seed).sample(items, min(n, len(items)))
         docs, qs, qrels = [], [], {}
         for q in items:
-            group = safe(q["question_id"])
+            # A workarea name is a lowercase RFC 1035 label (ADR-0026 d2).
+            group = re.sub(r"[^a-z0-9]+", "-", q["question_id"].lower()).strip("-")
             rel = {}
             for s_i, (session, stamp) in enumerate(zip(q["haystack_sessions"],
                                                        q["haystack_dates"])):
@@ -323,6 +327,7 @@ class LongMemEvalTemporal:
             qrels[qid] = rel
             qs.append(Query(qid, q["question"], group, "temporal-reasoning",
                             now=longmemeval_day(q.get("question_date"))))
+        self.groups = sorted({d.group for d in docs})
         return Bench(self.name, docs, subsample_queries(qs, qrels, seed, limit), qrels,
                      notes=[f"LongMemEval_s temporal-reasoning, {len(qs)} questions drawn "
                             f"with seed {seed}; one turn per memory; has_answer turns as qrels"])
