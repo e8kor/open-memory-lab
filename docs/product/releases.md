@@ -56,7 +56,7 @@ Proposed records live on branches and draft pull requests until they are accepte
 ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
-([#19](https://github.com/e8kor/open-memory-lab/pull/19)). The number ADR-0032 is not used by any record.
+([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0047 (branch `design/code-map-r2`). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -185,6 +185,7 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | accepted | Introduced in v0.5.0. |
+| [ADR-0047](../adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md) project knowledge and the code skeleton | proposed | Planned, not assigned; gated on its evaluation harness and on ADR-0030. |
 | [ADR-0048](../adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) search in stages | proposed | Partly built while the record is still proposed: S1–S3 introduced in v0.5.5 as ADR-0049's first pipelines, S6 in v0.5.6 as ADR-0053's `bm25-rerank`; S4 (filters) and S5 (author keywords) not built; S7 is ADR-0052's learned sparse kind, not built. |
 | [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) search pipelines | proposed | Introduced in v0.5.5 (increment 1, with ADR-0048's first three stages), while the record is still proposed; later increments not assigned. |
 | [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) search from an index under row security | accepted | Introduced in v0.5.6: `bm25-postings`, the default; the learned sparse kinds (`sparse`, `bm25-sparse`) are not built. |
