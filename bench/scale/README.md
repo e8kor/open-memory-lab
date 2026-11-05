@@ -31,7 +31,7 @@ no text index serves a recall under row security, which ADR-0049 and ADR-0052 ci
 and limits are in [BASELINE.md](BASELINE.md), its findings in
 [REPORT-baseline.md](REPORT-baseline.md), and its numbers in `results/` beside the postings runs
 (`s*.json`, `x_*.json`, `mt10x100k.json`, `tables.md`, `explain.md`, `p95.svg`, and one
-`oml-bench/1` file per approach and scale under `results/<method>/`).
+`oml-bench/1` file per approach and scale under `results/offline/<method>/`, which the docs' benchmark pages leave out: no served path ran these statements).
 
 ## Running it
 

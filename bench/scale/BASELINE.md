@@ -19,7 +19,7 @@ The findings are in [REPORT-baseline.md](REPORT-baseline.md). The generated tabl
 | `run.py` | runs one scale: creates the database, migrates it, loads the data, builds each approach, measures it, writes the results JSON |
 | `run_all.sh` | the sequence that produced `results/`: 10k, 100k, 10 tenants × 100k, 1M text (resumed once, `s1m_text2.json`), 1M vectors (halfvec and float), the stored-tsvector supplement at 10k and 100k, and the two added cases |
 | `extra.py` | the added cases: exact halfvec scan against HNSW (with and without iterative scan) under 10% and 1% readable shares, and a learned-sparse inverted table |
-| `report.py` | turns `results/*.json` into `results/tables.md`, `results/p95.svg`, `results/explain.md` and the `oml-bench/1` files `results/<method>/<rows>.json` the docs generator renders |
+| `report.py` | turns `results/*.json` into `results/tables.md`, `results/p95.svg`, `results/explain.md` and the `oml-bench/1` files `results/offline/<method>/<rows>.json`, which the docs generator leaves out (no served path ran them) |
 
 ## Method
 

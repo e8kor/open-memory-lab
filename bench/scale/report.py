@@ -457,8 +457,9 @@ def extra_tables():
 
 
 # ---------------------------------------------------------------------------
-# The common schema the Pages docs generator renders: one file per approach x
-# scale, results/<method>/<rows>.json ("oml-bench/1").
+# The common schema: one file per approach x scale,
+# results/offline/<method>/<rows>.json ("oml-bench/1"). No served path ran these
+# statements, so the docs generator skips them (offline/).
 # ---------------------------------------------------------------------------
 
 SUITE_VERSION = "1"
@@ -558,8 +559,8 @@ def export_common():
                                  if w["timeouts"] else "") + (" halfvec(384) at this scale." if method.endswith("halfvec") else ""),
                 "source": f"bench/scale/results/{name}",
             }
-            out = RES / method / f"{rows}.json"
-            out.parent.mkdir(exist_ok=True)
+            out = RES / "offline" / method / f"{rows}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(doc, indent=1) + "\n")
             written += 1
         if "adr0050" in run:
@@ -575,8 +576,8 @@ def export_common():
                    "per_category": {}, "extrapolated": False,
                    "notes": NOTE + " ADR-0050 d1: served-tip plus own-held any-word recall, k 3, the new text as query.",
                    "source": f"bench/scale/results/{name}"}
-            out = RES / "similar-check" / f"{rows}.json"
-            out.parent.mkdir(exist_ok=True)
+            out = RES / "offline" / "similar-check" / f"{rows}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(doc, indent=1) + "\n")
             written += 1
     written += export_extra()
@@ -593,8 +594,8 @@ def _doc(method, n, date, lat, metrics, per_cat, extrapolated, notes, source, ca
 
 
 def _write(doc, rows):
-    out = RES / doc["method"] / f"{rows}.json"
-    out.parent.mkdir(exist_ok=True)
+    out = RES / "offline" / doc["method"] / f"{rows}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1) + "\n")
 
 

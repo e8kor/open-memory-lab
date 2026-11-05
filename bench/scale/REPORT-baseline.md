@@ -3,7 +3,7 @@
 Measured 2026-11-04 on `origin/main` bb40436 (migrations 0001–0016), PostgreSQL 18.6, pgvector 0.8.1,
 8 vCPU / 15 GiB, one client. Method and limits: [BASELINE.md](BASELINE.md). Every table:
 [results/tables.md](results/tables.md). Plans: [results/explain.md](results/explain.md). Raw numbers:
-`results/*.json`; one `oml-bench/1` file per approach × scale under `results/<method>/<rows>.json`.
+`results/*.json`; one `oml-bench/1` file per approach × scale under `results/offline/<method>/<rows>.json`.
 
 The data is synthetic text templated from the recall eval's 200 seeds, and the vectors are synthetic
 clusters. Latency, size and write cost carry over to real data in shape; relevance does not, and nothing
