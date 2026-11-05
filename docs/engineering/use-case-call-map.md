@@ -158,6 +158,19 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 | UC-ON-06 | Search by term | designed | designed: recall `terms`, `expand_terms` | `read {query, terms}` |
 | UC-ON-07 | Require valid terms | designed | designed: workarea policy through settings | `settings apply` |
 
+### Sources
+
+Added on 2026-11-05 with the proposed [ADR-0056](../adr/ADR-0056-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), planned for v0.5.8; its d15 traces each
+new call to one of these rows.
+
+| UC | Use case | Status | Calls today | Minimal |
+|---|---|---|---|---|
+| UC-SM-01 | [Say where a memory came from](../product/use-cases.md#say-where-a-memory-came-from) | designed (ADR-0056 d1–d3) | none; the extractor of 2026-11-05 wrote `Source: <path>` into the text | `write {text, anchor}`; `oml anchor <path>[#fragment]` prints the anchor |
+| UC-SM-02 | [Find what is known about a file or folder](../product/use-cases.md#find-what-is-known-about-a-file-or-folder) | designed (ADR-0056 d4) | `read {query}` with the path as words | `read {query, anchor_repo, anchor_path_prefix}`; `read {mine: false, anchor_repo, anchor_path_prefix}` |
+| UC-SM-03 | [See that a memory's source changed](../product/use-cases.md#see-that-a-memorys-source-changed) | designed (ADR-0056 d5, d11) | none | `anchor` and `stale` on every claim item, no call; `oml sync --check` |
+| UC-SM-04 | [Load a repository's documents and keep them in step](../product/use-cases.md#load-a-repositorys-documents-and-keep-them-in-step) | designed (ADR-0056 d6–d9) | a script calling `oml write` per memory | `oml sync <source> --workarea <w> [--dry-run]` over `write`, `read` and the review listing |
+| UC-SM-05 | [Link the decisions documents say amend each other](../product/use-cases.md#link-the-decisions-documents-say-amend-each-other) | designed (ADR-0056 d10) | `oml edges propose claim` and `oml edges ratify`, one edge at a time | `oml sync … --edges [--ratify]` over the same two routes |
+
 ### Sessions and agents
 
 | UC | Use case | Status | Calls today | Minimal |

@@ -716,6 +716,52 @@ How it works: [ontologies](../architecture/ontologies.md).
   the standing instructions, and an agent that moves to another area reads that area's brief
   with `oml_workarea`. The brief is kept short by a size limit the server sets.
 
+## Sources
+
+Every use case here is **designed** and **planned for v0.5.8** ([ADR-0056](../adr/ADR-0056-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
+
+### Say where a memory came from
+
+- **Who:** an agent, a developer. **UC-SM-01.**
+- **Goal:** record with a memory the repository, commit, file and part of it that it was read
+  from, so a reviewer can check it against the source and a reader can find it again.
+- **How it plays out:** an agent with a terminal runs `oml anchor docs/adr/ADR-0047-….md#d3` and
+  passes the result with its write; a phone agent names the repository, commit and file it
+  cites. The reviewer sees the origin beside the text. Nobody checks it but the reviewer.
+
+### Find what is known about a file or folder
+
+- **Who:** an agent, a developer. **UC-SM-02.**
+- **Goal:** list or search only the memories that came from one repository, or from one folder or
+  file of it.
+- **How it plays out:** the agent asks for the memories from `docs/adr/` of this repository, or
+  searches among them; memories with no stated origin are left out.
+
+### See that a memory's source changed
+
+- **Who:** an agent, a developer, CI. **UC-SM-03.**
+- **Goal:** know when the document a memory came from has changed since it was read.
+- **How it plays out:** once a sync has read the newer document, every search result from it is
+  marked until someone reviews the newer version. In a checkout, `oml sync --check` lists every
+  memory a commit made stale and fails a CI step until they are answered.
+
+### Load a repository's documents and keep them in step
+
+- **Who:** a developer, an operator. **UC-SM-04.**
+- **Goal:** turn a folder of markdown, such as decision records or a wiki kept in git, into
+  memories, one per decision or section, and keep them matching the documents as they change.
+- **How it plays out:** `oml sync docs/adr --workarea project-design --dry-run` shows what it
+  would write; the run writes it in batches one person reviews at a time. After the documents
+  change, the same command replaces what changed and proposes retiring what was removed, and
+  writes nothing when nothing changed.
+
+### Link the decisions documents say amend each other
+
+- **Who:** a person reviewing. **UC-SM-05.**
+- **Goal:** turn "this record amends that decision" lines into reviewed links between memories.
+- **How it plays out:** after the memories are approved, one person proposes the links the
+  documents state and a second confirms them; a link is read like any other.
+
 ## Files and deliverables
 
 Every use case here is **designed**: deliverables and storage are parked, and files on a memory

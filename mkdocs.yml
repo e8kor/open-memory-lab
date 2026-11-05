@@ -186,3 +186,4 @@ nav:
       - ADR-0049: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md
       - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
       - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
+      - ADR-0056: adr/ADR-0056-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md
