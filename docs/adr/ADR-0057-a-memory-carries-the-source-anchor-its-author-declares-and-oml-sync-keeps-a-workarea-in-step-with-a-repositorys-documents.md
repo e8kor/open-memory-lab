@@ -1,16 +1,16 @@
 <!--
 id: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents
 tier: engineering
-status: accepted
+status: accepted design · 2026-11-05
 answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workarea and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how a moved span, a concurrent supersession and a rollback are handled; what a fragment may name; how each retriever's list is capped before fusion; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from
 -->
 
 # ADR-0057 — A memory carries the source anchor its author declares, and `oml sync` keeps a workarea in step with a repository's documents
 
-**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 for release v0.5.8,
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.8,
 with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight)
 
-**Release:** v0.5.8 ([releases](../product/releases.md#planned-releases))
+**Release:** introduced in v0.5.8 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0047 (d3, d12, d15 a, d17, and its open questions, answered here and in its own
 answers table), ADR-0048 (d5: two of S4's filters built ahead of the stage), ADR-0039 (d3, d4:
@@ -66,7 +66,7 @@ Occam rule ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d8 and the
 [use-case call map](../engineering/use-case-call-map.md)): every new call traces to a documented
 use case, and a capability is a parameter before it is a tool.
 
-Accepted for build in v0.5.8 on 2026-11-05.
+Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
 
 ## Decision
 
