@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-05
 answers: who may review in bulk and on which surfaces; why agent keys and MCP never reach it; what a reviewer is shown and how the selection is named; why the verdict names ids and never a filter; the cap per request; how each item is judged, journalled and signed; how R2 is held per item and what a skipped item answers; what a stale id answers; whether a claim approval is marked same_user; bulk reject and its reason; idempotency and retry; why the queue slowed with tens of thousands held and what fixed it, measured; the routes, the admin page's view and actions, the CLI verbs, the metric and the doctor line; the laws and their tests; the rejected alternatives
 -->
 
 # ADR-0055 — A person reviews a listed set of held items in one act, each item judged and signed as one verdict
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7
 
-**Release:** planned for v0.5.7 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.7 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0039 (d9: two served routes, `GET /v2/review/held` and
 `POST /v2/review/verdicts/bulk`; d10: `oml review list`, and `--ids` on `oml review approve` and
@@ -39,7 +39,7 @@ hold for every item, and the request must not become a way to approve what nobod
 The Occam API rule (ADR-0039 d8) asks that each new call trace to a use case: here the import
 above, and the review of any crew's backlog after it.
 
-Decided, and built on `feat/bulk-review` for v0.5.7 with this record proposed.
+Decided, built on `feat/bulk-review`, and accepted and introduced with release v0.5.7.
 
 ## Decision
 

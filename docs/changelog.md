@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design and 0.5.6-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design and 0.5.7-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.6-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.7-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,7 +27,79 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Unreleased
+## 0.5.7-design
+
+Opened for release v0.5.7, which carries this revision: [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13 to d17, the measurement
+half of [ADR-0054](adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) (d1 to d6, d11 to d13) and [ADR-0055](adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md), each introduced in
+v0.5.7; ADR-0055 is accepted with the release. `info.version` moved to `0.5.7-design` once, at the
+release: the pipeline names gained `sparse` and `bm25-sparse`, `matched.via` gained `sparse`, each
+hit's `matched` gained `tokens` and `expanded`, `GET /v2/search`'s `postings` gained
+`sparse_backlog` and `sparse_failing`; the recall answer gained `recall_id` and the recall body
+`feedback`; `/v2/usage/settings`, `/v2/usage/events`, `/v2/usage/eval`, `GET /v2/review/held` and
+`POST /v2/review/verdicts/bulk` were added. Members were added and none removed. The entries below
+were kept apart under "Unreleased" until this release, newest first.
+
+### 2026-11-05 — Release v0.5.7: search by related words, recall quality measured, and bulk review
+
+What changes for someone using OML:
+
+- **Two optional searches that also find memories by related words they do not say.**
+  `bm25-sparse` adds the word weights of a small local model,
+  `opensearch-neural-sparse-encoding-doc-v3-distill` (Apache-2.0), to the default search, and
+  `sparse` reads the model's weights alone. `bm25-sparse` ranks best on every measured set: nDCG@10
+  0.730 against the default's 0.685 on SciFact, 0.349 against 0.321 on NFCorpus, 0.550 against
+  0.503 on LoCoMo, and success@5 0.983 against 0.934 on OML's recall set. Each hit names the words
+  that matched and which of them the model added. The cost is latency: at 100,000 memories, about
+  60,000 of them readable, `bm25-sparse`'s two lists took 272 ms at the 95th percentile, where the
+  default search's bar is 50 ms (FR-118). That is why both stay off unless an operator turns them
+  on:
+  1. Place the model's four files (`config.json`, `tokenizer.json`, `model.safetensors`,
+     `idf.json`) in `search.sparse.model_dir`, by default
+     `<state>/models/opensearch-neural-sparse-encoding-doc-v3-distill`:
+     `scripts/fetch_sparse_model.sh <dir>` downloads them and checks each file's pinned SHA-256, or
+     set `search.sparse.fetch = true` to let the server fetch them at start. With neither, the
+     server never reaches the network for a model.
+  2. Add `sparse` or `bm25-sparse` to `search.enabled`. The server refuses to start, naming the
+     file, when a configured sparse search lacks its model or a file's digest differs.
+
+  The model reads each memory once, after its write commits, on `search.sparse.threads` (2)
+  threads, so writing never waits for it; a memory it has not reached yet is missing from the
+  sparse list only, and `oml doctor` names the backlog. A query runs no model.
+- **Recall quality, measured.** Each recall is recorded for 30 days in `recall_events`, with the
+  digest of its request and the hits it served, and with what its reader did next in
+  `recall_outcomes`; a lead deletes rows past 30 days every minute. The query's text is kept only
+  where an admin turns it on with `oml usage settings --query-text on`. `oml_read`, in any mode,
+  and `POST /v1/memories/recall` take an optional `feedback: {recall_id, useful, not_useful}`, so
+  a reader can say which hits of an earlier recall helped; it never changes what the read answers.
+  An admin reads the recalls with `oml usage events` and replays them through other searches with
+  `oml usage eval --pipelines a,b`, which answers numbers only. The metrics listener carries the
+  quality figures (zero-hit and below-floor share, latency per search, follow-up rate, duplicate
+  writes, time to review and the rejection rate), and
+  [`oml-quality.json`](operations/dashboards/oml-quality.json) is a Grafana dashboard over them.
+- **`/readyz` carries no counts.** The skipped reranks and the failed sign-ins moved to `/metrics`
+  (`oml_reranks_total`, `oml_web_exchanges_failed_total`); `oml doctor` reads them, and the
+  telemetry's health, where `OML_METRICS_URL` names the metrics listener.
+- **Bulk review.** A person lists the held memories their reviewer key may judge, filtered by
+  workarea, author key and claim-key prefix, picks a set, confirms, and gets one verdict per
+  memory, each journalled and signed as a single approval is, with an outcome for each: on the
+  admin page, or with `oml review list` and `oml review approve --ids` / `oml review reject --ids`.
+  Agent keys, a crew's reviewer keys and MCP never reach it. An approval says whether reviewer and
+  author are one person: `same_user` on `lifecycle.promote` and `lifecycle.supersede`. The review
+  queue no longer slows as it grows: `review next` took 100 ms a call with 45,000 held and takes
+  0.17 ms after migration 0024.
+- **The test scripts no longer default to port 5432.** `eval/bench/boot.sh`,
+  `eval/recall/served.sh` and the benchmark scripts refuse to run until `PGPORT` names a throwaway
+  PostgreSQL cluster, so a test run cannot reach a production database by default.
+- **Migrations 0022 to 0024 run at upgrade.** 0022 adds the sparse encoder's queue and queues
+  nothing (a lead serving a sparse search backfills on its own); 0023 adds `recall_events` and
+  `recall_outcomes`, partitioned by organisation under row security, and the trigger that keeps
+  query text only by the opt-in; 0024 adds the review queue's order index.
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.7; every reader page fetches the
+installer at `v0.5.7`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.7-design`. ADR-0055 is accepted, introduced in v0.5.7; ADR-0054's
+measurement half and ADR-0052 d13 to d17 are introduced in v0.5.7.
 
 ### 2026-11-05 — ADR-0055 proposed: a person reviews a listed set of held items in one act
 

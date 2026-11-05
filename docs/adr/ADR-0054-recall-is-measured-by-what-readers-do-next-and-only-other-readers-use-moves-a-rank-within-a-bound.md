@@ -10,7 +10,7 @@ answers: which recall and remember health figures reach Prometheus and Grafana, 
 **Status:** accepted in part · 2026-11-05. The measurement half, d1 to d6 and d11 to d13 as amended
 below, is accepted; the ranking half, d7 to d10, stays proposed until open question 6 is decided.
 
-**Release:** the measurement half, v0.5.7; the ranking half, not assigned
+**Release:** the measurement half, introduced in v0.5.7; the ranking half, not assigned
 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed): d3 (fusion gains a convex combination beside reciprocal rank),
