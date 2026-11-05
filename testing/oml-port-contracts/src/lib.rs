@@ -457,6 +457,7 @@ pub fn held_memory(
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
         guardrail: None,
         anchor: None,
+        origin_kind: None,
         source_check: None,
     }
 }

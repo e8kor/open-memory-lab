@@ -55,6 +55,7 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::origin::OriginKind;
 use oml_domain::vocab::{Curie, OmlLabel};
 use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
@@ -447,7 +448,37 @@ fn submit_request_digest(
     });
     let doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
     let doc = with_anchor(doc, req.anchor.as_ref());
+    let doc = with_origin(doc, req.origin);
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// The name of a person's chat workarea under their user root (ADR-0063
+/// d8).
+pub const CHAT_WORKAREA: &str = "chat";
+
+/// A request digest's document with `origin` when sent, and unchanged
+/// otherwise, so a request without one digests as it did before
+/// ADR-0063.
+fn with_origin(mut doc: Value, origin: Option<OriginKind>) -> Value {
+    if let (Some(kind), Some(members)) = (origin, doc.as_object_mut()) {
+        members.insert("origin".to_owned(), kind.to_json());
+    }
+    doc
+}
+
+/// The kind a submission records: as declared, `manual` when none was
+/// sent, after the two compositions with the anchor (ADR-0063 d2).
+fn recorded_origin(
+    origin: Option<OriginKind>,
+    anchor: Option<&Anchor>,
+) -> Result<OriginKind, AppError> {
+    let kind = origin.unwrap_or(OriginKind::Manual);
+    kind.check_with(anchor)
+        .map_err(|e| AppError::OriginInvalid {
+            field: e.field,
+            reason: e.reason,
+        })?;
+    Ok(kind)
 }
 
 /// A request digest's document with the anchor when sent, and unchanged
@@ -559,6 +590,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
+        *body = with_origin(body.take(), req.origin);
     }
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
@@ -2669,6 +2701,18 @@ where
             ),
             None => None,
         };
+        // A person's chat workarea, `chat` directly under a user root, is
+        // opened only by a key a person holds, before anything is
+        // journalled (ADR-0063 d8).
+        if let Some(parent) = ancestors.first()
+            && parent.user_root
+            && name.as_str() == CHAT_WORKAREA
+            && key.held_by != HeldBy::Human
+        {
+            return Err(AppError::ChatScopeHumanOnly {
+                held_by: key.held_by,
+            });
+        }
         if let Some(parent) = ancestors.first()
             && frozen_refuses(parent.status, FrozenOp::CreateChild)
         {
@@ -3965,6 +4009,7 @@ where
         // scanner port: a veto journals nothing (proposed ADR-0037 d10).
         let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -4033,6 +4078,7 @@ where
             created_at: self.clock.now(),
             guardrail,
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
         };
 
@@ -4053,6 +4099,7 @@ where
             "attachments": [],
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": Value::Null,
@@ -5839,6 +5886,7 @@ where
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
@@ -5919,6 +5967,7 @@ where
             created_at: self.clock.now(),
             guardrail,
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
         };
 
@@ -5942,6 +5991,7 @@ where
             "attachments": [],
             "derives_from": derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": {

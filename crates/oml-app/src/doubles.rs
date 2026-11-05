@@ -1821,7 +1821,7 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
-            if !scope.anchor.admits(m.anchor.as_deref()) {
+            if !scope.anchor.admits_row(m.anchor.as_deref(), m.origin_kind) {
                 return false;
             }
             if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
@@ -2162,7 +2162,7 @@ impl JournalStore for MemStore {
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
-            .filter(|m| filter.anchor.admits(m.anchor.as_deref()))
+            .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
             .filter(|m| {
                 filter
                     .since

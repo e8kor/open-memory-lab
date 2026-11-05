@@ -47,6 +47,7 @@ pub mod ladder;
 pub mod model;
 pub mod name;
 pub mod oauth;
+pub mod origin;
 pub mod vocab;
 pub mod vocab_edges;
 pub mod web;

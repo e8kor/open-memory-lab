@@ -483,6 +483,24 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "held_by": held_by.as_str(),
         })),
+        AppError::OriginInvalid { field, reason } => {
+            ApiError::validation(format!("{field}: {reason}"))
+                .with_details(json!({ "field": field }))
+        }
+        // The chat workarea is a person's to open (ADR-0063 d8).
+        AppError::ChatScopeHumanOnly { held_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: an agent never opens the scope that holds a person's own words; the person does.",
+            format!(
+                "a workarea named chat under a user root is created by a key held by a human, and this key is held by {}",
+                held_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "chat_scope_is_human_only",
+            "held_by": held_by.as_str(),
+        })),
         AppError::BulkShape { field, reason } => {
             ApiError::validation(reason).with_details(json!({ "field": field }))
         }

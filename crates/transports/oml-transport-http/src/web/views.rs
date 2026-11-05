@@ -1389,6 +1389,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     severity: None,
                     rule: None,
                     anchor: None,
+                    origin: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1445,6 +1446,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     severity: None,
                     rule: None,
                     anchor: None,
+                    origin: None,
                     expected_version,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))

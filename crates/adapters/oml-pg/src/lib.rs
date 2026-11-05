@@ -21,6 +21,7 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::origin::OriginKind;
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
@@ -1661,6 +1662,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
      m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
+     m.origin_kind, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1710,8 +1712,19 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
         anchor: anchor_from_row(row)?.map(Box::new),
+        origin_kind: origin_kind_from_row(row)?,
         source_check: source_check_from_row(row)?.map(Box::new),
     })
+}
+
+/// A row's `origin_kind`, `None` on versions written before ADR-0063.
+fn origin_kind_from_row(row: &PgRow) -> Result<Option<OriginKind>, StoreError> {
+    let kind: Option<String> = row.try_get("origin_kind").map_err(backend)?;
+    kind.map(|k| {
+        OriginKind::parse(&k)
+            .ok_or_else(|| StoreError::Backend(format!("unknown origin kind {k:?}")))
+    })
+    .transpose()
 }
 
 /// A row's anchor columns, as the author declared them (ADR-0057 d1).
@@ -2123,14 +2136,23 @@ async fn insert_memory(
     } else {
         ("", "")
     };
+    // A version with a kind names `origin_kind` after the anchor's columns
+    // (ADR-0063 d2); one without, folded from an event before it, names
+    // none.
+    let origin_n = if anchor.is_some() { 32 } else { 25 };
+    let (origin_column, origin_value) = if m.origin_kind.is_some() {
+        (", origin_kind".to_owned(), format!(", ${origin_n}"))
+    } else {
+        (String::new(), String::new())
+    };
     let sql = format!(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule{columns}) \
+         severity, rule{columns}{origin_column}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values})"
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values}{origin_value})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -2172,6 +2194,9 @@ async fn insert_memory(
             .bind(anchor.fragment.as_deref())
             .bind(anchor.hash.as_ref().map(|(h, _)| h.as_str()))
             .bind(anchor.hash.as_ref().map(|(_, h)| h.as_str()));
+    }
+    if let Some(kind) = m.origin_kind {
+        insert = insert.bind(kind.as_str());
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
     Ok(())
@@ -3613,7 +3638,14 @@ enum AnchorRead {
         repo: Option<String>,
         lo: Option<String>,
         hi: Option<String>,
+        /// `origin_kinds` (ADR-0063 d3), empty when unset.
+        kinds: Vec<String>,
     },
+}
+
+/// The kinds a filter names, as the column stores them.
+fn origin_kind_strings(kinds: &[OriginKind]) -> Vec<String> {
+    kinds.iter().map(|k| k.as_str().to_owned()).collect()
 }
 
 /// The anchor predicate on the row `m` from `$first` on: the repository by
@@ -3621,6 +3653,19 @@ enum AnchorRead {
 /// bound, so the index serves the serving role under row security
 /// (ADR-0057 d4).
 fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> String {
+    origin_columns_sql(m, repo, lo, hi, false, first)
+}
+
+/// [`anchor_columns_sql`] and, when `kinds`, the kind filter's predicate
+/// last, `{m}.origin_kind = ANY($n::text[])` (ADR-0063 d3).
+fn origin_columns_sql(
+    m: &str,
+    repo: bool,
+    lo: bool,
+    hi: bool,
+    kinds: bool,
+    first: usize,
+) -> String {
     let mut n = first;
     let mut sql = String::new();
     if repo {
@@ -3633,6 +3678,10 @@ fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> 
     }
     if hi {
         sql.push_str(&format!(" AND {m}.anchor_path ~<~ ${n}"));
+        n += 1;
+    }
+    if kinds {
+        sql.push_str(&format!(" AND {m}.origin_kind = ANY(${n}::text[])"));
     }
     sql
 }
@@ -3675,9 +3724,19 @@ impl AnchorRead {
         match self {
             Self::Unfiltered => String::new(),
             Self::Ids(_) => format!(" AND {m}.id = ANY(${first}::uuid[])"),
-            Self::Columns { repo, lo, hi } => {
-                anchor_columns_sql(m, repo.is_some(), lo.is_some(), hi.is_some(), first)
-            }
+            Self::Columns {
+                repo,
+                lo,
+                hi,
+                kinds,
+            } => origin_columns_sql(
+                m,
+                repo.is_some(),
+                lo.is_some(),
+                hi.is_some(),
+                !kinds.is_empty(),
+                first,
+            ),
         }
     }
 
@@ -3702,9 +3761,17 @@ impl AnchorRead {
         match self {
             Self::Unfiltered => q,
             Self::Ids(ids) => q.bind(ids),
-            Self::Columns { repo, lo, hi } => {
+            Self::Columns {
+                repo,
+                lo,
+                hi,
+                kinds,
+            } => {
                 for value in [repo, lo, hi].into_iter().flatten() {
                     q = q.bind(value.as_str());
+                }
+                if !kinds.is_empty() {
+                    q = q.bind(kinds);
                 }
                 q
             }
@@ -3757,15 +3824,22 @@ impl PgStore {
             repo: scope.anchor.repo.clone(),
             lo,
             hi,
+            kinds: origin_kind_strings(&scope.anchor.origin_kinds),
         };
         let sql = format!(
             "SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{} LIMIT ${}",
             columns.row("m", 6),
             6 + match &columns {
-                AnchorRead::Columns { repo, lo, hi } => {
+                AnchorRead::Columns {
+                    repo,
+                    lo,
+                    hi,
+                    kinds,
+                } => {
                     usize::from(repo.is_some())
                         + usize::from(lo.is_some())
                         + usize::from(hi.is_some())
+                        + usize::from(!kinds.is_empty())
                 }
                 _ => 0,
             }
@@ -5015,6 +5089,12 @@ impl JournalStore for PgStore {
             if let Some(upper) = prefix_upper(prefix) {
                 sql.push(" AND m.anchor_path ~<~ ").push_bind(upper);
             }
+        }
+        // The kind filter (ADR-0063 d3): a row without a kind never passes.
+        if !filter.anchor.origin_kinds.is_empty() {
+            sql.push(" AND m.origin_kind = ANY(")
+                .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
+                .push("::text[])");
         }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")

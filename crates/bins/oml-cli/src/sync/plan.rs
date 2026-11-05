@@ -116,7 +116,9 @@ impl Entry {
     #[must_use]
     pub fn write_body(&self, workarea: &str) -> Option<Value> {
         let text = self.text.as_ref()?;
-        let mut body = json!({ "body": text, "anchor": self.anchor });
+        // Every adapter sync builds reads documents, so every write it sends
+        // is of kind doc, derived and never declared by hand (ADR-0063 d2).
+        let mut body = json!({ "body": text, "anchor": self.anchor, "origin": { "kind": "doc" } });
         match self.outcome {
             Outcome::New => {
                 body["claim_key"] = json!(self.claim_key);
