@@ -187,6 +187,7 @@ struct TenantState {
     brief_edges: BTreeMap<Uuid, BriefEdgeRecord>,
     /// The tenant's journalled default search pipeline (ADR-0049 d4).
     search_default: Option<String>,
+    query_text_since: Option<EventTime>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1005,6 +1006,9 @@ fn apply_fold(
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
         MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
+        MetadataFold::TelemetrySettingsSet { query_text_since } => {
+            state.query_text_since = query_text_since;
+        }
         MetadataFold::WorkareaCreated(workarea) => {
             require_universe_root(&workarea)?;
             // Unique in its namespace: the shared one, or its user root's,
@@ -2054,6 +2058,15 @@ impl JournalStore for MemStore {
         Ok(self
             .tenant_existing(tenant_id)
             .and_then(|t| t.lock().expect("tenant lock").search_default.clone()))
+    }
+
+    async fn tenant_query_text_since(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .and_then(|t| t.lock().expect("tenant lock").query_text_since.clone()))
     }
 
     async fn steering_in_force(

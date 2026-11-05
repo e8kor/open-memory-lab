@@ -24,6 +24,7 @@ pub mod oauth;
 mod search;
 pub mod time;
 pub mod traffic;
+mod usage;
 pub mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -121,6 +122,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/admin/memories/{artifact_id}"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
+    ("GET", "/v2/usage/settings"),
+    ("POST", "/v2/usage/settings"),
+    ("GET", "/v2/usage/events"),
+    ("POST", "/v2/usage/eval"),
 ];
 
 /// The unversioned probes among [`ROUTES`], served even while names are not
@@ -324,6 +329,10 @@ where
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
+            ("GET", "/v2/usage/settings") => get(Self::usage_settings),
+            ("POST", "/v2/usage/settings") => post(Self::set_usage_settings),
+            ("GET", "/v2/usage/events") => get(Self::usage_events),
+            ("POST", "/v2/usage/eval") => post(Self::usage_eval),
             _ => panic!("{method} {path} is in ROUTES with no handler"),
         }
     }
@@ -624,6 +633,23 @@ where
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
     /// workarea, so an `X-OML-Workarea` sent with it is refused, not
     /// ignored, and names no successor (ADR-0025 d13, ADR-0039 d7).
+    /// A read's `feedback` member, checked and queued (ADR-0054 d6); the
+    /// read it rides on runs only when this answers.
+    pub(crate) async fn feedback_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        connection: Option<&Caller>,
+        feedback: &Value,
+    ) -> Result<Response, ApiError> {
+        let acting = acting(headers, connection)?;
+        let feedback = usage::parse_feedback(feedback)?;
+        st.app
+            .accept_feedback(acting.bearer(), &feedback)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &json!({})))
+    }
+
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
@@ -713,6 +739,12 @@ where
             }
         };
         let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
+        // Feedback on the key's last recall rides this one: refused by its
+        // field before the recall runs, never changing what it answers
+        // (ADR-0054 d6).
+        if let Some(feedback) = &req.feedback {
+            Self::feedback_inner(st, headers, connection, feedback).await?;
+        }
         let result = st
             .app
             .recall(
@@ -759,6 +791,7 @@ where
             .collect();
         // What ran and what the query was read as (ADR-0049 d5, d6).
         let mut response = json!({
+            "recall_id": result.recall_id,
             "steering": steering,
             "hits": hits,
             "query_digest": result.query_digest,
@@ -2210,6 +2243,9 @@ struct RecallBody {
     /// `any` (the default) or `all` (ADR-0049 d5).
     #[serde(rename = "match")]
     match_mode: Option<String>,
+    /// What the key's last recall served that helped, and what did not;
+    /// checked before the recall runs (ADR-0054 d6).
+    feedback: Option<Value>,
 }
 
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission

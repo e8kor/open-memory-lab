@@ -7,9 +7,11 @@
 
 mod pages;
 mod search;
+mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use search::SearchSettings;
+pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;
@@ -67,6 +69,7 @@ use crate::ports::{
     JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
     Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
+use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
     Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage, BriefEdgeProposalOutcome,
@@ -177,6 +180,9 @@ pub struct App<J, S, C, I, Sc> {
     /// deployment loads none, and then no reranking pipeline is served
     /// (ADR-0053 d2, d8).
     reranker: Option<Arc<dyn Reranker>>,
+    /// The recall telemetry's writer; `None` where the deployment records
+    /// no recall (ADR-0054 d2).
+    telemetry: Option<Arc<dyn Telemetry>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -992,6 +998,7 @@ where
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
             search: SearchConfig::default(),
             reranker: None,
+            telemetry: None,
         }
     }
 
@@ -1002,6 +1009,16 @@ where
     pub fn with_reranker(self, reranker: Arc<dyn Reranker>) -> Self {
         Self {
             reranker: Some(reranker),
+            ..self
+        }
+    }
+
+    /// The app whose recalls hand their events, and whose gets, citations
+    /// and supersessions hand their acts, to `telemetry` (ADR-0054 d2, d5).
+    #[must_use]
+    pub fn with_telemetry(self, telemetry: Arc<dyn Telemetry>) -> Self {
+        Self {
+            telemetry: Some(telemetry),
             ..self
         }
     }
@@ -3971,6 +3988,20 @@ where
             idempotency,
         )
         .await?;
+        // After the commit, off the write's path: the remember side's
+        // duplicate count, and a citation's label on the key's recall
+        // (ADR-0054 d5, d12).
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.offer(TelemetryItem::Remembered(Remembered {
+                tenant_id: key.tenant_id,
+                workarea_id,
+                memory_id,
+                body_digest: receipt.body_digest.clone(),
+            }));
+        }
+        for cited in &req.derives_from {
+            self.offer_act(key.tenant_id, key.key_id, *cited, Label::Derived);
+        }
         Ok(SubmitOutcome {
             receipt,
             replayed: false,
@@ -4206,8 +4237,11 @@ where
                         idempotency,
                     )
                     .await;
-                self.verdict_committed(committed, recording.as_ref(), outcome)
-                    .await
+                let answered = self
+                    .verdict_committed(committed, recording.as_ref(), outcome)
+                    .await;
+                self.verdict_observed(&answered, "reject", &memory.created_at);
+                answered
             }
             Verdict::Approve => {
                 // Ratification snapshots the policy it was decided under
@@ -4294,9 +4328,31 @@ where
                     }
                     other => other.map_err(AppError::from),
                 };
-                self.verdict_committed(committed, recording.as_ref(), outcome)
-                    .await
+                let answered = self
+                    .verdict_committed(committed, recording.as_ref(), outcome)
+                    .await;
+                self.verdict_observed(&answered, "approve", &memory.created_at);
+                answered
             }
+        }
+    }
+
+    /// Tells the observer a verdict committed, and how long after its
+    /// memory was submitted; a replay committed nothing and tells nothing
+    /// (ADR-0054 d1, d12).
+    fn verdict_observed(
+        &self,
+        answered: &Result<VerdictOutcome, AppError>,
+        verdict: &'static str,
+        submitted: &EventTime,
+    ) {
+        if let Ok(outcome) = answered
+            && !outcome.replayed
+        {
+            let waited = self.clock.now().unix_micros() - submitted.unix_micros();
+            #[allow(clippy::cast_precision_loss, reason = "a wait in microseconds")]
+            self.observer
+                .verdict(verdict, waited.max(0) as f64 / 1_000_000.0);
         }
     }
 
@@ -4346,6 +4402,55 @@ where
             return Err(AppError::BudgetWithoutBodies);
         }
         let caller = self.authenticate_bearer(bearer.into()).await?;
+        let started = std::time::Instant::now();
+        let result = self.recall_as(&caller, req).await?;
+        // The answer's shape and latency, by pipeline, for the metrics
+        // listener; then the event, handed to the writer without waiting,
+        // so neither sits on the recall's path (ADR-0054 d1, d2).
+        let shape = if result.below_floor > 0 {
+            "below_floor"
+        } else if result.hits.is_empty() {
+            "empty"
+        } else {
+            "hits"
+        };
+        self.observer.recall_answered(
+            result.pipeline.as_str(),
+            shape,
+            started.elapsed().as_secs_f64(),
+        );
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.offer(TelemetryItem::Recall(Box::new(RecallEvent {
+                tenant_id: caller.key.tenant_id,
+                recall_id: result.recall_id,
+                created_at: self.clock.now(),
+                key_id: caller.key.key_id,
+                principal: caller.key.principal.clone(),
+                scope_workarea_id: result.scope_workarea_id,
+                source_workarea_id: caller.key.default_workarea,
+                pipeline: result.pipeline.as_str(),
+                access: result.access.as_str(),
+                query_digest: result.query_digest.clone(),
+                query_text: nfc(&req.query),
+                hits: result
+                    .hits
+                    .iter()
+                    .take(HITS_STORED)
+                    .map(|h| (h.served.memory.memory_id, h.score))
+                    .collect(),
+            })));
+        }
+        Ok(result)
+    }
+
+    /// The recall itself, as `caller`: what [`Self::recall`] answers, and
+    /// what the real-usage replay runs under each original key, recording
+    /// nothing (ADR-0054 d11).
+    async fn recall_as(
+        &self,
+        caller: &Caller,
+        req: &RecallRequest,
+    ) -> Result<RecallResult, AppError> {
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
         let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
@@ -4614,6 +4719,8 @@ where
             }
         }
         Ok(RecallResult {
+            recall_id: self.ids.new_id(),
+            scope_workarea_id: scope,
             steering: served_steering,
             hits,
             budget,
@@ -4952,6 +5059,14 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         if self.readable(&caller, &memory).await? {
+            // A get by id labels the key's recall that served the version
+            // (ADR-0054 d5).
+            self.offer_act(
+                caller.key.tenant_id,
+                caller.key.key_id,
+                memory_id,
+                Label::Get,
+            );
             self.served(&caller, memory).await
         } else {
             Err(AppError::NotFound)
@@ -5266,6 +5381,17 @@ where
             });
         }
         committed?;
+        // A supersession labels the key's recall that served the target,
+        // and a citation labels the version it cites (ADR-0054 d5).
+        self.offer_act(
+            key.tenant_id,
+            key.key_id,
+            receipt.replaces.artifact_id,
+            Label::Superseded,
+        );
+        for cited in &req.derives_from {
+            self.offer_act(key.tenant_id, key.key_id, *cited, Label::Derived);
+        }
         Ok(SupersedeOutcome {
             receipt,
             replayed: false,

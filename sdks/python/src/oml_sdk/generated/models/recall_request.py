@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -9,6 +9,10 @@ from ..models.recall_request_kinds_item import RecallRequestKindsItem
 from ..models.recall_request_match import RecallRequestMatch
 from ..models.recall_request_search import RecallRequestSearch
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.feedback import Feedback
+
 
 T = TypeVar("T", bound="RecallRequest")
 
@@ -45,6 +49,11 @@ class RecallRequest:
                 deployment does not serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
+            feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not
+                (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in
+                the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field
+                (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
+                day answer limit.rate. A valid member changes nothing the read answers.
     """
 
     query: str
@@ -56,6 +65,7 @@ class RecallRequest:
     max_tokens: int | Unset = UNSET
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
+    feedback: Feedback | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -89,6 +99,10 @@ class RecallRequest:
         if not isinstance(self.match, Unset):
             match = self.match.value
 
+        feedback: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.feedback, Unset):
+            feedback = self.feedback.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -112,11 +126,15 @@ class RecallRequest:
             field_dict["search"] = search
         if match is not UNSET:
             field_dict["match"] = match
+        if feedback is not UNSET:
+            field_dict["feedback"] = feedback
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.feedback import Feedback
+
         d = dict(src_dict)
         query = d.pop("query")
 
@@ -158,6 +176,13 @@ class RecallRequest:
         else:
             match = RecallRequestMatch(_match)
 
+        _feedback = d.pop("feedback", UNSET)
+        feedback: Feedback | Unset
+        if isinstance(_feedback, Unset):
+            feedback = UNSET
+        else:
+            feedback = Feedback.from_dict(_feedback)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -168,6 +193,7 @@ class RecallRequest:
             max_tokens=max_tokens,
             search=search,
             match=match,
+            feedback=feedback,
         )
 
         return recall_request

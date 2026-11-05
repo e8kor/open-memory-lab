@@ -98,6 +98,9 @@ pub mod event_types {
     /// An admin key set the tenant's default search pipeline, or cleared
     /// it to follow the deployment's (ADR-0049 d4).
     pub const SEARCH_DEFAULT_SET: &str = "search.default_set";
+    /// An admin key turned the tenant's recall query text on or off
+    /// (ADR-0054 d3).
+    pub const TELEMETRY_SETTINGS_SET: &str = "telemetry.settings_set";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

@@ -32,6 +32,7 @@ use oml_app::search::{Pipeline, SearchConfig};
 use oml_app::types::AssignedNames;
 use oml_fetch::PinnedFetcher;
 use oml_fetch::signin::{ClientCredentials, ProviderClients};
+use oml_pg::telemetry::PgTelemetry;
 use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -1113,6 +1114,47 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
     })
 }
 
+/// How often the lead rotates the recall telemetry's partitions: this week's
+/// and the next four created, those past the 30 days dropped (ADR-0054 d2,
+/// as accepted).
+pub const TELEMETRY_ROTATION_SECONDS: u64 = 3600;
+
+/// The event the rotation logs, with its counts or its reason.
+pub const EVENT_TELEMETRY_ROTATED: &str = "telemetry_rotated";
+pub const EVENT_TELEMETRY_ROTATION_FAILED: &str = "telemetry_rotation_failed";
+
+/// Runs the recall telemetry's rotation every
+/// [`TELEMETRY_ROTATION_SECONDS`], the first an hour after the start, which
+/// rotated as it migrated, under the owner's URL the store holds for
+/// partition DDL (ADR-0034 d11), logging what it created and dropped. A
+/// failed rotation never stops the lead; doctor names the partitions it
+/// left missing or overdue.
+pub fn spawn_telemetry_rotation(store: PgStore) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let period = std::time::Duration::from_secs(TELEMETRY_ROTATION_SECONDS);
+        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            match store.rotate_telemetry().await {
+                None => {}
+                Some(Ok(r)) => tracing::info!(
+                    event = EVENT_TELEMETRY_ROTATED,
+                    tenants = r.tenants,
+                    created = r.created,
+                    dropped = r.dropped,
+                    "recall telemetry partitions rotated (ADR-0054 d2)"
+                ),
+                Some(Err(e)) => tracing::error!(
+                    event = EVENT_TELEMETRY_ROTATION_FAILED,
+                    reason = %e,
+                    "TELEMETRY ROTATION FAILED — the next hour retries"
+                ),
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // The composed state
 // ---------------------------------------------------------------------------
@@ -1295,6 +1337,12 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         Some(reranker) => app.with_reranker(reranker),
         None => app,
     };
+    // Each recall's event, and what its reader did next, go to a bounded
+    // queue a task writes off the recall's path, counted on the metrics
+    // listener (ADR-0054 d1, d2).
+    let meter: Arc<dyn oml_app::ports::TelemetryMeter> = Arc::clone(traffic.metrics()) as _;
+    let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
+    let app = app.with_telemetry(telemetry);
     let app = match oauth_issuer {
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,

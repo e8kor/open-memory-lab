@@ -27,6 +27,33 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased
+
+### 2026-11-05 — Recall and remember quality, measured
+
+[ADR-0054](adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) is accepted in part: its measurement half, planned for v0.5.7; its ranking
+half stays proposed. What changes for someone using OML:
+
+- **Every recall answers `recall_id`, and the next read can say what helped.** `oml_read`, in any
+  mode, and `POST /v1/memories/recall` take an optional `feedback: {recall_id, useful,
+  not_useful}`. It is checked before the read runs and never changes what the read answers. No
+  new tool.
+- **Each recall is recorded for 30 days, off the recall's path.** The digest of the request, the
+  hits served and what the reader did next; the query's text only where an admin turned it on
+  with `oml usage settings --query-text on`. Only a tenant admin reads them, with `oml usage
+  events`. The replay, `oml usage eval --pipelines a,b`, scores each pipeline on those recalls
+  inside the server and answers numbers alone.
+- **Quality on the metrics listener, and a dashboard.** Zero-hit and below-floor share, latency
+  per pipeline, follow-up rate, duplicate writes, time to review and the rejection rate, as
+  aggregates with closed labels, and [`oml-quality.json`](operations/dashboards/oml-quality.json).
+- **`/readyz` counts nothing.** The skipped reranks and the failed sign-ins moved to `/metrics`;
+  `oml doctor` reads them, and the telemetry's health, where `OML_METRICS_URL` names it.
+
+The contract gained members and removed none: the recall answer's `recall_id`, the recall
+body's `feedback`, `/v2/usage/settings`, `/v2/usage/events` and `/v2/usage/eval`, and the event
+type `telemetry.settings_set`. Migration 0022 adds `recall_events`, `recall_outcomes` and
+`tenants.telemetry_query_text_since`.
+
 ## 0.5.6-design
 
 Opened for release v0.5.6, which carries this revision: [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) and

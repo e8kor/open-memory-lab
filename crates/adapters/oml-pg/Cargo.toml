@@ -12,11 +12,12 @@ hex.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+# The recall telemetry's queue and writer task (ADR-0054 d2).
+tokio = { workspace = true, features = ["sync", "time"] }
 uuid.workspace = true
 
 [dev-dependencies]
 oml-port-contracts.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

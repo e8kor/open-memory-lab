@@ -1450,6 +1450,46 @@ rescored for the candidates the others reach; when every word is pruned the `bm2
 (`search.access: "scan"`); [retrieval](../architecture/retrieval.md) has the rule and its
 constants.
 
+### recall telemetry (ADR-0054)
+
+*Since v0.5.7, migration 0022 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d4, d5.* Telemetry, not claims:
+no memory's text, no version, no verdict and no journal event, nothing derived from it, and
+every row gone 30 days after its recall.
+
+```sql
+ALTER TABLE tenants ADD COLUMN telemetry_query_text_since timestamptz(6);  -- from telemetry.settings_set
+
+CREATE TABLE recall_events (           -- one row per recall
+    tenant_id, recall_id, created_at,  -- PRIMARY KEY; created_at the week key
+    key_id, principal, scope_workarea_id, source_workarea_id,
+    pipeline text, access text,        -- the closed names
+    query_digest bytea,                -- the request's digest, always
+    query_text text,                   -- only for created_at >= the tenant's opt-in instant
+    hit_ids uuid[], hit_scores real[]  -- served, in rank order, at most 20
+) PARTITION BY LIST (tenant_id);
+CREATE TABLE recall_outcomes (         -- what the reader did next
+    tenant_id, recall_id, created_at,  -- the event's, so a label lives in its week
+    artifact_id uuid,                  -- NULL for requery and no_use
+    label text, source text,           -- inferred | explicit
+    at timestamptz,
+    UNIQUE NULLS NOT DISTINCT (tenant_id, recall_id, created_at, artifact_id, label)
+) PARTITION BY LIST (tenant_id);
+```
+
+Each tenant's partition, `recall_events_t_<tenant id hex>` and `recall_outcomes_t_<hex>`, is
+range-partitioned by ISO week of `created_at`, `…_w<YYYYMMDD>` from Monday 00:00 UTC. Every
+partition at both levels has `ENABLE` and `FORCE ROW LEVEL SECURITY` and `tenant_isolation`, and
+the columns holding a reader's words or names keep no statistics. The lead creates a new
+tenant's with its memories partition, and at start and every hour creates each tenant's weeks
+for this week and the next four and detaches and drops each week whose upper bound is more
+than 30 days past, under the owner connection it opens for partition DDL (ADR-0034 d11). The
+serving role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on both and owns neither: it
+inserts, labels, nulls text on opt-out and erase, and every minute deletes rows older than 30
+days from the weeks that remain. Every read filters `created_at > now() - 30 days`.
+`oml_telemetry_erase(tenant, version_ids)`, `SECURITY INVOKER`, granted to the serving role, is
+the rule erase's build calls: it nulls the text of each event that served an erased version,
+removes the version from `hit_ids` and `hit_scores`, and deletes its labels.
+
 ## upload_sessions
 
 Resumable attachment uploads (D3, declared in [storage](../architecture/storage.md)).
@@ -1601,7 +1641,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `memories` | submission, review, lifecycle, simulation events |
 | `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
-| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set`; `telemetry_query_text_since` from `telemetry.settings_set` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |

@@ -80,7 +80,9 @@ this section governs.
 - **d2.** The tables are `recall_events` and `recall_outcomes`, migration 0022, list-partitioned by
   tenant and each tenant's partition range-partitioned by week; every partition at both levels
   has `ENABLE` and `FORCE ROW LEVEL SECURITY` and the `tenant_isolation` policy. `usage_applied`
-  and `interleaved` belong to the ranking half and are not created. A recall-level label
+  and `interleaved` belong to the ranking half and are not created. `pipeline` and `access` are
+  text checked against their closed spellings, not codes, so a pipeline another branch adds
+  needs no code table. A recall-level label
   (`requery`, `no_use`) has no `artifact_id`. **The rotation is the lead's**, not an owner
   timer's: the lead already opens the owner's URL for a tenant's partition DDL (ADR-0034 d11),
   and rotating is that DDL, so at start and every hour it creates each tenant's partitions for
@@ -118,8 +120,23 @@ this section governs.
 - **d11.** The replay is `POST /v2/usage/eval` and `oml usage eval --pipelines a,b`, as decided.
   It writes no event and no label of its own. The `served-replay` suite of `eval/bench/` and the
   first committed run are *not built*.
-- **d13.** The measurement laws are built as tests named after them, against PostgreSQL as the
-  serving role, each shown red against a deliberately broken clause before it was kept. Doctor
+- **d13.** The measurement laws are built as tests against PostgreSQL as the serving role
+  (`crates/bins/oml-server-lead/tests/recall_telemetry.rs`, and the queue's law in
+  `crates/oml-app/tests/recall_telemetry.rs`):
+  `feedback_for_another_keys_recall_or_an_unserved_id_is_refused_and_the_read_not_run`,
+  `a_recall_answers_the_same_when_the_event_queue_is_full`,
+  `no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport`,
+  `no_tenant_reads_another_tenants_recall_events_and_the_probe_finds_a_leak_without_the_fence`,
+  `query_text_is_null_unless_the_tenant_opted_in`,
+  `no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied_and_dropped`,
+  `an_erased_version_leaves_no_text_no_hit_and_no_label_in_the_telemetry`,
+  `every_quality_metric_label_is_from_its_declared_set`,
+  `a_replay_scores_the_labelled_queries_and_its_answer_holds_no_text_and_no_id` and
+  `a_get_a_citation_and_a_second_recall_in_other_words_label_the_keys_recall`. The fence and
+  the opt-in laws carry their control in the test, the same probe run against a broken clause;
+  the admin check, the insert's opt-in rule and the feedback's key check were each shown red
+  by hand against a broken clause before the change was kept. The event write's cost on a
+  recall was measured as negligible on a debug build (FR-104 stays open for the scale lane). Doctor
   reads the telemetry's health from the metrics listener: events dropped above 1% of recalls,
   the queue's depth above half its bound, a tenant missing this week's or next week's partition,
   rows past the 30 days not yet purged, and the labeller's lag above 10 minutes.

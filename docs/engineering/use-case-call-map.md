@@ -102,6 +102,7 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 | UC-LC-08 | [Learn when a write was promoted or rejected](../product/use-cases.md#learn-when-a-memory-was-approved-or-rejected) | built; the state only, since neither call serves the author a verdict's reason ([`oml_my_work`](../api/mcp-plugin.md#oml_my_work)) | `oml_events_tail {after_seq?, scope?}`; `oml_my_work {state}`; `GET /v2/events` | `read {state?}` (cut C1); no call loses a reason, since none serves one |
 | UC-LC-09 | [Check where it works](../product/use-cases.md#check-where-it-works-and-what-it-may-do) | built | `oml_workarea_info {workarea?}`; `GET /v2/workareas/{w}` | `workarea {}` |
 | UC-LC-10 | [Link two memories](../product/use-cases.md#link-two-memories) | designed; `oml_relate_propose` and `oml_graph` answer "not built yet" | designed: `oml_relate_propose {kind, label, from, to}`, `oml_graph`, `/v2/claim-edges`, `GET /v2/memories/{id}/lineage` | `relate {from, to, label}` (designed); browsing is `read {artifact_id, lineage}` (merge M4) |
+| UC-LC-13 | Tell the server what helped: *an agent tells the server which memories of its last recall answered its question and which did not, so that recall improves for the next reader* ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d6) | built, v0.5.7 | `oml_read {…, feedback: {recall_id, useful, not_useful}}` in any mode; `POST /v1/memories/recall {…, feedback}` | a parameter of the next `read`, no tool (ADR-0039 d8) |
 | UC-LC-12 | [List what a workarea holds](../product/use-cases.md#list-what-a-workarea-holds) | built on HTTP and the SDKs; not on MCP | `GET /v1/memories?workarea=&kind=&claim_key=`; SDK `list_memories`/`iter_memories` | `read {mine: false}` (ADR-0039 d4) |
 | UC-LC-11 | [Save many at once](../product/use-cases.md#save-many-memories-at-once) | designed | reserved `POST /v1/memories:batch` | `write` taking a list, on HTTP and the SDKs only |
 | UC-SDK-01 | [Store and search from an application](../product/use-cases.md#store-and-search-from-an-application) | built; not on PyPI or npm | `remember`, `learn`, `recall`, `get`, `list_memories`/`iter_memories`, `supersede` | `write`, `read`, `workarea` |
@@ -230,7 +231,8 @@ serves it. Arguments are shown only where the minimal form differs from today's.
 | UC-DP-08 | Back up and restore | designed | the operator's own database backups | unchanged |
 | UC-DP-09 | Rotate keys, respond to compromise | designed | none | unchanged |
 | UC-DP-10 | Move between profiles | designed (ADR-0023 d10) | none | unchanged |
-| UC-DP-11 | Monitor | designed; partly `/healthz`, `/readyz`, plain-text boot lines | designed: metrics, JSON logs, SLOs | unchanged |
+| UC-DP-11 | Monitor | built in part: request lines, `/metrics` on its own listener, and since v0.5.7 the recall and remember quality families and the `oml-quality` dashboard ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d1) | `server.metrics_listen`; `docs/operations/dashboards/oml-quality.json` | unchanged |
+| UC-OP-02 | Measure recall on real use | built, v0.5.7 ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d11) | `oml usage settings --query-text on`; `oml usage events`; `oml usage eval --pipelines`; `/v2/usage/*` | unchanged |
 
 ### Audit
 

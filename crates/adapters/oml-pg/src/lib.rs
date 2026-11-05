@@ -10,6 +10,8 @@
 //! Every query is the sqlx runtime API — no compile-time checked macros, so
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
+pub mod telemetry;
+
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::budget::hit_order;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
@@ -526,6 +528,17 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
             .persistent(false)
             .execute(&mut *tx)
             .await?;
+    }
+    // The tenant's recall telemetry partitions, this week's and the next
+    // four, so its first recall is recorded (ADR-0054 d2, as accepted). A
+    // schema before 0022 has none to create.
+    let telemetry_tables: bool =
+        sqlx::query_scalar("SELECT to_regclass('recall_events') IS NOT NULL")
+            .persistent(false)
+            .fetch_one(&mut *tx)
+            .await?;
+    if telemetry_tables {
+        telemetry::ensure_tenant(&mut tx, tenant_id).await?;
     }
     tx.commit().await
 }
@@ -1162,6 +1175,21 @@ impl PgStore {
         &self.pool
     }
 
+    /// The recall telemetry's rotation (ADR-0054 d2, as accepted) over an
+    /// owner connection opened at the URL [`Self::with_owner_url`] gave and
+    /// closed after it, as a tenant's partition DDL is (ADR-0034 d11);
+    /// without that URL, `None`.
+    pub async fn rotate_telemetry(&self) -> Option<Result<telemetry::Rotation, sqlx::Error>> {
+        let owner_url = self.owner_url.as_ref()?;
+        let owner = match self.connect_owner(&owner_url.0).await {
+            Ok(owner) => owner,
+            Err(e) => return Some(Err(e)),
+        };
+        let rotated = telemetry::rotate(&owner).await;
+        owner.close().await;
+        Some(rotated)
+    }
+
     /// Opens the owner's connection at `owner_url` (ADR-0034 d2, d4): one
     /// connection whose `after_connect` sets `oml.serving_role` to this
     /// store's login, its pool's `current_user`, so a granting migration names
@@ -1210,6 +1238,11 @@ impl PgStore {
         // A tenant a lead before 0021 created has no postings partition, and
         // its writes fail until it does (ADR-0052 d1).
         ensure_postings_partitions(owner)
+            .await
+            .map_err(sqlx::migrate::MigrateError::Execute)?;
+        // Every tenant's recall telemetry partitions for this week and the
+        // next four, and the weeks past the 30 days dropped (ADR-0054 d2).
+        telemetry::rotate(owner)
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
         // 0020 may have created pg_trgm, which serves bm25-trigram.
@@ -2293,6 +2326,28 @@ async fn apply_fold(
                 .execute(&mut **tx)
                 .await
                 .map_err(backend)?;
+        }
+        // The opt-in's instant, or off; off nulls the text the tenant's
+        // events hold, in this commit (ADR-0054 d3, as accepted).
+        MetadataFold::TelemetrySettingsSet { query_text_since } => {
+            sqlx::query(
+                "UPDATE tenants SET telemetry_query_text_since = $2::timestamptz WHERE id = $1",
+            )
+            .bind(tenant_id)
+            .bind(query_text_since.as_ref().map(EventTime::as_str))
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if query_text_since.is_none() {
+                sqlx::query(
+                    "UPDATE recall_events SET query_text = NULL \
+                     WHERE tenant_id = $1 AND query_text IS NOT NULL",
+                )
+                .bind(tenant_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
         }
         MetadataFold::WorkareaCreated(w) => {
             // The status stored is the record's, the one column every
@@ -3946,6 +4001,30 @@ impl JournalStore for PgStore {
                 .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(value.flatten())
+    }
+
+    async fn tenant_query_text_since(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let value: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT to_char(telemetry_query_text_since AT TIME ZONE 'UTC', \
+                            'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             FROM tenants WHERE id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        value
+            .flatten()
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(backend)
     }
 
     async fn steering_in_force(
