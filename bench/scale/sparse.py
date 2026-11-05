@@ -23,6 +23,7 @@ average is read before and after each run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -63,7 +64,7 @@ def apply_0022(db: str, owner: str, serving: str) -> float:
 
 
 def write_kind2(db: str, owner: str, t: uuid.UUID, model_dir: str, threads: int,
-                cache: Path | None) -> dict:
+                cache: Path | None, reuse: bool = False) -> dict:
     with P.su(db) as c:
         c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
         versions = c.execute(
@@ -77,6 +78,19 @@ def write_kind2(db: str, owner: str, t: uuid.UUID, model_dir: str, threads: int,
     todo = sorted({v[4] for v in versions} - known.keys())
     stats = {"versions": len(versions), "distinct_texts": len({v[4] for v in versions}),
              "encoded_now": len(todo)}
+    if reuse and todo:
+        # --reuse: a version whose text the cache lacks takes the encoding of
+        # a cached text chosen by its text's digest, so the postings' shape
+        # (about 100 per version) and each token's share of the versions are
+        # those of the encoded sample; what this measures is the read's cost,
+        # not the ranking.
+        pool = sorted(known)
+        for text in todo:
+            h = int(hashlib.sha256(text.encode()).hexdigest()[:12], 16)
+            known[text] = known[pool[h % len(pool)]]
+        stats["reused_from"] = len(pool)
+        stats["encoded_now"] = 0
+        todo = []
     if todo:
         la0 = load_average()
         rows, cost = encode(model_dir, threads, "docs", todo)
@@ -142,6 +156,8 @@ def main() -> None:
     ap.add_argument("--model-dir", required=True)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--cache", default=None, help="a JSONL cache of encoded texts")
+    ap.add_argument("--reuse", action="store_true",
+                    help="give an uncached text a cached text's encoding instead of encoding it")
     ap.add_argument("--out", required=True)
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
@@ -161,7 +177,7 @@ def main() -> None:
         result["fill_0021_s"] = round(P.apply_0021(db, owner, serving), 2)
         result["fill_0022_s"] = round(apply_0022(db, owner, serving), 2)
         result["kind2"] = write_kind2(db, owner, t, a.model_dir, a.threads,
-                                      Path(a.cache) if a.cache else None)
+                                      Path(a.cache) if a.cache else None, a.reuse)
         result["space"] = P.sizes(db, owner, t)
         url = f"postgres://{serving}@{P.HOST}:{P.PORT}/{db}"
         items = P.workload(t, tree, a.rows, a.seed)

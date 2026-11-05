@@ -19,6 +19,7 @@ are in [REPORT.md](REPORT.md); the numbers in `results/postings-*.json`.
 | `gen.py`, `seed_*.json` | the scale lane's generator and seeds |
 | `run.py`, `extra.py`, `run_all.sh`, `report.py` | the baseline lane: every candidate approach at 10k, 100k and 1M ([BASELINE.md](BASELINE.md)) |
 | `postings.py` | one run at one scale: database, migrations through 0020, load, 0021's fill timed, space, the query sweep, the access-index variant, own held rows and write cost |
+| `sparse.py` | the learned sparse lane (ADR-0052 d16): migrations through 0022, every version encoded by the real model through `sparse_encode` (oml-rerank's example) and its kind 2 rows written with its state, then `bm25_postings` and `sparse` at k 10, and the two lists `bm25-sparse` reads at depth 100, with the load average beside each run |
 | `../../crates/adapters/oml-pg/examples/search_scale.rs` | the driver: each query through `PgStore::retrieve`, the adapter's own statements, warm, one JSON line per call |
 
 ## The baseline lane
