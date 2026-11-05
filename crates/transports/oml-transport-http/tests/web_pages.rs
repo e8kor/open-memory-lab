@@ -1306,6 +1306,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             value,
             &oml_app::types::SubmitRequest {
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("k-{body}"),
                 claim_key: None,
                 verb: Some(oml_app::types::SubmitVerb::Remember),
@@ -1936,6 +1937,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             value,
             &oml_app::types::SubmitRequest {
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("g-{body}"),
                 claim_key: None,
                 verb: None,

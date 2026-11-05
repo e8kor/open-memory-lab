@@ -29,6 +29,22 @@ implementation milestone where it changes what the repository holds.
 
 ## Unreleased
 
+### 2026-11-05 — Chat memory and origin kinds (ADR-0063, proposed)
+
+What changes for someone using OML: every memory says what kind of source it came from, recall
+can be narrowed to what a person said or to what documents say, and an opted-in agent writes the
+facts a conversation settled into the person's own chat workarea, held until they review them.
+
+- `info.version` is `0.6.0-design`. `SubmitRequest` and `SupersedeRequest` gain `origin`;
+  `RecallRequest` and `GET /v1/memories` gain `origin_kinds`; `MemorySummary` gains `origin`; the
+  `Anchor` schema admits a `chat://` uri and the `oml-turn/1` hasher. No error code is added.
+- `oml_write` gains `origin`, `oml_read` gains `origin_kinds`; the catalog stays three tools.
+- `submission.remember` and `submission.learn` carry `origin`. Migration 0030 adds
+  `memories.origin_kind` and `memories_origin_kind`.
+- The CLI gains `oml chat init`, `--origin-kind` on `oml write` and `oml read`, and the hook verbs
+  `user-prompt`, `stop` and `pre-compact`; the plugin gains their three hooks, the
+  `oml-chat-capture` skill and the `chat_workarea` option.
+
 ### 2026-11-05 — Source anchors and the expected version (ADR-0057, ADR-0049 d13)
 
 What changes for someone using OML: a memory can say where it came from (a repository, the

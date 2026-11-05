@@ -140,6 +140,14 @@ a use case, and a capability is a parameter before it is a tool.
     | `Stop` | `oml hook stop` | When a capture is due, prints `{"decision": "block", "reason": …}`: the instruction to run the `oml:oml-chat-capture` skill over turns `a..b`, naming each turn's anchor, the workarea, the idempotency key prefix and the facts left in the budget. Otherwise prints nothing. |
     | `PreCompact` | `oml hook pre-compact` | Records that the session compacted, so the next `Stop` asks at once; prints nothing and never blocks. |
 
+    The three verbs are one dispatcher, `oml hook <event>`: it reads the event's JSON once, runs
+    every handler registered for that event in order, and merges their answers (the first block
+    decision wins; contexts are joined under one `additionalContext`). Any harness with command
+    hooks calls the same verbs with the same JSON, and the plugin's `hooks.json` holds no logic.
+    The chat handlers are the first rows; repository detection at session start, filling an
+    anchor before `oml_write`, the paths an edit touched, and a stale-claim check at `Stop` are
+    later rows of the same table, not new verbs (operator's direction, 2026-11-05, for v0.6.1).
+
     A capture is due when at least `OML_CHAT_CAPTURE_EVERY` (default 5) turns have ended since
     the last one, or a compaction was recorded and at least one turn is uncaptured. The loop
     guards: nothing when `stop_hook_active` is true, so a capture never triggers another; nothing

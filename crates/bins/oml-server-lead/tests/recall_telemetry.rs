@@ -296,6 +296,7 @@ impl World {
                 &t.writer,
                 &SubmitRequest {
                     anchor: None,
+                    origin: None,
                     idempotency_key: fresh_id().to_string(),
                     claim_key: None,
                     verb: None,

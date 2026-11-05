@@ -179,6 +179,7 @@ async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> Issue
 fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,

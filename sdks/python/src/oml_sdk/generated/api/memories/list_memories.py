@@ -9,6 +9,7 @@ from ...models.error_envelope import ErrorEnvelope
 from ...models.list_memories_kind import ListMemoriesKind
 from ...models.list_memories_state import ListMemoriesState
 from ...models.memory_page import MemoryPage
+from ...models.origin_kind import OriginKind
 from ...types import UNSET, Response, Unset
 
 
@@ -21,6 +22,7 @@ def _get_kwargs(
     own: bool | Unset = False,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
+    origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -67,6 +69,17 @@ def _get_kwargs(
     params["anchor_repo"] = anchor_repo
 
     params["anchor_path_prefix"] = anchor_path_prefix
+
+    json_origin_kinds: list[str] | Unset = UNSET
+    if not isinstance(origin_kinds, Unset):
+        json_origin_kinds = []
+        for componentsschemas_origin_kinds_item_data in origin_kinds:
+            componentsschemas_origin_kinds_item = (
+                componentsschemas_origin_kinds_item_data.value
+            )
+            json_origin_kinds.append(componentsschemas_origin_kinds_item)
+
+    params["origin_kinds"] = json_origin_kinds
 
     json_since: str | Unset = UNSET
     if not isinstance(since, Unset):
@@ -133,6 +146,7 @@ def sync_detailed(
     own: bool | Unset = False,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
+    origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -171,6 +185,8 @@ def sync_detailed(
             whose anchor names it; unanchored rows are left out (d4).
         anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
             bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
+        origin_kinds (list[OriginKind] | Unset): Rows whose origin kind is one of these, combined
+            with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -195,6 +211,7 @@ def sync_detailed(
         own=own,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
+        origin_kinds=origin_kinds,
         since=since,
         until=until,
         limit=limit,
@@ -221,6 +238,7 @@ def sync(
     own: bool | Unset = False,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
+    origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -259,6 +277,8 @@ def sync(
             whose anchor names it; unanchored rows are left out (d4).
         anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
             bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
+        origin_kinds (list[OriginKind] | Unset): Rows whose origin kind is one of these, combined
+            with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -284,6 +304,7 @@ def sync(
         own=own,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
+        origin_kinds=origin_kinds,
         since=since,
         until=until,
         limit=limit,
@@ -304,6 +325,7 @@ async def asyncio_detailed(
     own: bool | Unset = False,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
+    origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -342,6 +364,8 @@ async def asyncio_detailed(
             whose anchor names it; unanchored rows are left out (d4).
         anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
             bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
+        origin_kinds (list[OriginKind] | Unset): Rows whose origin kind is one of these, combined
+            with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -366,6 +390,7 @@ async def asyncio_detailed(
         own=own,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
+        origin_kinds=origin_kinds,
         since=since,
         until=until,
         limit=limit,
@@ -390,6 +415,7 @@ async def asyncio(
     own: bool | Unset = False,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
+    origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -428,6 +454,8 @@ async def asyncio(
             whose anchor names it; unanchored rows are left out (d4).
         anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
             bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
+        origin_kinds (list[OriginKind] | Unset): Rows whose origin kind is one of these, combined
+            with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -454,6 +482,7 @@ async def asyncio(
             own=own,
             anchor_repo=anchor_repo,
             anchor_path_prefix=anchor_path_prefix,
+            origin_kinds=origin_kinds,
             since=since,
             until=until,
             limit=limit,

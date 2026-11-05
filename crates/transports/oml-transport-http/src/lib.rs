@@ -3354,6 +3354,14 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut origin_kinds: Option<Vec<String>> = None;
     let mut seen = HashSet::new();
     for (name, value) in params {
+        // origin_kinds may be sent comma-separated or repeated, as a
+        // generated client explodes a list (ADR-0063 d3).
+        if name == "origin_kinds" {
+            origin_kinds
+                .get_or_insert_with(Vec::new)
+                .extend(value.split(',').map(ToOwned::to_owned));
+            continue;
+        }
         if !seen.insert(name.as_str()) {
             return Err(ApiError::validation(format!(
                 "the query parameter {name} is given more than once"
@@ -3395,10 +3403,6 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             "cursor" => req.cursor = Some(value.clone()),
             "anchor_repo" => anchor_repo = Some(value.as_str()),
             "anchor_path_prefix" => anchor_path_prefix = Some(value.as_str()),
-            // A comma-separated list in the query string (ADR-0063 d3).
-            "origin_kinds" => {
-                origin_kinds = Some(value.split(',').map(ToOwned::to_owned).collect());
-            }
             other => {
                 return Err(ApiError::validation(format!(
                     "unknown query parameter {other:?}"

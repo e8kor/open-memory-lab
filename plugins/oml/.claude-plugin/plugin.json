@@ -22,6 +22,12 @@
       "description": "This agent's own OML key, never an admin key. Stored in the system keychain.",
       "sensitive": true,
       "required": true
+    },
+    "chat_workarea": {
+      "type": "string",
+      "title": "Chat workarea",
+      "description": "Your chat workarea's id, as oml chat init prints it. Leave empty to keep chat capture and per-turn recall off.",
+      "default": ""
     }
   }
 }

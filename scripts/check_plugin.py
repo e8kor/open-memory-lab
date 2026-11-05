@@ -106,6 +106,11 @@ HOOK_EVENTS = {
     ],
     "PostToolUseFailure": [("Bash", 3, None, ["hook", "tool-failure"], "guarded")],
     "SessionEnd": [(None, 1, None, ["hook", "session-end"], "guarded")],
+    # ADR-0063 d6, d10: each above its verb's deadline (2 s for user-prompt,
+    # 1 s for stop and pre-compact), each a no-op until switched on.
+    "UserPromptSubmit": [(None, 3, None, ["hook", "user-prompt"], "guarded")],
+    "Stop": [(None, 2, None, ["hook", "stop"], "guarded")],
+    "PreCompact": [(None, 2, None, ["hook", "pre-compact"], "guarded")],
 }
 # A fenced block, indented or not, and an inline code span outside one.
 FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", re.S | re.M)
@@ -156,6 +161,13 @@ USER_CONFIG = {
         "description": "This agent's own OML key, never an admin key. Stored in the system keychain.",
         "sensitive": True,
         "required": True,
+    },
+    # ADR-0063 d6, d8: where chat capture writes and per-turn recall reads.
+    "chat_workarea": {
+        "type": "string",
+        "title": "Chat workarea",
+        "description": "Your chat workarea's id, as oml chat init prints it. Leave empty to keep chat capture and per-turn recall off.",
+        "default": "",
     },
 }
 # ADR-0040 d2.

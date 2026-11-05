@@ -10,6 +10,7 @@ pub mod chat;
 pub mod client;
 pub mod creds;
 pub mod discovery;
+pub mod events;
 pub mod guardrails;
 pub mod hook;
 pub mod issue;

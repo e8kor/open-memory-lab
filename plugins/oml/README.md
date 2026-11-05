@@ -228,6 +228,31 @@ first. The cost is that the error's words go to your server. A per-session file 
 the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
 
+## Chat memory (opt-in)
+
+*Planned for v0.6.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
+Run `oml chat init` once with your own key, not an agent's: it opens `chat` under your user
+root, the one place your agents write what you tell them, and prints its id. Put that id in the
+plugin's `chat_workarea` setting, or `OML_CHAT_WORKAREA`, and set `OML_CHAT_CAPTURE=1`. Every
+fifth turn (`OML_CHAT_CAPTURE_EVERY`), and at once after a compaction, the Stop hook asks Claude
+to use the `oml-chat-capture` skill: Claude itself picks out the preferences, decisions and
+corrections those turns settled and writes each as one held memory, with the turn it came from.
+No other model reads the conversation and no transcript leaves your machine; the hooks keep a
+fingerprint of each prompt in the session file, never its text. A session asks at most four
+times and for at most 24 facts, and never while a Stop hook is already continuing. The cost is
+the tokens Claude spends on those short continuations, and the last turns of a session that ends
+between two captures are not kept. `OML_CHAT_EXCERPT=1` lets Claude quote up to 280 characters of
+what you said under a fact.
+
+Set `OML_TURN_RECALL=1` and the UserPromptSubmit hook searches with up to eight words of each
+prompt, in your chat workarea and the key's default workarea, and adds at most six memories,
+each marked `[unreviewed]` when no one has reviewed it yet. It waits at most
+`OML_TURN_RECALL_BUDGET_MS` (300 ms by default, at most 1,000) and adds nothing when the server is
+slower; after three slow answers it stops for the session. The cost is that your prompt's words
+go to your server on every turn. Nothing you or Claude writes leaves the chat workarea until you
+review it.
+
 ## Guardrails
 
 *Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*

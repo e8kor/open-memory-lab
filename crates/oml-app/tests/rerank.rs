@@ -144,6 +144,7 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
 fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,

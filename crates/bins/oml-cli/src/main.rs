@@ -1315,19 +1315,23 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "user-prompt",
                 std::time::Duration::from_millis(oml_cli::chat::BUDGET_MAX_MS + 1000),
                 "nothing was recalled",
-                |var, stdin| oml_cli::chat::user_prompt(var, stdin),
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::UserPromptSubmit, var, stdin)
+                },
             ),
             HookCommand::Stop => run_hook(
                 "stop",
                 hook::SESSION_END_DEADLINE,
                 "nothing was captured",
-                |var, stdin| oml_cli::chat::stop(var, stdin),
+                |var, stdin| oml_cli::events::dispatch(oml_cli::events::Event::Stop, var, stdin),
             ),
             HookCommand::PreCompact => run_hook(
                 "pre-compact",
                 hook::SESSION_END_DEADLINE,
                 "the compaction was not recorded",
-                |var, stdin| oml_cli::chat::pre_compact(var, stdin),
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::PreCompact, var, stdin)
+                },
             ),
             HookCommand::SessionEnd => run_hook(
                 "session-end",

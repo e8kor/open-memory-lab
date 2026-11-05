@@ -85,6 +85,7 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
   "derives_from": ["artifact_id…"],
   "anchor": {"repo": "github.com/e8kor/open-memory-lab", "rev": "ca61c9e…", "path": "docs/adr/ADR-0001-the-constitution.md",
              "fragment": "d1", "hash": "sha256:…", "hasher": "oml-md/1"},
+  "origin": {"kind": "doc"},
   "provenance": "agent",
   "simulation_id": null,
   "replaces": null,
@@ -92,6 +93,11 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
   "scan": {"result": "pass", "scanner_version": "…"}
 }
 ```
+
+`origin` is the version's `origin.kind`, as declared, or `manual` when none was sent; it is
+signed here and never inherited by a successor, and a chat anchor's `uri` is
+`chat://<harness>/<session>` with a `turn=<n>` fragment ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1, d2, d4).
+`submission.learn` carries it the same way.
 
 A writer submits a memory; it is held on arrival, scanned in the same call, and visible to no one
 else until ratified. A supersession is a submission at the claim's next unused version whose

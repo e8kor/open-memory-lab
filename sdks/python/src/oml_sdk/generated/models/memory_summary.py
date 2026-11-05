@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+    from ..models.origin import Origin
     from ..models.source_checked import SourceChecked
 
 
@@ -74,6 +75,8 @@ class MemorySummary:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
+            written before ADR-0063 (d1-d3).
     """
 
     artifact_id: str
@@ -103,11 +106,13 @@ class MemorySummary:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    origin: None | Origin | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.anchor import Anchor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
         from ..models.source_checked import SourceChecked
 
         artifact_id = self.artifact_id
@@ -209,6 +214,14 @@ class MemorySummary:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        origin: dict[str, Any] | None | Unset
+        if isinstance(self.origin, Unset):
+            origin = UNSET
+        elif isinstance(self.origin, Origin):
+            origin = self.origin.to_dict()
+        else:
+            origin = self.origin
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -252,6 +265,8 @@ class MemorySummary:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if origin is not UNSET:
+            field_dict["origin"] = origin
 
         return field_dict
 
@@ -260,6 +275,7 @@ class MemorySummary:
         from ..models.anchor import Anchor
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
         from ..models.source_checked import SourceChecked
 
         d = dict(src_dict)
@@ -436,6 +452,23 @@ class MemorySummary:
 
                 attachments.append(attachments_item)
 
+        def _parse_origin(data: object) -> None | Origin | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                origin_type_0 = Origin.from_dict(data)
+
+                return origin_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Origin | Unset, data)
+
+        origin = _parse_origin(d.pop("origin", UNSET))
+
         memory_summary = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -464,6 +497,7 @@ class MemorySummary:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            origin=origin,
         )
 
         memory_summary.additional_properties = d

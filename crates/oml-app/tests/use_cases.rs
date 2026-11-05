@@ -187,6 +187,7 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -226,6 +227,7 @@ fn recall_req(query: &str) -> RecallRequest {
 fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
         anchor: None,
+        origin: None,
         expected_version: 1,
         idempotency_key: idem.to_owned(),
         target_id: target,

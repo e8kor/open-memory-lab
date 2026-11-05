@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.origin_kind import OriginKind
 from ..models.recall_request_kinds_item import RecallRequestKindsItem
 from ..models.recall_request_match import RecallRequestMatch
 from ..models.recall_request_search import RecallRequestSearch
@@ -42,6 +43,8 @@ class RecallRequest:
                 (d4).
             anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor
                 path starts with it, unanchored rows left out (ADR-0057 d4).
+            origin_kinds (list[OriginKind] | Unset): Rows whose origin kind is one of these, combined with every other
+                filter by AND; rows without a kind are left out (ADR-0063 d3).
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
                 filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held;
@@ -69,6 +72,7 @@ class RecallRequest:
     include_text: bool | Unset = True
     anchor_repo: str | Unset = UNSET
     anchor_path_prefix: str | Unset = UNSET
+    origin_kinds: list[OriginKind] | Unset = UNSET
     include_unreviewed: bool | Unset = False
     max_tokens: int | Unset = UNSET
     search: RecallRequestSearch | Unset = UNSET
@@ -98,6 +102,15 @@ class RecallRequest:
         anchor_repo = self.anchor_repo
 
         anchor_path_prefix = self.anchor_path_prefix
+
+        origin_kinds: list[str] | Unset = UNSET
+        if not isinstance(self.origin_kinds, Unset):
+            origin_kinds = []
+            for componentsschemas_origin_kinds_item_data in self.origin_kinds:
+                componentsschemas_origin_kinds_item = (
+                    componentsschemas_origin_kinds_item_data.value
+                )
+                origin_kinds.append(componentsschemas_origin_kinds_item)
 
         include_unreviewed = self.include_unreviewed
 
@@ -134,6 +147,8 @@ class RecallRequest:
             field_dict["anchor_repo"] = anchor_repo
         if anchor_path_prefix is not UNSET:
             field_dict["anchor_path_prefix"] = anchor_path_prefix
+        if origin_kinds is not UNSET:
+            field_dict["origin_kinds"] = origin_kinds
         if include_unreviewed is not UNSET:
             field_dict["include_unreviewed"] = include_unreviewed
         if max_tokens is not UNSET:
@@ -178,6 +193,17 @@ class RecallRequest:
 
         anchor_path_prefix = d.pop("anchor_path_prefix", UNSET)
 
+        _origin_kinds = d.pop("origin_kinds", UNSET)
+        origin_kinds: list[OriginKind] | Unset = UNSET
+        if _origin_kinds is not UNSET:
+            origin_kinds = []
+            for componentsschemas_origin_kinds_item_data in _origin_kinds:
+                componentsschemas_origin_kinds_item = OriginKind(
+                    componentsschemas_origin_kinds_item_data
+                )
+
+                origin_kinds.append(componentsschemas_origin_kinds_item)
+
         include_unreviewed = d.pop("include_unreviewed", UNSET)
 
         max_tokens = d.pop("max_tokens", UNSET)
@@ -211,6 +237,7 @@ class RecallRequest:
             include_text=include_text,
             anchor_repo=anchor_repo,
             anchor_path_prefix=anchor_path_prefix,
+            origin_kinds=origin_kinds,
             include_unreviewed=include_unreviewed,
             max_tokens=max_tokens,
             search=search,

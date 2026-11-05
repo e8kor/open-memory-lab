@@ -17,9 +17,10 @@ use sha2::{Digest as _, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::client::{CallOpts, Client};
+use crate::events::{self, Event, Reply};
 use crate::hook::{
     FRAMING, KEY_CAP, Pair, Quiet, cache_path, cut, cut_bytes, describe, is_secret, one_line,
-    read_object, resolve_pair_for,
+    resolve_pair_for,
 };
 
 /// Asks the agent to capture chat facts at `Stop` (ADR-0063 d6).
@@ -231,12 +232,42 @@ fn bounded(
     }
 }
 
-/// The session id and one string field of a hook's stdin.
-fn read_fields(stdin: &mut dyn Read, event: &str) -> Result<serde_json::Map<String, Value>, Quiet> {
-    read_object(stdin).map_err(|why| Some(format!("stdin is not the {event} JSON object ({why})")))
+type Object = serde_json::Map<String, Value>;
+
+/// `oml hook user-prompt`, through the one dispatcher (ADR-0063 d6).
+///
+/// # Errors
+///
+/// As [`events::dispatch`].
+pub fn user_prompt(
+    var: &dyn Fn(&str) -> Option<String>,
+    stdin: &mut dyn Read,
+) -> Result<String, Quiet> {
+    events::dispatch(Event::UserPromptSubmit, var, stdin)
 }
 
-/// `oml hook user-prompt`: counts the turn and records its hash when
+/// `oml hook stop`, through the one dispatcher (ADR-0063 d6).
+///
+/// # Errors
+///
+/// As [`events::dispatch`].
+pub fn stop(var: &dyn Fn(&str) -> Option<String>, stdin: &mut dyn Read) -> Result<String, Quiet> {
+    events::dispatch(Event::Stop, var, stdin)
+}
+
+/// `oml hook pre-compact`, through the one dispatcher (ADR-0063 d6).
+///
+/// # Errors
+///
+/// As [`events::dispatch`].
+pub fn pre_compact(
+    var: &dyn Fn(&str) -> Option<String>,
+    stdin: &mut dyn Read,
+) -> Result<String, Quiet> {
+    events::dispatch(Event::PreCompact, var, stdin)
+}
+
+/// The chat handler of `UserPromptSubmit`: counts the turn and records its hash when
 /// capture or per-turn recall is on; with per-turn recall, injects what the
 /// prompt's words recall, within the budget (ADR-0063 d6, d10).
 ///
@@ -244,16 +275,15 @@ fn read_fields(stdin: &mut dyn Read, event: &str) -> Result<serde_json::Map<Stri
 ///
 /// `Err(None)` when there is nothing to do; `Err(Some(why))` for a reason
 /// the user may read on stderr. The turn goes on either way.
-pub fn user_prompt(
+pub fn on_user_prompt(
     var: &dyn Fn(&str) -> Option<String>,
-    stdin: &mut dyn Read,
-) -> Result<String, Quiet> {
+    object: &Object,
+) -> Result<Reply, Quiet> {
     let capture = switch(var, CAPTURE_SWITCH).map_err(Some)?;
     let recall = switch(var, TURN_RECALL_SWITCH).map_err(Some)?;
     if !capture && !recall {
         return Err(None);
     }
-    let object = read_fields(stdin, "UserPromptSubmit")?;
     let (Some(Value::String(session_id)), Some(Value::String(prompt))) =
         (object.get("session_id"), object.get("prompt"))
     else {
@@ -272,7 +302,7 @@ pub fn user_prompt(
     if !recall {
         return Err(None);
     }
-    turn_recall(var, prompt, &path, &mut cache)
+    turn_recall(var, prompt, &path, &mut cache).map(Reply::Context)
 }
 
 /// The per-turn recall (d10): two recalls under one deadline, nothing
@@ -368,13 +398,7 @@ fn turn_recall(
         return Err(None);
     }
     let redact = |text: &str| text.replace(key.as_str(), "[OML_API_KEY]");
-    Ok(json!({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": render_turn(&fresh, &redact),
-        }
-    })
-    .to_string())
+    Ok(render_turn(&fresh, &redact))
 }
 
 fn miss(cache: &mut ChatCache, path: &Path, budget: Duration) -> Result<String, Quiet> {
@@ -475,7 +499,7 @@ const PROMPT_STOP_WORDS: &[&str] = &[
     "it's", "does", "did", "done", "one", "two", "yes", "okay", "thanks", "thank", "see",
 ];
 
-/// `oml hook stop`: when a capture is due, the `Stop` document that asks
+/// The chat handler of `Stop`: when a capture is due, the block reason that asks
 /// the running agent to write what the uncaptured turns established
 /// (ADR-0063 d6). Never when `stop_hook_active`, never past the session's
 /// budgets, and the cache records the request before it is printed.
@@ -483,7 +507,7 @@ const PROMPT_STOP_WORDS: &[&str] = &[
 /// # Errors
 ///
 /// `Err(None)` when nothing is due; `Err(Some(why))` for a reason on stderr.
-pub fn stop(var: &dyn Fn(&str) -> Option<String>, stdin: &mut dyn Read) -> Result<String, Quiet> {
+pub fn on_stop(var: &dyn Fn(&str) -> Option<String>, object: &Object) -> Result<Reply, Quiet> {
     if !switch(var, CAPTURE_SWITCH).map_err(Some)? {
         return Err(None);
     }
@@ -493,7 +517,6 @@ pub fn stop(var: &dyn Fn(&str) -> Option<String>, stdin: &mut dyn Read) -> Resul
         ))
     })?;
     let every = bounded(var, EVERY_VAR, EVERY_DEFAULT, EVERY_MAX).map_err(Some)?;
-    let object = read_fields(stdin, "Stop")?;
     if object.get("stop_hook_active") == Some(&Value::Bool(true)) {
         return Err(None);
     }
@@ -530,7 +553,7 @@ pub fn stop(var: &dyn Fn(&str) -> Option<String>, stdin: &mut dyn Read) -> Resul
     cache
         .store(&path)
         .map_err(|e| Some(format!("the chat cache could not be written: {e}")))?;
-    Ok(json!({ "decision": "block", "reason": reason }).to_string())
+    Ok(Reply::Block(reason))
 }
 
 /// What a capture request names.
@@ -585,20 +608,19 @@ pub fn capture_reason(r: &CaptureRequest<'_>) -> String {
     lines.join("\n")
 }
 
-/// `oml hook pre-compact`: records that the session compacted, so the next
+/// The chat handler of `PreCompact`: records that the session compacted, so the next
 /// `Stop` asks at once; prints nothing and never blocks (ADR-0063 d6).
 ///
 /// # Errors
 ///
 /// `Err(None)` always: there is nothing to print.
-pub fn pre_compact(
+pub fn on_pre_compact(
     var: &dyn Fn(&str) -> Option<String>,
-    stdin: &mut dyn Read,
-) -> Result<String, Quiet> {
+    object: &Object,
+) -> Result<Reply, Quiet> {
     if !switch(var, CAPTURE_SWITCH).map_err(Some)? {
         return Err(None);
     }
-    let object = read_fields(stdin, "PreCompact")?;
     let Some(Value::String(session_id)) = object.get("session_id") else {
         return Err(None);
     };
@@ -608,7 +630,7 @@ pub fn pre_compact(
     cache
         .store(&path)
         .map_err(|e| Some(format!("the chat cache could not be written: {e}")))?;
-    Err(None)
+    Ok(Reply::Nothing)
 }
 
 /// Deletes a session's chat cache, for `oml hook session-end`.
