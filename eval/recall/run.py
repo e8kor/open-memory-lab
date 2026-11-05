@@ -191,6 +191,9 @@ def main():
             "budget": res.get("budget"),
             "latency_ms": round(ms, 2),
             "fallback": res.get("search", {}).get("fallback"),
+            "rerank": res.get("search", {}).get("rerank"),
+            "rerank_scores": [(h.get("matched") or {}).get("rerank") for h in res.get("hits", [])],
+            "below_floor": res.get("search", {}).get("below_floor"),
         }
     summary = metrics.aggregate(per_query, queries)
     if a.name:

@@ -8365,9 +8365,14 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     assert_eq!(named["search"]["access"], "scan", "{named}");
     assert_eq!(
         named["hits"][0]["matched"],
-        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"]}),
+        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"], "rerank": null, "rank_before": null}),
         "{named}"
     );
+    // A pipeline that does not rerank says so, and applies no floor
+    // (ADR-0053 d5, d6).
+    assert_eq!(named["search"]["rerank"], Value::Null, "{named}");
+    assert_eq!(named["search"]["floor"], Value::Null, "{named}");
+    assert_eq!(named["search"]["below_floor"], 0, "{named}");
 
     drop_db(&rig.db_name).await;
 }
@@ -8579,10 +8584,113 @@ async fn a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         Some(named),
+        None,
     )
     .await;
     let err = refused.err().expect("refused without pg_trgm");
     assert!(err.contains("pg_trgm"), "{err}");
+    drop_db(&db).await;
+}
+
+/// The reranker double for the served rerank: 0.9 for a passage naming a
+/// canary, 0.1 for every other.
+fn prefers_canary(_query: &str, passage: &str) -> f32 {
+    if passage.contains("canary") { 0.9 } else { 0.1 }
+}
+
+/// A lead serving `bm25-rerank` over the test double with `floor`, its
+/// first tenant claimed: the router, the database, and the reader's and
+/// writer's keys with a promoted corpus.
+async fn rerank_rig(floor: f32) -> Option<(Router, String, String)> {
+    let db = fresh_database().await?;
+    let store = serving_store(&db).await;
+    let search = oml_app::search::SearchConfig::new(
+        &[
+            oml_app::search::Pipeline::Bm25,
+            oml_app::search::Pipeline::Bm25Rerank,
+        ],
+        oml_app::search::Pipeline::Bm25Rerank,
+    )
+    .expect("served")
+    .with_rerank(oml_app::search::RerankPolicy::new(10, Some(floor)).expect("a policy"));
+    let started = oml_server_lead::start_lead_with(
+        &store,
+        SigningKey::from_bytes(&OsIds.new_secret()),
+        None,
+        oml_fetch::PinnedFetcher,
+        oml_transport_http::traffic::Traffic::default(),
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        Some(search),
+        Some(Arc::new(oml_app::doubles::FakeReranker::scoring(
+            prefers_canary,
+        ))),
+    )
+    .await
+    .expect("starts with a reranker");
+    let router = started.router;
+    let (status, _, body) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({
+            "enrollment_token": started.enrollment_token.expect("an empty deployment"),
+            "name": "root-admin",
+            "tenant_name": "test-tenant",
+            "admin_principal": "platform/admin",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let admin = body["value"].as_str().expect("value").to_owned();
+    let root = Uuid::parse_str(body["root_workarea_id"].as_str().expect("root")).expect("uuid");
+    let crew = create_workarea(&router, &admin, root, "metals-crew").await;
+    let (agent, dreamer, reader) = supersession_keys(&router, &admin, crew).await;
+    for (i, body) in [
+        "We deploy the api service with a canary first",
+        "Billing runs nightly",
+    ]
+    .iter()
+    .enumerate()
+    {
+        promoted_over_http(&router, &agent, &dreamer, &format!("rr-{i}"), body).await;
+    }
+    Some((router, reader, db))
+}
+
+/// The served answer prints each relevance and the floor as the numbers
+/// they are, not as their 32-bit float's widening, in the recall and on
+/// `/readyz` (ADR-0053 d7, d9).
+#[tokio::test]
+async fn a_reranked_answer_prints_its_relevances_and_floor_as_set() {
+    let Some((router, reader, db)) = rerank_rig(0.005).await else {
+        return;
+    };
+    let recall = recall_ok(&router, &reader, json!({"query": "deploy canary nightly"})).await;
+    assert_eq!(recall["search"]["rerank"], "applied", "{recall}");
+    assert_eq!(recall["search"]["floor"], json!(0.005), "{recall}");
+    assert_eq!(
+        recall["hits"][0]["matched"]["rerank"],
+        json!(0.9),
+        "{recall}"
+    );
+    assert_eq!(recall["hits"][0]["score"], json!(0.9), "{recall}");
+    let (_, _, ready) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(ready["search"]["rerank"]["floor"], json!(0.005), "{ready}");
+    drop_db(&db).await;
+}
+
+/// An answer the floor emptied says "nothing relevant", so it offers no
+/// spellings: its words matched, the rows were withheld (ADR-0053 d6).
+#[tokio::test]
+async fn an_answer_the_floor_emptied_offers_no_spellings() {
+    let Some((router, reader, db)) = rerank_rig(0.95).await else {
+        return;
+    };
+    let recall = recall_ok(&router, &reader, json!({"query": "deplyo nightly"})).await;
+    assert_eq!(recall["hits"], json!([]), "{recall}");
+    assert_eq!(recall["search"]["below_floor"], 1, "{recall}");
+    assert_eq!(recall["search"]["did_you_mean"], json!([]), "{recall}");
     drop_db(&db).await;
 }
 
@@ -8612,6 +8720,7 @@ async fn readyz_names_no_recall_counts() {
         json!({
             "enabled": ["keyword-any", "bm25", "bm25-postings"],
             "default": "bm25-postings",
+            "rerank": null,
         }),
         "{ready}"
     );

@@ -222,6 +222,11 @@ pub struct MemStore {
     before_head_read: Arc<Mutex<Option<Interleaved>>>,
     /// The commit landed just before the next head read, then forgotten.
     before_next_head: Arc<Mutex<Option<HeadInterleave>>>,
+    /// Whether the `bm25` kind is answered with the any-word list, so the
+    /// core's stages after the first (the reranker's, ADR-0053) can be
+    /// tested over this store; never a law of `bm25`, which the in-memory
+    /// store does not serve (ADR-0049 d7).
+    bm25_as_any_word: bool,
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -251,6 +256,17 @@ impl MemStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The store that answers the `bm25` retriever with its any-word list:
+    /// a first stage for the core's later stages to be tested over, never a
+    /// ranking that claims to be BM25 (ADR-0053 d10).
+    #[must_use]
+    pub fn answering_bm25_with_any_word(self) -> Self {
+        Self {
+            bm25_as_any_word: true,
+            ..self
+        }
     }
 
     /// Refuses the next commit of an `event_type` event with
@@ -1755,7 +1771,15 @@ impl Retriever for MemStore {
     /// trigrams, so a composition over it serves `keyword-all` and
     /// `keyword-any` alone (ADR-0049 d7).
     fn retrievers(&self) -> Vec<RetrieverKind> {
-        vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+        if self.bm25_as_any_word {
+            vec![
+                RetrieverKind::KeywordAll,
+                RetrieverKind::KeywordAny,
+                RetrieverKind::Bm25,
+            ]
+        } else {
+            vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+        }
     }
 
     async fn retrieve(
@@ -1794,6 +1818,11 @@ impl Retriever for MemStore {
                     && own.author_key_ids.contains(&m.author_key_id)
                     && own.nodes.contains(&m.workarea_id)
             })
+        };
+        let kind = if kind == RetrieverKind::Bm25 {
+            RetrieverKind::KeywordAny
+        } else {
+            kind
         };
         Ok(keyword_ranked(
             state.memories.values().filter(admitted),
@@ -3797,5 +3826,95 @@ impl Scanner for MarkerScanner {
         } else {
             ScanOutcome::Pass
         }
+    }
+}
+
+/// The reranker double (ADR-0053 d10): by default a passage's relevance is
+/// the share of the query's distinct words it holds, lower-cased
+/// ([`FakeReranker::relevance`]), so a test can predict the order without a
+/// model; [`FakeReranker::scoring`] takes another function. It records every
+/// call's passages, so a test can assert what the core handed it. Armed
+/// with [`FakeReranker::failing`] it answers that error instead.
+#[derive(Debug)]
+pub struct FakeReranker {
+    relevance: fn(&str, &str) -> f32,
+    fail: Option<crate::ports::RerankError>,
+    seen: Mutex<Vec<Vec<String>>>,
+}
+
+impl Default for FakeReranker {
+    fn default() -> Self {
+        Self::scoring(Self::relevance)
+    }
+}
+
+impl FakeReranker {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The double whose relevance of a passage to a query is `relevance`.
+    #[must_use]
+    pub fn scoring(relevance: fn(&str, &str) -> f32) -> Self {
+        Self {
+            relevance,
+            fail: None,
+            seen: Mutex::default(),
+        }
+    }
+
+    /// The double that answers every call with `error`.
+    #[must_use]
+    pub fn failing(error: crate::ports::RerankError) -> Self {
+        Self {
+            fail: Some(error),
+            ..Self::default()
+        }
+    }
+
+    /// Every call's passages, in call order.
+    #[must_use]
+    pub fn seen(&self) -> Vec<Vec<String>> {
+        self.seen.lock().expect("seen lock").clone()
+    }
+
+    /// The double's relevance of `passage` to `query`.
+    #[must_use]
+    pub fn relevance(query: &str, passage: &str) -> f32 {
+        let words = |t: &str| -> BTreeSet<String> {
+            t.split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(str::to_lowercase)
+                .collect()
+        };
+        let q = words(query);
+        if q.is_empty() {
+            return 0.0;
+        }
+        let p = words(passage);
+        let held = q.intersection(&p).count();
+        #[allow(clippy::cast_precision_loss, reason = "word counts are small")]
+        let share = held as f32 / q.len() as f32;
+        share
+    }
+}
+
+impl crate::ports::Reranker for FakeReranker {
+    fn model(&self) -> &str {
+        "fake-word-share"
+    }
+
+    fn score(&self, query: String, passages: Vec<String>) -> crate::ports::RerankFuture<'_> {
+        Box::pin(async move {
+            self.seen.lock().expect("seen lock").push(passages.clone());
+            if let Some(error) = &self.fail {
+                return Err(error.clone());
+            }
+            Ok(passages
+                .iter()
+                .map(|p| (self.relevance)(&query, p))
+                .collect())
+        })
     }
 }

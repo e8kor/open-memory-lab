@@ -23,6 +23,8 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 | `run.sh` | boot, load, run every pipeline and print the tables, in one command; the nightly workflow runs it |
 | `reference.py` | ranks the same memories offline with [bm25s](https://github.com/xhluca/bm25s) (MIT), to split a gap to a published number between the mapping and the served implementation |
 | `export.py` | writes every result in the common schema below, and converts `eval/recall`'s served results too |
+| `rerank_probe.py` | reorders a served run's first-stage lists offline with each cross-encoder through onnxruntime, at several depths, to choose a model and a depth before one is served (ADR-0053 d4) |
+| `rerank_floor.py` | sweeps a relevance floor over runs made with none: unanswerable queries emptied against answerable ones lost, and LoCoMo's categories (ADR-0053 d6) |
 | `prune_sweep.py` | asks every query through the PostgreSQL adapter's own `retrieve` (`crates/adapters/oml-pg/examples/search_scale.rs`) for `bm25` and for `bm25-postings` at several pairs of prune constants, and scores each list: the run that set ADR-0052's constants (`results/prune-sweep.json`) |
 | `requirements.txt` | the Python packages, pinned |
 | `results/<suite>/<method>.json` | the committed results, one file per suite and method, schema `oml-bench/1` |
@@ -57,6 +59,16 @@ python eval/bench/bench.py report .tmp/bench > eval/bench/results/tables.md
 
 `boot.sh` drops its database when it is stopped. `run --limit N` asks N queries drawn with
 the fixed `--seed` (default 20261104); the corpus is always loaded whole.
+
+### The reranking pipeline
+
+`bm25-rerank` needs the reranker's files, which are never committed: fetch them once with
+`scripts/fetch_rerank_model.sh <dir>`, which checks the pinned digests, and boot with
+`BENCH_PIPELINES="bm25 bm25-rerank" OML_SEARCH__RERANK__MODEL_DIR=<dir>`; the lead reads every
+`OML_SEARCH__RERANK__*` setting from the environment it inherits. Raise
+`OML_SEARCH__RERANK__TIMEOUT_MS` and `OML_SEARCH__RERANK__MAX_CONCURRENT` for a quality run, so
+no rerank is skipped, and keep the defaults for a latency run. `run --workers N` asks N queries
+at once. The raw rows record each recall's `rerank` outcome and each hit's relevance.
 
 ## What is measured
 

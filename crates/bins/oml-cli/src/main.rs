@@ -3727,6 +3727,37 @@ fn search_doctor(
         .filter_map(Value::as_str)
         .collect();
     let mut lines = vec![format!("default {default}; enabled {}", enabled.join(", "))];
+    // The reranker the reranking pipelines call, and the stages it skipped
+    // since the lead started, by reason (ADR-0053 d9).
+    let rerank = &body["search"]["rerank"];
+    if let Some(model) = rerank["model"].as_str() {
+        let floor = rerank["floor"]
+            .as_f64()
+            .map_or_else(|| "off".to_owned(), |f| f.to_string());
+        lines.push(format!(
+            "rerank {model}, depth {}, floor {floor}",
+            rerank["depth"].as_u64().unwrap_or(0)
+        ));
+        let count = |reason: &str| rerank["skipped"][reason].as_u64().unwrap_or(0);
+        let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
+        if busy + timeout > 0 {
+            let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
+                .into_iter()
+                .filter(|(_, n)| *n > 0)
+                .map(|(reason, n)| format!("{n} {reason}"))
+                .collect();
+            lines.push(format!(
+                "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
+                busy + timeout,
+                reasons.join(", ")
+            ));
+        }
+        if failed > 0 {
+            lines.push(format!(
+                "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
+            ));
+        }
+    }
     if default == "keyword-all" {
         lines.push(
             "warn search: the default is keyword-all, every word exactly, kept for comparison; set search.default"
@@ -3910,4 +3941,63 @@ fn refusal(e: &CliError) -> String {
 
 fn verdict(ok: bool) -> &'static str {
     if ok { "ok" } else { "fail" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_search_doctor_names_the_reranker_and_warns_on_skipped_reranks() {
+        let ready = (
+            200,
+            json!({"search": {
+                "enabled": ["bm25", "bm25-rerank"], "default": "bm25",
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null,
+                           "skipped": {"busy": 3, "timeout": 0, "failed": 1}},
+            }}),
+        );
+        let lines = search_doctor(Some(&ready), None, None);
+        assert_eq!(
+            lines[1],
+            "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
+        );
+        assert!(
+            lines[2].starts_with("warn search_rerank: 3 reranks skipped since start (3 busy)"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].contains("search.rerank.max_concurrent"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].starts_with("warn search_rerank_failed: 1 rerank failed since start"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].contains("rerank_failed") && !lines[3].contains("max_concurrent"),
+            "a failure names the log event, not the cap: {lines:?}"
+        );
+        let floored = (
+            200,
+            json!({"search": {
+                "enabled": ["bm25-rerank"], "default": "bm25-rerank",
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005,
+                           "skipped": {"busy": 0, "timeout": 0, "failed": 0}},
+            }}),
+        );
+        assert_eq!(
+            search_doctor(Some(&floored), None, None)[1],
+            "rerank ms-marco-MiniLM-L6-v2, depth 10, floor 0.005"
+        );
+        let quiet = (
+            200,
+            json!({"search": {"enabled": ["bm25"], "default": "bm25", "rerank": null}}),
+        );
+        assert_eq!(
+            search_doctor(Some(&quiet), None, None).len(),
+            1,
+            "no reranker, no line"
+        );
+    }
 }

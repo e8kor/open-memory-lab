@@ -68,6 +68,9 @@ struct Observed {
     workarea_id: Option<Uuid>,
     store: Duration,
     store_calls: u64,
+    /// What a recall's reranking stage did, and why when it was skipped
+    /// (ADR-0053 d9).
+    rerank: Option<(&'static str, Option<&'static str>)>,
     /// The search pipeline a recall ran, whether `match: all` fell back,
     /// and whether postings or a scan answered (ADR-0049 d4; ADR-0052 d11).
     search: Option<(&'static str, bool, &'static str)>,
@@ -157,6 +160,12 @@ pub fn search(pipeline: &'static str, fallback: bool, access: &'static str) {
     in_scope(|scope| scope.update(|o, _| o.search = Some((pipeline, fallback, access))));
 }
 
+/// The request's recall reranked (`applied`) or served the first stage's
+/// order (`skipped`, with the reason) (ADR-0053 d9).
+pub fn rerank(outcome: &'static str, reason: Option<&'static str>) {
+    in_scope(|scope| scope.update(|o, _| o.rerank = Some((outcome, reason))));
+}
+
 /// One call into the store port took `elapsed`: summed into the request's
 /// `store_ms` and counted in `store_calls` (ADR-0042 d14). Outside a
 /// request, as the startup and the hourly sweep are, nothing is recorded.
@@ -185,6 +194,12 @@ impl RequestObserver for ScopeObserver {
 
     fn search(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
         search(pipeline, fallback, access);
+    }
+
+    fn rerank(&self, outcome: Option<&'static str>, reason: Option<&'static str>) {
+        if let Some(outcome) = outcome {
+            rerank(outcome, reason);
+        }
     }
 }
 
@@ -442,6 +457,8 @@ pub(crate) async fn layer(
             .search
             .and_then(|(_, fallback, _)| fallback.then_some(true)),
         search_access: observed.search.map(|(_, _, access)| access),
+        search_rerank: observed.rerank.map(|(outcome, _)| outcome),
+        search_rerank_reason: observed.rerank.and_then(|(_, reason)| reason),
     };
     if status.is_server_error() {
         line.write_error();
@@ -458,6 +475,9 @@ pub(crate) async fn layer(
     );
     if let Some((pipeline, fallback, access)) = observed.search {
         traffic.metrics.recall(pipeline, fallback, access);
+    }
+    if let Some((outcome, reason)) = observed.rerank {
+        traffic.metrics.rerank(outcome, reason);
     }
     response
 }
@@ -482,6 +502,9 @@ struct Line<'a> {
     /// The search pipeline a recall ran (ADR-0049 d4).
     search: Option<&'static str>,
     search_fallback: Option<bool>,
+    /// The reranking stage's outcome and its reason (ADR-0053 d9).
+    search_rerank: Option<&'static str>,
+    search_rerank_reason: Option<&'static str>,
     /// `postings` or `scan` (ADR-0052 d11).
     search_access: Option<&'static str>,
 }
@@ -533,6 +556,8 @@ macro_rules! write_line {
             web_provider = web.and_then(|w| w.provider),
             search = line.search,
             search_fallback = line.search_fallback,
+            search_rerank = line.search_rerank,
+            search_rerank_reason = line.search_rerank_reason,
             search_access = line.search_access,
         );
     }};

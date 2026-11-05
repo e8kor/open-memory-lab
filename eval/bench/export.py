@@ -28,7 +28,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from adapters import PUBLISHED_BM25  # noqa: E402
+from adapters import ADAPTERS, PUBLISHED_BM25  # noqa: E402
 
 SUITES = {"scifact": "beir-scifact", "nfcorpus": "beir-nfcorpus", "arguana": "beir-arguana",
           "locomo": "locomo", "scifact-x10": "beir-scifact-x10"}
@@ -131,6 +131,8 @@ def from_bench(r, a):
                 "Snowball stems), not a served path; " + note)
     limit = r.get("limit")
     total = a.full_queries.get(ds) if limit else None
+    if limit and not total:
+        total = len(ADAPTERS[ds]().load(a.cache, r["seed"], None).queries)
     return SUITES[ds], METHOD_NAMES.get(method, method), {
         "schema": "oml-bench/1",
         "suite": SUITES[ds],
@@ -162,7 +164,9 @@ def from_recall(r, a, version, commit, date):
     metrics = {k: metrics[k] for k in ["ndcg@10", "recall@10", "recall@100", "mrr@10",
                                        "success@1", "success@5", "zero_result_rate"]}
     per_category = {c: {names[k]: r4(row[k]) for k in names} | {"n_queries": row["n"]}
-                    for c, row in s.items() if c != "overall"}
+                    for c, row in s.items() if c not in ("overall", "unanswerable")}
+    # Data version 2's unanswerable queries are scored apart (ADR-0053 d6).
+    unanswerable = s.get("unanswerable")
     return "recall-synthetic", r["pipeline"], {
         "schema": "oml-bench/1",
         "suite": "recall-synthetic",
@@ -180,7 +184,10 @@ def from_recall(r, a, version, commit, date):
         "latency_ms": latency(r["per_query"]),
         "reference": None,
         "notes": ("One model wrote corpus, queries and labels; success counts grade 2, nDCG gains "
-                  "2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured."),
+                  "2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured."
+                  + (f" Of {unanswerable['n']} unanswerable queries, kept out of these metrics, "
+                     f"{unanswerable['empty']:.3f} were answered with no hit."
+                     if unanswerable else "")),
     }
 
 
@@ -211,7 +218,7 @@ def main():
         suite, method, doc = from_bench(r, a)
         written.append((suite, method, doc))
     recall = Path(a.recall)
-    version = json.loads((recall.parent / "corpus.json").read_text())["version"]
+    version = json.loads((recall.parent / "queries.json").read_text())["version"]
     for p in sorted(recall.glob("served_*.json")):
         rel = p.relative_to(HERE.parent.parent)
         log = subprocess.run(["git", "log", "-1", "--format=%h %ad", "--date=short", "--",

@@ -9,6 +9,8 @@ Run by .github/workflows/ci.yml (job recall-eval-data). Fails when:
   fewer than 5 queries;
 - a query labels a memory id the corpus does not hold, labels a grade other
   than 1 or 2, or has no grade-2 memory (success@k would be undefined);
+- an `unanswerable` query labels any memory, or there are fewer than 20 of
+  them (data version 2; ADR-0053 d6);
 - metrics.py scores a perfect ranking below 1.0 or an empty one above 0.0.
 """
 
@@ -33,6 +35,12 @@ def main():
     cats = Counter()
     for q in queries:
         cats[q["category"]] += 1
+        if q["category"] == metrics.UNANSWERABLE:
+            if q["relevant"]:
+                errors.append(f"{q['id']}: unanswerable, yet labels {sorted(q['relevant'])}")
+            if not q["query"].strip():
+                errors.append(f"{q['id']}: empty query")
+            continue
         if q["category"] not in metrics.CATEGORIES:
             errors.append(f"{q['id']}: unknown category {q['category']}")
         if not q["query"].strip():
@@ -51,11 +59,13 @@ def main():
         if max(none[k] for k in ("s1", "s5", "r10", "mrr", "ndcg10")) > 0.0:
             errors.append(f"{q['id']}: an empty ranking scores above 0.0: {none}")
     errors += [f"category {c} has {cats[c]} queries, fewer than 5" for c in metrics.CATEGORIES if cats[c] < 5]
+    if cats[metrics.UNANSWERABLE] < 20:
+        errors.append(f"{cats[metrics.UNANSWERABLE]} unanswerable queries, fewer than 20")
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
     print(f"recall eval data: {len(memories)} memories, {len(queries)} queries, "
-          f"{len(cats)} categories, every label resolves")
+          f"{len(cats)} categories ({cats[metrics.UNANSWERABLE]} unanswerable), every label resolves")
     return 0
 
 

@@ -15,6 +15,9 @@ it against its gate, taken from ADR-0048 d1:
 - keyword-any: success@5 >= 0.70 and a zero-result rate <= 0.05.
 - bm25: success@5 >= 0.86 and success@1 >= 0.67.
 - bm25-trigram: success@5 >= 0.92, and partial and typo success@5 >= 0.91.
+- bm25-rerank: success@1 >= 0.87 and success@5 >= 0.94, above bm25's
+  measured 0.835 and 0.934 (ADR-0053 d9), and no reranked query skipped:
+  a skipped rerank serves bm25's order, so its numbers would gate bm25.
 - bm25-postings: bm25's gate (ADR-0052 d9).
 
 Every pipeline must also keep each category's success@5 within one query
@@ -39,6 +42,7 @@ GATES = {
         ("partial", "s5", ">=", 0.91),
         ("typo", "s5", ">=", 0.91),
     ],
+    "bm25-rerank": [("overall", "s1", ">=", 0.87), ("overall", "s5", ">=", 0.94)],
 }
 # One query of a category of 11, plus the 0.001 the summaries' rounding to
 # three decimals can take from a difference (metrics.py): 10/11 is stored as
@@ -70,6 +74,10 @@ def groups(ranked, scores, k):
 
 def check(pipeline, result, committed):
     problems = []
+    if pipeline == "bm25-rerank":
+        skipped = sum(1 for row in result["per_query"].values() if row.get("rerank") == "skipped")
+        if skipped:
+            problems.append(f"{skipped} queries skipped the rerank")
     summary = result["summary"]
     for scope, metric, op, bound in GATES.get(pipeline, []):
         value = summary[scope][metric]
@@ -78,7 +86,7 @@ def check(pipeline, result, committed):
             problems.append(f"{scope} {metric} {value} is not {op} {bound}")
     if committed is not None:
         for category, now in summary.items():
-            if category == "overall" or category not in committed["summary"]:
+            if category in ("overall", "unanswerable") or category not in committed["summary"]:
                 continue
             before = committed["summary"][category]["s5"]
             if now["s5"] < before - ONE_QUERY:
@@ -95,7 +103,7 @@ def main():
     results, committed_dir = Path(a.results), Path(a.committed)
     failed = False
     seen = []
-    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings"]:
+    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank"]:
         path = results / file_of(pipeline)
         if not path.exists():
             continue
@@ -104,8 +112,9 @@ def main():
         if pipeline == "keyword-all":
             reference = json.loads((committed_dir / "oml.json").read_text())
             k = result["params"]["k"]
+            # Data version 2's unanswerable queries postdate v0.5.0's lists.
             differ = [q for q, row in result["per_query"].items()
-                      if groups(row["ranked"], row["scores_raw"], k)
+                      if q in reference["per_query"] and groups(row["ranked"], row["scores_raw"], k)
                       != groups(reference["per_query"][q]["ranked"],
                                 reference["per_query"][q]["scores_raw"], k)]
             if differ:

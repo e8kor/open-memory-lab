@@ -64,8 +64,8 @@ use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, ScanOutcome, Scanner,
-    Signer, StoreError, SubjectRow, TailEvent,
+    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
+    Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
@@ -82,17 +82,17 @@ use crate::types::{
     ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
     OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
     RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow,
-    TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows,
-    Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    RerankOutcome, ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord, WorkareaStatusView,
 };
 
 use crate::search::{
     Access, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
-    OwnHeldScope, Pipeline, RetrievalQuery, SearchConfig, fuse, pipeline_access, pruned_words,
-    query_terms,
+    OwnHeldScope, Pipeline, RetrievalQuery, SearchConfig, apply_floor, fuse, pipeline_access,
+    pruned_words, query_terms, rerank_order,
 };
 
 /// One pipeline's answer before the cuts: the fused candidates, the query's
@@ -173,6 +173,13 @@ pub struct App<J, S, C, I, Sc> {
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
+    /// The cross-encoder the reranking pipelines call; `None` where the
+    /// deployment loads none, and then no reranking pipeline is served
+    /// (ADR-0053 d2, d8).
+    reranker: Option<Arc<dyn Reranker>>,
+    /// Reranking stages skipped since the process started, by reason:
+    /// busy, timeout, failed; what doctor warns on (ADR-0053 d9).
+    rerank_skips: [AtomicU64; 3],
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -987,7 +994,35 @@ where
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
             search: SearchConfig::default(),
+            reranker: None,
+            rerank_skips: Default::default(),
         }
+    }
+
+    /// Reranking stages skipped since the process started: busy, timeout,
+    /// failed (ADR-0053 d9).
+    #[must_use]
+    pub fn rerank_skipped(&self) -> [u64; 3] {
+        self.rerank_skips
+            .each_ref()
+            .map(|n| n.load(Ordering::Relaxed))
+    }
+
+    /// The app whose reranking pipelines call `reranker` (ADR-0053 d2). The
+    /// composition refuses to serve a reranking pipeline without one
+    /// (`SearchConfig::require_reranker`).
+    #[must_use]
+    pub fn with_reranker(self, reranker: Arc<dyn Reranker>) -> Self {
+        Self {
+            reranker: Some(reranker),
+            ..self
+        }
+    }
+
+    /// The loaded reranker's model name, for doctor and `/readyz`.
+    #[must_use]
+    pub fn reranker_model(&self) -> Option<&str> {
+        self.reranker.as_deref().map(Reranker::model)
     }
 
     /// The app whose workarea briefs are cut to `max_tokens`, the
@@ -4401,32 +4436,150 @@ where
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
         self.observer
             .search(pipeline.as_str(), fallback, ran.access.as_str());
-        // The k cut, then the budget cut over the counts `body_bytes` gives
+        // R3 defense in depth: the gate changed visibility. Nothing
+        // unpromoted or unreadable leaves the application layer except the
+        // caller's own held rows when it asked for them; a replaced version
+        // or any version of a retired claim is promoted history, never a
+        // hit; a retirement version is never in force (ADR-0025 d4, d8).
+        // The reranker is handed only rows this admits (ADR-0053 d2).
+        let admits = |m: &MemoryRecord| {
+            let admitted = match m.status {
+                MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
+                MemoryStatus::Held => {
+                    req.include_unreviewed
+                        && m.author_key_id == key.key_id
+                        && readable.contains(&m.workarea_id)
+                }
+                _ => false,
+            };
+            admitted && !m.retirement && kinds.contains(&m.kind)
+        };
+        // The reranking stage, after fusion and before the cuts: the head
+        // of the first stage's list, hydrated and admitted by the core,
+        // reordered by the reranker's relevance; a reranker that is busy,
+        // late or failing leaves the first stage's order and says so
+        // (ADR-0053 d1, d5).
+        let mut rows: BTreeMap<Uuid, MemoryRecord> = BTreeMap::new();
+        let mut rerank = RerankOutcome::NotRun;
+        if pipeline.reranks()
+            && let Some(reranker) = self.reranker.as_deref()
+            && !candidates.is_empty()
+        {
+            let depth = self.search.rerank().depth.min(candidates.len());
+            let head_ids: Vec<Uuid> = candidates[..depth].iter().map(|c| c.memory_id).collect();
+            rows.extend(
+                self.journal
+                    .memories(key.tenant_id, &head_ids)
+                    .await?
+                    .into_iter()
+                    .filter(|m| admits(m))
+                    .map(|m| (m.memory_id, m)),
+            );
+            let tail = candidates.split_off(depth);
+            let head: Vec<_> = candidates
+                .into_iter()
+                .filter(|c| rows.contains_key(&c.memory_id))
+                .collect();
+            let passages: Vec<String> = head
+                .iter()
+                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.body.clone()))
+                .collect();
+            let scored = reranker.score(query.clone(), passages).await;
+            let scored = match scored {
+                // A score that is not a finite relevance in [0, 1] would sort
+                // first or serialise as null: the list is refused whole.
+                Ok(scores)
+                    if scores
+                        .iter()
+                        .any(|s| !s.is_finite() || !(0.0..=1.0).contains(s)) =>
+                {
+                    Err(crate::ports::RerankError::Failed(
+                        "a score is not a finite relevance in [0, 1]".to_owned(),
+                    ))
+                }
+                Ok(scores) if scores.len() == head.len() => Ok(scores),
+                Ok(scores) => Err(crate::ports::RerankError::Failed(format!(
+                    "{} scores for {} passages",
+                    scores.len(),
+                    head.len()
+                ))),
+                Err(e) => Err(e),
+            };
+            candidates = match scored {
+                Ok(scores) => {
+                    rerank = RerankOutcome::Applied;
+                    rerank_order(head, &scores)
+                }
+                Err(e) => {
+                    let slot = match e {
+                        crate::ports::RerankError::Busy => 0,
+                        crate::ports::RerankError::Timeout => 1,
+                        crate::ports::RerankError::Failed(_) => 2,
+                    };
+                    self.rerank_skips[slot].fetch_add(1, Ordering::Relaxed);
+                    rerank = RerankOutcome::Skipped(e.reason());
+                    head
+                }
+            };
+            candidates.extend(tail);
+        }
+        self.observer.rerank(rerank.as_str(), rerank.reason());
+        // The k cut, then the relevance floor over what the reranker
+        // scored, then the budget cut over the counts `body_bytes` gives
         // without any body read; steering is never cut and spent first
-        // (ADR-0025 d7).
+        // (ADR-0025 d7; ADR-0053 d6).
         candidates.truncate(req.k);
+        let floor = match rerank {
+            RerankOutcome::Applied => self.search.rerank().floor,
+            _ => None,
+        };
+        let mut below_floor = 0;
+        if let Some(floor) = floor {
+            // Only rows the core admits are counted as withheld: the tail
+            // past the depth is hydrated and admitted first (ADR-0053 d6).
+            let unread: Vec<Uuid> = candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .filter(|id| !rows.contains_key(id))
+                .collect();
+            if !unread.is_empty() {
+                rows.extend(
+                    self.journal
+                        .memories(key.tenant_id, &unread)
+                        .await?
+                        .into_iter()
+                        .map(|m| (m.memory_id, m)),
+                );
+            }
+            candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
+            (candidates, below_floor) = apply_floor(candidates, floor);
+        }
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
         // words no hit holds, from the vocabulary of the readable nodes
         // alone, under any pipeline but v0.5.0's (ADR-0049 d6, d12).
-        let did_you_mean =
-            if pipeline.suggests() && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k) {
-                let unmatched: Vec<String> = terms
-                    .iter()
-                    .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
-                    .cloned()
-                    .collect();
-                if unmatched.is_empty() {
-                    Vec::new()
-                } else {
-                    self.journal
-                        .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
-                        .await?
-                }
-            } else {
+        // An answer the floor thinned matched its words; its rows were
+        // withheld, so it offers no spellings (ADR-0053 d6).
+        let did_you_mean = if pipeline.suggests()
+            && below_floor == 0
+            && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k)
+        {
+            let unmatched: Vec<String> = terms
+                .iter()
+                .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
+                .cloned()
+                .collect();
+            if unmatched.is_empty() {
                 Vec::new()
-            };
+            } else {
+                self.journal
+                    .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
+                    .await?
+            }
+        } else {
+            Vec::new()
+        };
 
         let steering_counts: Vec<u64> = steering
             .iter()
@@ -4440,14 +4593,20 @@ where
         if let Some(budget) = &budget {
             candidates.truncate(budget.hits_served);
         }
-        let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
-        let mut rows: BTreeMap<Uuid, MemoryRecord> = self
-            .journal
-            .memories(key.tenant_id, &ids)
-            .await?
-            .into_iter()
-            .map(|m| (m.memory_id, m))
+        let ids: Vec<Uuid> = candidates
+            .iter()
+            .map(|c| c.memory_id)
+            .filter(|id| !rows.contains_key(id))
             .collect();
+        if !ids.is_empty() {
+            rows.extend(
+                self.journal
+                    .memories(key.tenant_id, &ids)
+                    .await?
+                    .into_iter()
+                    .map(|m| (m.memory_id, m)),
+            );
+        }
         let mut served_ids: Vec<Uuid> = steering.iter().map(|m| m.memory_id).collect();
         let mut ancestries = BTreeMap::new();
         let mut served_steering = Vec::with_capacity(steering.len());
@@ -4459,29 +4618,17 @@ where
             let Some(m) = rows.remove(&candidate.memory_id) else {
                 continue;
             };
-            // R3 defense in depth: the gate changed visibility. Nothing
-            // unpromoted or unreadable leaves the application layer except
-            // the caller's own held rows when it asked for them; a replaced
-            // version or any version of a retired claim is promoted history,
-            // never a hit; a retirement version is never in force (ADR-0025
-            // d4, d8). Each hit names only the ancestors the caller can read
-            // (d3).
-            let admitted = match m.status {
-                MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
-                MemoryStatus::Held => {
-                    req.include_unreviewed
-                        && m.author_key_id == key.key_id
-                        && readable.contains(&m.workarea_id)
-                }
-                _ => false,
-            };
-            if admitted && !m.retirement && kinds.contains(&m.kind) {
+            // R3 defense in depth, `admits` above; each hit names only the
+            // ancestors the caller can read (ADR-0025 d3).
+            if admits(&m) {
                 served_ids.push(m.memory_id);
                 hits.push(RecallHit {
                     served: self.served_in(&caller, m, &mut ancestries).await?,
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),
+                    rerank: candidate.rerank,
+                    rank_before: candidate.rank_before,
                 });
             }
         }
@@ -4495,6 +4642,9 @@ where
             terms,
             fallback,
             did_you_mean,
+            rerank,
+            floor,
+            below_floor,
             access: ran.access,
             pruned: ran.pruned,
         })
@@ -4750,6 +4900,13 @@ where
         let depth = match pipeline.fusion() {
             Fusion::Single => req.k,
             Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
+        };
+        // A reranking pipeline reads its first stage as deep as the head it
+        // reorders (ADR-0053 d4).
+        let depth = if pipeline.reranks() {
+            depth.max(self.search.rerank().depth)
+        } else {
+            depth
         };
         let mut modes = vec![req.match_mode];
         if req.match_mode == MatchMode::All && pipeline != Pipeline::KeywordAll {

@@ -3,6 +3,11 @@
 Every function takes `ranked`, the served memory ids in rank order, and
 `rel`, the query's labels {memory_id: grade} with grade 2 (answers it) or
 1 (related). Unlabelled ids count as grade 0.
+
+Queries of the category `unanswerable` (data version 2) label nothing: no
+memory answers them. They are scored apart, by whether the recall answered
+nothing (`empty`), and never enter `overall`, so the ranking metrics stay
+comparable with version 1's (ADR-0053 d6).
 """
 
 import json
@@ -16,6 +21,7 @@ CATEGORIES = [
     "exact", "paraphrase", "inflection", "partial", "typo", "identifier",
     "question", "long", "negation", "temporal", "multihop",
 ]
+UNANSWERABLE = "unanswerable"
 
 
 def load():
@@ -67,8 +73,13 @@ def aggregate(per_query, queries):
     """per_query: {qid: {"ranked": [...], "latency_ms": float?}} -> summary."""
     cats = OrderedDict((c, []) for c in CATEGORIES)
     cats["overall"] = []
+    unanswerable = []
     for q in queries:
         row = per_query[q["id"]]
+        if q["category"] == UNANSWERABLE:
+            row["scores"] = {"empty": 1.0 if not row["ranked"] else 0.0}
+            unanswerable.append((row["scores"]["empty"], row.get("latency_ms")))
+            continue
         s = score_query(row["ranked"], q["relevant"])
         row["scores"] = s
         cats[q["category"]].append((s, row.get("latency_ms")))
@@ -82,6 +93,13 @@ def aggregate(per_query, queries):
         agg["median_latency_ms"] = round(statistics.median(lat), 1) if lat else None
         agg["n"] = len(rows)
         out[c] = agg
+    if unanswerable:
+        lat = [l for _, l in unanswerable if l is not None]
+        out[UNANSWERABLE] = {
+            "empty": round(sum(e for e, _ in unanswerable) / len(unanswerable), 3),
+            "median_latency_ms": round(statistics.median(lat), 1) if lat else None,
+            "n": len(unanswerable),
+        }
     return out
 
 

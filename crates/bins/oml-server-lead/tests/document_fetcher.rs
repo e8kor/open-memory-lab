@@ -261,6 +261,7 @@ async fn the_leads_authorize_page_fetches_a_document_client_through_its_composed
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         None,
+        None,
     )
     .await
     .expect("the start reads the store");

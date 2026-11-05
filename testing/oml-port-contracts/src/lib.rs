@@ -33,7 +33,7 @@ use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Retriever, Scanner, Signer, StoreError, SubjectRow,
+    Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved,
@@ -10759,4 +10759,90 @@ where
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
+}
+
+// ---------------------------------------------------------------------------
+// Reranker laws (ADR-0053 d10): the double and every model adapter pass them.
+// ---------------------------------------------------------------------------
+
+/// How far two scores of one passage may differ across calls and batches:
+/// a padded batch runs other kernels than a lone passage, so a model's float
+/// result moves in the last places, never by a rank's worth.
+pub const RERANK_TOLERANCE: f32 = 1e-3;
+
+const QUERY: &str = "which port does postgres listen on";
+const ANSWER: &str = "PostgreSQL listens on port 5432 by default; the eval cluster uses 55437.";
+const UNRELATED: &str = "The cafeteria serves lunch from noon until two on weekdays.";
+const NEAR: &str = "Postgres connections go through pgbouncer in transaction mode.";
+
+async fn scores<R: Reranker + ?Sized>(r: &R, query: &str, passages: &[&str]) -> Vec<f32> {
+    r.score(
+        query.to_owned(),
+        passages.iter().map(|p| (*p).to_owned()).collect(),
+    )
+    .await
+    .expect("a reranker inside its cap and deadline answers")
+}
+
+/// One score per passage, in the order given: reversing the passages
+/// reverses the scores.
+pub async fn a_reranker_scores_each_passage_once_in_order<R: Reranker + ?Sized>(r: &R) {
+    let forward = scores(r, QUERY, &[ANSWER, UNRELATED, NEAR]).await;
+    assert_eq!(forward.len(), 3, "one score per passage");
+    let backward = scores(r, QUERY, &[NEAR, UNRELATED, ANSWER]).await;
+    for (a, b) in forward.iter().zip(backward.iter().rev()) {
+        assert!(
+            (a - b).abs() <= RERANK_TOLERANCE,
+            "{forward:?} against {backward:?}"
+        );
+    }
+    assert!(
+        scores(r, QUERY, &[]).await.is_empty(),
+        "no passage, no score"
+    );
+}
+
+/// Every score is a relevance in `[0, 1]`, so a floor reads the same way on
+/// every query (ADR-0053 d6).
+pub async fn a_reranker_scores_lie_in_the_unit_interval<R: Reranker + ?Sized>(r: &R) {
+    for s in scores(r, QUERY, &[ANSWER, UNRELATED, NEAR, ""]).await {
+        assert!((0.0..=1.0).contains(&s), "{s} is outside [0, 1]");
+    }
+}
+
+/// A passage's score depends on the query and that passage alone: the
+/// passages beside it in a call, and a call before it, never move it, so no
+/// other row, readable or not, reaches a candidate's relevance (ADR-0048 d3).
+pub async fn a_reranker_scores_a_passage_alone_as_among_others<R: Reranker + ?Sized>(r: &R) {
+    let alone = scores(r, QUERY, &[ANSWER]).await[0];
+    let among = scores(r, QUERY, &[UNRELATED, ANSWER, NEAR]).await[1];
+    let again = scores(r, QUERY, &[ANSWER]).await[0];
+    assert!(
+        (alone - among).abs() <= RERANK_TOLERANCE,
+        "{alone} alone, {among} among others"
+    );
+    assert!(
+        (alone - again).abs() <= RERANK_TOLERANCE,
+        "{alone}, then {again}"
+    );
+}
+
+/// The passage that answers the query outranks one that shares no word
+/// with it.
+pub async fn a_reranker_ranks_an_answer_above_an_unrelated_passage<R: Reranker + ?Sized>(r: &R) {
+    let s = scores(r, QUERY, &[UNRELATED, ANSWER]).await;
+    assert!(
+        s[1] > s[0],
+        "the answer scored {} and the unrelated {}",
+        s[1],
+        s[0]
+    );
+}
+
+/// Every reranker law, run against `r`.
+pub async fn run_reranker_suite<R: Reranker + ?Sized>(r: &R) {
+    a_reranker_scores_each_passage_once_in_order(r).await;
+    a_reranker_scores_lie_in_the_unit_interval(r).await;
+    a_reranker_scores_a_passage_alone_as_among_others(r).await;
+    a_reranker_ranks_an_answer_above_an_unrelated_passage(r).await;
 }

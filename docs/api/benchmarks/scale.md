@@ -42,7 +42,14 @@ Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all c
 | bm25-postings | 3,633 | beir-nfcorpus | 38.0 | 54.8 | no |
 | bm25-postings | 5,183 | beir-scifact | 46.2 | 65.6 | no |
 | bm25-postings | 5,882 | locomo | 29.9 | 37.0 | yes |
+| bm25-rerank | 200 | recall-synthetic | 128 | 215 | no |
 | bm25-k10 | 5,183 | beir-scifact | 70.5 | 98.5 | no |
 | bm25-k10 | 51,830 | beir-scifact-x10 | 572 | 804 | no |
+| bm25-rerank-d20 | 3,633 | beir-nfcorpus | 5,247 | 15,467 | no |
+| bm25-rerank-d20 | 5,183 | beir-scifact | 4,563 | 5,711 | no |
+| bm25-rerank-d20 | 5,882 | locomo | 2,522 | 3,367 | no |
+| bm25-sampled | 3,633 | beir-nfcorpus | 69.5 | 140 | no |
+| bm25-sampled | 5,183 | beir-scifact | 102 | 140 | no |
+| bm25-sampled | 5,882 | locomo | 57.6 | 77.5 | no |
 | bm25-trigram-k10 | 5,183 | beir-scifact | 3,664 | 5,334 | no |
 | keyword-any-k10 | 5,183 | beir-scifact | 630 | 1,090 | no |

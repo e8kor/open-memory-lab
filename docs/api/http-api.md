@@ -751,12 +751,14 @@ ADR-0021). Response separates what is ranked from what is not:
 {
   "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
   "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.032,
-              "matched": {"terms": ["deploy", "window"], "of": 2, "via": ["bm25_postings"]}} ],
+              "matched": {"terms": ["deploy", "window"], "of": 2, "via": ["bm25_postings"],
+                          "rerank": null, "rank_before": null}} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
   "query_digest": "sha256:…",
   "search": {"pipeline": "bm25-postings", "match": "any", "terms": ["deploy", "window"],
-             "fallback": null, "did_you_mean": [], "access": "postings", "pruned": []}
+             "fallback": null, "did_you_mean": [], "access": "postings", "pruned": [],
+             "rerank": null, "rerank_reason": null, "floor": null, "below_floor": 0}
 }
 ```
 
@@ -772,6 +774,17 @@ the rows in scope were scanned, as every other pipeline does and as `bm25-postin
 query word is frequent among the rows the key may read; `pruned` names the words `bm25-postings`
 left out of the postings it read because they are that frequent, which still count in each hit's
 score, so a memory holding only them is not found (unreleased; ADR-0052 d6, d11).
+
+*Proposed ([ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)), served where a deployment enables `bm25-rerank`:* a local cross-encoder
+reorders the best `search.rerank.depth` candidates of `bm25` after the core has admitted them.
+`search.rerank` is `"applied"`, `"skipped"` (the reranker was busy, late or failed, and `bm25`'s
+order was served; `search.rerank_reason` says which) or `null` (the pipeline does not rerank).
+A reranked hit's `matched.rerank` is its relevance between 0 and 1, which is then its `score`, and
+`matched.rank_before` its rank in `bm25`'s list; hits past the depth follow in `bm25`'s order with
+both `null`. Where the deployment sets a relevance floor and the rerank applied, `search.floor`
+names it and `search.below_floor` counts the first `k` candidates it withheld: an answer with no
+hit and `below_floor` above 0 means nothing scored above the floor, not that nothing matched a
+word. The relevance reads the query and the memory's text alone, never a review.
 
 Steering rows precede hits and carry no score — the recall-ordering contract: the gate changes
 visibility, not ranking (R3/D12). Which steering applies, the total order of hits and the budget
