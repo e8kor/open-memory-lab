@@ -95,15 +95,19 @@ pub enum Pipeline {
     /// `bm25-trigram`: `bm25` fused with trigram similarity by reciprocal
     /// rank (S3).
     Bm25Trigram,
+    /// `bm25-rerank`: `bm25`'s list, its head reordered by a local
+    /// cross-encoder (ADR-0048 S6; ADR-0053 d1).
+    Bm25Rerank,
 }
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
         Self::Bm25Trigram,
+        Self::Bm25Rerank,
     ];
 
     /// The pipeline's name, as configuration, requests and logs spell it.
@@ -114,6 +118,7 @@ impl Pipeline {
             Self::KeywordAny => "keyword-any",
             Self::Bm25 => "bm25",
             Self::Bm25Trigram => "bm25-trigram",
+            Self::Bm25Rerank => "bm25-rerank",
         }
     }
 
@@ -130,7 +135,7 @@ impl Pipeline {
         match self {
             Self::KeywordAll => &[RetrieverKind::KeywordAll],
             Self::KeywordAny => &[RetrieverKind::KeywordAny],
-            Self::Bm25 => &[RetrieverKind::Bm25],
+            Self::Bm25 | Self::Bm25Rerank => &[RetrieverKind::Bm25],
             Self::Bm25Trigram => &[RetrieverKind::Bm25, RetrieverKind::Trigram],
         }
     }
@@ -139,9 +144,16 @@ impl Pipeline {
     #[must_use]
     pub const fn fusion(self) -> Fusion {
         match self {
-            Self::KeywordAll | Self::KeywordAny | Self::Bm25 => Fusion::Single,
+            Self::KeywordAll | Self::KeywordAny | Self::Bm25 | Self::Bm25Rerank => Fusion::Single,
             Self::Bm25Trigram => Fusion::Rrf { k: RRF_K },
         }
+    }
+
+    /// Whether the pipeline reorders its head with the deployment's
+    /// reranker after fusion and before the cuts (ADR-0053 d1).
+    #[must_use]
+    pub const fn reranks(self) -> bool {
+        matches!(self, Self::Bm25Rerank)
     }
 
     /// Whether the pipeline offers spellings for a thin result
@@ -174,17 +186,70 @@ pub enum MatchMode {
 /// The deployment's search settings: the pipelines it serves and the one a
 /// recall uses when neither the request nor the tenant names one
 /// (configuration.md `search.*`; ADR-0049 d4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchConfig {
     enabled: Vec<Pipeline>,
     default: Pipeline,
+    rerank: RerankPolicy,
+}
+
+/// How a reranking pipeline uses the reranker (configuration.md
+/// `search.rerank.*`; ADR-0053 d4, d6): how many of the first stage's
+/// candidates it reorders, and the relevance below which a reranked
+/// candidate is withheld.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RerankPolicy {
+    /// The head of the first stage's list the reranker reorders.
+    pub depth: usize,
+    /// The relevance floor, a rerank score in `[0, 1]`; `None` serves every
+    /// candidate.
+    pub floor: Option<f32>,
+}
+
+/// `search.rerank.depth`'s default, chosen on the eval (ADR-0053 d4).
+pub const RERANK_DEPTH: usize = 10;
+
+/// The deepest head a deployment may rerank: `k`'s own ceiling.
+pub const RERANK_DEPTH_MAX: usize = 100;
+
+/// `search.rerank.floor`'s default, chosen on the eval (ADR-0053 d6).
+pub const RERANK_FLOOR: Option<f32> = None;
+
+impl Default for RerankPolicy {
+    fn default() -> Self {
+        Self {
+            depth: RERANK_DEPTH,
+            floor: RERANK_FLOOR,
+        }
+    }
+}
+
+impl RerankPolicy {
+    /// A policy reordering `depth` candidates and withholding those under
+    /// `floor`.
+    ///
+    /// # Errors
+    ///
+    /// [`SearchConfigError::Rerank`] for a depth outside `1..=100` or a
+    /// floor outside `[0, 1]`.
+    pub fn new(depth: usize, floor: Option<f32>) -> Result<Self, SearchConfigError> {
+        if !(1..=RERANK_DEPTH_MAX).contains(&depth) {
+            return Err(SearchConfigError::Rerank("depth must be between 1 and 100"));
+        }
+        if floor.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
+            return Err(SearchConfigError::Rerank(
+                "floor must be between 0 and 1, or off",
+            ));
+        }
+        Ok(Self { depth, floor })
+    }
 }
 
 /// Why a search configuration is refused at start (ADR-0049 d4, d8).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchConfigError {
     #[error(
-        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram)"
+        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-rerank)"
     )]
     Unknown(String),
     #[error("search.enabled is empty: a deployment serves at least one pipeline")]
@@ -199,6 +264,12 @@ pub enum SearchConfigError {
         retriever: &'static str,
         hint: &'static str,
     },
+    #[error(
+        "search.enabled names {0}, which reranks, and no reranker is loaded: set search.rerank.model_dir to a directory holding the model (configuration.md search.rerank)"
+    )]
+    NoReranker(Pipeline),
+    #[error("search.rerank.{0}")]
+    Rerank(&'static str),
 }
 
 impl SearchConfig {
@@ -221,7 +292,43 @@ impl SearchConfig {
         Ok(Self {
             enabled: set,
             default,
+            rerank: RerankPolicy::default(),
         })
+    }
+
+    /// The configuration with `policy` for its reranking pipelines.
+    #[must_use]
+    pub fn with_rerank(self, policy: RerankPolicy) -> Self {
+        Self {
+            rerank: policy,
+            ..self
+        }
+    }
+
+    /// How the reranking pipelines use the reranker.
+    #[must_use]
+    pub fn rerank(&self) -> RerankPolicy {
+        self.rerank
+    }
+
+    /// Whether any served pipeline reranks, so the composition must load a
+    /// reranker before it serves.
+    #[must_use]
+    pub fn needs_reranker(&self) -> bool {
+        self.enabled.iter().any(|p| p.reranks())
+    }
+
+    /// Refuses a configuration serving a reranking pipeline with no
+    /// reranker loaded (ADR-0053 d8).
+    ///
+    /// # Errors
+    ///
+    /// [`SearchConfigError::NoReranker`] naming the first such pipeline.
+    pub fn require_reranker(&self, loaded: bool) -> Result<(), SearchConfigError> {
+        match self.enabled.iter().find(|p| p.reranks()) {
+            Some(&pipeline) if !loaded => Err(SearchConfigError::NoReranker(pipeline)),
+            _ => Ok(()),
+        }
     }
 
     /// Parses `search.enabled` names.
@@ -288,6 +395,7 @@ impl Default for SearchConfig {
         Self {
             enabled: vec![Pipeline::KeywordAll, Pipeline::KeywordAny],
             default: Pipeline::KeywordAny,
+            rerank: RerankPolicy::default(),
         }
     }
 }
@@ -349,6 +457,12 @@ pub struct Fused {
     pub score: f32,
     pub matched: Vec<String>,
     pub via: Vec<RetrieverKind>,
+    /// The reranker's relevance, for a candidate the reranker scored
+    /// (`matched.rerank`; ADR-0053 d7).
+    pub rerank: Option<f32>,
+    /// Its rank in the first stage's list, from 1, for a candidate the
+    /// reranker scored (`matched.rank_before`; ADR-0053 d7).
+    pub rank_before: Option<u32>,
 }
 
 /// Fuses each retriever's list under `fusion`, in the total order of hits
@@ -374,6 +488,8 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
                 score: 0.0,
                 matched: Vec::new(),
                 via: Vec::new(),
+                rerank: None,
+                rank_before: None,
             });
             entry.score += contribution;
             for term in &c.matched {
@@ -392,6 +508,35 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
     }
     hit_order(&mut fused, |f| (f.score, f.memory_id));
     fused
+}
+
+/// Reorders `head`, the first stage's candidates in its order, by the
+/// reranker's `scores`, one per candidate (ADR-0053 d1, d7). Each candidate's
+/// `score` becomes its relevance, `rerank` holds it and `rank_before` its
+/// first-stage rank; equal relevances keep the first stage's order, which is
+/// itself total, so equal input gives equal output. Pure: it reads the
+/// candidates and the scores and nothing else.
+///
+/// # Panics
+///
+/// Never: a score list of another length is the caller's refusal, checked
+/// before (`RerankError::Failed`).
+#[must_use]
+pub fn rerank_order(head: Vec<Fused>, scores: &[f32]) -> Vec<Fused> {
+    // Not built yet: the first stage's order, unscored (ADR-0053 d1).
+    let _ = scores;
+    head
+}
+
+/// The relevance floor over the served head (ADR-0053 d6): the candidates
+/// the reranker scored at or above `floor` stay, in order; every other
+/// candidate, a reranked one below the floor or one the reranker never
+/// scored, is withheld, and the count withheld is returned.
+#[must_use]
+pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
+    // Not built yet: nothing withheld (ADR-0053 d6).
+    let _ = floor;
+    (candidates, 0)
 }
 
 /// The query's distinct terms across the lists, sorted: `matched.of`'s
@@ -517,5 +662,87 @@ mod tests {
             .require_supported(&[RetrieverKind::Bm25])
             .unwrap_err();
         assert!(err.to_string().contains("pg_trgm"), "{err}");
+    }
+
+    fn fused(id: u128, score: f32) -> Fused {
+        Fused {
+            memory_id: Uuid::from_u128(id),
+            body_bytes: 10,
+            score,
+            matched: vec!["a".to_owned()],
+            via: vec![RetrieverKind::Bm25],
+            rerank: None,
+            rank_before: None,
+        }
+    }
+
+    #[test]
+    fn rerank_order_sorts_by_relevance_and_keeps_the_first_stages_order_on_a_tie() {
+        let head = vec![fused(9, 3.0), fused(1, 2.0), fused(5, 1.0)];
+        let out = rerank_order(head.clone(), &[0.2, 0.7, 0.2]);
+        let ids: Vec<u128> = out.iter().map(|f| f.memory_id.as_u128()).collect();
+        assert_eq!(
+            ids,
+            vec![1, 9, 5],
+            "relevance, then the first stage's rank, never the id"
+        );
+        assert_eq!(out[0].rank_before, Some(2));
+        assert_eq!(out[0].rerank, Some(0.7));
+        assert!((out[0].score - 0.7).abs() < f32::EPSILON);
+        assert_eq!(out[0].matched, vec!["a".to_owned()], "the reasons stay");
+        assert_eq!(
+            rerank_order(head.clone(), &[0.2, 0.7, 0.2]),
+            rerank_order(head, &[0.2, 0.7, 0.2]),
+            "equal input, equal output"
+        );
+    }
+
+    #[test]
+    fn the_floor_keeps_reranked_candidates_at_or_above_it_and_withholds_the_rest() {
+        let mut unscored = fused(4, 9.0);
+        unscored.rerank = None;
+        let mut list = rerank_order(
+            vec![fused(1, 1.0), fused(2, 1.0), fused(3, 1.0)],
+            &[0.5, 0.49, 0.9],
+        );
+        list.push(unscored);
+        let (kept, withheld) = apply_floor(list, 0.5);
+        let ids: Vec<u128> = kept.iter().map(|f| f.memory_id.as_u128()).collect();
+        assert_eq!(
+            ids,
+            vec![3, 1],
+            "at the floor stays; under it and unscored do not"
+        );
+        assert_eq!(withheld, 2);
+    }
+
+    #[test]
+    fn a_rerank_policy_outside_its_bounds_is_refused() {
+        assert!(RerankPolicy::new(0, None).is_err());
+        assert!(RerankPolicy::new(101, None).is_err());
+        assert!(RerankPolicy::new(20, Some(1.5)).is_err());
+        assert!(RerankPolicy::new(20, Some(-0.1)).is_err());
+        assert_eq!(
+            RerankPolicy::new(20, Some(0.3)),
+            Ok(RerankPolicy {
+                depth: 20,
+                floor: Some(0.3)
+            })
+        );
+    }
+
+    #[test]
+    fn a_reranking_pipeline_with_no_reranker_loaded_is_refused_by_name() {
+        let config =
+            SearchConfig::new(&[Pipeline::Bm25, Pipeline::Bm25Rerank], Pipeline::Bm25).unwrap();
+        assert!(config.needs_reranker());
+        let err = config.require_reranker(false).unwrap_err();
+        assert_eq!(err, SearchConfigError::NoReranker(Pipeline::Bm25Rerank));
+        assert!(err.to_string().contains("search.rerank.model_dir"), "{err}");
+        assert_eq!(config.require_reranker(true), Ok(()));
+        let plain = SearchConfig::new(&[Pipeline::Bm25], Pipeline::Bm25).unwrap();
+        assert_eq!(plain.require_reranker(false), Ok(()));
+        assert!(Pipeline::Bm25Rerank.reranks() && !Pipeline::Bm25.reranks());
+        assert_eq!(Pipeline::Bm25Rerank.retrievers(), &[RetrieverKind::Bm25]);
     }
 }

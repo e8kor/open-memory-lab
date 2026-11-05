@@ -46,3 +46,8 @@ fn clock_and_idgen_doubles_pass() {
 async fn connection_store_double_passes_the_suite() {
     contracts::run_connection_store_suite(|| async { MemStore::new() }).await;
 }
+
+#[tokio::test]
+async fn reranker_double_passes_the_suite() {
+    contracts::run_reranker_suite(&oml_app::doubles::FakeReranker::new()).await;
+}

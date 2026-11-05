@@ -50,7 +50,7 @@ use crate::timed::Timed;
 /// per-binary table: `postgres.*`, `kms.*`, `server.listen`, `oauth.issuer`;
 /// `server.role` is not accepted in standalone — a standalone node is always
 /// the lead).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// The serving role's URL, which the lead serves under (ADR-0034 d2, d4).
     pub postgres_url: String,

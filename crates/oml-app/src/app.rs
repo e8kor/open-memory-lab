@@ -64,8 +64,8 @@ use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, ScanOutcome, Scanner,
-    Signer, StoreError, SubjectRow, TailEvent,
+    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
+    Scanner, Signer, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
@@ -82,11 +82,11 @@ use crate::types::{
     ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
     OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
     RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb,
-    SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow,
-    TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows,
-    Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    RerankOutcome, ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord, WorkareaStatusView,
 };
 
 use crate::search::{
@@ -160,6 +160,10 @@ pub struct App<J, S, C, I, Sc> {
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
+    /// The cross-encoder the reranking pipelines call; `None` where the
+    /// deployment loads none, and then no reranking pipeline is served
+    /// (ADR-0053 d2, d8).
+    reranker: Option<Arc<dyn Reranker>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -974,7 +978,25 @@ where
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
             search: SearchConfig::default(),
+            reranker: None,
         }
+    }
+
+    /// The app whose reranking pipelines call `reranker` (ADR-0053 d2). The
+    /// composition refuses to serve a reranking pipeline without one
+    /// (`SearchConfig::require_reranker`).
+    #[must_use]
+    pub fn with_reranker(self, reranker: Arc<dyn Reranker>) -> Self {
+        Self {
+            reranker: Some(reranker),
+            ..self
+        }
+    }
+
+    /// The loaded reranker's model name, for doctor and `/readyz`.
+    #[must_use]
+    pub fn reranker_model(&self) -> Option<&str> {
+        self.reranker.as_deref().map(Reranker::model)
     }
 
     /// The app whose workarea briefs are cut to `max_tokens`, the
@@ -4467,6 +4489,8 @@ where
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),
+                    rerank: candidate.rerank,
+                    rank_before: candidate.rank_before,
                 });
             }
         }
@@ -4480,6 +4504,9 @@ where
             terms,
             fallback,
             did_you_mean,
+            rerank: RerankOutcome::NotRun,
+            floor: None,
+            below_floor: 0,
         })
     }
 

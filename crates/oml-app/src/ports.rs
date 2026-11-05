@@ -1498,6 +1498,13 @@ pub trait RequestObserver: Send + Sync {
     fn search(&self, pipeline: &'static str, fallback: bool) {
         let _ = (pipeline, fallback);
     }
+
+    /// A recall's reranking stage ended `outcome` (`applied`, `skipped`, or
+    /// `None` when its pipeline does not rerank), with `reason` when skipped
+    /// (ADR-0053 d9). Telling no one is the default.
+    fn rerank(&self, outcome: Option<&'static str>, reason: Option<&'static str>) {
+        let _ = (outcome, reason);
+    }
 }
 
 /// The observer of a composition that logs no request.
@@ -1508,4 +1515,57 @@ impl RequestObserver for NoObserver {
     fn credential(&self, _key: Option<&KeyRecord>, _connection: Option<Uuid>) {}
 
     fn workarea(&self, _workarea_id: Uuid) {}
+}
+
+/// Why a rerank did not reorder a recall (ADR-0053 d5): the core then serves
+/// the first stage's order and says so, never an error to the caller.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RerankError {
+    /// Every slot of the concurrency cap stayed taken until the deadline.
+    #[error("busy: every rerank slot stayed taken until the deadline")]
+    Busy,
+    /// The model did not answer before the deadline.
+    #[error("timeout: the model did not answer before the deadline")]
+    Timeout,
+    /// The model failed: a tokenizer or tensor error, named.
+    #[error("failed: {0}")]
+    Failed(String),
+}
+
+impl RerankError {
+    /// The reason `search.rerank_reason`, the request line and the metric
+    /// spell: a closed set (ADR-0053 d5, d9).
+    #[must_use]
+    pub const fn reason(&self) -> &'static str {
+        match self {
+            Self::Busy => "busy",
+            Self::Timeout => "timeout",
+            Self::Failed(_) => "failed",
+        }
+    }
+}
+
+/// What one rerank call returns: a relevance per passage, in order.
+pub type RerankFuture<'a> =
+    core::pin::Pin<Box<dyn Future<Output = Result<Vec<f32>, RerankError>> + Send + 'a>>;
+
+/// A cross-encoder that scores a query against passages the core hands it
+/// (ADR-0053 d2). It reads only those passages, which the core took from
+/// rows it would serve, stores nothing and decides no visibility; a score
+/// is a relevance in `[0, 1]`, one per passage in the order given, from the
+/// query and the passage alone, so no verdict, reviewer or `promoted_at`
+/// reaches it (ADR-0001 d3). An adapter enforces its own concurrency cap
+/// and deadline and answers [`RerankError::Busy`] or
+/// [`RerankError::Timeout`] past them, so a slow model never holds a
+/// recall longer than its deadline.
+///
+/// Unlike the other ports it is held as `Arc<dyn Reranker>`, as the request
+/// observer is: a deployment may run without one, and a boxed future per
+/// recall costs nothing beside the model's milliseconds.
+pub trait Reranker: Send + Sync {
+    /// The model's name, as `oml doctor`, `/readyz` and the metrics spell it.
+    fn model(&self) -> &str;
+
+    /// Scores each passage against `query`.
+    fn score(&self, query: String, passages: Vec<String>) -> RerankFuture<'_>;
 }

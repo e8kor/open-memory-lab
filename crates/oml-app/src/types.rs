@@ -1395,6 +1395,47 @@ pub struct RecallHit {
     pub matched: Vec<String>,
     /// `matched.via`: the retrievers whose lists held the row.
     pub via: Vec<RetrieverKind>,
+    /// `matched.rerank`: the reranker's relevance in `[0, 1]`, for a hit it
+    /// scored; the hit's `score` is then this relevance (ADR-0053 d7).
+    pub rerank: Option<f32>,
+    /// `matched.rank_before`: the hit's rank in the first stage's list, from
+    /// 1, for a hit the reranker scored (ADR-0053 d7).
+    pub rank_before: Option<u32>,
+}
+
+/// What the reranking stage did to one recall (ADR-0053 d5, d7):
+/// `search.rerank` and `search.rerank_reason`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RerankOutcome {
+    /// The pipeline does not rerank, or the first stage found nothing to
+    /// reorder: `search.rerank` is `null`.
+    NotRun,
+    /// The head was reordered: `"applied"`.
+    Applied,
+    /// The reranker did not answer in time or failed, and the first stage's
+    /// order was served: `"skipped"`, with the reason.
+    Skipped(&'static str),
+}
+
+impl RerankOutcome {
+    /// `search.rerank`, as the answer and the request line spell it.
+    #[must_use]
+    pub const fn as_str(&self) -> Option<&'static str> {
+        match self {
+            Self::NotRun => None,
+            Self::Applied => Some("applied"),
+            Self::Skipped(_) => Some("skipped"),
+        }
+    }
+
+    /// `search.rerank_reason`: `busy`, `timeout` or `failed` when skipped.
+    #[must_use]
+    pub const fn reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Skipped(reason) => Some(reason),
+            _ => None,
+        }
+    }
 }
 
 impl core::ops::Deref for RecallHit {
@@ -1437,6 +1478,14 @@ pub struct RecallResult {
     /// pipeline with a trigram list, when no hit holds every term
     /// (`explain.did_you_mean`; ADR-0049 d6).
     pub did_you_mean: Vec<String>,
+    /// What the reranking stage did (ADR-0053 d5).
+    pub rerank: RerankOutcome,
+    /// The relevance floor applied to this answer, `None` when none was
+    /// (ADR-0053 d6).
+    pub floor: Option<f32>,
+    /// How many of the first `k` candidates the floor withheld; `0` when no
+    /// floor applied (ADR-0053 d6).
+    pub below_floor: usize,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
