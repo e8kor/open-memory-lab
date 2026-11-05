@@ -3859,36 +3859,37 @@ impl Retriever for PgStore {
     ) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // The entry read, and only it: one enqueued again since is left for
-        // the next pass, so the newer claim is the one encoded.
-        let taken: Option<i32> = sqlx::query_scalar(
-            "DELETE FROM search_sparse_queue \
-              WHERE tenant_id = $1 AND memory_id = $2 \
-                AND (extract(epoch FROM enqueued_at) * 1000000)::int8 = $3 \
-             RETURNING 1",
-        )
-        .bind(tenant_id)
-        .bind(pending.memory_id)
-        .bind(pending.enqueued_at_us)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(backend)?;
-        if taken.is_none() {
-            tx.rollback().await.map_err(backend)?;
-            return Ok(false);
+        let mut version: Option<(Uuid, Option<i16>, Option<i16>)> = None;
+        for step in SPARSE_WRITE_ORDER {
+            match step {
+                // The entry read, and only it: one enqueued again since is
+                // left for the next pass, so the newer claim is the one
+                // encoded.
+                SparseWriteStep::TakeEntry => {
+                    let taken: Option<i32> = sqlx::query_scalar(SPARSE_TAKE_ENTRY)
+                        .bind(tenant_id)
+                        .bind(pending.memory_id)
+                        .bind(pending.enqueued_at_us)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                    if taken.is_none() {
+                        tx.rollback().await.map_err(backend)?;
+                        return Ok(false);
+                    }
+                }
+                // The version's state now, held FOR SHARE so a flip waits
+                // for this write or precedes it (ADR-0052 d8, d15).
+                SparseWriteStep::HoldVersion => {
+                    version = sqlx::query_as(SPARSE_HOLD_VERSION)
+                        .bind(tenant_id)
+                        .bind(pending.memory_id)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                }
+            }
         }
-        // The version's state now, held FOR SHARE so a flip waits for this
-        // write or precedes it (ADR-0052 d8, d15).
-        let version: Option<(Uuid, Option<i16>, Option<i16>)> = sqlx::query_as(
-            "SELECT m.workarea_id, oml_search_memory_kind(m.kind), \
-                    oml_search_state(m.status, m.is_tip, m.retirement, m.kind) \
-               FROM memories m WHERE m.tenant_id = $1 AND m.id = $2 FOR SHARE",
-        )
-        .bind(tenant_id)
-        .bind(pending.memory_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(backend)?;
         let Some((workarea_id, Some(memory_kind), Some(state))) = version else {
             tx.commit().await.map_err(backend)?;
             return Ok(true);
@@ -4037,6 +4038,33 @@ impl PgStore {
             .collect()
     }
 }
+
+/// The drain's guarded take of a queue entry: `$1` tenant, `$2` version,
+/// `$3` the `enqueued_at` it read, in microseconds (ADR-0052 d15).
+pub const SPARSE_TAKE_ENTRY: &str = "DELETE FROM search_sparse_queue \
+      WHERE tenant_id = $1 AND memory_id = $2 \
+        AND (extract(epoch FROM enqueued_at) * 1000000)::int8 = $3 \
+     RETURNING 1";
+
+/// The drain's read of the version it writes, held `FOR SHARE`: `$1`
+/// tenant, `$2` version (ADR-0052 d15).
+pub const SPARSE_HOLD_VERSION: &str = "SELECT m.workarea_id, oml_search_memory_kind(m.kind), \
+            oml_search_state(m.status, m.is_tip, m.retirement, m.kind) \
+       FROM memories m WHERE m.tenant_id = $1 AND m.id = $2 FOR SHARE";
+
+/// The two locking steps of a drain's write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseWriteStep {
+    /// [`SPARSE_TAKE_ENTRY`].
+    TakeEntry,
+    /// [`SPARSE_HOLD_VERSION`].
+    HoldVersion,
+}
+
+/// The order a drain's write takes its locks in; exported so the suite
+/// interleaves a version's removal with exactly this order.
+pub const SPARSE_WRITE_ORDER: [SparseWriteStep; 2] =
+    [SparseWriteStep::TakeEntry, SparseWriteStep::HoldVersion];
 
 /// The longest a failed encode waits before its next try (ADR-0052 d15).
 pub const SPARSE_RETRY_MAX_SECS: i64 = 3_600;

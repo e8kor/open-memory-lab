@@ -3929,6 +3929,7 @@ impl crate::ports::Reranker for FakeReranker {
 #[derive(Debug, Default)]
 pub struct FakeSparseEncoder {
     fail: Option<String>,
+    poison: Option<String>,
 }
 
 impl FakeSparseEncoder {
@@ -3942,6 +3943,17 @@ impl FakeSparseEncoder {
     pub fn failing(reason: &str) -> Self {
         Self {
             fail: Some(reason.to_owned()),
+            poison: None,
+        }
+    }
+
+    /// The double that fails only a text holding `word`, as a model fails
+    /// on one bad claim (ADR-0052 d15).
+    #[must_use]
+    pub fn failing_on(word: &str) -> Self {
+        Self {
+            fail: None,
+            poison: Some(word.to_owned()),
         }
     }
 
@@ -4018,6 +4030,11 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
         Box::pin(async move {
             if let Some(reason) = &self.fail {
                 return Err(reason.clone());
+            }
+            if let Some(word) = &self.poison
+                && texts.iter().any(|t| Self::words(t).contains(word))
+            {
+                return Err(format!("the model failed on a claim saying {word}"));
             }
             Ok(texts.iter().map(|t| Self::document(t)).collect())
         })
