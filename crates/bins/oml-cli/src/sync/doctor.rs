@@ -1,11 +1,12 @@
-//! The doctor lines of `oml sync`'s failures (ADR-0057 d17): a server that
-//! does not accept anchors, an `origin` remote carrying credentials, the
-//! public server without `--allow-public-server` recorded for this clone,
-//! and the default workarea's stale versions and waiting claim edges.
+//! The doctor lines of `oml sync`'s failures (ADR-0057 d17): an `origin`
+//! remote carrying credentials, the public server without
+//! `--allow-public-server` recorded for this clone, and the default
+//! workarea's stale versions and waiting claim edges. A server that accepts
+//! no anchor is the `sources` line's (`sources_unsupported`).
 
 use std::path::Path;
 
-use crate::client::{CliError, Client, encode};
+use crate::client::{Client, encode};
 
 use super::source::{ALLOW_PUBLIC_CONFIG, Git, is_public_server, repo_of_remote};
 
@@ -27,8 +28,9 @@ pub fn lines(
         && repo_of_remote(&remote).is_ok_and(|r| r.had_credentials)
     {
         out.push(
-            "warn: this clone's origin remote carries credentials in its URL; oml sync strips them \
-             from every anchor, and they belong in a credential helper, not .git/config"
+            "warn sync_remote_credentials: this clone's origin remote URL carries credentials \
+             (in .git/config or a url.insteadOf rewrite in a git config); oml sync strips them \
+             from every anchor, and they belong in a credential helper"
                 .to_owned(),
         );
     }
@@ -37,29 +39,14 @@ pub fn lines(
         && git.config(ALLOW_PUBLIC_CONFIG).as_deref() != Some("true")
     {
         out.push(format!(
-            "warn: the URL is the public server {url}, and --allow-public-server is not recorded \
-             for this clone; oml sync refuses it until a run passes the flag (ADR-0057 d6)"
+            "warn sync_public_server: the URL is the public server {url}, and \
+             --allow-public-server is not recorded for this clone; oml sync refuses it until a \
+             run passes the flag (ADR-0057 d6)"
         ));
     }
     let (Some(client), Some(workarea)) = (client, default_workarea) else {
         return out;
     };
-    let probe = format!(
-        "/v1/memories?limit=1&workarea={}&anchor_repo=oml.doctor",
-        encode(workarea)
-    );
-    match client.get(&probe) {
-        Err(CliError::Refused { code, .. }) if code == "request.validation" => {
-            out.push(
-                "warn: the server does not accept anchors (it is older than v0.5.8); oml sync \
-                 refuses it before reading anything"
-                    .to_owned(),
-            );
-            return out;
-        }
-        Err(_) => return out,
-        Ok(_) => {}
-    }
     let mut stale = 0;
     let mut cursor: Option<String> = None;
     let mut complete = false;
@@ -101,12 +88,12 @@ pub fn lines(
         .unwrap_or(0);
     let at_least = if complete { "" } else { "at least " };
     out.push(format!(
-        "{}: {at_least}{stale} served version(s) marked stale and {waiting} claim edge(s) waiting \
+        "{}{at_least}{stale} served version(s) marked stale and {waiting} claim edge(s) waiting \
          for a second key on the default workarea",
         if stale > 0 || waiting > 0 {
-            "warn"
+            "warn sync_stale: "
         } else {
-            "ok"
+            "ok "
         }
     ));
     out

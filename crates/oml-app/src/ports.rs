@@ -25,8 +25,8 @@ use crate::types::{
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkareaRecord,
+    RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -304,6 +304,13 @@ pub enum MetadataFold {
     },
     MemoryRejected {
         memory_id: Uuid,
+    },
+    /// `source.checked`: the version's latest source check, set on its row
+    /// (ADR-0057 d5, d18). The application admits only a promoted, anchored
+    /// served tip; the store writes the check and nothing else.
+    SourceChecked {
+        memory_id: Uuid,
+        check: SourceCheck,
     },
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets

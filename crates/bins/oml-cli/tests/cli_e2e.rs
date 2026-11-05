@@ -3881,8 +3881,7 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v2/workareas/w1",
             "/v2/events",
             // The sync lines on the default workarea (ADR-0057 d17): the
-            // anchor filter probe, the stale count and the waiting edges.
-            "/v1/memories",
+            // stale count and the waiting edges.
             "/v1/memories",
             "/v2/edges"
         ],
@@ -4893,6 +4892,8 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
             "Retired: the 2026 runbook replaces it.",
             "--replaces",
             STUB_ARTIFACT,
+            "--expected-version",
+            "1",
             "--retirement",
             "--reason",
             "superseded by the runbook",
@@ -4909,6 +4910,7 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
         sent[0].body,
         json!({
             "body": "Retired: the 2026 runbook replaces it.",
+            "expected_version": 1,
             "retirement": true,
             "reason": "superseded by the runbook",
         }),
@@ -4932,11 +4934,18 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
                 "t",
                 "--replaces",
                 STUB_ARTIFACT,
+                "--expected-version",
+                "1",
                 "--claim-key",
                 "k",
             ],
             "--claim-key",
         ),
+        (
+            vec!["write", "t", "--replaces", STUB_ARTIFACT],
+            "--expected-version",
+        ),
+        (vec!["write", "t", "--expected-version", "1"], "--replaces"),
     ] {
         let (code, _, stderr) = stub_text(&server, &dir, &args);
         assert_eq!(code, 2, "{args:?}: {stderr}");

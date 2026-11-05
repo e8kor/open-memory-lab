@@ -821,8 +821,18 @@ struct WriteArgs {
     workarea: Option<String>,
     /// The promoted tip this write replaces, by artifact id: a new version
     /// of its claim, held like any write.
-    #[arg(long)]
+    #[arg(long, requires = "expected_version")]
     replaces: Option<String>,
+    /// With --replaces, required: the claim's latest version as you last
+    /// read it; the server refuses the write with
+    /// submission.version_conflict if the claim moved on (ADR-0057 d19).
+    #[arg(long = "expected-version", requires = "replaces")]
+    expected_version: Option<u32>,
+    /// Where the claim came from, one JSON object or @file holding one:
+    /// {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …}
+    /// (ADR-0057 d1). `oml anchor <path>` prints one for a committed file.
+    #[arg(long, value_parser = parse_anchor_arg)]
+    anchor: Option<serde_json::Value>,
     /// Propose retiring the --replaces claim; the text says why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
@@ -889,6 +899,14 @@ struct ReadArgs {
     /// The next_cursor of the listing's previous page.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     cursor: Option<String>,
+    /// Recall or list only memories anchored in this repository, such as
+    /// github.com/owner/name (ADR-0057 d4).
+    #[arg(long = "anchor-repo", conflicts_with = "artifact_id")]
+    anchor_repo: Option<String>,
+    /// Recall or list only memories whose anchor path starts with this
+    /// prefix, such as docs/adr/ (ADR-0057 d4).
+    #[arg(long = "anchor-path-prefix", conflicts_with = "artifact_id")]
+    anchor_path_prefix: Option<String>,
 }
 
 #[derive(Args)]
@@ -1847,11 +1865,13 @@ struct Write<'a> {
     derives_from: &'a [String],
     workarea: Option<&'a str>,
     replaces: Option<&'a str>,
+    expected_version: Option<u32>,
     retirement: bool,
     reason: Option<&'a str>,
     idempotency_key: Option<&'a str>,
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
+    anchor: Option<&'a serde_json::Value>,
 }
 
 impl<'a> Write<'a> {
@@ -1863,12 +1883,31 @@ impl<'a> Write<'a> {
             derives_from: &args.derives_from,
             workarea: args.workarea.as_deref(),
             replaces: args.replaces.as_deref(),
+            expected_version: args.expected_version,
             retirement: args.retirement,
             reason: args.reason.as_deref(),
             idempotency_key: args.idempotency_key.as_deref(),
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
+            anchor: args.anchor.as_ref(),
         }
+    }
+}
+
+/// `--anchor`: one JSON object, inline or `@file`; whether it is a
+/// well-formed anchor is the server's grammar to decide (ADR-0057 d3).
+fn parse_anchor_arg(text: &str) -> Result<serde_json::Value, String> {
+    let source = match text.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read the anchor file {path}: {e}"))?,
+        None => text.to_owned(),
+    };
+    match serde_json::from_str::<serde_json::Value>(&source) {
+        Ok(value @ serde_json::Value::Object(_)) => Ok(value),
+        Ok(_) => Err(
+            "an anchor is one JSON object, such as {\"repo\":…,\"rev\":…,\"path\":…}".to_owned(),
+        ),
+        Err(e) => Err(format!("an anchor is one JSON object: {e}")),
     }
 }
 
@@ -1905,6 +1944,12 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(rule) = write.rule {
         body["rule"] = rule.clone();
+    }
+    if let Some(anchor) = write.anchor {
+        body["anchor"] = anchor.clone();
+    }
+    if let Some(expected) = write.expected_version {
+        body["expected_version"] = json!(expected);
     }
     if !write.derives_from.is_empty() {
         body["derives_from"] = json!(write.derives_from);
@@ -1976,6 +2021,12 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         if let Some(mode) = &args.match_mode {
             body["match"] = json!(mode);
         }
+        if let Some(repo) = &args.anchor_repo {
+            body["anchor_repo"] = json!(repo);
+        }
+        if let Some(prefix) = &args.anchor_path_prefix {
+            body["anchor_path_prefix"] = json!(prefix);
+        }
         let read = CallOpts {
             auth: true,
             idempotency: false, // read-shaped POST (http-api.md idempotency)
@@ -1992,6 +2043,8 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             ("until", args.until.as_ref()),
             ("limit", limit.as_ref()),
             ("cursor", args.cursor.as_ref()),
+            ("anchor_repo", args.anchor_repo.as_ref()),
+            ("anchor_path_prefix", args.anchor_path_prefix.as_ref()),
         ] {
             if let Some(value) = value {
                 params.push((name, value.clone()));
@@ -4026,6 +4079,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         )
     });
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    let sources = sources_doctor(server_version(ready.as_ref()).as_deref(), scrape.as_ref());
+    let sources_warn = sources.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -4045,6 +4100,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || review_warn
         || telemetry_warn
         || sync_warn
+        || sources_warn
     {
         "warn"
     } else {
@@ -4088,6 +4144,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "review": review,
             "sync": sync,
             "telemetry": telemetry,
+            "sources": sources,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -4195,6 +4252,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sync {
             println!("sync        : {line}");
+        }
+        for line in &sources {
+            println!("sources     : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
@@ -4656,6 +4716,45 @@ fn web_doctor(
 
 /// The server's version, as `/readyz` names its build, ready or not
 /// (http-api.md "Health"); `None` when the probe did not run or names none.
+/// Source anchors (ADR-0057 d17): a server before v0.5.8 accepts no
+/// anchor, which `--anchor` and `oml sync` would be refused by; and the
+/// source checks that found a changed or removed source since the lead
+/// started, from the metrics listener.
+fn sources_doctor(server: Option<&str>, scrape: Option<&Scrape>) -> Vec<String> {
+    let mut lines = Vec::new();
+    // A client of the same build as the server never warns: the check is
+    // for a client that sends anchors to an older server.
+    if let Some(version) = server
+        && before_anchors(version)
+        && !before_anchors(env!("CARGO_PKG_VERSION"))
+    {
+        lines.push(format!(
+            "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor, the anchor filters and oml sync are refused; upgrade the server"
+        ));
+    }
+    if let Some(scrape) = scrape {
+        let changed = scrape.sum("oml_source_checks_total", &[("outcome", "changed")]);
+        let removed = scrape.sum("oml_source_checks_total", &[("outcome", "removed")]);
+        if changed + removed > 0 {
+            lines.push(format!(
+                "{} source checks since start found a changed source and {removed} a removed one: those served versions read stale until their successors are reviewed (oml sync --check lists them)",
+                changed
+            ));
+        }
+    }
+    lines
+}
+
+/// Whether a server version is before 0.5.8, the first to accept anchors.
+fn before_anchors(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let parts: Vec<u64> = core.split('.').filter_map(|p| p.parse().ok()).collect();
+    match parts.as_slice() {
+        [major, minor, patch, ..] => (*major, *minor, *patch) < (0, 5, 8),
+        _ => false,
+    }
+}
+
 fn server_version(ready: Option<&(u16, Value)>) -> Option<String> {
     ready
         .and_then(|(_, body)| body["build"]["version"].as_str())

@@ -1384,6 +1384,11 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
+        MetadataFold::SourceChecked { memory_id, check } => {
+            if let Some(memory) = state.memories.get_mut(&memory_id) {
+                memory.source_check = Some(Box::new(check));
+            }
+        }
         MetadataFold::TipSuperseded {
             successor,
             replaced,
@@ -1816,6 +1821,9 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
+            if !scope.anchor.admits(m.anchor.as_deref()) {
+                return false;
+            }
             if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
                 return true;
             }
@@ -2154,6 +2162,7 @@ impl JournalStore for MemStore {
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
+            .filter(|m| filter.anchor.admits(m.anchor.as_deref()))
             .filter(|m| {
                 filter
                     .since
@@ -2194,6 +2203,14 @@ impl JournalStore for MemStore {
             .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
             .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
+                latest_live_version: if matches!(
+                    m.status,
+                    MemoryStatus::Held | MemoryStatus::Promoted
+                ) {
+                    acc.latest_live_version.max(Some(m.version))
+                } else {
+                    acc.latest_live_version
+                },
                 live: acc.live || LIVE.contains(&m.status),
             }))
     }

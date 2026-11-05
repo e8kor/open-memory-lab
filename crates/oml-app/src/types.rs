@@ -1,6 +1,7 @@
 //! Application-layer records and use-case request/response shapes.
 
 use oml_domain::access::{Covers, Grant, KeyDenial};
+use oml_domain::anchor::{Anchor, CheckResult};
 use oml_domain::budget::Budget;
 use oml_domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_domain::guardrail::{GuardrailScope, Severity};
@@ -1035,6 +1036,68 @@ pub struct MemoryRecord {
     /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
+    /// The version's anchor as its author declared it, signed in its
+    /// submission event and immutable (ADR-0057 d1, d2). Boxed: most rows
+    /// carry none.
+    pub anchor: Option<Box<Anchor>>,
+    /// The version's latest source check, kept only on a promoted version
+    /// (ADR-0057 d5, d18); `stale` is computed from it alone.
+    pub source_check: Option<Box<SourceCheck>>,
+}
+
+/// A source check as stored on its version: the latest `source.checked`
+/// folded onto the row (ADR-0057 d5, d18).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceCheck {
+    pub rev: String,
+    pub result: CheckResult,
+    pub hash: Option<String>,
+    /// `(path, fragment)` where a `moved` check found the span.
+    pub moved_to: Option<(String, Option<String>)>,
+    pub at: EventTime,
+}
+
+impl SourceCheck {
+    /// The `stale` mark: `changed` or `removed`, else none (ADR-0057 d5).
+    #[must_use]
+    pub const fn stale(&self) -> Option<&'static str> {
+        self.result.stale()
+    }
+}
+
+/// The origin filters of a recall or a listing (ADR-0057 d4): either one
+/// leaves out unanchored rows; both combine by AND.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnchorFilter {
+    pub repo: Option<String>,
+    pub path_prefix: Option<String>,
+}
+
+impl AnchorFilter {
+    /// Whether neither filter is set.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.repo.is_none() && self.path_prefix.is_none()
+    }
+
+    /// Whether a row with `anchor` passes: an unanchored row passes only
+    /// an empty filter.
+    #[must_use]
+    pub fn admits(&self, anchor: Option<&Anchor>) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+        let Some(anchor) = anchor else {
+            return false;
+        };
+        self.repo
+            .as_deref()
+            .is_none_or(|r| anchor.repo() == Some(r))
+            && self
+                .path_prefix
+                .as_deref()
+                .is_none_or(|p| anchor.path().is_some_and(|path| path.starts_with(p)))
+    }
 }
 
 /// A guardrail version's severity and its optional `oml-gr/1` rule, the
@@ -1050,6 +1113,10 @@ pub struct GuardrailFields {
 /// (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimKeyState {
+    /// The greatest `version` among the key's held and promoted versions,
+    /// the claim's latest live version a supersession names (ADR-0057 d19);
+    /// `None` when none is.
+    pub latest_live_version: Option<u32>,
     /// The greatest `version` of any row of the key, whatever its state;
     /// `None` when no row carries the key.
     pub greatest_version: Option<u32>,
@@ -1283,6 +1350,9 @@ pub struct SubmitRequest {
     /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
+    /// The origin the author declares, grammar-checked by the transport
+    /// (ADR-0057 d1-d3).
+    pub anchor: Option<Anchor>,
 }
 
 /// The stored idempotent response: a replayed submit returns this byte for
@@ -1451,6 +1521,8 @@ pub struct RecallRequest {
     pub search: Option<String>,
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
+    /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1680,6 +1752,8 @@ pub struct ListingFilter {
     pub since: Option<EventTime>,
     /// `created_at` before this instant.
     pub until: Option<EventTime>,
+    /// The origin filters (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -1805,6 +1879,8 @@ pub struct ListRequest {
     pub limit: usize,
     /// The opaque cursor of the previous page.
     pub cursor: Option<String>,
+    /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// One listing page: summaries as the calling key is served them, and the
@@ -1921,6 +1997,35 @@ pub struct SupersedeRequest {
     /// A guardrail successor's optional rule, refused on every other kind and
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
+    /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
+    pub anchor: Option<Anchor>,
+    /// The claim's latest live version as the caller last read it; any
+    /// other is [`AppError::VersionConflict`] (ADR-0057 d19).
+    pub expected_version: u32,
+}
+
+/// `POST /v1/memories/{artifact_id}/source-check` (ADR-0057 d5, d18).
+#[derive(Debug, Clone)]
+pub struct SourceCheckRequest {
+    pub idempotency_key: String,
+    pub memory_id: Uuid,
+    pub rev: String,
+    pub result: CheckResult,
+    pub hash: Option<String>,
+    pub path: Option<String>,
+    pub fragment: Option<String>,
+}
+
+/// A recorded source check: the version's new mark and the event's seq.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceCheckReceipt {
+    pub memory_id: Uuid,
+    pub rev: String,
+    pub result: String,
+    pub moved_path: Option<String>,
+    pub moved_fragment: Option<String>,
+    pub at: String,
+    pub journal_seq: u64,
 }
 
 /// The stored idempotent response of a supersession: a replay returns this
@@ -2275,6 +2380,23 @@ pub enum AppError {
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
     TipConflict { current_tip: Option<VersionRef> },
+    /// A supersession's `expected_version` is not the claim's latest live
+    /// version (errors.md `submission.version_conflict`; ADR-0057 d19).
+    #[error(
+        "the claim's latest version is {current}, not the expected_version sent (submission.version_conflict)"
+    )]
+    VersionConflict { current: u32 },
+    /// A scan finding in an anchor's `field` vetoes the write (ADR-0057 d2).
+    #[error("the scan vetoed {field}: {finding} (submission.scan_veto)")]
+    AnchorScanVeto {
+        field: &'static str,
+        finding: String,
+    },
+    /// A source check names a version it may not check: held, unanchored or
+    /// superseded, or a body outside its anchor's grammar (request.validation;
+    /// ADR-0057 d5).
+    #[error("{field}: {reason} (request.validation)")]
+    SourceCheckInvalid { field: String, reason: String },
     /// The `workarea` as the request spelled it.
     #[error(
         "workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"

@@ -157,8 +157,13 @@ struct WriteArgs {
     derives_from: Option<Vec<String>>,
     workarea: Option<String>,
     replaces: Option<String>,
+    /// With `replaces`, required: the claim's latest version as last read
+    /// (ADR-0057 d19).
+    expected_version: Option<Value>,
     retirement: Option<bool>,
     reason: Option<String>,
+    /// The origin the author declares (ADR-0057 d1).
+    anchor: Option<Value>,
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
@@ -193,11 +198,14 @@ struct ReadArgs {
     match_mode: Option<String>,
     /// Feedback on the key's last recall, in any mode (ADR-0054 d6).
     feedback: Option<Value>,
+    /// The origin filters, in recall and listing modes (ADR-0057 d4).
+    anchor_repo: Option<String>,
+    anchor_path_prefix: Option<String>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
 const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 8] = [
+const READ_RECALL: [&str; 10] = [
     "query",
     "workarea",
     "k",
@@ -206,8 +214,12 @@ const READ_RECALL: [&str; 8] = [
     "max_tokens",
     "search",
     "match",
+    "anchor_repo",
+    "anchor_path_prefix",
 ];
-const READ_LISTING: [&str; 9] = [
+const READ_LISTING: [&str; 11] = [
+    "anchor_repo",
+    "anchor_path_prefix",
     "own",
     "workarea",
     "claim_key",
@@ -540,6 +552,8 @@ where
                 ("derives_from", args.derives_from.map(Value::from)),
                 ("retirement", args.retirement.map(Value::from)),
                 ("reason", args.reason.map(Value::from)),
+                ("expected_version", args.expected_version),
+                ("anchor", args.anchor),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -559,6 +573,7 @@ where
             for (field, sent) in [
                 ("retirement", args.retirement.is_some()),
                 ("reason", args.reason.is_some()),
+                ("expected_version", args.expected_version.is_some()),
             ] {
                 if sent {
                     return Err(field_refusal(
@@ -574,6 +589,7 @@ where
                 ("kind", args.kind.map(Value::from)),
                 ("workarea", args.workarea.map(Value::from)),
                 ("derives_from", args.derives_from.map(Value::from)),
+                ("anchor", args.anchor),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -657,6 +673,8 @@ where
             ("cursor", args.cursor.is_some()),
             ("search", args.search.is_some()),
             ("match", args.match_mode.is_some()),
+            ("anchor_repo", args.anchor_repo.is_some()),
+            ("anchor_path_prefix", args.anchor_path_prefix.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -705,6 +723,11 @@ where
                 ("max_tokens", args.max_tokens.map(Value::from)),
                 ("search", args.search.map(Value::from)),
                 ("match", args.match_mode.map(Value::from)),
+                ("anchor_repo", args.anchor_repo.map(Value::from)),
+                (
+                    "anchor_path_prefix",
+                    args.anchor_path_prefix.map(Value::from),
+                ),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -733,6 +756,8 @@ where
                 ("until", args.until),
                 ("limit", args.limit.map(|l| l.to_string())),
                 ("cursor", args.cursor),
+                ("anchor_repo", args.anchor_repo),
+                ("anchor_path_prefix", args.anchor_path_prefix),
             ] {
                 if let Some(value) = value {
                     params.push((name.to_owned(), value));
@@ -855,6 +880,9 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("tokens", "tokens"),
         ("created_at", "created_at"),
         ("promoted_at", "promoted_at"),
+        ("anchor", "anchor"),
+        ("stale", "stale"),
+        ("source_checked", "source_checked"),
     ]
     .into_iter()
     .map(|(from, to)| (to.to_owned(), m[from].clone()))
