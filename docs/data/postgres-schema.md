@@ -1499,7 +1499,8 @@ drops kind 2 rows of versions that have no postings any more, and queues any ver
 0022 queues nothing: a lead serving no sparse pipeline turns every tenant's state off and
 empties the queue at start, and one serving a sparse pipeline turns each tenant's on in its
 encoder's first pass and backfills the versions written before, 1,000 per pass, resuming after
-the last id read. The drain holds the version `FOR SHARE` before it takes the entry, as the
+the last id read; the step that turns a state on takes `SHARE` on `memories` first, so no write in
+flight is missed by both the trigger and the backfill. The drain holds the version `FOR SHARE` before it takes the entry, as the
 trigger does, takes entries `FOR UPDATE SKIP LOCKED` under a 5-minute lease, and parks an entry
 after 5 failed encodes.
 ### recall telemetry (ADR-0054)
