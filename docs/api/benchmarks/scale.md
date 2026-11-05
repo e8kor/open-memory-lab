@@ -38,7 +38,7 @@ Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all c
 | bm25-trigram | 5,183 | beir-scifact | 3,707 | 5,454 | no |
 | bm25-trigram | 5,882 | locomo | 89.1 | 112 | no |
 | bm25-trigram | 51,830 | beir-scifact-x10 | 13,271 | 19,248 | no |
-| bm25-rerank | 200 | recall-synthetic | 356 | 487 | no |
+| bm25-rerank | 200 | recall-synthetic | 128 | 215 | no |
 | bm25-k10 | 5,183 | beir-scifact | 70.5 | 98.5 | no |
 | bm25-k10 | 51,830 | beir-scifact-x10 | 572 | 804 | no |
 | bm25-rerank-d20 | 3,633 | beir-nfcorpus | 5,247 | 15,467 | no |

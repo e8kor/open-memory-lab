@@ -18,7 +18,7 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [Synthetic recall set](recall-synthetic.md)
 
-200 memories, 121 queries. Measured 2026-11-05 on commit `2b0cf53`, `71b7b69`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
+200 memories, 121 queries. Measured 2026-11-05 on commit `3c70c71`, `71b7b69`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -26,7 +26,7 @@ Every number below went through the served path: memories written over HTTP by a
 | keyword-any | 121 | 0.689 | 0.843 | – | 0.033 | 18.9 | 29.7 |
 | bm25 | 121 | 0.876 | 0.926 | – | 0.000 | 16.3 | 21.2 |
 | bm25-trigram | 121 | 0.874 | 0.950 | – | 0.000 | 30.4 | 41.9 |
-| bm25-rerank | 121 | 0.906 | 0.950 | – | 0.000 | 356 | 487 |
+| bm25-rerank | 121 | 0.906 | 0.950 | – | 0.000 | 128 | 215 |
 
 ## [BEIR SciFact](beir-scifact.md)
 

@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25-rerank",
  "date": "2026-11-05",
- "commit": "2b0cf53",
+ "commit": "3c70c71",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "18.6",
@@ -125,10 +125,10 @@
   }
  },
  "latency_ms": {
-  "p50": 356.45,
-  "p95": 487.32,
-  "p99": 536.86
+  "p50": 127.96,
+  "p95": 215.22,
+  "p99": 270.99
  },
  "reference": null,
- "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured. Of 22 unanswerable queries, kept out of these metrics, 0.000 were answered with no hit. bm25-rerank at its defaults (ms-marco-MiniLM-L6-v2, depth 10, floor off) with a 60 s deadline so no rerank was skipped, on a host other work kept at a load average of 9 to 29 (ADR-0053 d4, FR-88)."
+ "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured. Of 22 unanswerable queries, kept out of these metrics, 0.000 were answered with no hit. bm25-rerank at its defaults (ms-marco-MiniLM-L6-v2, depth 10, 256 tokens, 2 threads, a 1 s deadline, floor off); no rerank was skipped; the host's load average was 3.3 to 4.0 from other work, and another reviewer may have been running tests beside it (ADR-0053 d4, FR-88)."
 }

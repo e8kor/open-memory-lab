@@ -40,7 +40,7 @@ implementation is pure Rust (ADR-0006). The `oml` CLI ships static musl and Wind
 must not grow, since only the lead runs a model. Each hit keeps its `matched` explanation.
 
 **The host the numbers come from.** Every latency below was measured on the 8-vCPU host while
-other sessions' builds and evals ran beside it, a load average of 15 to 29; the relative order
+other sessions' builds and evals ran beside it, a load average of 15 to 29 in the first round and 3 to 8 in the second, after an independent review; each table names its own; the relative order
 of the runtimes and of the depths held across repeated runs, the absolute milliseconds did not,
 and they are reported as measured, not as what an idle host would give (FR-88).
 
@@ -71,8 +71,13 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   `candle-transformers`, and the relevance is the logistic of the logit, so one number reads the
   same way on every query (d6). The tokenizer is the model's own `tokenizer.json` through
   `tokenizers` with its pure-Rust regex backend (the default features would compile the C
-  oniguruma and the C++ esaxx). Pairs are cut to 512 tokens from the passage's end, never the
-  query's, and batched eight at a time by length.
+  oniguruma and the C++ esaxx). The adapter builds each pair itself: the query is tokenised once
+  and cut to a quarter of `search.rerank.max_tokens`, so a pasted stack trace never leaves a
+  passage without room and never fails the rerank; each passage is cut to 4 KiB before the
+  tokenizer reads it, so a megabyte memory costs what its start costs, then to the tokens the
+  query leaves; pairs are padded by the adapter and batched sixteen at a time by token count, so
+  the default head of ten is one forward pass. A failed rerank logs its error text, which holds
+  no passage, as `rerank_failed`.
 
     **The runtime, by evidence** (same pairs, same host, same hour):
 
@@ -90,8 +95,20 @@ and they are reported as measured, not as what an idle host would give (FR-88).
     exist for no musl target. tract matched candle's speed and failed to plan the model for
     long passages without more shape work. Measured: on a loaded host candle split over every
     core measured three times slower than on one thread (932 against 304 ms for ten pairs), so
-    the adapter runs each inference in a rayon pool of its own whose size is candle's thread
-    count (`RAYON_NUM_THREADS`, else the host's cores), and the two agree.
+    the reranker has a pool of its own, `search.rerank.threads` (default 2) threads that every
+    rerank shares, and the lead sets candle's split (`RAYON_NUM_THREADS`) to the same number
+    before it starts any thread, so the two agree and the stage never takes more of the host.
+    Measured served over the synthetic set at one client (L6, depth 10; load average 6.5 to 8
+    from other work):
+
+    | threads | p50 ms | p95 ms |
+    |---:|---:|---:|
+    | 1 | 178 | 288 |
+    | **2** | 133 | 224 |
+    | 4 | 120 | 174 |
+
+    Four threads buy 13 ms at the median for twice the cores; two leave an 8-vCPU host's other
+    six to the request runtime and PostgreSQL.
 
     **The CLI does not grow.** Only `oml-server-lead` depends on `oml-rerank`; `cargo tree -p
     oml-cli` holds no candle, tokenizers or gemm crate, so the musl and Windows CLI builds are
@@ -101,7 +118,9 @@ and they are reported as measured, not as what an idle host would give (FR-88).
 - **d3 — The model is pinned by digest and placed by the operator, or fetched once at start
   when allowed.** `oml-rerank` pins each model it serves by repository, commit and the SHA-256
   of `config.json`, `tokenizer.json` and `model.safetensors`. The lead reads them from
-  `search.rerank.model_dir` (default `oml-models/<model>`), checks every digest before parsing a
+  `search.rerank.model_dir`, an absolute path (default `<state>/models/<model>`, `<state>`
+  being systemd's `STATE_DIRECTORY`, else `$XDG_STATE_HOME/oml`, else `~/.local/state/oml`;
+  never the working directory, and a relative value stops the start), checks every digest before parsing a
   byte, and refuses to start naming a missing or different file. With `search.rerank.fetch =
   true` it first fetches the missing files from the pinned commit over HTTPS, checks each digest
   before writing it, and writes it under a `.partial` name first, so a cut fetch leaves nothing
@@ -140,14 +159,23 @@ and they are reported as measured, not as what an idle host would give (FR-88).
 
     Depth 10 keeps L6's first hit and loses one query at success@5 for about half the p95, so 10
     is the default and 20 a setting; L4 at depth 10 is the fastest and 0.017 below L6 on the
-    first hit. The recall eval, served through `oml_read` at the defaults (release build,
-    PostgreSQL 18.6, `k` 10, 2,000 tokens, depth 10, no floor; committed as
-    `eval/recall/results/served_bm25_rerank.json`):
+    first hit. (These rows predate the pair handling of d2 and ran with candle on every core.)
+
+    **The pair length is 256 tokens** (`search.rerank.max_tokens`, 64 to 512). Measured with L6
+    at depth 10: the synthetic set ranks the same at 256 as at 512 (nDCG@10 0.902, S@1 0.893,
+    S@5 0.950), since a claim is far shorter; on 100 SciFact abstracts 256 gives 0.694 nDCG@10
+    and S@5 0.76 at a p50 of 1,447 ms, against 0.695 and 0.79 at 3,783 ms for 512 (load average
+    3 to 8). Neither beats `bm25` on abstracts (0.696 on the same sample), and OML's memories are
+    claims, so the shorter pair is the default.
+
+    The recall eval, served through `oml_read` at the defaults (release build, PostgreSQL 18.6,
+    `k` 10, 2,000 tokens, depth 10, 256 tokens, 2 threads, a 1 s deadline, no floor; load
+    average 3.3 to 4.0; committed as `eval/recall/results/served_bm25_rerank.json`):
 
     | pipeline | success@1 | success@5 | recall@10 | nDCG@10 | median ms | p95 ms |
     |---|---:|---:|---:|---:|---:|---:|
-    | `bm25`, same run | 0.826 | 0.926 | 0.910 | 0.872 | 6.1 | 10.0 |
-    | `bm25-rerank` | **0.893** | **0.950** | 0.910 | **0.906** | 357 | 487 |
+    | `bm25`, same run | 0.826 | 0.934 | 0.910 | 0.872 | 6.1 | 10.0 |
+    | `bm25-rerank` | **0.893** | **0.950** | 0.910 | **0.906** | 123 | 215 |
 
     On the public sets, served at `k` 100 with L6 at depth 20, each beside `bm25` on the same
     seeded sample in the same hour (`eval/bench/results/*/bm25-rerank-d20.json` and
@@ -172,19 +200,25 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   `timeout`, a tokenizer or tensor error answers `failed`; in each case the recall serves the
   first stage's order with `search.rerank: "skipped"` and `search.rerank_reason` naming which,
   never an error to the caller. A late inference keeps its slot until it ends, so the cap bounds
-  the CPU in use, not only the calls answered. Measured over the synthetic set at depth 20,
-  one, four and eight clients at once:
+  the CPU in use, not only the calls answered. Measured over the synthetic set at the defaults
+  (depth 10, 256 tokens, 2 threads, 2 slots, 1 s), one, four and eight clients at once; the
+  load average from other work is beside each, and another session may have been running tests
+  on the host at the time:
 
-    | clients | no cap, 60 s deadline: p50 / p95 ms | defaults (2 slots, 1 s): p50 / p95 ms | defaults: reranks applied |
-    |---:|---|---|---:|
-    | 1 | 377 / 663 | 397 / 698 | 121 of 121 |
-    | 4 | 1,289 / 3,244 | 1,017 / 1,048 | 20 of 121 (39 busy, 62 timeout) |
-    | 8 | 2,248 / 7,843 | 1,021 / 1,050 | 12 of 121 (72 busy, 37 timeout) |
+    | model | clients | p50 / p95 ms | reranks applied | load average |
+    |---|---:|---|---:|---|
+    | L6 | 1 | 140 / 246 | 121 of 121 | 3.1 → 3.0 |
+    | L6 | 4 | 348 / 721 | 120 (1 timeout) | 3.0 → 3.1 |
+    | L6 | 8 | 805 / 1,018 | 87 (32 timeout, 2 busy) | 3.1 → 3.4 |
+    | L4 | 1 | 100 / 161 | 121 of 121 | 3.1 → 2.9 |
+    | L4 | 4 | 225 / 462 | 121 of 121 | 2.9 → 3.1 |
+    | L4 | 8 | 489 / 791 | 120 (1 timeout) | 3.1 → 3.3 |
 
-    The model is CPU-bound, about 2.6 reranked recalls a second on this host whatever the
-    concurrency, so without a cap the wait grows with the clients; with the defaults no recall
-    waits past the deadline and the ones that would serve `bm25`'s order and say so, which is
-    the behaviour this decision wants. The defaults are the measured trade on this host: two
+    Before the pair handling and the pool of d2 (depth 20, candle on every core, load 9 to 15),
+    four clients got 20 of 121 reranks and eight 12. The model is CPU-bound, so past the slots
+    the wait grows with the clients; with the defaults no recall waits past the deadline, and
+    the ones that would serve `bm25`'s order and say so, which is the behaviour this decision
+    wants. The defaults are the measured trade on this host: two
     slots leave cores to PostgreSQL and the rest of the lead, and one second is past the p95 of
     a reranked recall over short claims at one client; abstract-length rows need a higher
     deadline or a lower depth, and doctor says when reranks are being skipped (d9).
@@ -196,7 +230,10 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   lay past the depth, is withheld; `search.floor` names the threshold and `search.below_floor`
   counts what it withheld. An answer whose candidates all fall below it has `hits: []`,
   `below_floor` above zero and the query's `terms`, which says "nothing relevant", not "no
-  word matched". When the rerank was skipped no floor applies and `search.floor` is `null`.
+  word matched", and offers no `did_you_mean`, since its words matched. Only rows the core
+  admits are counted: the tail past the depth is hydrated and admitted before the floor counts
+  it. Relevances and the floor print to six places, as set. When the rerank was skipped no
+  floor applies and `search.floor` is `null`.
   *A normalised first-stage score as the fallback floor was measured and rejected:* `bm25`'s top
   score divided by the query's word count, swept on the recall eval, empties 64% of unanswerable
   queries only by emptying 13% of answerable ones, and 82% by emptying 28% (below). *Off by
@@ -237,9 +274,10 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   reranker); it is not in `search.enabled`'s default and needs a loaded model. Settings, each
   also `OML_SEARCH__RERANK__*`: `search.rerank.model` (`ms-marco-MiniLM-L6-v2`;
   `ms-marco-MiniLM-L4-v2`), `.model_dir`, `.fetch` (`false`), `.depth` (10, 1 to 100), `.floor`
-  (`off`, or 0 to 1), `.max_concurrent` (2), `.timeout_ms` (1,000). The start stops naming the
-  key on a model this build does not pin, a depth or floor out of range, or a fetch that is not
-  `true` or `false`; on an enabled reranking pipeline with no model loaded
+  (`off`, or 0 to 1), `.max_concurrent` (2), `.threads` (2), `.max_tokens` (256, 64 to 512),
+  `.timeout_ms` (1,000). The start stops naming the key on a model this build does not pin, a
+  relative `model_dir`, a depth, floor, thread count or pair length out of range, or a fetch
+  that is not `true` or `false`; on an enabled reranking pipeline with no model loaded
   (`search.enabled names bm25-rerank, which reranks, and no reranker is loaded`); and on a
   missing or different model file, naming it and the remedy. A deployment that serves no
   reranking pipeline reads no model file and fetches nothing.
@@ -249,14 +287,16 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   reranking stages; the request line gains `search_rerank` and `search_rerank_reason`.
   `/readyz`'s `search.rerank` names the model, the depth, the floor and the reranks skipped
   since start by reason; `oml doctor` prints `search: rerank <model>, depth <n>, floor <f|off>`
-  and warns `search_rerank` when any were skipped, naming the settings that change it. The
+  and warns `search_rerank` when any were busy or late, naming the settings that change it, and
+  `search_rerank_failed` when any failed, pointing at the `rerank_failed` log event. A score
+  that is not a finite relevance in `[0, 1]` fails the rerank rather than sorting first. The
   recall eval gates `bm25-rerank` at success@1 ≥ 0.87 and success@5 ≥ 0.94, above `bm25`'s
   committed 0.835 and 0.934, and fails it when any query skipped the rerank, since a skipped
   rerank serves `bm25`'s order; CI caches the pinned files, runs `bm25-rerank` beside the other
   pipelines with a deadline of 60 seconds so a slow runner measures the ranking, and runs the
   adapter's real-model tests. **The default does not change.** `bm25-rerank` passes its
   quality gate, and misses ADR-0048 d11's latency budget by more than an order of magnitude on
-  this host (a p95 of 487 ms against `bm25`'s 10 ms on the recall eval, where the budget is
+  this host (a p95 of 215 ms against `bm25`'s 10 ms on the recall eval, where the budget is
   about twice the every-word recall's 19 ms); ADR-0049 d12's rule picks the default
   among passing pipelines on quality, and this record adds that a default must also fit the
   budget, as ADR-0049 d10 already required of the reranker. `bm25` stays the default; a
@@ -268,8 +308,11 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   `a_reranker_scores_lie_in_the_unit_interval`,
   `a_reranker_scores_a_passage_alone_as_among_others` (so no other row, readable or not,
   reaches a candidate's relevance), and `a_reranker_ranks_an_answer_above_an_unrelated_passage`.
-  The real-model tests read the files from `OML_RERANK_MODEL_DIR` and print `skipped <test>:
-  OML_RERANK_MODEL_DIR is unset` when it is absent; one asserts candle's relevances equal the
+  The real-model tests are `#[ignore]`d with the reason `needs the model's files in
+  OML_RERANK_MODEL_DIR`, so a run without the model lists them as ignored, and CI runs them
+  with `--ignored` against its cached files, candle, gemm and tokenizers built at opt-level 3
+  in test builds; they include a megabyte passage inside a short deadline and a 2,000-word
+  query that still scores every passage. One asserts candle's relevances equal the
   model's own ONNX export under onnxruntime to 1e-3 on fixed pairs. The core's stage is tested
   over the in-memory store answering the `bm25` kind with its any-word list
   (`MemStore::answering_bm25_with_any_word`, a first stage for the later stages, never a law of
@@ -292,7 +335,10 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   LongMemEval's abstention questions). ADR-0048's FR-85 (a reranker's CPU cost in candle) is
   answered for this host by d2 and d4 and stays open until FR-88 closes.
 - **Costs**: up to `depth` rows hydrated per reranked recall; the model's 91 MB in memory once
-  per lead; the lead's binary 9.6 MB larger; CPU bounded by the cap and the pool.
+  per lead, and per running rerank the activations of one batch, at 256 tokens about 150 MB
+  at worst (attention scores of 16 × 12 × 256 × 256 floats, a few alive at once), so about
+  0.3 GB at the default two slots; the lead's binary 9.6 MB larger; CPU bounded by the slots
+  and the pool's threads.
 - **Expected conflicts**: ADR-0050 to ADR-0052 are on other branches and their numbers taken;
   FR-90 and above are used on other branches.
 
