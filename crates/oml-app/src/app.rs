@@ -4454,7 +4454,7 @@ where
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
         let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
-        self.require_access(&caller, scope, Role::Reader, "recall")
+        self.require_access(caller, scope, Role::Reader, "recall")
             .await?;
         // The query is its NFC text, searched and digested alike (ADR-0025
         // d9).
@@ -4490,7 +4490,7 @@ where
             })
             .collect();
 
-        let readable = self.nodes_with(&caller, scope, Role::Reader).await?;
+        let readable = self.nodes_with(caller, scope, Role::Reader).await?;
         // A scope inside a user root also searches `universe`'s own claims
         // where the key reads that node, ranked with the scope's own; own
         // held rows never include them (ADR-0044 d10).
@@ -4697,7 +4697,7 @@ where
         let mut ancestries = BTreeMap::new();
         let mut served_steering = Vec::with_capacity(steering.len());
         for m in steering {
-            served_steering.push(self.served_in(&caller, m, &mut ancestries).await?);
+            served_steering.push(self.served_in(caller, m, &mut ancestries).await?);
         }
         let mut hits = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
@@ -4709,7 +4709,7 @@ where
             if admits(&m) {
                 served_ids.push(m.memory_id);
                 hits.push(RecallHit {
-                    served: self.served_in(&caller, m, &mut ancestries).await?,
+                    served: self.served_in(caller, m, &mut ancestries).await?,
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),

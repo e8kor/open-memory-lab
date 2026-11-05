@@ -2526,10 +2526,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
     let mut rows = Vec::new();
     for table in POC_TABLES.iter().copied().chain(["journal"]) {
         let row = match (renamed, table) {
-            // 0020 adds search_default, null for every tenant it finds
+            // 0020 adds search_default and 0022 telemetry_query_text_since,
+            // null for every tenant they find
             // (ADR-0049 d4).
             (true, "tenants") => {
-                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default') \
+                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
+                  - 'telemetry_query_text_since') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workarea's status is the one every build served,
@@ -5855,7 +5857,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7292,7 +7294,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7953,7 +7955,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

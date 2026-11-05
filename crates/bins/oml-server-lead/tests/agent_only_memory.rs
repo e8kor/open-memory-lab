@@ -662,7 +662,12 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
             "next_hit_tokens": tokens(texts[&ranked[1]]),
         })
     );
-    let again = agent.ok("oml_read", budgeted_request).await;
+    let mut again = agent.ok("oml_read", budgeted_request).await;
+    // Each recall has an id of its own (ADR-0054 d2); the rest is the same.
+    let mut budgeted = budgeted;
+    for answer in [&mut again, &mut budgeted] {
+        answer.as_object_mut().map(|o| o.remove("recall_id"));
+    }
     assert_eq!(again, budgeted, "the cut is deterministic");
 
     // 9. A write with replaces enters admission held and replays once; the

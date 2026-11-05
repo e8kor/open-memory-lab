@@ -208,12 +208,12 @@ impl Quality {
         );
         registry.register(
             "oml_telemetry_partitions_missing",
-            "tenants missing a recall telemetry partition for this week or the next",
+            "organisations missing a recall telemetry partition for this week or the next",
             q.partitions_missing.clone(),
         );
         registry.register(
             "oml_telemetry_purge_overdue",
-            "tenants holding recall telemetry rows past the 30 days, plus week partitions past them not dropped",
+            "organisations holding recall telemetry rows past the 30 days, plus week partitions past them not dropped",
             q.purge_overdue.clone(),
         );
         registry.register(

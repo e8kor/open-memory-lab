@@ -3404,7 +3404,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     assert_eq!(recalled["mode"], "recall", "{recalled}");
     assert_eq!(
         fields(&recalled),
-        ["budget", "hits", "mode", "search", "steering"]
+        ["budget", "hits", "mode", "recall_id", "search", "steering"]
     );
     let hit = &recalled["hits"][0];
     assert_eq!(hit["artifact_id"], stored.as_str(), "{recalled}");
