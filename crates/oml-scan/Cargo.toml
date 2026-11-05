@@ -1,0 +1,16 @@
+[package]
+name = "oml-scan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The deterministic content scan (ADR-0065): the oml-scan/1 rule set of secret, path, injection, Unicode and encoding rules, compiled in, no model. A leaf: it links no workspace crate, so the server's scanner, oml-domain's anchor path rule and oml-cli's sync read one rule list."
+
+[dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
