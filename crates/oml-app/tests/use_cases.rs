@@ -3102,10 +3102,7 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
         .expect("revision")
         .receipt;
     let edit = app
-        .supersede(
-            &editor.value,
-            &at_version(supersede_req("sup-e", first, "edit"), 2),
-        )
+        .supersede(&editor.value, &supersede_req("sup-e", first, "edit"))
         .await
         .expect("edit")
         .receipt;
@@ -3459,21 +3456,10 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     app.post_verdict(&approver.value, edit, Verdict::Approve, None)
         .await
         .expect("ratify the edit");
-    // Naming the version it read, it learns only that the claim moved on:
-    // the ordinal, the count residual FR-31 states (ADR-0057 d19).
+    // The version check counts only versions it can read, so it names the
+    // one it read and meets the tip check (ADR-0057 d19).
     let err = app
         .supersede(&blind.value, &supersede_req("sup-b", blind_first, "v3"))
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(err, AppError::VersionConflict { current: 2 }),
-        "{err:?}"
-    );
-    let err = app
-        .supersede(
-            &blind.value,
-            &at_version(supersede_req("sup-b2", blind_first, "v3"), 2),
-        )
         .await
         .unwrap_err();
     assert!(
@@ -3961,10 +3947,7 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
         .receipt
         .memory_id;
     let revision = app
-        .supersede(
-            &writer.value,
-            &at_version(supersede_req("w-1", first, "revision"), 2),
-        )
+        .supersede(&writer.value, &supersede_req("w-1", first, "revision"))
         .await
         .expect("revision")
         .receipt

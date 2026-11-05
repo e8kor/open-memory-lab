@@ -141,12 +141,13 @@ version took the tip first, the refusal `submission.tip_conflict` names it in
 again. Keep the same `idempotency_key` when you retry the same proposal.
 
 When a memory states something read from a committed file, pass `anchor` with where it came
-from: `{repo, rev, path, fragment}`, which `oml anchor <path>[#fragment]` prints. The reviewer
+from: `{repo, rev, path, fragment}`, with `repo` like `github.com/owner/name`, `rev` the full
+commit id you read and `fragment` a heading slug or a line span such as `L10-L42`. The reviewer
 sees it beside the text, and recall can then be narrowed with `anchor_repo` and
 `anchor_path_prefix`; a hit whose source changed since it was reviewed carries `stale`.
 
-To retire a claim that no longer holds, pass `replaces` and `retirement: true` with a
-`text` that says why. Once approved, recall stops serving the claim, and every version
+To retire a claim that no longer holds, pass `replaces`, its `expected_version` and
+`retirement: true` with a `text` that says why. Once approved, recall stops serving the claim, and every version
 stays readable with `oml_read`.
 
 ## What the tools cannot do

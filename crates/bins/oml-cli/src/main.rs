@@ -862,7 +862,7 @@ struct WriteArgs {
     expected_version: Option<u32>,
     /// Where the claim came from, one JSON object or @file holding one:
     /// {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …}
-    /// (ADR-0057 d1). `oml anchor <path>` prints one for a committed file.
+    /// (ADR-0057 d1).
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
     /// Propose retiring the --replaces claim; the text says why.
@@ -2436,6 +2436,7 @@ fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError
             field(item, "principal")
         );
         println!("  claim_key {}", field(item, "claim_key"));
+        println!("  source    {}", anchor_line(&item["anchor"]));
         println!(
             "  body      | {}",
             field(item, "text").replace('\n', "\n            | ")
@@ -2506,10 +2507,34 @@ fn run_review_list(
                     ""
                 }
             );
+            println!("    source {}", anchor_line(&item["anchor"]));
             println!("    | {}", field(item, "text").replace('\n', "\n    | "));
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
+/// commit's first 12 digits, the path and the fragment, or the page; `none`
+/// for an unanchored version.
+fn anchor_line(anchor: &Value) -> String {
+    if !anchor.is_object() {
+        return "none".to_owned();
+    }
+    let fragment = anchor["fragment"]
+        .as_str()
+        .map_or_else(String::new, |f| format!("#{f}"));
+    match anchor["repo"].as_str() {
+        Some(repo) => {
+            let rev = anchor["rev"].as_str().unwrap_or("");
+            format!(
+                "{repo} @ {} {}{fragment}",
+                &rev[..rev.len().min(12)],
+                anchor["path"].as_str().unwrap_or("")
+            )
+        }
+        None => format!("{}{fragment}", anchor["uri"].as_str().unwrap_or("")),
+    }
 }
 
 /// The ids `--ids` names: a file of one per line, `-` for standard input,
@@ -2996,6 +3021,7 @@ fn run_admin(
             println!("    principal   : {}", field(&read, "principal"));
             println!("    user        : {}", field(&read, "user"));
             println!("    derives from: {}", read["derives_from"]);
+            println!("    source      : {}", anchor_line(&read["anchor"]));
             println!("    replaces    : {}", field(&read, "replaces"));
             for v in read["verdicts"].as_array().into_iter().flatten() {
                 println!(
@@ -4053,9 +4079,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut default_node: Option<Value> = None;
+    let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let mut sync: Option<Vec<String>> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -4082,6 +4107,21 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                // The claim edges there waiting for a second key, one page
+                // (ADR-0057 d17; ADR-0046 d4).
+                waiting_edges = client
+                    .get(&format!(
+                        "/v2/edges?kind=claim&workarea_id={segment}&limit=200"
+                    ))
+                    .ok()
+                    .map(|(_, page)| {
+                        page["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|e| e["state"] == "pending")
+                            .count()
+                    });
             }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
@@ -4101,17 +4141,6 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
             }
-            // The sync failures of ADR-0057 d17, on the default workarea.
-            let default_id = match &me {
-                Some(Ok(v)) => v["default_workarea"]["id"].as_str().map(ToOwned::to_owned),
-                _ => None,
-            };
-            sync = Some(oml_cli::sync::doctor::lines(
-                Some(url),
-                Some(&client),
-                default_id.as_deref(),
-                &cwd,
-            ));
         }
     }
     // Every count of the lead's traffic is the metrics listener's alone
@@ -4128,16 +4157,18 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
-    let sync = sync.unwrap_or_else(|| {
-        oml_cli::sync::doctor::lines(
-            source.as_ref().and_then(|s| s.url.map(String::as_str)),
-            None,
-            None,
-            &cwd,
-        )
-    });
+    // The sync failures of ADR-0057 d17 that the clone alone answers; the
+    // stale count and the waiting edges are the sources lines'.
+    let sync = oml_cli::sync::doctor::lines(
+        source.as_ref().and_then(|s| s.url.map(String::as_str)),
+        &std::env::current_dir().unwrap_or_default(),
+    );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
-    let sources = sources_doctor(server_version(ready.as_ref()).as_deref(), scrape.as_ref());
+    let sources = sources_doctor(
+        server_version(ready.as_ref()).as_deref(),
+        default_node.as_ref(),
+        waiting_edges,
+    );
     let sources_warn = sources.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
@@ -4772,13 +4803,15 @@ fn web_doctor(
     lines
 }
 
-/// The server's version, as `/readyz` names its build, ready or not
-/// (http-api.md "Health"); `None` when the probe did not run or names none.
-/// Source anchors (ADR-0057 d17): a server before v0.5.8 accepts no
-/// anchor, which `--anchor` and `oml sync` would be refused by; and the
-/// source checks that found a changed or removed source since the lead
-/// started, from the metrics listener.
-fn sources_doctor(server: Option<&str>, scrape: Option<&Scrape>) -> Vec<String> {
+/// Source anchors (ADR-0057 d17): a server before v0.5.8, which accepts no
+/// anchor; the served versions of the key's default workarea that read
+/// stale, as the server counts them; and the claim edges there waiting for
+/// a second key.
+fn sources_doctor(
+    server: Option<&str>,
+    default_node: Option<&Value>,
+    waiting_edges: Option<usize>,
+) -> Vec<String> {
     let mut lines = Vec::new();
     // A client of the same build as the server never warns: the check is
     // for a client that sends anchors to an older server.
@@ -4790,15 +4823,24 @@ fn sources_doctor(server: Option<&str>, scrape: Option<&Scrape>) -> Vec<String> 
             "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor, the anchor filters and oml sync are refused; upgrade the server"
         ));
     }
-    if let Some(scrape) = scrape {
-        let changed = scrape.sum("oml_source_checks_total", &[("outcome", "changed")]);
-        let removed = scrape.sum("oml_source_checks_total", &[("outcome", "removed")]);
-        if changed + removed > 0 {
+    if let Some(node) = default_node
+        && let Some(stale) = node["stale_versions"].as_u64()
+    {
+        let path = node["path"].as_str().unwrap_or("the default workarea");
+        if stale > 0 {
             lines.push(format!(
-                "{} source checks since start found a changed source and {removed} a removed one: those served versions read stale until their successors are reviewed (oml sync --check lists them)",
-                changed
+                "warn sources_stale: {stale} served version(s) in {path} read stale: their source changed or went away since they were reviewed, until a successor is reviewed"
             ));
+        } else {
+            lines.push(format!("no served version in {path} reads stale"));
         }
+    }
+    if let Some(waiting) = waiting_edges
+        && waiting > 0
+    {
+        lines.push(format!(
+            "{waiting} claim edge(s) in the default workarea wait for a second key to ratify them"
+        ));
     }
     lines
 }
@@ -4813,6 +4855,8 @@ fn before_anchors(version: &str) -> bool {
     }
 }
 
+/// The server's version, as `/readyz` names its build, ready or not
+/// (http-api.md "Health"); `None` when the probe did not run or names none.
 fn server_version(ready: Option<&(u16, Value)>) -> Option<String> {
     ready
         .and_then(|(_, body)| body["build"]["version"].as_str())

@@ -824,6 +824,30 @@ pub trait JournalStore: Retriever + Send + Sync {
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
+    /// How many promoted served tips on `workarea_id` itself read `stale`:
+    /// their latest source check found the source `changed` or `removed`
+    /// (ADR-0057 d5, d17). A held version is never counted.
+    fn stale_count(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The greatest `version` of `claim_key` in the workarea that a key of
+    /// `own_key_ids` may read as the claim's: its own held and promoted
+    /// versions, and with `reads_promoted` (reader effective access on the
+    /// workarea) every promoted one; never another author's held version,
+    /// so a supersession's check tells its caller nothing it cannot read
+    /// (ADR-0057 d19; R3).
+    fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+        reads_promoted: bool,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
     /// The promoted served tip of `claim_key` in the workarea, if any
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
     fn claim_tip(

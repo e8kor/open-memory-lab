@@ -26,9 +26,9 @@ class SupersedeRequest:
         Attributes:
             body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
                 larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
-            expected_version (int): The claim's latest live version as the caller last read it: the greatest version among
-                its held and promoted versions in the workarea. Any other is 409 submission.version_conflict,
-                details.current_version (ADR-0057 d19).
+            expected_version (int): The claim's latest version the caller can read, as it last read it: its promoted
+                versions where it reads the workarea and its own keys' versions; never another author's held version. Any other
+                is 409 submission.version_conflict, details.current_version (ADR-0057 d19).
             anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
                 immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.

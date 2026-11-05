@@ -452,14 +452,16 @@ Accepted for build in v0.5.8 on 2026-11-05.
   name.** *Added 2026-11-05 from basic-memory's `expected_checksum`
   (`mcp/tools/write.py:71-72, 142-148`).* `POST /v1/memories/{artifact_id}/supersede`, `oml_write`
   with `replaces` and `oml write --replaces` take a required `expected_version`, the ordinal of
-  the claim's latest live version as the caller last read it: the greatest `version` among the
-  claim's held and promoted versions in the workarea, the tip's own when nothing is held. When
-  the claim's latest live version differs, the write is refused with `submission.version_conflict`
-  and `details.current_version`, after the readability check and before the tip check, and
-  nothing is captured. Two sessions of one key that both read version 3 can no longer each leave
-  a held successor for the reviewer to arbitrate: the first captures version 4, the second is
-  refused and re-reads. The residual is the one FR-31 already states for the ordinal: the
-  refusal tells a writer that a version it may not read exists, a count and never content. A
+  the claim's latest version the caller can read, as it last read it: the greatest `version`
+  among the claim's promoted versions (where the caller reads the workarea) and the held and
+  promoted versions its own keys wrote, the tip's own when there is none. When that differs, the
+  write is refused with `submission.version_conflict` and `details.current_version`, after the
+  readability check and before the tip check, and nothing is captured. Two sessions of one key
+  that both read version 3 can no longer each leave a held successor for the reviewer to
+  arbitrate: the first captures version 4, the second is refused and re-reads. Another author's
+  held version never changes the answer, so polling the refusal tells a caller nothing it cannot
+  read (R3; *amended 2026-11-05 on review of #69*); rival successors by different keys remain
+  possible, as ADR-0025 d10 allows, and the compare-and-set at ratification decides between them. A
   rejected or demoted version does not count, so a rejection never blocks the next proposal.
   The web console's dreamer edit sends the version it rendered. Pre-release (ADR-0060's rule
   for OML, ADR-0039 d11): the field is required, not defaulted, so no caller supersedes blind.
@@ -547,7 +549,7 @@ get mode.
 
 **Refusals.** A malformed anchor or filter: `request.validation`, `details.field` such as
 `/anchor/path`. A scanned finding in it: `submission.scan_veto`. A supersession whose
-`expected_version` is not the claim's latest live version: `submission.version_conflict` (409),
+`expected_version` is not the claim's latest version the caller can read: `submission.version_conflict` (409),
 `details.current_version`, the one new code (d19).
 
 **CLI.**

@@ -2782,7 +2782,13 @@ where
         } else {
             self.brief(&caller, node).await?
         };
+        let stale_versions = if structure {
+            0
+        } else {
+            self.journal.stale_count(tenant_id, node).await?
+        };
         Ok(WorkareaInfo {
+            stale_versions,
             path: derived_path(&ancestry),
             policy: review_policy(),
             pending_transitions,
@@ -5464,8 +5470,20 @@ where
         let Some(anchor) = anchor else {
             return Ok(());
         };
-        for (field, value) in anchor.scanned() {
-            if field == "/anchor/path" && anchor_grammar::secret_shaped(value) {
+        self.scan_fields(tenant_id, &anchor.scanned(), "/anchor/path")
+    }
+
+    /// The anchor scan over `fields`: the one named `path_field` vetoed when
+    /// its file name has a secret's shape, and every field by the
+    /// deterministic scanner, a hold counting as a veto (ADR-0057 d2).
+    fn scan_fields(
+        &self,
+        tenant_id: Uuid,
+        fields: &[(&'static str, &str)],
+        path_field: &str,
+    ) -> Result<(), AppError> {
+        for &(field, value) in fields {
+            if field == path_field && anchor_grammar::secret_shaped(value) {
                 return Err(AppError::AnchorScanVeto {
                     field,
                     finding: "anchor.secret_path".to_owned(),
@@ -5578,6 +5596,15 @@ where
             field: e.field,
             reason: e.reason,
         })?;
+        // Where a span moved is kept for good and served to every reader,
+        // so it is scanned as an anchor is (ADR-0057 d2, d18).
+        if let Some((path, fragment)) = &body.moved_to {
+            let mut fields: Vec<(&'static str, &str)> = vec![("/path", path.as_str())];
+            if let Some(fragment) = fragment {
+                fields.push(("/fragment", fragment.as_str()));
+            }
+            self.scan_fields(key.tenant_id, &fields, "/path")?;
+        }
         let at = self.clock.now();
         let (moved_path, moved_fragment) = body
             .moved_to
@@ -5739,15 +5766,31 @@ where
                 workarea: sent.clone(),
             });
         }
-        // The claim's latest live version, read after the head: a capture
-        // that commits in between moves the head and the retry reads it
-        // again. Anything but the version the caller names is refused
-        // before the tip check, nothing captured (ADR-0057 d19).
+        // The claim's latest version the caller may read (promoted, or held
+        // by its own keys), read after the head: a capture that commits in
+        // between moves the head and the retry reads it again. Anything but
+        // the version the caller names is refused before the tip check,
+        // nothing captured; another author's held version never changes the
+        // answer (ADR-0057 d19; R3).
         let claim_state = self
             .journal
             .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
             .await?;
-        let latest = claim_state.latest_live_version.unwrap_or(target.version);
+        let reads_promoted = self
+            .require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+            .await
+            .is_ok();
+        let latest = self
+            .journal
+            .claim_latest_readable(
+                key.tenant_id,
+                target.workarea_id,
+                &target.claim_key,
+                &caller.own_key_ids(),
+                reads_promoted,
+            )
+            .await?
+            .unwrap_or(target.version);
         if req.expected_version != latest {
             // An attempt under the same key that committed since the lookup
             // above made the claim move on: its record answers this one, as

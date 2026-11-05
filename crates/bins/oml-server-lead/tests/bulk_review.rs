@@ -700,7 +700,7 @@ async fn a_stale_id_is_reported_not_approved() {
     // the tip and the second has lost its target.
     let mut successors = Vec::new();
     // A writer supersedes its own claims and a dreamer proposes for any.
-    for (token, tag, expected) in [(&w.agent, "one", 1), (&w.agent_dreamer, "two", 2)] {
+    for (token, tag, expected) in [(&w.agent, "one", 1), (&w.agent_dreamer, "two", 1)] {
         let (status, s) = send(
             r,
             "POST",
