@@ -70,6 +70,10 @@ jobs:
       - run: cargo test --workspace --locked
         env:
           OML_TEST_REQUIRE_SPLIT: "1"
+      # The adapter's real-model tests are ignored without the model; here
+      # they run against the cached pinned files (ADR-0053 d10).
+      - run: cargo test --locked -p oml-rerank -- --ignored
+        env:
           OML_RERANK_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
 
   e2e:

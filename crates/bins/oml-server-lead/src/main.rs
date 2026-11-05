@@ -170,6 +170,9 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         tracing::info!(
             event = "rerank_model_loaded",
             model = model.model(),
+            model_dir = ?config.rerank.model_dir,
+            threads = config.rerank.limits.threads,
+            max_tokens = config.rerank.limits.max_tokens,
             "reranker loaded"
         );
     }
@@ -258,16 +261,48 @@ async fn shutdown_signal() {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
-    // JSON lines on stderr, the whole process: stdout is reserved for the
-    // show-once ceremony (observability.md, structured logging; ADR-0042
-    // d1).
-    // The configuration first, since it says whether spans are exported; a
-    // configuration that does not load is logged once the subscriber is up.
+/// Sets candle's thread count to `search.rerank.threads` while the process
+/// has one thread, before the runtime or any pool starts: candle reads
+/// `RAYON_NUM_THREADS` for how many ways it splits a product, and the
+/// reranker's own pool has that many threads, so the two agree (ADR-0053
+/// d5). Only a deployment that serves a reranking pipeline sets it.
+#[allow(unsafe_code, reason = "set_var before any other thread exists")]
+fn set_rerank_threads(config: &Config) {
+    if config.search.needs_reranker() {
+        let threads = config.rerank.limits.threads.to_string();
+        // SAFETY: called first in `main`, before the tokio runtime, the
+        // trace exporter or any other thread is started, so no thread reads
+        // the environment concurrently.
+        unsafe { std::env::set_var("RAYON_NUM_THREADS", threads) };
+    }
+}
+
+fn main() -> ExitCode {
+    // The configuration first, since it says whether spans are exported and
+    // how many threads the reranker takes; a configuration that does not
+    // load is logged once the subscriber is up.
     let config = config_path_arg().map_err(BootError::from).and_then(|path| {
         Config::load(path.as_deref(), &|name| std::env::var(name).ok()).map_err(BootError::from)
     });
+    if let Ok(config) = &config {
+        set_rerank_threads(config);
+    }
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(serve(config)),
+        Err(e) => {
+            eprintln!("fatal: the runtime would not start: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn serve(config: Result<Config, BootError>) -> ExitCode {
+    // JSON lines on stderr, the whole process: stdout is reserved for the
+    // show-once ceremony (observability.md, structured logging; ADR-0042
+    // d1).
     let export = match config.as_ref().ok().and_then(|c| c.otlp_endpoint.as_ref()) {
         None => Ok(None),
         Some(endpoint) => Export::start(endpoint).map(Some),

@@ -105,11 +105,39 @@ pub struct RerankSettings {
 /// `search.rerank.max_concurrent`'s default (ADR-0053 d5).
 pub const DEFAULT_RERANK_MAX_CONCURRENT: usize = 2;
 
-/// `search.rerank.threads`'s default (not built yet).
+/// `search.rerank.threads`'s default: two of an 8-vCPU host's cores, the
+/// rest left to tokio's workers and PostgreSQL (ADR-0053 d5).
 pub const DEFAULT_RERANK_THREADS: usize = 2;
 
-/// `search.rerank.max_tokens`'s default (not built yet).
-pub const DEFAULT_RERANK_MAX_TOKENS: usize = 512;
+/// `search.rerank.max_tokens`'s default: the model's whole window
+/// (ADR-0053 d4).
+pub const DEFAULT_RERANK_MAX_TOKENS: usize = oml_rerank::MAX_TOKENS;
+
+/// The shortest `search.rerank.max_tokens`: room for a query's share and a
+/// passage.
+const MIN_RERANK_MAX_TOKENS: u64 = 64;
+
+/// The model directory under the process's state directory: systemd's
+/// `STATE_DIRECTORY`, else `$XDG_STATE_HOME/oml`, else
+/// `$HOME/.local/state/oml`, each only when absolute; never the working
+/// directory (ADR-0053 d3).
+fn state_model_dir(env: &dyn Fn(&str) -> Option<String>, model: &str) -> Option<PathBuf> {
+    let absolute = |v: String| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
+    let state = env("STATE_DIRECTORY")
+        .and_then(|v| v.split(':').next().map(ToOwned::to_owned))
+        .and_then(absolute)
+        .or_else(|| {
+            env("XDG_STATE_HOME")
+                .and_then(absolute)
+                .map(|p| p.join("oml"))
+        })
+        .or_else(|| {
+            env("HOME")
+                .and_then(absolute)
+                .map(|p| p.join(".local/state/oml"))
+        })?;
+    Some(state.join("models").join(model))
+}
 
 /// `search.rerank.timeout_ms`'s default (ADR-0053 d5).
 pub const DEFAULT_RERANK_TIMEOUT_MS: u64 = 1_000;
@@ -119,7 +147,7 @@ impl Default for RerankSettings {
         let model = oml_rerank::MINILM_L6;
         Self {
             model,
-            model_dir: Some(PathBuf::from("oml-models").join(model.name)),
+            model_dir: None,
             fetch: false,
             limits: oml_rerank::Limits {
                 max_concurrent: DEFAULT_RERANK_MAX_CONCURRENT,
@@ -150,9 +178,14 @@ pub fn fetch_model_file(url: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     response
         .into_reader()
-        .take(MODEL_FILE_MAX_BYTES)
+        .take(MODEL_FILE_MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MODEL_FILE_MAX_BYTES {
+        return Err(format!(
+            "the answer is larger than {MODEL_FILE_MAX_BYTES} bytes, so not the pinned file; nothing was written"
+        ));
+    }
     Ok(bytes)
 }
 
@@ -174,7 +207,7 @@ pub fn load_reranker(
         return Ok(None);
     }
     let model_dir = settings.model_dir.as_deref().ok_or_else(|| {
-        "search.rerank.model_dir is unset and no state directory is known".to_owned()
+        "search.rerank.model_dir is unset and no state directory is known (STATE_DIRECTORY, XDG_STATE_HOME or HOME): set an absolute search.rerank.model_dir".to_owned()
     })?;
     if settings.fetch {
         let fetched = oml_rerank::fetch_missing(model_dir, &settings.model, get)
@@ -247,6 +280,8 @@ const KEY_RERANK_DEPTH: &str = "search.rerank.depth";
 const KEY_RERANK_FLOOR: &str = "search.rerank.floor";
 const KEY_RERANK_MAX_CONCURRENT: &str = "search.rerank.max_concurrent";
 const KEY_RERANK_TIMEOUT_MS: &str = "search.rerank.timeout_ms";
+const KEY_RERANK_THREADS: &str = "search.rerank.threads";
+const KEY_RERANK_MAX_TOKENS: &str = "search.rerank.max_tokens";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -486,10 +521,15 @@ impl Config {
                 ))
             })?,
         };
-        let model_dir = Some(lookup(KEY_RERANK_MODEL_DIR).map_or_else(
-            || PathBuf::from("oml-models").join(model.name),
-            PathBuf::from,
-        ));
+        let model_dir = match lookup(KEY_RERANK_MODEL_DIR) {
+            None => state_model_dir(env, model.name),
+            Some(dir) if PathBuf::from(&dir).is_absolute() => Some(PathBuf::from(dir)),
+            Some(dir) => {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_RERANK_MODEL_DIR} {dir:?} is not an absolute path: a relative one would follow the working directory (configuration.md)"
+                )));
+            }
+        };
         let fetch = match lookup(KEY_RERANK_FETCH).as_deref().map(str::trim) {
             None | Some("false") => false,
             Some("true") => true,
@@ -518,14 +558,29 @@ impl Config {
                 usize::try_from(n).unwrap_or(usize::MAX)
             });
         let timeout_ms = whole(KEY_RERANK_TIMEOUT_MS, 1)?.unwrap_or(DEFAULT_RERANK_TIMEOUT_MS);
+        let threads = whole(KEY_RERANK_THREADS, 1)?.map_or(DEFAULT_RERANK_THREADS, |n| {
+            usize::try_from(n).unwrap_or(usize::MAX)
+        });
+        let max_tokens = match whole(KEY_RERANK_MAX_TOKENS, MIN_RERANK_MAX_TOKENS)? {
+            None => DEFAULT_RERANK_MAX_TOKENS,
+            Some(n) if n <= oml_rerank::MAX_TOKENS as u64 => {
+                usize::try_from(n).unwrap_or(oml_rerank::MAX_TOKENS)
+            }
+            Some(n) => {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_RERANK_MAX_TOKENS} {n} is past the model's {} tokens (configuration.md)",
+                    oml_rerank::MAX_TOKENS
+                )));
+            }
+        };
         let rerank = RerankSettings {
             model,
             model_dir,
             fetch,
             limits: oml_rerank::Limits {
                 max_concurrent,
-                threads: DEFAULT_RERANK_THREADS,
-                max_tokens: DEFAULT_RERANK_MAX_TOKENS,
+                threads,
+                max_tokens,
                 timeout: std::time::Duration::from_millis(timeout_ms),
             },
         };
