@@ -109,9 +109,11 @@ pub const DEFAULT_RERANK_MAX_CONCURRENT: usize = 2;
 /// rest left to tokio's workers and PostgreSQL (ADR-0053 d5).
 pub const DEFAULT_RERANK_THREADS: usize = 2;
 
-/// `search.rerank.max_tokens`'s default: the model's whole window
+/// `search.rerank.max_tokens`'s default: 256, half the model's window.
+/// Measured: the recall eval's claims rank the same at 256 as at 512, and
+/// SciFact's abstracts rerank 2.6 times faster for 0.001 nDCG@10
 /// (ADR-0053 d4).
-pub const DEFAULT_RERANK_MAX_TOKENS: usize = oml_rerank::MAX_TOKENS;
+pub const DEFAULT_RERANK_MAX_TOKENS: usize = 256;
 
 /// The shortest `search.rerank.max_tokens`: room for a query's share and a
 /// passage.
