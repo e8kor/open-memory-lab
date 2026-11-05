@@ -13577,3 +13577,53 @@ async fn a_rescan_reports_a_stored_version_by_rule_and_changes_nothing() {
     let err = now.rescan(&writer.value, 0, 10).await.unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
 }
+
+#[tokio::test]
+async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
+    // Both reach the journal as plaintext, so the scan reads them, and only
+    // a veto refuses (ADR-0065 d7). The double vetoes "-----BEGIN".
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("key-----BEGIN-x".to_owned()),
+                ..submit_req("ck", "a clean body")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    let id = app
+        .submit_memory(&writer.value, &submit_req("ok", "a clean body"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(
+            &dreamer.value,
+            id,
+            Verdict::Reject,
+            Some("it quotes -----BEGIN PRIVATE KEY-----"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    // A hold-class finding in a reason does not refuse.
+    app.post_verdict(
+        &dreamer.value,
+        id,
+        Verdict::Approve,
+        Some("[needs-human] fine"),
+    )
+    .await
+    .expect("a hold finding in a reason passes");
+}

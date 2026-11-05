@@ -3250,14 +3250,34 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 
     // A claim key in which the key value straddles the 120-character cut:
     // cut first, its first 46 characters would be printed.
+    // The scan refuses such a claim key today (ADR-0065 d7), so the row is
+    // one a server before the rule set stored.
     let claim_key = format!("{}{}-tail", "k".repeat(73), crew.agent);
     assert_eq!(claim_key.chars().count(), 125);
-    crew.submit(
-        &crew.agent,
-        "memory",
-        &claim_key,
-        "Metals lot D: 40 tonnes, Tema, Sunday.",
+    let (code, _, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+            "--claim-key",
+            &claim_key,
+            "--kind",
+            "memory",
+        ],
     );
+    assert_ne!(
+        code, 0,
+        "a claim key carrying a key value is refused: {log}"
+    );
+    assert!(log.contains("submission.scan_veto"), "{log}");
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
+    crew.lab
+        .seed_unscanned(
+            &crew.agent,
+            &claim_key,
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
     assert_eq!(code, 0, "{stderr}");
