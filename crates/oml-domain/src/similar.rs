@@ -323,7 +323,7 @@ mod tests {
         let typo = Fingerprint::of(&LONG.replace("approval", "aproval"));
         let (relation, j) = relate(&a, &Fingerprint::of(&format!("Note: {LONG}"))).unwrap();
         assert_eq!(relation, Relation::NearCopy);
-        assert!(j >= NEAR_COPY_JACCARD && j < 1.0, "{j}");
+        assert!((NEAR_COPY_JACCARD..1.0).contains(&j), "{j}");
         assert_eq!(relate(&a, &typo).map(|r| r.0), Some(Relation::NearCopy));
         let other = Fingerprint::of(
             "Deploys to production need the on-call lead to approve them unless they land \

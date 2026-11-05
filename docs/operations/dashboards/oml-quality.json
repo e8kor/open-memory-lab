@@ -265,6 +265,50 @@
       }
     },
     {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Recall stage p95, per pipeline and stage",
+      "description": "Time the app spent answering a recall, by pipeline (oml_recall_duration_seconds; ADR-0042 d12 bounds).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, pipeline, stage) (rate(oml_recall_stage_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{pipeline}} {{stage}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 6,
       "type": "timeseries",
       "title": "Follow-up rate per recall",
@@ -275,7 +319,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 25,
         "w": 24,
         "h": 8
       },
@@ -315,7 +359,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 33,
         "w": 24,
         "h": 1
       },
@@ -332,7 +376,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 34,
         "w": 12,
         "h": 8
       },
@@ -385,7 +429,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 26,
+        "y": 34,
         "w": 12,
         "h": 8
       },
@@ -428,6 +472,50 @@
       }
     },
     {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Similar check: named relation by on_similar, and p95",
+      "description": "Writes whose text a served memory of the same workarea already holds (same_text) or not (none) (oml_remember_duplicates_total). A write repeating a claim_key is refused as submission.claim_key_conflict and shows in oml_http_request_duration_seconds{route=\"/v1/memories\",status=\"409\"}.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "expr": "sum by (relation, on_similar) (rate(oml_remember_similar_total[$__rate_interval]))",
+          "legendFormat": "{{relation}} {{on_similar}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 10,
       "type": "stat",
       "title": "Rejection rate",
@@ -438,7 +526,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 50,
         "w": 12,
         "h": 8
       },
@@ -482,7 +570,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 34,
+        "y": 50,
         "w": 12,
         "h": 8
       },
@@ -522,7 +610,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 42,
+        "y": 58,
         "w": 24,
         "h": 1
       },
@@ -539,7 +627,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 43,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -592,7 +680,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 43,
+        "y": 59,
         "w": 12,
         "h": 8
       },

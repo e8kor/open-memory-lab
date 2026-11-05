@@ -220,14 +220,16 @@ Decided, not built.
     | `oml_recall_events_total` | counter | `outcome` (`written`, `dropped_queue_full`, `dropped_store_error`, `dropped_no_partition`) | 4 |
     | `oml_usage_credits_total` | counter | `outcome` (`counted`, `author`, `duplicate`, `rate_limited`, `unreadable_source`) | 5 |
     | `oml_labeller_lag_seconds` | gauge | none | 1 |
-    | `oml_remember_similar_total` | counter | `relation` (`none`, `same_text`, `shares`), `on_similar` (`hold`, `refuse`) | 6 |
+    | `oml_recall_stage_duration_seconds` | histogram, ADR-0042 d12's 17 bounds (ADR-0049 d13, added 2026-11-05) | `pipeline`, `stage` (ADR-0049 d13's 12 values; a pipeline observes only its own) | ≤ 95 per served pipeline |
+    | `oml_remember_similar_total` | counter | `relation` (`none`, `same_text`, `near_copy`; ADR-0050 r2's d1), `on_similar` (`hold`, `refuse`) | 6 |
+    | `oml_remember_similar_duration_seconds` | histogram, ADR-0042 d12's 17 bounds (added 2026-11-05) | none | 19 |
     | `oml_remember_warnings_total` | counter | `finding` (ADR-0050 d6's six `quality.*` classes) | 6 |
     | `oml_review_wait_seconds` | histogram, bounds 1 min to 32 days doubling | `verdict` (`approve`, `reject`) | ≤ 40 |
     | `oml_review_rejections_total` | counter | `duplicate_of` (`set`, `unset`) | 2 |
     | `oml_keys_rejection_share` | histogram over keys with ≥ 10 verdicts in 7 days, bounds 0.05 … 1.0 by 0.05 | none | 22 |
     | `oml_memories_unrecalled` | gauge, refreshed by the labeller every 10 minutes | `promoted_for` (`7d`, `30d`, `90d`, `older`) | 4 |
 
-    The budget is 400 new series per lead, about 300 used above; a law holds every label of
+    The budget is 400 new series per lead, about 300 used above; the stage and similar-check histograms added on 2026-11-05 (ADR-0049 d13, ADR-0050 d1) take about 115 more at the default pipeline, so the budget is 520; a law holds every label of
     these families to its declared set (d13). Gauges that need a query are refreshed by the
     labeller and read from memory at scrape, so a scrape runs no SQL (ADR-0042 d12's reason for
     leaving such gauges designed). The Grafana dashboard `oml-quality`, committed under
@@ -240,6 +242,7 @@ Decided, not built.
     | Scan-fallback share of `bm25-postings*` | `oml_recalls_total{access="scan"}` |
     | Follow-up rate: requery, get, derived and feedback per recall | `oml_recall_outcomes_total` ÷ `oml_recall_events_total{outcome="written"}` |
     | Latency p50 / p95 / p99 per pipeline | `oml_recall_duration_seconds` |
+    | Where a pipeline's time goes, p95 per stage | `oml_recall_stage_duration_seconds` |
     | Remember-side duplicate warnings, held against refused | `oml_remember_similar_total` |
     | Time to review, p50 / p95, by verdict | `oml_review_wait_seconds` |
     | Rejection rate, overall and as a distribution over keys | `oml_review_rejections_total`, `oml_keys_rejection_share` |
