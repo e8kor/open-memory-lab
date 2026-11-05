@@ -9,6 +9,7 @@ use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::valid_time::{ValidTime, ValidTimeError, Window};
 use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
@@ -1040,6 +1041,10 @@ pub struct MemoryRecord {
     /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
+    /// When the version says it holds, declared by its author and signed;
+    /// open on both sides when it declares none (proposed ADR-0059 d2).
+    /// Boxed: most rows declare none, and every fold carries the record.
+    pub valid: Box<ValidTime>,
     /// The version's anchor as its author declared it, signed in its
     /// submission event and immutable (ADR-0057 d1, d2). Boxed: most rows
     /// carry none.
@@ -1142,6 +1147,10 @@ pub struct VersionRef {
 pub struct ServedMemory {
     pub memory: MemoryRecord,
     pub replaces: Option<VersionRef>,
+    /// On a held successor, the end approving it gives the version it
+    /// replaces, so a reviewer sees it before the verdict; `None` otherwise
+    /// (proposed ADR-0059 d4).
+    pub replaces_valid_until: Option<oml_domain::valid_time::ValidEnd>,
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,
@@ -1350,6 +1359,10 @@ pub struct SubmitRequest {
     /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
+    /// `valid_from` and `valid_until` as sent; parsed and checked against
+    /// the kind by the capture (proposed ADR-0059 d2).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
     /// The origin the author declares, grammar-checked by the transport
     /// (ADR-0057 d1-d3).
     pub anchor: Option<Anchor>,
@@ -1521,6 +1534,13 @@ pub struct RecallRequest {
     pub search: Option<String>,
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
+    /// `include_expired`: serve versions whose valid time has ended, hidden
+    /// by default (proposed ADR-0059 d3).
+    pub include_expired: bool,
+    /// `now`, as sent: the instant the expiry, the query's relative dates
+    /// are read at; `None` is the lead's clock
+    /// (proposed ADR-0059 d5).
+    pub now: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
 }
@@ -1646,6 +1666,9 @@ pub struct RecallResult {
     /// The query words whose every form was pruned from the postings read
     /// (`search.pruned`; ADR-0052 d6, d11).
     pub pruned: Vec<String>,
+    /// The date window the query named, read by rule `oml-when/1`
+    /// (`search.window`; proposed ADR-0059 d6).
+    pub window: Option<Window>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
@@ -1997,6 +2020,10 @@ pub struct SupersedeRequest {
     /// A guardrail successor's optional rule, refused on every other kind and
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
+    /// The successor's own valid time as sent; it inherits none (proposed
+    /// ADR-0059 d2, d4).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
     /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
     pub anchor: Option<Anchor>,
     /// The claim's latest live version as the caller last read it; any
@@ -2465,6 +2492,16 @@ pub enum AppError {
         "{field} is a guardrail's field, refused on any other kind and on a retirement (proposed ADR-0037 d10, request.validation)"
     )]
     GuardrailFieldRefused { field: &'static str },
+    /// A valid end in no accepted form, an empty interval, or valid time on
+    /// a kind or a retirement that takes none (proposed ADR-0059 d2,
+    /// request.validation).
+    #[error("{0} (proposed ADR-0059 d2, request.validation)")]
+    ValidTime(ValidTimeError),
+    /// `now` in no accepted form (proposed ADR-0059 d5, request.validation).
+    #[error(
+        "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0059 d5, request.validation)"
+    )]
+    NowUnparsable,
     #[error(
         "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
     )]

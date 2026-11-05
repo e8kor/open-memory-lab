@@ -1,4 +1,4 @@
--- 0026_lake_writer — the lake writer's two tables in Postgres: the keys that
+-- 0032_lake_writer — the lake writer's two tables in Postgres: the keys that
 -- seal the bodies it materializes, and the outbox rows it could not
 -- materialize (ADR-0003 d6, ADR-0005 d1, d2, ADR-0060 d6, d14).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file
@@ -10,6 +10,12 @@
 -- writes either table (ADR-0034 d3). The lake writer's own login is granted
 -- by oml-lakewriter itself, through the owner URL, at its start
 -- (ADR-0060 d13), because no migration knows that role's name.
+--
+-- Safe on a live database: both tables are new and unreferenced, so nothing
+-- waits on them; a lock on `tenants` for the foreign key is waited for at most
+-- 5 s, then the migration fails and is run again in a quieter moment.
+
+SET LOCAL lock_timeout = '5s';
 
 ------------------------------------------------------------------------------
 -- artifact_keys — one data key per materialized claim version, wrapped by

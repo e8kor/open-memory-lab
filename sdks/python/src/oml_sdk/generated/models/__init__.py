@@ -162,6 +162,7 @@ from .recall_search import RecallSearch
 from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
+from .recall_search_window_type_0 import RecallSearchWindowType0
 from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
 from .replay_report import ReplayReport
@@ -173,6 +174,7 @@ from .review_policy import ReviewPolicy
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
 from .search_settings import SearchSettings
+from .search_settings_valid_time import SearchSettingsValidTime
 from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
@@ -382,6 +384,7 @@ __all__ = (
     "RecallSearchAccess",
     "RecallSearchMatch",
     "RecallSearchPipeline",
+    "RecallSearchWindowType0",
     "RemoveWebEmailBody",
     "RemoveWebEmailResponse200",
     "ReplayReport",
@@ -393,6 +396,7 @@ __all__ = (
     "RevokeConnectionBody",
     "Role",
     "SearchSettings",
+    "SearchSettingsValidTime",
     "Serve",
     "ServedDigests",
     "ServedGuardrail",

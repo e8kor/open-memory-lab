@@ -53,6 +53,7 @@ use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
+use oml_app::domain::valid_time::{ValidEnd, fixed_width};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, WorkareaStatus, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
@@ -556,6 +557,8 @@ where
             derives_from: req.derives_from,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            valid_from: req.valid_from,
+            valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
@@ -777,6 +780,8 @@ where
                     max_tokens: req.max_tokens,
                     search: req.search.clone(),
                     match_mode,
+                    include_expired: req.include_expired.unwrap_or(false),
+                    now: req.now.clone(),
                     anchor: anchor_filter(
                         req.anchor_repo.as_deref(),
                         req.anchor_path_prefix.as_deref(),
@@ -839,6 +844,12 @@ where
                 "below_floor": result.below_floor,
                 "access": result.access.as_str(),
                 "pruned": result.pruned,
+                // The date window the query named (proposed ADR-0059 d6).
+                "window": result.window.as_ref().map(|w| json!({
+                    "from": w.from_us.map(fixed_width),
+                    "until": w.until_us.map(fixed_width),
+                    "phrase": w.phrase,
+                })),
             },
         });
         // The budget object is present if and only if max_tokens was sent
@@ -1044,6 +1055,8 @@ where
             refuse_vocabulary_target,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            valid_from: req.valid_from,
+            valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
             expected_version: parse_expected_version(req.expected_version)?,
         };
@@ -2436,6 +2449,12 @@ struct SubmitBody {
     /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// When the memory holds, each end a period or an instant (proposed
+    /// ADR-0059 d2).
+    #[serde(default)]
+    valid_from: Option<String>,
+    #[serde(default)]
+    valid_until: Option<String>,
     /// The origin the author declares (ADR-0057 d1-d3).
     #[serde(default)]
     anchor: Option<Value>,
@@ -2468,6 +2487,10 @@ struct RecallBody {
     /// What the key's last recall served that helped, and what did not;
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
+    /// Serve versions whose valid time has ended (proposed ADR-0059 d3).
+    include_expired: Option<bool>,
+    /// The recall's now: a period or an instant (proposed ADR-0059 d5).
+    now: Option<String>,
     /// The origin filters (ADR-0057 d4).
     anchor_repo: Option<String>,
     anchor_path_prefix: Option<String>,
@@ -2529,6 +2552,12 @@ struct SupersedeBody {
     /// A guardrail successor's optional rule (proposed ADR-0037 d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// The successor's own valid time; it inherits none (proposed
+    /// ADR-0059 d2).
+    #[serde(default)]
+    valid_from: Option<String>,
+    #[serde(default)]
+    valid_until: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3640,6 +3669,9 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
+        // When the version says it holds, as signed (proposed ADR-0059 d2).
+        "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
+        "valid_until": m.valid.until.as_ref().map(ValidEnd::as_str),
         // The author's declared origin, and the served version's latest
         // source check, from the source alone (ADR-0057 d1, d5).
         "anchor": m.anchor.as_deref().map_or(Value::Null, Anchor::to_json),
@@ -3659,6 +3691,12 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             "rule".to_owned(),
             fields.rule.clone().unwrap_or(Value::Null),
         );
+    }
+    // On a held successor, the end approving it gives the version it
+    // replaces, shown to a reviewer before the verdict (proposed ADR-0059
+    // d4).
+    if let (Some(end), Some(obj)) = (&served.replaces_valid_until, value.as_object_mut()) {
+        obj.insert("replaces_valid_until".to_owned(), json!(end.as_str()));
     }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));

@@ -55,6 +55,10 @@ class SupersedeRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
+            valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+            valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
     """
 
     body: str
@@ -67,6 +71,8 @@ class SupersedeRequest:
     reason: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
+    valid_from: str | Unset = UNSET
+    valid_until: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
@@ -103,6 +109,10 @@ class SupersedeRequest:
         if not isinstance(self.rule, Unset):
             rule = self.rule.to_dict()
 
+        valid_from = self.valid_from
+
+        valid_until = self.valid_until
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -127,6 +137,10 @@ class SupersedeRequest:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
 
         return field_dict
 
@@ -181,6 +195,10 @@ class SupersedeRequest:
         else:
             rule = GuardrailRule.from_dict(_rule)
 
+        valid_from = d.pop("valid_from", UNSET)
+
+        valid_until = d.pop("valid_until", UNSET)
+
         supersede_request = cls(
             body=body,
             expected_version=expected_version,
@@ -192,6 +210,8 @@ class SupersedeRequest:
             reason=reason,
             severity=severity,
             rule=rule,
+            valid_from=valid_from,
+            valid_until=valid_until,
         )
 
         return supersede_request
