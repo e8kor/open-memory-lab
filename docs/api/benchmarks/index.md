@@ -18,70 +18,70 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [Synthetic recall set](recall-synthetic.md)
 
-200 memories, 121 queries. Measured 2026-11-04 on commit `9a6a0d0`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+200 memories, 121 queries. Measured 2026-11-05 on commit `71b7b69`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| keyword-all | 121 | 0.156 | 0.174 | – | 0.826 | 14.6 | 18.7 |
-| keyword-any | 121 | 0.694 | 0.810 | – | 0.033 | 21.8 | 41.5 |
-| bm25 | 121 | 0.858 | 0.934 | – | 0.000 | 13.8 | 19.8 |
-| bm25-trigram | 121 | 0.865 | 0.959 | – | 0.000 | 33.4 | 41.8 |
+| keyword-all | 121 | 0.156 | 0.174 | – | 0.826 | 14.2 | 18.6 |
+| keyword-any | 121 | 0.689 | 0.843 | – | 0.033 | 18.9 | 29.7 |
+| bm25 | 121 | 0.876 | 0.926 | – | 0.000 | 16.3 | 21.2 |
+| bm25-trigram | 121 | 0.874 | 0.950 | – | 0.000 | 30.4 | 41.9 |
 
 ## [BEIR SciFact](beir-scifact.md)
 
-5,183 memories, 300 queries. Measured 2026-11-04 on commit `4a8f5ba`, `9a6a0d0`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,183 memories, 300 queries. Measured 2026-11-05 on commit `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| keyword-all | 300 | 0.013 | 0.013 | 0.013 | 0.987 | 632 | 666 |
-| keyword-any | 300 | 0.515 | 0.603 | 0.781 | 0.000 | 880 | 1,141 |
-| bm25 | 300 | 0.684 | 0.780 | 0.925 | 0.000 | 88.3 | 118 |
-| bm25-trigram | 100 (sampled) | 0.609 | 0.710 | 0.906 | 0.000 | 3,806 | 5,484 |
-| bm25-k10 | 300 | 0.684 | 0.780 | 0.818 | 0.000 | 76.5 | 108 |
-| bm25-trigram-k10 | 100 (sampled) | 0.615 | 0.710 | 0.764 | 0.000 | 3,739 | 5,354 |
-| keyword-any-k10 | 300 | 0.515 | 0.603 | 0.632 | 0.000 | 1,213 | 1,326 |
+| keyword-all | 300 | 0.013 | 0.013 | 0.013 | 0.987 | 629 | 672 |
+| keyword-any | 300 | 0.515 | 0.603 | 0.781 | 0.000 | 815 | 1,075 |
+| bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 83.2 | 113 |
+| bm25-trigram | 100 (sampled) | 0.611 | 0.710 | 0.906 | 0.000 | 3,707 | 5,454 |
+| bm25-k10 | 300 | 0.685 | 0.783 | 0.822 | 0.000 | 70.5 | 98.5 |
+| bm25-trigram-k10 | 100 (sampled) | 0.612 | 0.720 | 0.754 | 0.000 | 3,664 | 5,334 |
+| keyword-any-k10 | 300 | 0.515 | 0.603 | 0.632 | 0.000 | 630 | 1,090 |
 | reference-bm25s-k1-0.9-b-0.4 | 300 | 0.676 | 0.757 | 0.913 | 0.000 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 300 | 0.679 | 0.753 | 0.913 | 0.000 | offline | offline |
 | BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields), published | | 0.665 | | | | | |
 
 ## [BEIR NFCorpus](beir-nfcorpus.md)
 
-3,633 memories, 323 queries. Measured 2026-11-04 on commit `4a8f5ba`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+3,633 memories, 323 queries. Measured 2026-11-05 on commit `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| keyword-all | 323 | 0.186 | 0.362 | 0.092 | 0.511 | 484 | 531 |
-| keyword-any | 323 | 0.273 | 0.560 | 0.209 | 0.081 | 647 | 1,115 |
-| bm25 | 323 | 0.315 | 0.632 | 0.246 | 0.046 | 132 | 175 |
-| bm25-trigram | 100 (sampled) | 0.269 | 0.580 | 0.244 | 0.000 | 2,218 | 3,120 |
+| keyword-all | 323 | 0.187 | 0.362 | 0.092 | 0.511 | 477 | 513 |
+| keyword-any | 323 | 0.274 | 0.560 | 0.210 | 0.081 | 586 | 1,016 |
+| bm25 | 323 | 0.321 | 0.656 | 0.248 | 0.046 | 69.3 | 93.4 |
+| bm25-trigram | 100 (sampled) | 0.267 | 0.600 | 0.245 | 0.000 | 2,172 | 3,047 |
 | reference-bm25s-k1-0.9-b-0.4 | 323 | 0.318 | 0.647 | 0.246 | 0.046 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 323 | 0.318 | 0.644 | 0.247 | 0.046 | offline | offline |
 | BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields), published | | 0.325 | | | | | |
 
 ## [LoCoMo](locomo.md)
 
-5,882 memories, 1,535 queries. Measured 2026-11-04 on commit `4a8f5ba`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| keyword-all | 1,535 | 0.001 | 0.001 | 0.001 | 0.996 | 30.6 | 40.1 |
-| keyword-any | 1,535 | 0.345 | 0.434 | 0.750 | 0.000 | 137 | 167 |
-| bm25 | 1,535 | 0.501 | 0.621 | 0.812 | 0.000 | 98.5 | 118 |
-| bm25-trigram | 1,535 | 0.483 | 0.582 | 0.819 | 0.000 | 146 | 179 |
+| keyword-all | 1,535 | 0.001 | 0.001 | 0.001 | 0.996 | 31.4 | 41.3 |
+| keyword-any | 1,535 | 0.345 | 0.437 | 0.744 | 0.000 | 62.2 | 86.4 |
+| bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 31.0 | 38.4 |
+| bm25-trigram | 1,535 | 0.483 | 0.587 | 0.822 | 0.000 | 89.1 | 112 |
 | reference-bm25s-k1-0.9-b-0.4 | 1,535 | 0.468 | 0.585 | 0.812 | 0.000 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 1,535 | 0.446 | 0.566 | 0.806 | 0.000 | offline | offline |
 
 ## [SciFact ×10 (latency at 50k rows)](beir-scifact-x10.md)
 
-8,825 memories, 300 queries. Measured 2026-11-04 on commit `9a6a0d0`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+51,830 memories, 300 queries. Measured 2026-11-05 on commit `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| keyword-all | 300 | 0.012 | 0.013 | 0.013 | 0.987 | 1,074 | 1,136 |
-| keyword-any | 100 (sampled) | 0.504 | 0.550 | 0.752 | 0.000 | 2,199 | 2,434 |
-| bm25 | 300 | 0.654 | 0.753 | 0.910 | 0.000 | 141 | 183 |
-| bm25-trigram | 30 (sampled) | 0.515 | 0.600 | 0.817 | 0.000 | 6,542 | 9,509 |
-| bm25-k10 | 300 | 0.654 | 0.753 | 0.794 | 0.000 | 123 | 168 |
+| keyword-all | 300 | 0.012 | 0.013 | 0.013 | 0.980 | 2,142 | 2,195 |
+| keyword-any | 100 (sampled) | 0.352 | 0.420 | 0.638 | 0.000 | 4,278 | 4,670 |
+| bm25 | 300 | 0.543 | 0.577 | 0.841 | 0.000 | 604 | 849 |
+| bm25-trigram | 30 (sampled) | 0.434 | 0.467 | 0.683 | 0.000 | 13,271 | 19,248 |
+| bm25-k10 | 300 | 0.543 | 0.577 | 0.630 | 0.000 | 572 | 804 |
 
 ## [Latency at scale](scale.md)
 

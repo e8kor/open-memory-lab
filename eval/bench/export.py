@@ -110,7 +110,7 @@ def from_bench(r, a):
                  "0.318, so most of the gap is the one-body mapping and the analyser (Snowball "
                  "against Lucene's Porter, hyphenated words kept whole), not the ranking "
                  "(ADR-0049 d12).")
-    if r.get("rows_in_scope"):
+    if r.get("rows_in_scope") and r["rows_in_scope"] < r["docs"]:
         note += (f" {r['rows_in_scope']:,} of the {r['docs']:,} rows written were promoted when "
                  "it ran, so the scope held those: approval through review next slowed with the "
                  "queue (FR-87).")

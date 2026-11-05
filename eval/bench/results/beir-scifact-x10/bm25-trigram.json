@@ -1,0 +1,37 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "beir-scifact-x10",
+ "suite_version": "beir/scifact/test x10 (ir_datasets 0.6.3)",
+ "kind": "recall",
+ "method": "bm25-trigram",
+ "date": "2026-11-05",
+ "commit": "d3fdb72",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "17.9",
+  "build": "release"
+ },
+ "n_queries": 30,
+ "n_docs": 51830,
+ "sampled": {
+  "seed": 20261104,
+  "fraction": 0.1
+ },
+ "metrics": {
+  "ndcg@10": 0.4341,
+  "recall@10": 0.5,
+  "recall@100": 0.6833,
+  "mrr@10": 0.4194,
+  "success@1": 0.3667,
+  "success@5": 0.4667,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {},
+ "latency_ms": {
+  "p50": 13271.355,
+  "p95": 19248.35,
+  "p99": 23597.68
+ },
+ "reference": null,
+ "notes": "SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories written to one workarea, for latency at scale; qrels name the original copy only, so quality is not comparable to beir-scifact. k 100, no token budget."
+}

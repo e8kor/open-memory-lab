@@ -1,14 +1,15 @@
 # Recall benchmark: report
 
-Re-measured 2026-11-04 on a release build of the stored-lexeme search (`4a8f5ba`, ADR-0049 d12;
-the SciFact ×10 and `k` 10 runs on `9a6a0d0`, which adds one ancestry read per workarea and the `bm25` default) against
-a throwaway PostgreSQL 17.9 on one 8 vCPU / 15 GB host shared with other build lanes, through
-the harness in this directory ([README.md](README.md)). Every memory went in through the HTTP
-API and was promoted by a reviewer key of another principal; every query went out through
-`oml_read` over `/mcp` with `k` 100 and no token budget unless stated. Metrics are
-ir_measures'. The committed numbers are in `results/<suite>/<method>.json` (schema
-`oml-bench/1`) and render as the API docs' benchmark pages (`docs/api/benchmarks/`); the first
-run, on `0ff5c9e`, is kept under `results/archive/0ff5c9e/`.
+Re-measured 2026-11-05 on a release build of `d3fdb72`, the stored-lexeme search after the
+review's fixes (ADR-0049 d12: an inflected word's stem counted once, one ancestry read per
+workarea, the `bm25` default), against a throwaway PostgreSQL 17.9 on one 8 vCPU / 15 GB host
+shared with other build lanes, through the harness in this directory ([README.md](README.md)).
+Every memory went in through the HTTP API and was promoted by a reviewer key of another
+principal; every query went out through `oml_read` over `/mcp` with `k` 100 and no token budget
+unless stated. Metrics are ir_measures'. The committed numbers are in
+`results/<suite>/<method>.json` (schema `oml-bench/1`) and render as the API docs' benchmark
+pages (`docs/api/benchmarks/`); the first run (`0ff5c9e`) and the run before the review's fixes
+(`4a8f5ba`, `9a6a0d0`) are kept under `results/archive/` and shown beside the current one.
 
 ## Before and after
 
@@ -16,52 +17,55 @@ nDCG@10, then the median and p95 latency per query at `k` 100, one client:
 
 | pipeline | synthetic | SciFact (5,183 rows) | NFCorpus (3,633) | LoCoMo (5,882, ~590 per query) |
 |---|---|---|---|---|
-| bm25, before (`0ff5c9e`) | 0.861, 48 ms | 0.660, 3,703 / 3,865 ms | 0.308, 2,742 ms | 0.499, 150 ms |
-| **bm25, after** | 0.859, 23 / 65 ms | **0.684**, 88 / 119 ms (176 / 214 before one ancestry read per workarea) | **0.315**, 132 / 176 ms | **0.501**, 98 / 118 ms |
-| bm25-trigram, before | 0.856, 60 ms | 0.589, 7,995 ms | 0.285, 5,235 ms | 0.471, 224 ms |
-| bm25-trigram, after | 0.868, 39 / 82 ms | 0.609, 3,806 / 5,484 ms (100 queries) | 0.269, 2,218 / 3,120 ms (100 queries) | 0.483, 146 / 178 ms |
-| keyword-any, after | 0.693, 45 / 125 ms | 0.515, 880 / 1,141 ms | 0.273, 647 / 1,115 ms | 0.345, 136 / 165 ms |
-| keyword-all, after | 0.150, 16 ms | 0.013, 632 ms | 0.186, 484 ms | 0.001, 31 ms |
+| bm25, first build (`0ff5c9e`) | 0.861, 48 ms | 0.660, 3,703 / 3,865 ms | 0.308, 2,742 ms | 0.499, 150 ms |
+| **bm25, now** | **0.874**, 16 / 23 ms | **0.685**, 83 / 113 ms | **0.321**, 69 / 93 ms | **0.503**, 31 / 38 ms |
+| bm25-trigram, first build | 0.856, 60 ms | 0.589, 7,995 ms | 0.285, 5,235 ms | 0.471, 224 ms |
+| bm25-trigram, now | 0.868, 39 / 51 ms | 0.611, 3,707 / 5,528 ms (100 queries) | 0.267, 2,172 / 3,079 ms (100 queries) | 0.483, 89 / 111 ms |
+| keyword-any, now | 0.687, 24 / 51 ms | 0.515, 815 / 1,087 ms | 0.274, 586 / 1,016 ms | 0.345, 61 / 85 ms |
+| keyword-all, now | 0.150, 16 ms | 0.013, 629 ms | 0.187, 477 ms | 0.001, 32 ms |
 | offline BM25 (bm25s, k1 0.9, b 0.4) | 0.837 | 0.676 | 0.318 | 0.468 |
 | BEIR BM25, published | | 0.665 | 0.325 | |
 
 ## Latency at the size an agent asks, and at scale
 
-`bm25` on `9a6a0d0`, which reads each workarea's ancestry once per recall instead of once per hit
-(ADR-0049 d12), p50 / p95 per query, one client:
+`bm25`, p50 / p95 per query, one client:
 
 | scope | rows read | `k` 100 | `k` 10 |
 |---|---:|---:|---:|
-| SciFact, served | 5,183 | 88 / 119 ms (was 176 / 214 before the ancestry change) | 77 / 108 ms |
-| SciFact ×10, served, the rows promoted when the run started | 8,825 | 141 / 183 ms | 123 / 168 ms |
-| SciFact ×10, the `bm25` statement alone, lab, under row security | 51,830 | 639 / 947 ms | |
+| SciFact, served | 5,183 | 83 / 113 ms | 71 / 99 ms |
+| SciFact ×10, served, every row promoted | 51,830 | 604 / 849 ms | 572 / 807 ms |
+| SciFact ×10, the `bm25` statement alone, lab, under row security, before the stem fix | 51,830 | 639 / 947 ms | |
 | the first build's `bm25` statement alone, lab, no row security, 10 queries | 51,830 | 15,287 / 21,697 ms | |
 
-The 100 ms p95 target at 5,000 rows is missed by 8% at `k` 10 on abstract-length rows, the worst
-case: a SciFact memory is about 1,400 characters, where OML's claims are a sentence or two, and
-LoCoMo's turns (about 590 per conversation) answer in 98 / 118 ms at `k` 100 on the build before
-the ancestry change. Latency grows with the readable rows: under row security no text index
-serves a read (ADR-0034 d13), so every recall reads the stored lexemes of every row in its scope.
-The scale lane (`feat/scale-bench`) measured an every-word match over a stored `simple` vector
-past 50 ms near 70,000 rows; `bm25` reads more per row. Stored lexemes moved the curve down by
-an order of magnitude; they did not flatten it. The served 51,830-row point was not reached:
-see loading below.
+At 5,000 rows the default meets a 100 ms p95 at `k` 10 on abstract-length rows, the worst case
+(a SciFact memory is about 1,400 characters, where OML's claims are a sentence or two; LoCoMo's
+turns answer in 31 / 38 ms at `k` 100), and misses it at `k` 100 by 13%. Latency grows with the
+readable rows: under row security no text index serves a read (ADR-0034 d13), so every recall
+reads the stored lexemes of every row in its scope. The scale lane (`feat/scale-bench`) measured
+an every-word match over a stored `simple` vector past 50 ms near 70,000 rows; `bm25` reads more
+per row: served over 51,830 abstracts it takes 604 / 849 ms at `k` 100 and 572 / 807 ms at
+`k` 10. Stored lexemes moved the curve down by more than an order of magnitude; they did not
+flatten it.
 
 ## What changed (ADR-0049 d12)
 
 - **Stored lexemes.** Each version's search vector and its length are stored generated columns
   of `memories`, written once; the `bm25` statement reads them and no row's text. On SciFact
-  that took `bm25` from 3.7 s to 176 ms per query.
+  that took `bm25` from 3.7 s to 176 ms per query, and reading each workarea's ancestry once
+  per recall took it to 83 ms.
 - **Each occurrence counts once**, a word scores its best form, and a query's English stop words
-  are dropped when it has other words. That moved SciFact from 0.660 to 0.684 nDCG@10, above
-  the published 0.665 and the offline textbook BM25's 0.676; NFCorpus from 0.308 to 0.315
-  (offline 0.318); LoCoMo from 0.499 to 0.501. R@100 on LoCoMo fell from 0.829 to 0.812: a
-  question made mostly of stop words now ranks on its remaining words.
+  are dropped when it has other words. That moved SciFact from 0.660 to 0.685 nDCG@10, above
+  the published 0.665 and the offline textbook BM25's 0.676; NFCorpus from 0.308 to 0.321
+  (offline 0.318); LoCoMo from 0.499 to 0.503. R@100 on LoCoMo fell from 0.829 to 0.813: a
+  question made mostly of stop words now ranks on its remaining words. The run before the
+  review's fixes still counted an inflected word's stem twice (`runs` outranked `run`); fixing
+  it moved NFCorpus from 0.315 to 0.321 and synthetic success@1 from 0.777 to 0.835.
 - **`did_you_mean` from a maintained vocabulary, only when fewer than three hits came back.** No
   query reads a row for it; a thin misspelt recall reads the readable workareas' vocabulary.
-- **`bm25` is the default.** On the CI recall eval it passes its gate (success@5 0.934,
-  success@1 0.777, median 13.8 ms at 200 rows, `k` 10 and a 2,000-token budget); on every
-  external set it ranks above `bm25-trigram`, which stays enabled for misspellings.
+- **`bm25` is the default**, and the default set (`keyword-any`, `bm25`) needs no extension. On
+  the CI recall eval it passes its gate (success@5 0.926, success@1 0.835, median 16.3 ms at 200
+  rows, `k` 10 and a 2,000-token budget); on every external set it ranks above `bm25-trigram`,
+  which a deployment enables for misspellings.
 
 ## Sanity check against published BM25
 | | SciFact nDCG@10 | SciFact R@100 | NFCorpus nDCG@10 | NFCorpus R@100 |
@@ -71,6 +75,7 @@ see loading below.
 | bm25s over OML's memories, k1 1.2, b 0.75 | 0.679 | 0.913 | 0.318 | 0.247 |
 | OML `bm25`, served, first build (`0ff5c9e`) | 0.660 | 0.899 | 0.308 | 0.239 |
 | OML `bm25`, served, stored lexemes (`4a8f5ba`) | 0.684 | 0.925 | 0.315 | 0.246 |
+| OML `bm25`, served, stems counted once (`d3fdb72`) | 0.685 | 0.928 | 0.321 | 0.248 |
 
 Source of the published row: Thakur et al., *BEIR*, arXiv:2104.08663, Table 2 (nDCG@10) and
 Table 9 (Recall@100); its section 4 names Anserini with "the default Lucene parameters (k=0.9
@@ -88,7 +93,8 @@ offline reference splits the gap in two:
   reference by at most 0.003.
 - **The first build's served implementation was 0.010 to 0.016 below a textbook BM25 on long
   English text; the stored-lexeme build removed the causes it could** (ADR-0049 d12) and now
-  measures +0.008 (SciFact) and −0.003 (NFCorpus) against the same textbook reference.
+  measures +0.009 (SciFact) and +0.003 (NFCorpus) against the same textbook reference, and
+  0.321 against Pyserini's single-field 0.322 and BEIR's two-field 0.325 on NFCorpus.
   Reading `bm25_sql` and `oml_search_vector` (migration 0020), the differences are:
   every word is indexed twice (`oml_search_text` appends the identifier-split copy to the
   text, so the smallest tf is 2 and saturation starts later); a word whose English stem
@@ -148,13 +154,15 @@ supersede them.
 
 One row per request, as the routes take them: 8 writer threads and 6 reviewer keys of
 different principals. With the stored lexemes and the vocabulary trigger (`results/load-*.json`):
-SciFact's 5,183 rows were written in 84 s (62 a second) and approved in 67 s (77 a second);
-NFCorpus's 3,633 in 60 s and 45 s; LoCoMo's 5,882 in 66 s and 62 s; SciFact ×10's 51,830
-were written in about 25 minutes, 48 a second at first and 25 by the end, and 8,825 of them
-were approved in about 50 minutes before the load was stopped: `review next` sorts the held
+SciFact's 5,183 rows were written in 64 s (82 a second) and approved in 55 s (94 a second);
+NFCorpus's 3,633 in 47 s and 41 s; LoCoMo's 5,882 in 61 s and 60 s; SciFact ×10's 51,830
+were written in 22 minutes (39 a second) and approved in 37 minutes (24 a second), with 4,053
+retries; approval ran at a few rows a second while tens of thousands were held and sped up as
+the queue shrank: `review next` sorts the held
 queue on every call, and with 45,000 held six reviewer keys approved 2 to 14 rows a second. The first run wrote LoCoMo at 98 a second and approved it at 103: computing the
-vector at write and keeping the vocabulary costs roughly a third of the write rate on these
-sets. Two findings, now roadmap rows:
+vector at write and keeping the vocabulary now costs a few percent of it (LoCoMo written at 96 a
+second and approved at 98), where the run before the review's fixes, which computed the vector
+twice per write, wrote SciFact at 62 a second. Two findings, now roadmap rows:
 
 - At 8 concurrent writers, writes and verdicts meet `503 system.unavailable`, "chain head
   contention", marked retryable: 534 to 775 retries per 5,000-row set. The loader retries them.

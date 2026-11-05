@@ -5,9 +5,9 @@
  "refused": 0,
  "refusals": {},
  "approved": 5183,
- "write_seconds": 83.7,
- "review_seconds": 67.4,
+ "write_seconds": 63.5,
+ "review_seconds": 55.4,
  "writers": 8,
  "reviewers": 6,
- "retried_503": 775
+ "retried_503": 770
 }

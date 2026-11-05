@@ -1,0 +1,13 @@
+{
+ "dataset": "scifact-x10",
+ "docs": 51830,
+ "written": 51830,
+ "refused": 0,
+ "refusals": {},
+ "approved": 51830,
+ "write_seconds": 1327.2,
+ "review_seconds": 2200.5,
+ "writers": 8,
+ "reviewers": 6,
+ "retried_503": 4053
+}

@@ -243,13 +243,13 @@ alike, are in `oml-port-contracts` (ADR-0049 d7).
 
 **Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
 default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
-NFCorpus, LoCoMo, and SciFact grown ten times (8,825 of its rows promoted when it ran). Their generated pages hold every number,
+NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
 with the date, commit and host of each run: [benchmarks](../api/benchmarks/index.md). `bm25` is
 the default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
-misspellings at many times the latency and is enabled for a tenant or a request that names it
-(ADR-0049 d12). Under row security the GIN and trigram indexes do not serve the serving role's
-reads (ADR-0034 d13), so a recall's cost grows with the rows in its scope; the scale page shows
-by how much.
+misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
+enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
+role's reads (ADR-0034 d13), so 0020 builds none and a recall's cost grows with the rows in its
+scope; the scale page shows by how much.
 
 ## The recall-ordering contract: steering rows first, unranked
 

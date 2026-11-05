@@ -44,10 +44,10 @@ event catalog, releases. **Breaks**, each with its migration:
   accept them. The SDKs' generated layers are regenerated.
 - `query_digest` digests `search` and `match`, so a digest from before the upgrade does not match
   one after.
-- The shipped `search.enabled` includes `bm25-trigram`, which needs `pg_trgm`: migration 0020
-  creates it as the owner role where it owns the database; elsewhere create it once as a role with
-  `CREATE` on the database, or set `search.enabled` without it. The lead refuses to start
-  otherwise, naming both.
+- `bm25-trigram` needs `pg_trgm` and is served only where `search.enabled` names it: migration
+  0020 creates the extension as the owner role where it owns the database; elsewhere create it
+  once as a role with `CREATE` on the database. A lead naming it without the extension refuses
+  to start, naming both; the default set (`keyword-any`, `bm25`) needs no extension.
 - The store port's `recall_fts` and `recall_own_held` are replaced by `Retriever::retrieve`.
 - The server instructions, the `oml_read` description, the `oml-memory` skill, the librarian and
   the session-start line no longer ask for "2-4 exact keywords".
@@ -65,7 +65,12 @@ docs-checks.yml). FR-86 and FR-87 are opened. **Breaks**, each with its migratio
   default. Send `search: "bm25-trigram"`, or set it as the tenant's or the deployment's default.
 - `search.terms` under `bm25` and `bm25-trigram` leaves out English stop words when the query has
   other words, and `match: "all"` requires every word but those.
-- `did_you_mean` is `[]` for a recall with three or more hits, even when a word matched nothing.
+- `did_you_mean` is `[]` for a recall with three or more hits, even when a word matched nothing,
+  and offers only words of the kinds recall serves.
+- *Review fixes, 2026-11-05:* an inflected word's stem counts once (it counted twice); the
+  lexemes are set once per write by a trigger instead of two generated columns; 0020 builds no
+  text or trigram index, since none serves the serving role under row security; the vocabulary
+  takes only `memory` and `derived_fact`; the trigger functions pin `search_path`.
 
 ## 0.5.2-design
 

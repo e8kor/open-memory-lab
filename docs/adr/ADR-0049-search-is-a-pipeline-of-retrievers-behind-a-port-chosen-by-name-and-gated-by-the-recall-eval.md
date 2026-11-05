@@ -93,8 +93,8 @@ reorders results, and steering rows, which precede hits, are never ranked"
     | `bm25` | identifier parts, `simple` and `english` lexemes, BM25 over the readable rows | single | S2 |
     | `bm25-trigram` | `bm25` and `pg_trgm` word similarity | reciprocal rank, 60 | S3 |
 
-    The deployment's `search.enabled` lists the pipelines it serves (default `keyword-any`,
-    `bm25`, `bm25-trigram`) and `search.default` the one a recall naming none runs (default
+    The deployment's `search.enabled` lists the pipelines it serves (default `keyword-any` and
+    `bm25`; `bm25-trigram` when a deployment names it, d12) and `search.default` the one a recall naming none runs (default
     `bm25`, by d9 and d12); `OML_SEARCH__ENABLED` and `OML_SEARCH__DEFAULT` in the environment.
     A tenant's admin sets the tenant's default among the enabled ones with `POST
     /v2/search/default` or `oml search set-default <pipeline>`, journalled as
@@ -152,8 +152,8 @@ reorders results, and steering rows, which precede hits, are never ranked"
   `CREATE` where it owns the database, as every documented profile has it
   ([ADR-0034](ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2); `pg_trgm` is a trusted
   extension, so no superuser step is needed there, and where the owner lacks `CREATE` the
-  migration goes on without it and the lead's start creates the trigram index once an operator
-  has created the extension. `/readyz` names the enabled set and the default. `oml doctor` prints
+  migration goes on without it; the lead then serves the default pipelines, which need none
+  (d12). `/readyz` names the enabled set and the default. `oml doctor` prints
   `search: default <p>; enabled <list>`, warns when the default is `keyword-all`, and, read by an
   admin key, warns when the tenant's journalled default is one the deployment no longer serves
   (the deployment's then applies). The request line gains `search` and `search_fallback`; the
@@ -225,9 +225,9 @@ reorders results, and steering rows, which precede hits, are never ranked"
        unknown members must accept them; `oml-sdk` layers are regenerated.
     3. **`query_digest` changes for every recall**, since it digests `search` and `match`: a read
        log compared across the upgrade does not match by digest.
-    4. **`search.enabled` defaults to a pipeline that needs `pg_trgm`.** A deployment whose owner
-       role cannot create it must create it once as a role that can, or set `search.enabled`
-       without `bm25-trigram`; the lead refuses to start otherwise, naming both.
+    4. **`bm25-trigram` needs `pg_trgm`.** It is not in the default `search.enabled` (d12); a
+       deployment that names it on a database without the extension must create it once as a
+       role that can, and the lead refuses to start otherwise, naming both.
     5. **The store port changed**: `JournalStore::recall_fts` and `recall_own_held` are gone,
        replaced by `Retriever::retrieve`; an out-of-tree adapter implements the new port.
     6. **The plugin's guidance changed**: the server instructions, the `oml_read` description,
@@ -246,10 +246,13 @@ reorders results, and steering rows, which precede hits, are never ranked"
   its latency the blocker: 3.7 s per query on 5,183 SciFact abstracts, because the `bm25`
   statement rebuilt every scope row's text vector per query (3.2 s of it) and `did_you_mean`
   rebuilt the scope's vocabulary per query (about 2 s under load).
-    1. **Stored lexemes.** Migration 0020 adds `memories.search_vector` and `search_len` as stored
-       generated columns, with a GIN index on the partitioned parent; the column is filled for
-       every existing row when 0020 rewrites the partitions, and a partition created later takes
-       it through `LIKE … INCLUDING ALL`. The `bm25` statement reads them and no row's text
+    1. **Stored lexemes.** Migration 0020 adds `memories.search_vector` and `search_len`, set by
+       a `BEFORE` trigger on every insert and on any update naming the claim or either column, so
+       the vector is computed once per write (a generated `search_len` could not read the
+       generated vector and computed it twice) and a write cannot store lexemes that are not its
+       claim's. 0020 fills both for every existing row under each tenant's row security; a
+       partition created later takes the columns through `LIKE … INCLUDING ALL` and the trigger
+       through `ATTACH PARTITION`. No text index is built on them (item 5). The `bm25` statement reads them and no row's text
        (`the_bm25_statement_reads_the_stored_lexemes_and_never_a_rows_claim`). Row security and the
        per-tenant partitions are unchanged; the owner creates the columns, the serving role reads
        them. A v0.5.4-shaped database migrated forward ranks exactly as one written after 0020
@@ -258,12 +261,17 @@ reorders results, and steering rows, which precede hits, are never ranked"
        identifier-split copy and `simple` with `english`, so a word said once had a term
        frequency of two to four, and a word whose stem differs counted under two lexemes. The
        stored vector holds the `simple` words, then only the identifier parts the text lacks, then
-       only the `english` stems neither holds; a query word scores its best form; a query's
+       only the `english` stems neither holds, the stems taken once from the text and once from
+       the parts it lacks (`runs` holds `run` once, so it never outranks a row that says `run`);
+       a query word scores its best form; a query's
        English stop words are dropped when it has other words (they score near nothing and made
-       nearly every row a candidate). Measured on the same rows (lab, statement only, SciFact, no
-       row security): nDCG@10 0.660 (as served) → 0.684 with all three; synthetic success@5 0.917
-       → 0.942. Laws: `bm25_scores_a_word_a_lone_row_says_once_at_its_weight`,
-       `bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other`.
+       nearly every row a candidate). Served, after the review's fix below: SciFact nDCG@10 0.660
+       → 0.685, NFCorpus 0.308 → 0.321, LoCoMo 0.499 → 0.503. Laws: `bm25_scores_a_word_a_lone_row_says_once_at_its_weight`,
+       `bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word`,
+       `bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other`. The first
+       build of this item still took the stems from the text and its split copy together, so
+       an inflected word had two positions; an independent review found it, the law above
+       failed on it (0.396 against 0.288), and the numbers in item 6 are measured after the fix.
     3. **Statistics stay per query over the readable scope.** Two readings were measured on
        SciFact ×10 (51,830 rows, ten workareas), statement only: (a) document frequencies taken
        from the rows that hold a query form, inside the readable scope, which are exactly the
@@ -274,64 +282,87 @@ reorders results, and steering rows, which precede hits, are never ranked"
        a counter to every promotion, supersession, retirement and demotion. (a) is built; no table
        holds a statistic across workareas, as the rejected alternative below requires.
     4. **`did_you_mean` from a maintained vocabulary, only when thin.** `search_vocabulary` holds,
-       per workarea, the `simple` words of its promoted served tips that are no retirement
-       version, with the count of those rows; a trigger adds and removes words in the write's own
+       per workarea, the `simple` words of its promoted served tips of the kinds recall serves
+       (`memory`, `derived_fact`) that are no retirement version, with the count of those rows; a trigger adds and removes words in the write's own
        transaction, and 0020 fills it for the rows already promoted. A recall offers spellings
        only when it found fewer than three hits (`DID_YOU_MEAN_BELOW`, or fewer than its `k`),
        for the words no hit holds, read from the readable nodes' vocabulary, under every pipeline
        but `keyword-all`, whose v0.5.0 answer had none. A held row's, another workarea's, a
-       replaced version's and a retired claim's words are never offered
-       (`did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope`). Under row
-       security `%` is not leakproof, so the trigram index on `word` serves the owner only and the
-       serving role scans the readable nodes' vocabulary: 62 ms per word over SciFact's 50,746
-       words, 2 ms with the index (ADR-0034 d13), against about 2 s before.
-    5. **The indexes under row security.** `@@`, `%` and `<%` are not leakproof, so the GIN and
-       trigram indexes do not serve the serving role (ADR-0034 d13). Measured with
+       steering row's, another tenant's on the same node id, a replaced version's and a retired
+       claim's words are never offered
+       (`did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope`). The serving
+       role scans the readable nodes' vocabulary: 58 ms per word over SciFact's workarea
+       vocabulary of about 50,000 words in the served database, against about 2 s before. A
+       trigram index on `word` does not help it: on a 50,001-word table under forced row
+       security, `word % q` with `pg_trgm.similarity_threshold` 0.4 ran a sequential scan in 158
+       ms as the policy-bound role, against 0.05 ms through the index as a role that bypasses the
+       policy and 131 ms for the `similarity() > 0.4` form the statement uses, so no index is
+       built (item 5).
+    5. **No index the serving role cannot use.** `@@`, `%` and `<%` are not leakproof, so under
+       forced row security no GIN or trigram index serves the serving role (ADR-0034 d13); 0020
+       builds none on `search_vector`, `search_vocabulary` or the trigram text, which the first
+       build of this record did, so no write maintains one. Measured with
        `ts_match_vq` marked `LEAKPROOF` on a throwaway cluster, the `bm25` statement's p50 went
        from 615 to 442 ms at 51,830 rows and was unchanged at 5,183, since most queries hold a
        word thousands of rows share: the `LEAKPROOF` step would not make `bm25` fast at that size.
-    6. **The default is `bm25`.** Re-measured with the stored lexemes (2026-11-04, PostgreSQL 17.9, the
-       generated [benchmark pages](../api/benchmarks/index.md)): on the recall eval `bm25` passes
-       its gate, success@5 0.934 and success@1 0.777 at a median of 13.8 ms and a p95 of 19.8 ms
-       over 200 rows, and `bm25-trigram` reaches success@5 0.959 but misses its own partial gate
-       by one query (0.909 against 0.91). On the public sets `bm25` ranks above `bm25-trigram` by
-       0.075 nDCG@10 on SciFact (0.684 against 0.609), 0.046 on NFCorpus (0.315 against 0.269)
-       and 0.018 on LoCoMo (0.501 against 0.483), at a twentieth of its latency on abstracts
-       (p50 176 against 3,806 ms at `k` 100). d9's rule, the highest success@5 among the passing
-       pipelines, is replaced: the default is the passing pipeline that ranks best on the
-       external sets, since the synthetic set's typo and partial categories, 22 queries one model
-       wrote, should not outweigh 2,158 queries others wrote. `bm25-trigram` stays enabled for a
-       tenant or a request that wants misspellings matched, and a thin misspelt recall under
-       `bm25` offers `did_you_mean`.
+    6. **The default is `bm25`.** Re-measured after the review's fixes (2026-11-05, release build
+       of `d3fdb72`, PostgreSQL 17.9, the generated [benchmark pages](../api/benchmarks/index.md)):
+       on the recall eval `bm25` passes its gate, success@5 0.926 and success@1 0.835 at a median
+       of 16.3 ms and a p95 of 21.2 ms over 200 rows, and `bm25-trigram` reaches success@5 0.950
+       but misses its own partial gate by one query (0.909 against 0.91). On the public sets
+       `bm25` ranks above `bm25-trigram` by 0.074 nDCG@10 on SciFact (0.685 against 0.611), 0.054
+       on NFCorpus (0.321 against 0.267) and 0.020 on LoCoMo (0.503 against 0.483), at a
+       fortieth of its latency on abstracts (p50 83 against 3,707 ms at `k` 100). d9's rule, the
+       highest success@5 among the passing pipelines, is replaced: the default is the passing
+       pipeline that ranks best on the external sets, since the synthetic set's typo and partial
+       categories, 22 queries one model wrote, should not outweigh 2,158 queries others wrote.
+       `bm25-trigram` stays available to a deployment that enables it for misspellings, and a
+       thin misspelt recall under `bm25` offers `did_you_mean`.
     7. **Hydration.** At `k` 100 a recall read each hit's workarea ancestry with its own
        recursive query; recall now reads each workarea's once
        (`a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it_serves`).
-       SciFact's `bm25` at `k` 100 went from 176 / 214 ms (p50 / p95) to
-       88 / 119 ms, and at `k` 10 measures 77 / 108 ms: the target of a 100 ms p95 at 5,000 rows
-       is missed by 8% on abstract-length rows, the worst case OML's short claims meet.
+       SciFact's `bm25` at `k` 100 went from 176 / 214 ms (p50 / p95) to 88 / 119 ms on that
+       change alone, and measures 83 / 113 ms after the review's fixes; at `k` 10 it measures
+       71 / 99 ms, inside the target of a 100 ms p95 at 5,000 rows on abstract-length rows, the
+       worst case OML's short claims meet. LoCoMo's turns answer in 31 / 38 ms at `k` 100.
     8. **Latency grows with the readable rows; it is not solved.** Under row security every
        pipeline reads the stored lexemes of every row the key may read. Measured: served `bm25`
-       over 8,825 abstracts in one workarea, 141 / 183 ms at `k` 100 and 123 / 168 ms at `k` 10;
-       the statement alone over 51,830 abstracts in the lab, 639 / 947 ms, where the first
-       build's statement took 15.3 s at its median. The scale lane (`feat/scale-bench`) puts an
-       every-word match over a stored `simple` vector past 50 ms near 70,000 readable rows;
-       `bm25` reads more per row. Larger scopes need the `LEAKPROOF` step of ADR-0034 d13 and,
-       per item 5, a candidate cut beyond it; this record does not claim them. The served
-       51,830-row point was not reached: approving the copies through `review next` slowed to a
-       few rows a second with 45,000 held (FR-87), and the run measured the 8,825 promoted when
-       it was stopped.
+       over 51,830 abstracts in one workarea, 604 / 849 ms at `k` 100 and 572 / 807 ms at `k` 10;
+       the statement alone over 51,830 abstracts in the lab, 639 / 947 ms (before the stem fix),
+       where the first build's statement took 15.3 s at its median. The scale lane
+       (`feat/scale-bench`) puts an every-word match over a stored `simple` vector past 50 ms near
+       70,000 readable rows; `bm25` reads more per row. Larger scopes need what item 13 names;
+       this record does not claim them. Loading the 51,830 copies through `review next` took 37
+       minutes, a few rows a second while tens of thousands were held (FR-87).
     9. **Room for a learned sparse leg.** An inference-free learned sparse retriever (a
        `(memory, token, weight)` table written at promotion and scored by a token-weight sum) would
        sit beside these columns as a table and a retriever of its own, under the same
        partitioning and row security; nothing here stores the lexical leg's statistics in a shape
        it would have to share.
-    10. **Known gap.** NFCorpus measures 0.315 nDCG@10 served against BEIR's published 0.325 and
+    10. **Known gap.** NFCorpus measures 0.321 nDCG@10 served against BEIR's published 0.325 and
        Pyserini's single-field 0.322; an offline textbook BM25 over the same memories (bm25s, k1
-       0.9, b 0.4, Snowball stems, stop words removed) measures 0.318, and k1 0.9 / b 0.4 in the
-       served statement measured 0.317 in the lab. Most of the gap is the mapping (title and
-       abstract as one body) and the analyser (Snowball's `english_stem` against Lucene's Porter,
-       PostgreSQL's parser keeping hyphenated words whole); it is recorded on the benchmark pages
-       and not chased further here.
+       0.9, b 0.4, Snowball stems, stop words removed) measures 0.318. Before the stem fix the
+       served figure was 0.315. What remains is about the mapping (title and abstract as one
+       body) and the analyser (Snowball's `english_stem` against Lucene's Porter, PostgreSQL's
+       parser keeping hyphenated words whole); it is recorded on the benchmark pages and not
+       chased further here.
+    11. **The default needs no extension.** `search.enabled` defaults to `keyword-any` and `bm25`;
+       `bm25-trigram`, which needs `pg_trgm`, is served only where a deployment names it, and a
+       lead that names it without the extension refuses to start naming it. 0020 goes on without
+       the extension where the owner may not create it or contrib is absent, and `did_you_mean`
+       then answers `[]`
+       (`a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm25_trigram_is_refused`).
+    12. **Erasure must rewrite the lexemes.** `search_vector` holds the claim's words. Erasure is
+       not built; when it is, it must rewrite `claim`, which the trigger turns into the new
+       lexemes, and take the version out of the vocabulary; an erasure that changed only the
+       status would leave the erased text in `search_vector`. The stored vectors also depend on
+       the `english` configuration and the database's character classes: changing either needs
+       the vectors recomputed (`UPDATE memories SET claim = claim` per tenant).
+    13. **What comes next is decided elsewhere.** The operator decided on 2026-11-05 that text
+       search moves to an integer token table, `(memory, token_id, weight)`, whose index row
+       security can use; that is its own record. This item's columns and statement are the
+       lexical leg until then.
+
 
 ## Consequences
 
@@ -347,11 +378,9 @@ reorders results, and steering rows, which precede hits, are never ranked"
   latency budget), FR-85 (a reranker's CPU cost in `candle`) are ADR-0048's and stay open; this
   record adds none.
 - **Costs**: the BM25 statement reads every readable row's stored lexemes per query, so its cost
-  grows with the scope (d12); the stored vector, its GIN index, the trigram index and the
-  vocabulary cost write time and storage: loading SciFact wrote 62 rows a second and approved 77 a second with
+  grows with the scope (d12); the stored vector and the vocabulary cost write time and storage: loading SciFact wrote 62 rows a second and approved 77 a second with
   8 writers and 6 reviewers, where the first build loaded LoCoMo at 98 and 103, and the
-  vocabulary held 88,127 words for 14,000 promoted abstracts (20 MB); the GIN index on the stored
-  vector serves no serving-role read until the `LEAKPROOF` step; `pg_trgm` stays a requirement of
+  vocabulary held 88,127 words for 14,000 promoted abstracts (20 MB); `pg_trgm` stays a requirement of
   `did_you_mean` and of `bm25-trigram`, not of the default ranking.
 - **Roadmap rows**: FR-86 (chain-head contention under concurrent writes) and FR-87 (one row
   reviewed at a time per key), both found by the benchmark loader.
