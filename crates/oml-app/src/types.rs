@@ -8,6 +8,7 @@ use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::valid_time::{ValidTime, ValidTimeError, Window};
 use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
@@ -1035,6 +1036,9 @@ pub struct MemoryRecord {
     /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
+    /// When the version says it holds, declared by its author and signed;
+    /// open on both sides when it declares none (proposed ADR-0058 d2).
+    pub valid: ValidTime,
 }
 
 /// A guardrail version's severity and its optional `oml-gr/1` rule, the
@@ -1283,6 +1287,10 @@ pub struct SubmitRequest {
     /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
+    /// `valid_from` and `valid_until` as sent; parsed and checked against
+    /// the kind by the capture (proposed ADR-0058 d2).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
 }
 
 /// The stored idempotent response: a replayed submit returns this byte for
@@ -1451,6 +1459,13 @@ pub struct RecallRequest {
     pub search: Option<String>,
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
+    /// `include_expired`: serve versions whose valid time has ended, hidden
+    /// by default (proposed ADR-0058 d3).
+    pub include_expired: bool,
+    /// `now`, as sent: the instant the expiry, the query's relative dates
+    /// and the recency age are read at; `None` is the lead's clock
+    /// (proposed ADR-0058 d5).
+    pub now: Option<String>,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1478,6 +1493,9 @@ pub struct RecallHit {
     /// `matched.rank_before`: the hit's rank in the first stage's list, from
     /// 1, for a hit the reranker scored (ADR-0053 d7).
     pub rank_before: Option<u32>,
+    /// `matched.recency`: the recency factor the pipeline applied to the
+    /// hit's score, under a recency pipeline (proposed ADR-0058 d8).
+    pub recency: Option<f32>,
 }
 
 /// What the reranking stage did to one recall (ADR-0053 d5, d7):
@@ -1574,6 +1592,9 @@ pub struct RecallResult {
     /// The query words whose every form was pruned from the postings read
     /// (`search.pruned`; ADR-0052 d6, d11).
     pub pruned: Vec<String>,
+    /// The date window the query named, read by rule `oml-when/1`
+    /// (`search.window`; proposed ADR-0058 d6).
+    pub window: Option<Window>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
@@ -1921,6 +1942,10 @@ pub struct SupersedeRequest {
     /// A guardrail successor's optional rule, refused on every other kind and
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
+    /// The successor's own valid time as sent; it inherits none (proposed
+    /// ADR-0058 d2, d4).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
 }
 
 /// The stored idempotent response of a supersession: a replay returns this
@@ -2343,6 +2368,16 @@ pub enum AppError {
         "{field} is a guardrail's field, refused on any other kind and on a retirement (proposed ADR-0037 d10, request.validation)"
     )]
     GuardrailFieldRefused { field: &'static str },
+    /// A valid end in no accepted form, an empty interval, or valid time on
+    /// a kind or a retirement that takes none (proposed ADR-0058 d2,
+    /// request.validation).
+    #[error("{0} (proposed ADR-0058 d2, request.validation)")]
+    ValidTime(ValidTimeError),
+    /// `now` in no accepted form (proposed ADR-0058 d5, request.validation).
+    #[error(
+        "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0058 d5, request.validation)"
+    )]
+    NowUnparsable,
     #[error(
         "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
     )]

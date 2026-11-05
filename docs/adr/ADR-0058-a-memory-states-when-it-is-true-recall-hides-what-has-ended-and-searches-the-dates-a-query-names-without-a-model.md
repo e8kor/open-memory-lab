@@ -73,8 +73,9 @@ use. Decided here and built on the same branch; the measurements below are this 
       instant is the fixed-width UTC form of `at` ([chain format](../data/chain-format.md)).
     - **Stored.** `memories` gains the two strings and their bounds in microseconds since the
       epoch (`valid_from_us`, `valid_until_us`, `int8`), which every filter and index reads (d11).
-    - **Immutable and reviewed.** A version's ends never change. A successor inherits none: it
-      states its own or is open. The served item carries both, so a reviewer judges them with
+    - **Declared once, reviewed.** A version's declared ends never change; the one later fact is
+      the end a ratified supersession gives it (d4), signed in that ratification. A successor
+      inherits none: it states its own or is open. The served item carries both, so a reviewer judges them with
       the text, and a verdict approves both together.
 
 - **d3 — A memory whose valid time has ended is hidden from recall by default: a visibility
@@ -92,13 +93,20 @@ use. Decided here and built on the same branch; the measurements below are this 
   every other scan statement gains one `int8` comparison per row, and `bm25-postings` one probe
   of an index on (`tenant_id`, `valid_until_us`) that holds only rows with an end.
 
-- **d4 — A fact ends by a reviewed supersession, never by the server.** To end a fact, its
-  author supersedes it with a version that carries `valid_until`, or retires it; the successor
-  is held and reviewed like any other ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md)
-  d10), and once promoted it is the tip, so the claim is hidden from recall from that end on.
-  The replaced version keeps its own signed interval and stays in the history; nothing is
-  deleted and no end is computed, inferred, copied from a successor's `valid_from` or written to
-  an earlier version (R4). Detecting that two memories contradict each other is not built.
+- **d4 — A fact ends by a reviewed supersession, never by the server alone.** Two ways, both
+  reviewed. The author supersedes the claim with a successor that declares `valid_from`: once a
+  reviewer ratifies it, the ratifying `lifecycle.supersede` event carries
+  `replaces_valid_until`, the successor's start as an instant, and the fold sets it as the
+  replaced version's end, when that start falls after the replaced version's start and before
+  its declared end; an end it already has that is earlier stays. Or the author supersedes with a
+  successor that carries its own `valid_until`, or retires the claim. Nothing ends on
+  submission: a held successor changes nothing, a rejected one never ends anything, and a
+  successor that declares no start ends nothing, since no end is inferred, guessed from the text,
+  or computed from anything but the declared start the verdict approved. The replaced version's
+  own submission stays as it was signed; its later end is a fact of the ratifying event, signed
+  there. Nothing is deleted (R4). Detecting that two memories contradict each other is not
+  built. This composes with ADR-0057's `expected_version` on a supersession (draft PR #69): the
+  version a supersession names is the one the ratification ends.
 
 - **d5 — A recall has one now, the server's clock unless the request names it.** `now`, a date
   or an instant as d2 parses it (a period reads as its first instant), anchors three things: the
@@ -205,7 +213,9 @@ use. Decided here and built on the same branch; the measurements below are this 
   row, steering, an empty scope); `a_row_with_no_valid_from_never_matches_a_window`;
   `a_query_with_no_window_answers_as_bm25_postings_does`; `the_date_parser_reads_each_form_in_its_table`
   (d6's table as cases); `valid_time_is_refused_on_steering_guardrail_and_a_retirement`;
-  `a_successor_inherits_no_valid_time`; `the_recency_factor_stays_within_ten_percent`;
+  `a_successor_inherits_no_valid_time`;
+  `a_ratified_supersession_ends_the_replaced_version_where_the_successor_begins` (and a held one
+  ends nothing); `the_recency_factor_stays_within_ten_percent`;
   `no_ranking_input_reads_promoted_at_or_a_verdict` (two rows differing only in `promoted_at` and
   their verdicts rank equal under every time pipeline); and the signed payload carries the ends
   only when sent.

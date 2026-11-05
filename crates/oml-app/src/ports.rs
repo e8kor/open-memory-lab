@@ -315,6 +315,10 @@ pub enum MetadataFold {
     TipSuperseded {
         successor: Uuid,
         replaced: Uuid,
+        /// The end the ratification gives the replaced version: the
+        /// successor's declared start, when it begins inside the replaced
+        /// version's interval; `None` changes no end (proposed ADR-0058 d4).
+        replaced_valid_until: Option<oml_domain::valid_time::ValidEnd>,
     },
     /// `web.email_allowed`: the entry's row, with no pinned subject. The
     /// store refuses an email another tenant's entry holds with

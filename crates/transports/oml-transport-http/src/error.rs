@@ -415,6 +415,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "{field} is a guardrail's field, refused on any other kind and on a retirement"
         ))
         .with_details(json!({ "field": format!("/{field}") })),
+        AppError::ValidTime(err) => ApiError::validation(err.to_string())
+            .with_details(json!({ "field": err.field() })),
+        AppError::NowUnparsable => ApiError::validation(
+            "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset",
+        )
+        .with_details(json!({ "field": "/now" })),
         // Raised only from the agent plugin, whose oml_write names the
         // target `replaces` (proposed ADR-0037 d10, amending ADR-0039 d3).
         AppError::GuardrailTarget => ApiError::validation(

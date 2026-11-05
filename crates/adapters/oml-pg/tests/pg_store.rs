@@ -378,12 +378,14 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                             author_key_ids: vec![own],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k,
                         sparse: &[],
+                        window: None,
                     },
                 )
                 .await
@@ -2575,9 +2577,11 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             (true, "grants") => "to_jsonb(t) - 'covers'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
-            // lexemes, generated from the claim (ADR-0049 d12).
+            // lexemes, generated from the claim (ADR-0049 d12); 0026 adds
+            // valid time, open on every existing row (proposed ADR-0058 d11).
             (true, "memories") => {
-                "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len'"
+                "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
+                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5870,10 +5874,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7225,12 +7226,14 @@ async fn bm25_list(
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
+                expired_at: None,
             },
             RetrievalQuery {
                 query,
                 match_mode: MatchMode::Any,
                 k: 50,
                 sparse: &[],
+                window: None,
             },
         )
         .await
@@ -7311,10 +7314,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7975,10 +7975,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8010,12 +8007,14 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k: 50,
                         sparse: &[],
+                        window: None,
                     },
                 )
                 .await

@@ -46,8 +46,10 @@ class RecallRequest:
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does
-                not serve is request.validation with details.field /search and details.served.
+                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time,
+                bm25-postings fused with the memories whose valid time overlaps a date the query names, and bm25-postings-time-
+                recent, which also moves each of the first 50 scores by at most 10% by recency, proposed ADR-0058 d7, d8). A
+                name the deployment does not serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not
@@ -55,6 +57,10 @@ class RecallRequest:
                 the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
+            include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
+                default; get and the listings always serve them (proposed ADR-0058 d3). Default: False.
+            now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
+                digits (proposed ADR-0058 d2).
     """
 
     query: str
@@ -67,6 +73,8 @@ class RecallRequest:
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
     feedback: Feedback | Unset = UNSET
+    include_expired: bool | Unset = False
+    now: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -104,6 +112,10 @@ class RecallRequest:
         if not isinstance(self.feedback, Unset):
             feedback = self.feedback.to_dict()
 
+        include_expired = self.include_expired
+
+        now = self.now
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -129,6 +141,10 @@ class RecallRequest:
             field_dict["match"] = match
         if feedback is not UNSET:
             field_dict["feedback"] = feedback
+        if include_expired is not UNSET:
+            field_dict["include_expired"] = include_expired
+        if now is not UNSET:
+            field_dict["now"] = now
 
         return field_dict
 
@@ -184,6 +200,10 @@ class RecallRequest:
         else:
             feedback = Feedback.from_dict(_feedback)
 
+        include_expired = d.pop("include_expired", UNSET)
+
+        now = d.pop("now", UNSET)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -195,6 +215,8 @@ class RecallRequest:
             search=search,
             match=match,
             feedback=feedback,
+            include_expired=include_expired,
+            now=now,
         )
 
         return recall_request

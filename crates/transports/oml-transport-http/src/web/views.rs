@@ -447,6 +447,8 @@ where
                         max_tokens: None,
                         search: None,
                         match_mode: oml_app::search::MatchMode::Any,
+                        include_expired: false,
+                        now: None,
                     },
                 )
                 .await
@@ -1381,6 +1383,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     derives_from: vec![source],
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1427,6 +1431,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await

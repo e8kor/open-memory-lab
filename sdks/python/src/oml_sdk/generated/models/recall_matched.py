@@ -22,7 +22,10 @@ class RecallMatched:
     Attributes:
         terms (list[str]): The query words the row holds, as the pipeline reads words.
         of (int): How many words the query had.
-        via (list[RecallMatchedViaItem]): The retrievers whose lists held the row.
+        via (list[RecallMatchedViaItem]): The retrievers whose lists held the row; time when its valid time overlaps the
+            window the query named (proposed ADR-0058 d7).
+        recency (float | None | Unset): The recency factor a recency pipeline multiplied the score by; null under every
+            other pipeline (proposed ADR-0058 d8).
         rerank (float | None | Unset): The reranker's relevance of the row to the query, when a reranking pipeline
             scored it; the hit's score is then this relevance (ADR-0053 d7).
         rank_before (int | None | Unset): The row's rank in the first stage's list, from 1, when the reranker scored it
@@ -36,6 +39,7 @@ class RecallMatched:
     terms: list[str]
     of: int
     via: list[RecallMatchedViaItem]
+    recency: float | None | Unset = UNSET
     rerank: float | None | Unset = UNSET
     rank_before: int | None | Unset = UNSET
     tokens: list[RecallMatchedTokensItem] | Unset = UNSET
@@ -50,6 +54,12 @@ class RecallMatched:
         for via_item_data in self.via:
             via_item = via_item_data.value
             via.append(via_item)
+
+        recency: float | None | Unset
+        if isinstance(self.recency, Unset):
+            recency = UNSET
+        else:
+            recency = self.recency
 
         rerank: float | None | Unset
         if isinstance(self.rerank, Unset):
@@ -83,6 +93,8 @@ class RecallMatched:
                 "via": via,
             }
         )
+        if recency is not UNSET:
+            field_dict["recency"] = recency
         if rerank is not UNSET:
             field_dict["rerank"] = rerank
         if rank_before is not UNSET:
@@ -109,6 +121,15 @@ class RecallMatched:
             via_item = RecallMatchedViaItem(via_item_data)
 
             via.append(via_item)
+
+        def _parse_recency(data: object) -> float | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(float | None | Unset, data)
+
+        recency = _parse_recency(d.pop("recency", UNSET))
 
         def _parse_rerank(data: object) -> float | None | Unset:
             if data is None:
@@ -143,6 +164,7 @@ class RecallMatched:
             terms=terms,
             of=of,
             via=via,
+            recency=recency,
             rerank=rerank,
             rank_before=rank_before,
             tokens=tokens,

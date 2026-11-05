@@ -1314,6 +1314,8 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                valid_from: None,
+                valid_until: None,
             },
         )
         .await
@@ -1899,6 +1901,8 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
                 max_tokens: None,
                 search: None,
                 match_mode: oml_app::search::MatchMode::Any,
+                include_expired: false,
+                now: None,
             },
         )
         .await
@@ -1942,6 +1946,8 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 derives_from: Vec::new(),
                 severity: Some(oml_app::domain::guardrail::Severity::Must),
                 rule: None,
+                valid_from: None,
+                valid_until: None,
             },
         )
         .await

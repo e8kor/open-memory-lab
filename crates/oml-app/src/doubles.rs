@@ -1387,6 +1387,7 @@ fn apply_fold(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until,
         } => {
             // The compare-and-set: the successor is held and replaces
             // `replaced`, which is still the promoted tip under the
@@ -1411,6 +1412,9 @@ fn apply_fold(
             }
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
+                if let Some(end) = replaced_valid_until {
+                    target.valid.until = Some(end);
+                }
             }
             if let Some(memory) = state.memories.get_mut(&successor) {
                 memory.status = MemoryStatus::Promoted;
@@ -1777,14 +1781,22 @@ impl Retriever for MemStore {
     /// trigrams, so a composition over it serves `keyword-all` and
     /// `keyword-any` alone (ADR-0049 d7).
     fn retrievers(&self) -> Vec<RetrieverKind> {
+        // The `time` leg is a predicate over declared bounds, served with
+        // PostgreSQL's semantics (proposed ADR-0058 d7).
         if self.bm25_as_any_word {
             vec![
                 RetrieverKind::KeywordAll,
                 RetrieverKind::KeywordAny,
                 RetrieverKind::Bm25,
+                RetrieverKind::Bm25Postings,
+                RetrieverKind::Time,
             ]
         } else {
-            vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+            vec![
+                RetrieverKind::KeywordAll,
+                RetrieverKind::KeywordAny,
+                RetrieverKind::Time,
+            ]
         }
     }
 
@@ -1816,6 +1828,14 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
+            // An ended version is outside the scope unless asked for
+            // (proposed ADR-0058 d3); keyword-all's v0.5.0 statement keeps
+            // no such cut on PostgreSQL, and the core re-checks either way.
+            if kind != RetrieverKind::KeywordAll
+                && scope.expired_at.is_some_and(|now| m.valid.expired_at(now))
+            {
+                return false;
+            }
             if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
                 return true;
             }
@@ -1825,7 +1845,39 @@ impl Retriever for MemStore {
                     && own.nodes.contains(&m.workarea_id)
             })
         };
-        let kind = if kind == RetrieverKind::Bm25 {
+        if kind == RetrieverKind::Time {
+            let Some(window) = query.window else {
+                return Ok(Retrieved::default());
+            };
+            let anchor = window.from_us.or(window.until_us).unwrap_or(0);
+            let mut candidates: Vec<Candidate> = state
+                .memories
+                .values()
+                .filter(admitted)
+                .filter(|m| m.valid.overlaps(window))
+                .filter_map(|m| {
+                    let from = m.valid.from.as_ref()?.unix_micros();
+                    #[allow(clippy::cast_precision_loss, reason = "days apart")]
+                    let days = (from - anchor).unsigned_abs() as f64 / 86_400_000_000.0;
+                    #[allow(clippy::cast_possible_truncation, reason = "a score in (0, 1]")]
+                    let score = (1.0 / (1.0 + days)) as f32;
+                    Some(Candidate {
+                        memory_id: m.memory_id,
+                        body_bytes: m.body_bytes,
+                        score,
+                        matched: Vec::new(),
+                        tokens: Vec::new(),
+                    })
+                })
+                .collect();
+            hit_order(&mut candidates, |c| (c.score, c.memory_id));
+            candidates.truncate(query.k);
+            return Ok(Retrieved {
+                candidates,
+                ..Retrieved::default()
+            });
+        }
+        let kind = if matches!(kind, RetrieverKind::Bm25 | RetrieverKind::Bm25Postings) {
             RetrieverKind::KeywordAny
         } else {
             kind

@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 author_key_ids: own_keys,
                 nodes: uuids(&item["own_nodes"]),
             }),
+            expired_at: None,
         };
         // A sparse workload carries each query's tokens, encoded by
         // oml-rerank's sparse_encode example (ADR-0052 d14).
@@ -96,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_u64()
                 .map_or(10, |k| usize::try_from(k).unwrap_or(10)),
             sparse: &sparse,
+            window: None,
         };
         store.retrieve(tenant, kind, &scope, query).await?;
         let started = Instant::now();

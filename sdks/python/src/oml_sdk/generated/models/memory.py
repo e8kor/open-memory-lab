@@ -66,6 +66,10 @@ class Memory:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
+            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0058 d2).
+        valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
+            it at; null when open (proposed ADR-0058 d2, d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false.
     """
@@ -94,6 +98,8 @@ class Memory:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    valid_from: None | str | Unset = UNSET
+    valid_until: None | str | Unset = UNSET
     text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -181,6 +187,18 @@ class Memory:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        valid_from: None | str | Unset
+        if isinstance(self.valid_from, Unset):
+            valid_from = UNSET
+        else:
+            valid_from = self.valid_from
+
+        valid_until: None | str | Unset
+        if isinstance(self.valid_until, Unset):
+            valid_until = UNSET
+        else:
+            valid_until = self.valid_until
+
         text = self.text
 
         field_dict: dict[str, Any] = {}
@@ -223,6 +241,10 @@ class Memory:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
         if text is not UNSET:
             field_dict["text"] = text
 
@@ -362,6 +384,24 @@ class Memory:
 
                 attachments.append(attachments_item)
 
+        def _parse_valid_from(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_from = _parse_valid_from(d.pop("valid_from", UNSET))
+
+        def _parse_valid_until(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
+
         text = d.pop("text", UNSET)
 
         memory = cls(
@@ -389,6 +429,8 @@ class Memory:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            valid_from=valid_from,
+            valid_until=valid_until,
             text=text,
         )
 

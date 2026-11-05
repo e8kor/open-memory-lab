@@ -159,6 +159,9 @@ struct WriteArgs {
     replaces: Option<String>,
     retirement: Option<bool>,
     reason: Option<String>,
+    /// When the memory holds (proposed ADR-0058 d2, d9).
+    valid_from: Option<String>,
+    valid_until: Option<String>,
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
@@ -193,11 +196,14 @@ struct ReadArgs {
     match_mode: Option<String>,
     /// Feedback on the key's last recall, in any mode (ADR-0054 d6).
     feedback: Option<Value>,
+    /// Recall's expired opt-in and its now (proposed ADR-0058 d3, d5).
+    include_expired: Option<bool>,
+    now: Option<String>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
 const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 8] = [
+const READ_RECALL: [&str; 10] = [
     "query",
     "workarea",
     "k",
@@ -206,6 +212,8 @@ const READ_RECALL: [&str; 8] = [
     "max_tokens",
     "search",
     "match",
+    "include_expired",
+    "now",
 ];
 const READ_LISTING: [&str; 9] = [
     "own",
@@ -540,6 +548,8 @@ where
                 ("derives_from", args.derives_from.map(Value::from)),
                 ("retirement", args.retirement.map(Value::from)),
                 ("reason", args.reason.map(Value::from)),
+                ("valid_from", args.valid_from.map(Value::from)),
+                ("valid_until", args.valid_until.map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -574,6 +584,8 @@ where
                 ("kind", args.kind.map(Value::from)),
                 ("workarea", args.workarea.map(Value::from)),
                 ("derives_from", args.derives_from.map(Value::from)),
+                ("valid_from", args.valid_from.map(Value::from)),
+                ("valid_until", args.valid_until.map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -657,6 +669,8 @@ where
             ("cursor", args.cursor.is_some()),
             ("search", args.search.is_some()),
             ("match", args.match_mode.is_some()),
+            ("include_expired", args.include_expired.is_some()),
+            ("now", args.now.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -705,6 +719,8 @@ where
                 ("max_tokens", args.max_tokens.map(Value::from)),
                 ("search", args.search.map(Value::from)),
                 ("match", args.match_mode.map(Value::from)),
+                ("include_expired", args.include_expired.map(Value::from)),
+                ("now", args.now.map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -855,6 +871,8 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("tokens", "tokens"),
         ("created_at", "created_at"),
         ("promoted_at", "promoted_at"),
+        ("valid_from", "valid_from"),
+        ("valid_until", "valid_until"),
     ]
     .into_iter()
     .map(|(from, to)| (to.to_owned(), m[from].clone()))

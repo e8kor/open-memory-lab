@@ -52,6 +52,7 @@ use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
+use oml_app::domain::valid_time::{ValidEnd, fixed_width};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, WorkareaStatus, nfc};
 use oml_app::ports::{
     ClientDocumentFetcher, Clock, ConnectionStore, HandleSealer, IdGen, JournalStore, Scanner,
@@ -552,6 +553,8 @@ where
             derives_from: req.derives_from,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            valid_from: req.valid_from,
+            valid_until: req.valid_until,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
@@ -772,6 +775,8 @@ where
                     max_tokens: req.max_tokens,
                     search: req.search.clone(),
                     match_mode,
+                    include_expired: req.include_expired.unwrap_or(false),
+                    now: req.now.clone(),
                 },
             )
             .await
@@ -798,6 +803,9 @@ where
                         "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
                         "rerank": hit.rerank.map(relevance),
                         "rank_before": hit.rank_before,
+                        // The recency factor a recency pipeline applied
+                        // (proposed ADR-0058 d8).
+                        "recency": hit.recency.map(relevance),
                         // The learned sparse tokens that scored the hit,
                         // each with its contribution and whether the
                         // encoder added it (ADR-0052 d17).
@@ -829,6 +837,12 @@ where
                 "below_floor": result.below_floor,
                 "access": result.access.as_str(),
                 "pruned": result.pruned,
+                // The date window the query named (proposed ADR-0058 d6).
+                "window": result.window.as_ref().map(|w| json!({
+                    "from": w.from_us.map(fixed_width),
+                    "until": w.until_us.map(fixed_width),
+                    "phrase": w.phrase,
+                })),
             },
         });
         // The budget object is present if and only if max_tokens was sent
@@ -960,6 +974,8 @@ where
             refuse_vocabulary_target,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            valid_from: req.valid_from,
+            valid_until: req.valid_until,
         };
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
@@ -2350,6 +2366,12 @@ struct SubmitBody {
     /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// When the memory holds, each end a period or an instant (proposed
+    /// ADR-0058 d2).
+    #[serde(default)]
+    valid_from: Option<String>,
+    #[serde(default)]
+    valid_until: Option<String>,
 }
 
 /// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
@@ -2379,6 +2401,10 @@ struct RecallBody {
     /// What the key's last recall served that helped, and what did not;
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
+    /// Serve versions whose valid time has ended (proposed ADR-0058 d3).
+    include_expired: Option<bool>,
+    /// The recall's now: a period or an instant (proposed ADR-0058 d5).
+    now: Option<String>,
 }
 
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission
@@ -2419,6 +2445,12 @@ struct SupersedeBody {
     /// A guardrail successor's optional rule (proposed ADR-0037 d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// The successor's own valid time; it inherits none (proposed
+    /// ADR-0058 d2).
+    #[serde(default)]
+    valid_from: Option<String>,
+    #[serde(default)]
+    valid_until: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3445,6 +3477,9 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
+        // When the version says it holds, as signed (proposed ADR-0058 d2).
+        "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
+        "valid_until": m.valid.until.as_ref().map(ValidEnd::as_str),
     });
     // The claim's text, `body` in v0.3.0 and still ADR-0004's storage
     // word (ADR-0039 d7).

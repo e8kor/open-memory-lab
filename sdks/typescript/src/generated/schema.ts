@@ -1073,6 +1073,10 @@ export interface components {
              * @enum {string}
              */
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0058 d2). */
+            valid_from?: components["schemas"]["ValidEnd"];
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0058 d2, d3). */
+            valid_until?: components["schemas"]["ValidEnd"];
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
@@ -1168,7 +1172,13 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             promoted_at: string | null;
+            /** @description When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0058 d2). */
+            valid_from?: string | null;
+            /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0058 d2, d4). */
+            valid_until?: string | null;
         };
+        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits (proposed ADR-0058 d2). */
+        ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
             /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
             text?: string;
@@ -1202,10 +1212,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, and bm25-postings-time-recent, which also moves each of the first 50 scores by at most 10% by recency, proposed ADR-0058 d7, d8). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time" | "bm25-postings-time-recent";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1213,6 +1223,13 @@ export interface components {
              */
             match?: "any" | "all";
             feedback?: components["schemas"]["Feedback"];
+            /**
+             * @description true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0058 d3).
+             * @default false
+             */
+            include_expired?: boolean;
+            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired, anchors the query's relative dates (last week, three days ago) and the recency age (proposed ADR-0058 d5). */
+            now?: components["schemas"]["ValidEnd"];
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
         Feedback: {
@@ -1246,8 +1263,10 @@ export interface components {
             terms: string[];
             /** @description How many words the query had. */
             of: number;
-            /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse")[];
+            /** @description The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0058 d7). */
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse" | "time")[];
+            /** @description The recency factor a recency pipeline multiplied the score by; null under every other pipeline (proposed ADR-0058 d8). */
+            recency?: number | null;
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
@@ -1267,7 +1286,7 @@ export interface components {
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time" | "bm25-postings-time-recent";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1282,6 +1301,21 @@ export interface components {
             access: "postings" | "scan";
             /** @description The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11). */
             pruned: string[];
+            /** @description The date window read from the query by rule oml-when/1, anchored to the recall's now; null when the query names no date (proposed ADR-0058 d6). */
+            window?: {
+                /**
+                 * Format: date-time
+                 * @description The window's first instant; null when open.
+                 */
+                from: string | null;
+                /**
+                 * Format: date-time
+                 * @description The instant after its last; null when open.
+                 */
+                until: string | null;
+                /** @description The query's words the window was read from. */
+                phrase: string;
+            } | null;
             /** @description applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does not rerank or found nothing. */
             rerank: components["schemas"]["RerankOutcome"] | null;
             /** @description Why the rerank was skipped; null otherwise. */
@@ -1443,6 +1477,10 @@ export interface components {
             reason?: string;
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0058 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0058 d2). */
+            valid_from?: components["schemas"]["ValidEnd"];
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0058 d2, d3). */
+            valid_until?: components["schemas"]["ValidEnd"];
         };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
         Crew: {

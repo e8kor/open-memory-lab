@@ -20,6 +20,7 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::valid_time::{ValidEnd, ValidTime};
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
@@ -704,12 +705,52 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 /// the own held author keys and `$5` their nodes: promoted served tips on
 /// the readable nodes, and the own held rows of the keys on theirs, never a
 /// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
-/// fence beneath it (ADR-0034 d11).
+/// fence beneath it (ADR-0034 d11). A version whose valid time ended at or
+/// before the transaction's `oml.expired_at` is outside it ([`NOT_EXPIRED`];
+/// proposed ADR-0058 d3).
 const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
+       AND (m.valid_until_us IS NULL OR m.valid_until_us > COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8)) \
        AND m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
          OR (m.status = 'held' AND m.author_key_id = ANY($4::uuid[]) \
              AND m.workarea_id = ANY($5::uuid[])))";
+
+/// The expiry cut every search statement but `keyword-all`'s applies
+/// (proposed ADR-0058 d3): a row of `m` whose `valid_until_us` is at or
+/// before the transaction-local `oml.expired_at`, which the retriever sets
+/// to the request's now, or leaves empty under `include_expired`. An
+/// `int8` comparison, leakproof, so it costs no index under row security.
+pub const NOT_EXPIRED: &str = "(m.valid_until_us IS NULL OR m.valid_until_us > COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8))";
+
+/// The versions of the tenant `$1` whose valid time ended at or before the
+/// transaction's `oml.expired_at`, by the `memories_valid_until` index; the
+/// postings statements leave them out (proposed ADR-0058 d3).
+const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
+     WHERE m.tenant_id = $1 AND m.valid_until_us <= \
+           COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8))";
+
+/// The `time` statement (proposed ADR-0058 d7): the scope's rows whose
+/// declared valid time overlaps the window [`$6`, `$7`), either side open
+/// when null; a row with no `valid_from` never matches. Nearest start to the
+/// window's start (its end when the start is open) first, then id, at most
+/// `$8`; the score is `1 / (1 + days apart)`. Every predicate on the bounds
+/// is a leakproof `int8` comparison, so `memories_valid_from` serves the
+/// serving role under row security. Exported so the suite plans the
+/// statement the adapter runs.
+#[must_use]
+pub fn time_sql() -> String {
+    format!(
+        "SELECT m.id, m.body_bytes, \
+                (1.0 / (1.0 + abs(m.valid_from_us - COALESCE($6::int8, $7::int8))::float8 / 86400000000.0))::float4 AS score, \
+                '{{}}'::text[] AS matched \
+         FROM memories m \
+         WHERE {SEARCH_SCOPE} AND m.valid_from_us IS NOT NULL \
+           AND ($7::int8 IS NULL OR m.valid_from_us < $7::int8) \
+           AND ($6::int8 IS NULL OR m.valid_until_us IS NULL OR m.valid_until_us > $6::int8) \
+         ORDER BY score DESC, m.id ASC \
+         LIMIT $8"
+    )
+}
 
 /// The `keyword-any` statement (ADR-0048 S1): the query's `simple` lexemes
 /// joined by OR on the existing GIN index, `ts_rank` normalization 0, ties
@@ -828,7 +869,8 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
 /// index (ADR-0052 d5, open question 7).
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' AND m.author_key_id = ANY($2::uuid[]) \
-       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement";
+       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
+       AND (m.valid_until_us IS NULL OR m.valid_until_us > COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8))";
 
 /// Each token of `$3`'s document frequency among the own held rows `$2`,
 /// from their postings by the `(memory_id)` index.
@@ -873,7 +915,9 @@ pub fn bm25_postings_sql() -> String {
                  AND p.token_id = ANY($10::int8[])), \
          gen AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
                  FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, q.w), \
-         top AS (SELECT memory_id FROM gen GROUP BY memory_id \
+         {EXPIRED_IDS}, \
+         top AS (SELECT memory_id FROM gen \
+                 WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
                  ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $11), \
          scored AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
                     FROM top JOIN search_postings p ON p.memory_id = top.memory_id \
@@ -902,7 +946,8 @@ pub fn bm25_postings_sql() -> String {
 /// leakproof equality.
 #[must_use]
 pub fn sparse_sql() -> String {
-    "WITH q AS (SELECT * FROM unnest($5::int8[], $6::float8[], $7::text[]) AS q(token_id, w, piece)), \
+    format!(
+        "WITH q AS (SELECT * FROM unnest($5::int8[], $6::float8[], $7::text[]) AS q(token_id, w, piece)), \
      p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
            WHERE p.tenant_id = $1 AND p.kind = 2 AND p.token_id = ANY($5::int8[]) \
              AND p.workarea_id = ANY($2::uuid[]) AND p.state = 1 \
@@ -913,7 +958,9 @@ pub fn sparse_sql() -> String {
              AND p.token_id = ANY($5::int8[])), \
      hit AS (SELECT p.memory_id, q.piece, q.w * p.weight::float8 AS c, p.doc_len = 1 AS in_text \
              FROM p JOIN q ON q.token_id = p.token_id), \
-     top AS (SELECT memory_id, sum(c) AS score FROM hit GROUP BY memory_id \
+     {EXPIRED_IDS}, \
+     top AS (SELECT memory_id, sum(c) AS score FROM hit \
+             WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
              HAVING NOT $8 OR count(*) = $9 \
              ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $10) \
      SELECT t.memory_id AS id, m.body_bytes, t.score::float4 AS score, \
@@ -924,7 +971,7 @@ pub fn sparse_sql() -> String {
      JOIN memories m ON m.tenant_id = $1 AND m.id = t.memory_id \
      GROUP BY t.memory_id, m.body_bytes, t.score \
      ORDER BY score DESC, id ASC"
-        .to_owned()
+    )
 }
 
 /// The sparse queue's health for one tenant (ADR-0052 d15): its entries
@@ -1612,6 +1659,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.severity, m.rule, \
+     m.valid_from, m.valid_until, m.valid_from_us, m.valid_until_us, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1660,6 +1708,21 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
+        valid: valid_from_row(row)?,
+    })
+}
+
+/// A row's declared valid time: each end's signed text and its bound
+/// (proposed ADR-0058 d2).
+fn valid_from_row(row: &PgRow) -> Result<ValidTime, StoreError> {
+    let end = |text: &str, micros: &str| -> Result<Option<ValidEnd>, StoreError> {
+        let text: Option<String> = row.try_get(text).map_err(backend)?;
+        let micros: Option<i64> = row.try_get(micros).map_err(backend)?;
+        Ok(text.zip(micros).map(|(t, m)| ValidEnd::from_stored(t, m)))
+    };
+    Ok(ValidTime {
+        from: end("valid_from", "valid_from_us")?,
+        until: end("valid_until", "valid_until_us")?,
     })
 }
 
@@ -2038,6 +2101,24 @@ async fn insert_memory(
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
+    // Declared valid time in the same transaction, only when declared, so a
+    // schema before 0026 still takes every row that declares none (proposed
+    // ADR-0058 d11).
+    if !m.valid.is_open() {
+        sqlx::query(
+            "UPDATE memories SET valid_from = $3, valid_until = $4, valid_from_us = $5, \
+             valid_until_us = $6 WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(m.valid.from.as_ref().map(ValidEnd::as_str))
+        .bind(m.valid.until.as_ref().map(ValidEnd::as_str))
+        .bind(m.valid.from.as_ref().map(ValidEnd::unix_micros))
+        .bind(m.valid.until.as_ref().map(ValidEnd::unix_micros))
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     Ok(())
 }
 
@@ -2117,8 +2198,11 @@ async fn supersede_tip(
     tenant_id: Uuid,
     successor: Uuid,
     replaced: Uuid,
+    replaced_valid_until: Option<&ValidEnd>,
     at: &EventTime,
 ) -> Result<(), StoreError> {
+    // The ratification's end for the replaced version, when it gives one
+    // (proposed ADR-0058 d4); null leaves the end as it was.
     let flipped = sqlx::query(
         "UPDATE memories t SET is_tip = false FROM memories s \
          WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'held' \
@@ -2135,6 +2219,19 @@ async fn supersede_tip(
     .map_err(backend)?;
     if flipped.rows_affected() != 1 {
         return Err(StoreError::TipMoved { replaced });
+    }
+    if let Some(end) = replaced_valid_until {
+        sqlx::query(
+            "UPDATE memories SET valid_until = $3, valid_until_us = $4 \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(replaced)
+        .bind(end.as_str())
+        .bind(end.unix_micros())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
     }
     promote_memory(tx, tenant_id, successor, at).await
 }
@@ -2819,8 +2916,17 @@ async fn apply_fold(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until,
         } => {
-            supersede_tip(tx, tenant_id, successor, replaced, at).await?;
+            supersede_tip(
+                tx,
+                tenant_id,
+                successor,
+                replaced,
+                replaced_valid_until.as_ref(),
+                at,
+            )
+            .await?;
         }
         MetadataFold::TransitionProposed(p) => {
             // The proposer principal must be the one the proposing key's
@@ -3694,6 +3800,7 @@ impl Retriever for PgStore {
             RetrieverKind::Bm25,
             RetrieverKind::Bm25Postings,
             RetrieverKind::Sparse,
+            RetrieverKind::Time,
         ];
         if self.trigram.load(std::sync::atomic::Ordering::SeqCst) {
             served.push(RetrieverKind::Trigram);
@@ -3731,6 +3838,13 @@ impl Retriever for PgStore {
             .await
             .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // The expiry cut every statement but keyword-all's reads (proposed
+        // ADR-0058 d3): the request's now, or empty under include_expired.
+        sqlx::query("SELECT set_config('oml.expired_at', $1, true)")
+            .bind(scope.expired_at.map(|t| t.to_string()).unwrap_or_default())
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
         // The terms as the retriever reads them: the query's `simple`
         // lexemes, of the normalised query for bm25, bm25_postings and
         // trigram.
@@ -3745,7 +3859,7 @@ impl Retriever for PgStore {
             RetrieverKind::Bm25 | RetrieverKind::Trigram | RetrieverKind::Sparse => {
                 Some(search_terms_sql())
             }
-            RetrieverKind::Bm25Postings => None,
+            RetrieverKind::Bm25Postings | RetrieverKind::Time => None,
         };
         let mut terms: Vec<String> = match terms_sql {
             Some(sql) => sqlx::query_scalar(&sql)
@@ -3770,6 +3884,26 @@ impl Retriever for PgStore {
                     .await?
             }
             RetrieverKind::Trigram if all => Vec::new(),
+            // The window's rows, by leakproof int8 comparisons; no window,
+            // no list (proposed ADR-0058 d7).
+            RetrieverKind::Time => match query.window {
+                None => Vec::new(),
+                Some(window) => sqlx::query(&time_sql())
+                    .bind(tenant_id)
+                    .bind(&scope.promoted_nodes)
+                    .bind(&kinds)
+                    .bind(&authors)
+                    .bind(&held_nodes)
+                    .bind(window.from_us)
+                    .bind(window.until_us)
+                    .bind(k)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(candidate_from_row)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
             RetrieverKind::Bm25Postings => {
                 let read = self.bm25_postings(&mut tx, &scoped, query).await?;
                 terms = read.terms;

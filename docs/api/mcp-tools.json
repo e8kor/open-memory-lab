@@ -72,6 +72,14 @@
           "reason": {
             "type": "string",
             "description": "With replaces, the reason for the change. Refused without replaces."
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "When the claim holds in the world, as its author declares it: YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset; a period names its first instant, so 2015 begins 1 January 2015. Signed with the claim and never changed; a new version states its own. Only memory and derived_fact take it."
+          },
+          "valid_until": {
+            "type": "string",
+            "description": "When the claim stops holding: the same forms as valid_from, a period naming its whole span, so valid_until 2015 holds through 31 December 2015 and a day holds through that day. A recall hides a claim whose valid_until has passed unless include_expired is true. To end a fact, supersede it with valid_until set; the server never ends one itself."
           }
         },
         "required": [
@@ -143,9 +151,11 @@
               "bm25-postings",
               "bm25-rerank",
               "sparse",
-              "bm25-sparse"
+              "bm25-sparse",
+              "bm25-postings-time",
+              "bm25-postings-time-recent"
             ],
-            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings, each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings, each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. bm25-postings-time adds the memories whose declared valid time overlaps a date the query names (in 2015, last week, since March 2025, read by rule and shown in search.window), ranked by reciprocal rank beside bm25-postings; bm25-postings-time-recent also moves each of the first 50 scores by at most 10% toward the more recent, each hit's matched.recency the factor. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
           },
           "match": {
             "type": "string",
@@ -155,6 +165,15 @@
             ],
             "default": "any",
             "description": "Recall, default any. all: only rows holding every query word are hits; when none does, the any-word hits are served and search.fallback says any_term."
+          },
+          "include_expired": {
+            "type": "boolean",
+            "default": false,
+            "description": "Recall, default false. True also serves claims whose valid_until has passed, which recall hides by default; get and the listing always serve them."
+          },
+          "now": {
+            "type": "string",
+            "description": "Recall: the instant the recall is read at, YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset; omitted, the server's clock. It decides which claims have expired and anchors the query's relative dates such as last week."
           },
           "own": {
             "type": "boolean",

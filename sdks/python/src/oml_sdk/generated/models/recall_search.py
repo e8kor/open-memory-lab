@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -10,6 +10,11 @@ from ..models.recall_search_match import RecallSearchMatch
 from ..models.recall_search_pipeline import RecallSearchPipeline
 from ..models.rerank_outcome import RerankOutcome
 from ..models.rerank_reason import RerankReason
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.recall_search_window_type_0 import RecallSearchWindowType0
+
 
 T = TypeVar("T", bound="RecallSearch")
 
@@ -40,6 +45,8 @@ class RecallSearch:
             applied; null when none was.
         below_floor (int): How many of the first k candidates the floor withheld; hits empty with below_floor above 0
             means nothing scored above the floor (ADR-0053 d6).
+        window (None | RecallSearchWindowType0 | Unset): The date window read from the query by rule oml-when/1,
+            anchored to the recall's now; null when the query names no date (proposed ADR-0058 d6).
     """
 
     pipeline: RecallSearchPipeline
@@ -53,8 +60,11 @@ class RecallSearch:
     rerank_reason: None | RerankReason
     floor: float | None
     below_floor: int
+    window: None | RecallSearchWindowType0 | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.recall_search_window_type_0 import RecallSearchWindowType0
+
         pipeline = self.pipeline.value
 
         match = self.match.value
@@ -87,6 +97,14 @@ class RecallSearch:
 
         below_floor = self.below_floor
 
+        window: dict[str, Any] | None | Unset
+        if isinstance(self.window, Unset):
+            window = UNSET
+        elif isinstance(self.window, RecallSearchWindowType0):
+            window = self.window.to_dict()
+        else:
+            window = self.window
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -104,11 +122,15 @@ class RecallSearch:
                 "below_floor": below_floor,
             }
         )
+        if window is not UNSET:
+            field_dict["window"] = window
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.recall_search_window_type_0 import RecallSearchWindowType0
+
         d = dict(src_dict)
         pipeline = RecallSearchPipeline(d.pop("pipeline"))
 
@@ -168,6 +190,23 @@ class RecallSearch:
 
         below_floor = d.pop("below_floor")
 
+        def _parse_window(data: object) -> None | RecallSearchWindowType0 | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                window_type_0 = RecallSearchWindowType0.from_dict(data)
+
+                return window_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RecallSearchWindowType0 | Unset, data)
+
+        window = _parse_window(d.pop("window", UNSET))
+
         recall_search = cls(
             pipeline=pipeline,
             match=match,
@@ -180,6 +219,7 @@ class RecallSearch:
             rerank_reason=rerank_reason,
             floor=floor,
             below_floor=below_floor,
+            window=window,
         )
 
         return recall_search

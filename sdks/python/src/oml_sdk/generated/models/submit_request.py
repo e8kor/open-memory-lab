@@ -40,6 +40,10 @@ class SubmitRequest:
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
                 Default: SubmitRequestKind.MEMORY.
+            valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits (proposed ADR-0058 d2).
+            valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits (proposed ADR-0058 d2).
             severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
                 orders the set first; required on kind guardrail except a retirement, refused on every other kind
                 (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
@@ -59,6 +63,8 @@ class SubmitRequest:
     verb: SubmitRequestVerb | Unset = UNSET
     claim_key: str | Unset = UNSET
     kind: SubmitRequestKind | Unset = SubmitRequestKind.MEMORY
+    valid_from: str | Unset = UNSET
+    valid_until: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
@@ -77,6 +83,10 @@ class SubmitRequest:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind.value
+
+        valid_from = self.valid_from
+
+        valid_until = self.valid_until
 
         severity: str | Unset = UNSET
         if not isinstance(self.severity, Unset):
@@ -109,6 +119,10 @@ class SubmitRequest:
             field_dict["claim_key"] = claim_key
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
         if severity is not UNSET:
             field_dict["severity"] = severity
         if rule is not UNSET:
@@ -143,6 +157,10 @@ class SubmitRequest:
         else:
             kind = SubmitRequestKind(_kind)
 
+        valid_from = d.pop("valid_from", UNSET)
+
+        valid_until = d.pop("valid_until", UNSET)
+
         _severity = d.pop("severity", UNSET)
         severity: Severity | Unset
         if isinstance(_severity, Unset):
@@ -171,6 +189,8 @@ class SubmitRequest:
             verb=verb,
             claim_key=claim_key,
             kind=kind,
+            valid_from=valid_from,
+            valid_until=valid_until,
             severity=severity,
             rule=rule,
             workarea=workarea,
