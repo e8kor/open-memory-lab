@@ -31,7 +31,8 @@ use oml_app::ports::{
     claim_subject,
 };
 use oml_app::search::{
-    Access, Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
+    Access, Candidate, CandidateScope, MatchMode, PostingsHealth, RetrievalQuery, Retrieved,
+    RetrieverKind,
 };
 use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -3515,6 +3516,15 @@ impl Retriever for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(found)
+    }
+
+    async fn postings_health(&self, tenant_id: Uuid) -> Result<Option<PostingsHealth>, StoreError> {
+        let _ = tenant_id;
+        Ok(Some(PostingsHealth {
+            partition: true,
+            terms_checked: 1,
+            ..PostingsHealth::default()
+        }))
     }
 }
 

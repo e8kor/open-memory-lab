@@ -6067,3 +6067,127 @@ async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_
     );
     crew.lab.stop().await;
 }
+
+/// A stub lead for the search doctor lines: `/readyz` reports `search`, an
+/// admin key's `whoami`, and `GET /v2/search` answers `settings`.
+async fn doctor_search_stub(
+    search: Value,
+    settings: Value,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let router = axum::Router::new().fallback(move |request: Request| {
+        let (search, settings) = (search.clone(), settings.clone());
+        async move {
+            let path = request.uri().path().to_owned();
+            if path.starts_with("/.well-known/") {
+                return axum::http::StatusCode::NOT_FOUND.into_response();
+            }
+            axum::Json(match path.as_str() {
+                "/healthz" => json!({ "status": "ok" }),
+                "/readyz" => json!({ "status": "ok", "checks": {}, "search": search }),
+                "/v2/whoami" => json!({
+                    "key_id": "k1", "name": "admin", "role": "admin",
+                    "principal": "acme/admin", "held_by": "human",
+                    "tenant": { "id": "t1", "name": "acme" },
+                    "default_workarea": null, "crew": null, "grants": [],
+                }),
+                "/v2/search" => settings,
+                "/v2/events" => json!({ "events": [], "head_seq": 7 }),
+                _ => json!({}),
+            })
+            .into_response()
+        }
+    });
+    serve_stub(router).await
+}
+
+/// The search lines doctor prints about `bm25-postings` (ADR-0052 d12):
+/// a warning when the scan answered more than 5% of its recalls since the
+/// lead started, and, read by an admin key, one per fault in the tenant's
+/// postings: a fill incomplete, served memories whose postings are behind,
+/// counts drifting from the postings; and none when all is well.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_when_all_is_well() {
+    let enabled = json!(["keyword-any", "bm25", "bm25-postings"]);
+    let healthy = json!({
+        "enabled": enabled, "deployment_default": "bm25-postings", "tenant_default": null,
+        "effective": "bm25-postings",
+        "postings": { "partition": true, "unfilled": 0, "served_behind": 0,
+                      "workarea_drift": 0, "term_drift": 0, "terms_checked": 200 },
+    });
+    let readyz = |postings: u64, scan: u64| {
+        json!({
+            "enabled": enabled, "default": "bm25-postings",
+            "access": { "bm25-postings": { "postings": postings, "scan": scan } },
+        })
+    };
+    let run = |url: String| {
+        let (code, doctor, log) = doctor_run(&["--url", &url, "--api-key", "oml_admin_key"], &[]);
+        assert_eq!(code, 0, "{log}");
+        let lines: Vec<String> = doctor["search"]
+            .as_array()
+            .expect("search lines")
+            .iter()
+            .filter_map(|l| l.as_str().map(ToOwned::to_owned))
+            .collect();
+        (doctor["verdict"].clone(), lines, log)
+    };
+
+    // All is well: 4 of 100 by the scan, every count clean.
+    let (url, task) = doctor_search_stub(readyz(96, 4), healthy.clone()).await;
+    let (_, lines, log) = run(url);
+    assert!(!lines.iter().any(|l| l.starts_with("warn")), "{log}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("postings complete") && l.contains("200")),
+        "{log}"
+    );
+    task.abort();
+
+    // The scan answered 6 of 100: above 5%.
+    let (url, task) = doctor_search_stub(readyz(94, 6), healthy.clone()).await;
+    let (verdict, lines, log) = run(url);
+    assert_eq!(verdict, "warn", "{log}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("warn search: bm25-postings answered 6 of 100")),
+        "{log}"
+    );
+    task.abort();
+
+    // Each fault in the tenant's postings, one line each.
+    let mut faulty = healthy.clone();
+    faulty["postings"] = json!({ "partition": true, "unfilled": 3, "served_behind": 2,
+                                 "workarea_drift": 1, "term_drift": 5, "terms_checked": 200 });
+    let (url, task) = doctor_search_stub(readyz(10, 0), faulty).await;
+    let (verdict, lines, log) = run(url);
+    assert_eq!(verdict, "warn", "{log}");
+    for says in [
+        "warn search: the postings fill is incomplete: 3 memory versions have no postings",
+        "warn search: 2 served memories have no served postings",
+        "warn search: the postings counts disagree: 1 workarea count, 5 of 200 sampled word counts",
+    ] {
+        assert!(lines.iter().any(|l| l.starts_with(says)), "{says}: {log}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("oml_search_postings_refill")),
+        "the repair is named: {log}"
+    );
+    task.abort();
+
+    // No postings partition for the tenant at all.
+    let mut missing = healthy;
+    missing["postings"]["partition"] = json!(false);
+    let (url, task) = doctor_search_stub(readyz(0, 0), missing).await;
+    let (_, lines, log) = run(url);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("warn search: this tenant has no postings partition")),
+        "{log}"
+    );
+    task.abort();
+}

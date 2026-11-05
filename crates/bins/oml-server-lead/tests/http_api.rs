@@ -8334,9 +8334,9 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
         let recall = recall_ok(router, &reader, json!({"query": query})).await;
         assert_eq!(hit_ids(&recall), vec![json!(quote)], "{query}: {recall}");
         assert_eq!(recall["search"]["pipeline"], "bm25-postings", "{recall}");
-        // One readable row: every word it holds is held by all the readable
-        // rows, so frequent, and the scan answers and says so (ADR-0052 d6).
-        assert_eq!(recall["search"]["access"], "scan", "{recall}");
+        // One readable row: its postings fit the budget, so they are read
+        // whole, nothing pruned (ADR-0052 d6).
+        assert_eq!(recall["search"]["access"], "postings", "{recall}");
         assert_eq!(recall["search"]["pruned"], json!([]), "{recall}");
         assert_eq!(recall["search"]["match"], "any", "{recall}");
         assert_eq!(recall["search"]["fallback"], Value::Null, "{recall}");
@@ -8584,4 +8584,54 @@ async fn a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm
     let err = refused.err().expect("refused without pg_trgm");
     assert!(err.contains("pg_trgm"), "{err}");
     drop_db(&db).await;
+}
+
+/// `/readyz` counts each served pipeline's recalls since start by how they
+/// were read, postings or a scan: doctor's scan-share line reads
+/// `bm25-postings`'s (ADR-0052 d6, d12).
+#[tokio::test]
+async fn readyz_counts_each_pipelines_recalls_by_how_they_were_read() {
+    let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let zero = json!({"postings": 0, "scan": 0});
+    let (_, _, before) = send(router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(
+        before["search"]["access"],
+        json!({"keyword-any": zero, "bm25": zero, "bm25-postings": zero}),
+        "{before}"
+    );
+    for (i, body) in [
+        "deploy the billing service on friday",
+        "the ledger closes at midnight",
+        "rollback the release with one command",
+    ]
+    .iter()
+    .enumerate()
+    {
+        promoted_over_http(router, &agent, &dreamer, &format!("scan-{i}"), body).await;
+    }
+    for query in ["deploy", "zebra"] {
+        let read = recall_ok(router, &reader, json!({"query": query})).await;
+        assert_eq!(read["search"]["access"], "postings", "{read}");
+    }
+    let scanned = recall_ok(
+        router,
+        &reader,
+        json!({"query": "deploy", "search": "bm25"}),
+    )
+    .await;
+    assert_eq!(scanned["search"]["access"], "scan", "{scanned}");
+    let (_, _, after) = send(router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(
+        after["search"]["access"],
+        json!({
+            "keyword-any": zero,
+            "bm25": {"postings": 0, "scan": 1},
+            "bm25-postings": {"postings": 2, "scan": 0},
+        }),
+        "{after}"
+    );
+    drop_db(&rig.db_name).await;
 }

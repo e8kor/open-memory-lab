@@ -362,3 +362,10 @@ BEGIN
     PERFORM set_config('oml.startup_check', '', true);
 END
 $$;
+
+-- oml_search_postings_refill: not yet built.
+CREATE FUNCTION oml_search_postings_refill(t uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+END
+$$;

@@ -7339,11 +7339,18 @@ async fn postings_store(created: &Mutex<Vec<String>>, limits: oml_pg::PruneLimit
     fresh_search_store(created).await.with_prune_limits(limits)
 }
 
-/// Forms above a share of 0.3 of the readable rows are pruned, with no
-/// budget: the limits the pruning laws name.
+/// Forms above a share of 0.3 of the readable rows are pruned once the
+/// query's readable postings pass a budget of 5, which the fixture's
+/// frequent words do: the limits the pruning laws name.
 const LAW_PRUNING: oml_pg::PruneLimits = oml_pg::PruneLimits {
     frequent_share: 0.3,
-    posting_budget: u64::MAX,
+    posting_budget: 5,
+};
+
+/// The same share with a budget the fixture's postings fit.
+const LAW_FITTING: oml_pg::PruneLimits = oml_pg::PruneLimits {
+    frequent_share: 0.3,
+    posting_budget: 1_000,
 };
 
 /// The postings laws of `oml-port-contracts` against the real store, each
@@ -7368,6 +7375,10 @@ async fn bm25_postings_contract_laws() {
     .await;
     oml_port_contracts::a_query_of_only_frequent_words_is_answered_by_the_scan_and_says_so(
         &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
+    oml_port_contracts::a_scope_whose_postings_fit_the_budget_is_read_whole(
+        &postings_store(&created, LAW_FITTING).await,
     )
     .await;
     for limits in [
@@ -7957,5 +7968,104 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             "{query}: the upgraded database ranks as a fresh one"
         );
     }
+    drop_dbs(&created).await;
+}
+
+/// The postings' health doctor reads (ADR-0052 d12): clean where the
+/// trigger kept everything; then each fault named by its own count — a
+/// served version whose postings are gone (behind, and the fill
+/// incomplete), a version of another state whose postings are gone (the
+/// fill incomplete alone), a workarea's count drifting from its versions,
+/// a token's count drifting from its postings; and clean again after the
+/// owner's refill.
+#[tokio::test]
+async fn the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_fault_until_a_refill()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(576);
+    rig.seed_chain(&store, 0).await;
+    let (_, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let health = |store: &PgStore| {
+        let store = store.clone();
+        async move {
+            store
+                .postings_health(tenant)
+                .await
+                .expect("health")
+                .expect("PostgreSQL keeps postings")
+        }
+    };
+    let clean = health(&store).await;
+    assert!(clean.partition, "the tenant's postings partition exists");
+    assert_eq!(
+        (
+            clean.unfilled,
+            clean.served_behind,
+            clean.workarea_drift,
+            clean.term_drift
+        ),
+        (0, 0, 0, 0),
+        "{clean:?}"
+    );
+    assert!(clean.terms_checked > 0, "{clean:?}");
+
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM search_postings WHERE tenant_id = $1 AND memory_id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM search_postings WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE search_workarea_rows SET rows = rows + 1 \
+          WHERE tenant_id = $1 AND workarea_id = $2",
+        Uuid::from_u128(0xE2),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE search_term_rows SET rows = rows + 1 \
+          WHERE tenant_id = $1 AND workarea_id = $2",
+        Uuid::from_u128(0xE2),
+    )
+    .await;
+    let faulty = health(&store).await;
+    assert_eq!(faulty.served_behind, 1, "the served version: {faulty:?}");
+    assert_eq!(
+        faulty.unfilled, 2,
+        "the served and the held version: {faulty:?}"
+    );
+    assert_eq!(faulty.workarea_drift, 1, "{faulty:?}");
+    assert!(faulty.term_drift > 0, "{faulty:?}");
+
+    as_owner(
+        &store,
+        tenant,
+        "SELECT oml_search_postings_refill($1) WHERE $2::uuid IS NOT NULL",
+        Uuid::nil(),
+    )
+    .await;
+    let refilled = health(&store).await;
+    assert_eq!(refilled, clean, "the refill restores what the trigger kept");
+    assert_eq!(
+        postings_of(&store, tenant).await.1,
+        counts_from_postings(&store, tenant).await.0,
+        "the refilled counts are the served postings'"
+    );
     drop_dbs(&created).await;
 }

@@ -348,6 +348,22 @@ pub struct OwnHeldScope {
     pub nodes: Vec<Uuid>,
 }
 
+/// The health of a tenant's integer postings, for doctor (ADR-0052 d12):
+/// whether its partition exists; how many versions that should have
+/// postings have none (the fill incomplete); how many served versions have
+/// no served postings (behind); how many per-workarea counts disagree with
+/// the served versions; and, of a sample of word counts, how many disagree
+/// with the served postings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PostingsHealth {
+    pub partition: bool,
+    pub unfilled: u64,
+    pub served_behind: u64,
+    pub workarea_drift: u64,
+    pub term_drift: u64,
+    pub terms_checked: u64,
+}
+
 /// One retrieval: the query, whether every term must match, and how many
 /// candidates to return at most.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

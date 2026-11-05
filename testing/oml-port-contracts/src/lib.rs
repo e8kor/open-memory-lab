@@ -10325,7 +10325,8 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
 /// with it, so each returned row's score is its full `bm25` score; the
 /// answer names the pruned word, and a row holding only it is not a
 /// candidate (ADR-0052 d4, d6, d12). The store prunes forms above a share of
-/// 0.3 of the readable rows, with no budget.
+/// 0.3 of the readable rows once the query's readable postings pass a budget
+/// of 5.
 pub async fn a_pruned_list_scores_each_of_its_rows_as_bm25_does<S: JournalStore>(store: &S) {
     if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
         return;
@@ -10406,7 +10407,8 @@ pub async fn a_pruned_list_scores_each_of_its_rows_as_bm25_does<S: JournalStore>
 /// cannot read (another node's, another key's held row, a rejected one,
 /// another tenant's) that make a word frequent tenant-wide change neither
 /// the pruned words nor the list (ADR-0052 d6, d12). The store prunes forms
-/// above a share of 0.3 of the readable rows, with no budget.
+/// above a share of 0.3 of the readable rows once the query's readable
+/// postings pass a budget of 5.
 pub async fn which_words_are_pruned_depends_on_the_readable_rows_alone<S: JournalStore>(store: &S) {
     if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
         return;
@@ -10504,7 +10506,7 @@ pub async fn which_words_are_pruned_depends_on_the_readable_rows_alone<S: Journa
 /// A query whose every word is frequent among the readable rows is answered
 /// by `bm25`'s scan, ranked as `bm25` ranks it, and says so with access
 /// `scan` (ADR-0052 d6, d12). The store prunes forms above a share of 0.3 of
-/// the readable rows, with no budget.
+/// the readable rows once the query's readable postings pass a budget of 5.
 pub async fn a_query_of_only_frequent_words_is_answered_by_the_scan_and_says_so<S: JournalStore>(
     store: &S,
 ) {
@@ -10540,6 +10542,70 @@ pub async fn a_query_of_only_frequent_words_is_answered_by_the_scan_and_says_so<
             assert!(!got.candidates.is_empty(), "{query:?}: rows hold it");
             same_list(&got, &scan, query);
         }
+    }
+}
+
+/// A scope whose readable postings of every query form fit the budget is
+/// read whole: nothing is pruned, however frequent a word, so a row holding
+/// only frequent words is found and the list is `bm25`'s; frequent words
+/// are left out only when reading them all would pass the budget (ADR-0052
+/// d6, amended 2026-11-05). The store prunes forms above a share of 0.3 of
+/// the readable rows, with a budget the fixture's postings fit.
+pub async fn a_scope_whose_postings_fit_the_budget_is_read_whole<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(427);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    for own_held in [None, Some(own)] {
+        let scope = scope_of(wa, own_held);
+        for query in POSTINGS_QUERIES {
+            let scan = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            let got = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert_eq!(
+                got.access,
+                Access::Postings,
+                "{query:?}: read from postings"
+            );
+            assert!(
+                got.pruned.is_empty(),
+                "{query:?}: nothing pruned: {:?}",
+                got.pruned
+            );
+            same_list(&got, &scan, query);
+        }
+        let got = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Bm25Postings,
+            &scope,
+            "billing friday",
+            MatchMode::Any,
+        )
+        .await;
+        assert!(
+            got.candidates
+                .iter()
+                .any(|c| c.memory_id.as_u128() == 0xF06),
+            "a row saying only the frequent billing is found: {got:?}"
+        );
     }
 }
 
