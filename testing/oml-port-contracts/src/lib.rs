@@ -456,6 +456,7 @@ pub fn held_memory(
         scan_finding: None,
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
         guardrail: None,
+        valid: Default::default(),
         anchor: None,
         source_check: None,
     }
@@ -514,6 +515,7 @@ async fn supersede_tip<S: JournalStore>(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until: None,
         },
         None,
     )
@@ -938,6 +940,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
             own_held: None,
+            expired_at: None,
         };
         let query = query.to_owned();
         async move {
@@ -950,6 +953,8 @@ pub trait KeywordAllReads: Retriever {
                     match_mode: MatchMode::All,
                     k,
                     sparse: &[],
+                    window: None,
+                    within: &[],
                 },
             )
             .await
@@ -975,6 +980,7 @@ pub trait KeywordAllReads: Retriever {
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
             }),
+            expired_at: None,
         };
         let query = query.to_owned();
         async move {
@@ -987,6 +993,8 @@ pub trait KeywordAllReads: Retriever {
                     match_mode: MatchMode::All,
                     k,
                     sparse: &[],
+                    window: None,
+                    within: &[],
                 },
             )
             .await
@@ -4028,6 +4036,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
                 MetadataFold::TipSuperseded {
                     successor: m.memory_id,
                     replaced: v1.memory_id,
+                    replaced_valid_until: None,
                 },
             ),
         ]
@@ -6917,6 +6926,101 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
 }
 
 /// Every journal-store law in one call, each against a fresh store.
+/// A ratified supersession that gives the replaced version an end writes it
+/// in the same commit that moves the tip, readable back exactly; an end the
+/// replaced version's own start forbids is refused and the commit changes
+/// nothing, its tip included (proposed ADR-0059 d4).
+pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: JournalStore>(store: &S) {
+    use oml_app::domain::valid_time::{ValidEnd, ValidTime};
+    let mut rig = ChainRig::new(433);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let mut v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x7201),
+        "rita",
+        key,
+        "the api is at v3",
+    );
+    *v1.valid = ValidTime::parse(Some("2025"), None).expect("ends");
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    let mut v2 = successor_of(&v1, Uuid::from_u128(0x7202), "the api is at v4", false);
+    *v2.valid = ValidTime::parse(Some("2026-06-01"), None).expect("ends");
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    // An end before v1's own start: refused, nothing moves.
+    let before = ValidEnd::from_stored(
+        "2024-01-01T00:00:00.000000Z".to_owned(),
+        1_704_067_200_000_000,
+    );
+    let refused = rig
+        .commit(
+            store,
+            event_types::LIFECYCLE_SUPERSEDE,
+            json!({ "new_artifact_id": v2.memory_id.to_string() }),
+            MetadataFold::TipSuperseded {
+                successor: v2.memory_id,
+                replaced: v1.memory_id,
+                replaced_valid_until: Some(Box::new(before)),
+            },
+            None,
+        )
+        .await;
+    assert!(refused.is_err(), "an end before the start is refused");
+    let still = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(
+        still.is_tip && still.valid.until.is_none(),
+        "the refused commit changed nothing"
+    );
+    let end = ValidEnd::from_stored(
+        "2026-06-01T00:00:00.000000Z".to_owned(),
+        1_780_272_000_000_000,
+    );
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({ "new_artifact_id": v2.memory_id.to_string() }),
+        MetadataFold::TipSuperseded {
+            successor: v2.memory_id,
+            replaced: v1.memory_id,
+            replaced_valid_until: Some(Box::new(end.clone())),
+        },
+        None,
+    )
+    .await
+    .expect("the ratification commits");
+    let ended = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(!ended.is_tip, "the tip moved");
+    assert_eq!(
+        ended.valid.until.as_ref(),
+        Some(&end),
+        "with the end it gave"
+    );
+    assert_eq!(
+        ended.valid.from.as_ref().map(ValidEnd::as_str),
+        Some("2025")
+    );
+    let tip = store
+        .memory(tenant, v2.memory_id)
+        .await
+        .expect("read")
+        .expect("v2");
+    assert!(tip.is_tip);
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -6936,6 +7040,10 @@ where
     )
     .await;
     Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(recall_serves_promoted_tips_only_within_the_readable_set(
         &new_store().await,
     ))
@@ -9722,6 +9830,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
             author_key_ids: vec![key],
             nodes: vec![wa],
         }),
+        expired_at: None,
     }
 }
 
@@ -9751,6 +9860,8 @@ async fn run<S: Retriever>(
                 match_mode,
                 k: 50,
                 sparse: &sparse,
+                window: None,
+                within: &[],
             },
         )
         .await
@@ -9826,6 +9937,7 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
                     own_held: None,
+                    expired_at: None,
                 };
                 assert!(
                     run(store, rig.tenant_id, kind, &empty, query, mode)
@@ -10655,6 +10767,8 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                                 match_mode: mode,
                                 k,
                                 sparse: &[],
+                                window: None,
+                                within: &[],
                             },
                         )
                     };
@@ -10671,6 +10785,63 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                     assert!(postings.pruned.is_empty(), "{what}: nothing pruned");
                 }
             }
+        }
+    }
+}
+
+/// An expired version counts in no statistic: `bm25` and `bm25-postings`
+/// rank the rows a scope keeps over the rows it keeps alone, so with
+/// readable versions ended both pipelines answer the same list, and the same
+/// list as a store in which those versions were never written; with
+/// `include_expired` both count them again (proposed ADR-0059 d3).
+pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(435);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let other = Uuid::from_u128(0xE5);
+    for (id, body) in [
+        (0xF31_u128, "billing billing billing friday deploy"),
+        (0xF32, "invoices billing ledger reconciled monthly"),
+    ] {
+        let mut m = held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
+        *m.valid = oml_app::domain::valid_time::ValidTime::parse(None, Some("2020")).expect("ends");
+        hold_and_promote(&mut rig, store, m).await;
+    }
+    let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
+    for query in POSTINGS_QUERIES {
+        for (own_held, expired_at) in [(None, Some(now)), (Some(own), Some(now)), (None, None)] {
+            let scope = CandidateScope {
+                expired_at,
+                ..scope_of(wa, own_held)
+            };
+            let ask = |kind| {
+                store.retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 12,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+            };
+            let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
+            let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
+            same_list(
+                &postings,
+                &scan,
+                &format!("{query:?} own {own_held:?} expired_at {expired_at:?}"),
+            );
         }
     }
 }
@@ -10994,6 +11165,8 @@ pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: Jo
                             match_mode: MatchMode::Any,
                             k,
                             sparse: &[],
+                            window: None,
+                            within: &[],
                         },
                     )
                 };
@@ -11096,6 +11269,295 @@ pub async fn a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds
     }
 }
 
+/// A fixture row of the valid-time laws with its declared ends.
+fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> MemoryRecord {
+    *m.valid = oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends");
+    m
+}
+
+/// The `time` leg never returns a row outside the scope the core hands it:
+/// another node's dated row, another key's held dated row, a dated steering
+/// row, an own held row when no own keys are named; a row with no
+/// `valid_from` never matches a window; an empty scope ranks nothing; and
+/// its order is the rows that start inside the window first, then those
+/// that started before it, nearest first, ties by id (proposed ADR-0059 d7).
+pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let (wa, elsewhere) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let (own, other) = (Uuid::from_u128(0xE4), Uuid::from_u128(0xE5));
+    let row = |id: u128, node: Uuid, key: Uuid, body: &str| {
+        held_memory(tenant, node, Uuid::from_u128(id), "rita", key, body)
+    };
+    let in_2015 = Uuid::from_u128(0x7001);
+    let spans_2015 = Uuid::from_u128(0x7002);
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7001, wa, other, "moved the office"),
+            Some("2015-06"),
+            Some("2015-06"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7002, wa, other, "the office lease"),
+            Some("2012"),
+            Some("2019"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(row(0x7003, wa, other, "a later office"), Some("2017"), None),
+    )
+    .await;
+    hold_and_promote(&mut rig, store, row(0x7004, wa, other, "an undated office")).await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7005, elsewhere, other, "elsewhere office"),
+            Some("2015"),
+            None,
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..dated(
+                row(0x7006, wa, other, "steering office"),
+                Some("2015"),
+                None,
+            )
+        },
+    )
+    .await;
+    let own_held = Uuid::from_u128(0x7007);
+    hold(
+        &mut rig,
+        store,
+        dated(row(0x7007, wa, own, "own held office"), Some("2015"), None),
+    )
+    .await
+    .expect("hold own");
+    hold(
+        &mut rig,
+        store,
+        dated(
+            row(0x7008, wa, other, "another key's held office"),
+            Some("2015"),
+            None,
+        ),
+    )
+    .await
+    .expect("hold another's");
+    let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // As if the text list had found every fixture row.
+    let within: Vec<Uuid> = (0x7001..=0x7008_u128).map(Uuid::from_u128).collect();
+    let leg = |scope: CandidateScope| {
+        let window = window.clone();
+        let within = within.clone();
+        async move {
+            store
+                .retrieve(
+                    tenant,
+                    RetrieverKind::Time,
+                    &scope,
+                    RetrievalQuery {
+                        query: "in 2015",
+                        match_mode: MatchMode::Any,
+                        k: 50,
+                        sparse: &[],
+                        window: Some(&window),
+                        within: &within,
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        leg(scope_of(wa, None)).await,
+        vec![in_2015, spans_2015],
+        "the window's rows on the readable node, those starting inside it first"
+    );
+    assert_eq!(
+        leg(scope_of(wa, Some(own))).await,
+        vec![in_2015, own_held, spans_2015],
+        "the own held row joins only when its key is named"
+    );
+    let empty = CandidateScope {
+        promoted_nodes: Vec::new(),
+        kinds: HIT_KINDS.to_vec(),
+        own_held: None,
+        expired_at: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+    };
+    assert!(leg(empty).await.is_empty(), "an empty scope ranks nothing");
+}
+
+/// A version whose valid time ended at or before the scope's `expired_at`
+/// is outside every retriever's scope but `keyword_all`'s, whose v0.5.0
+/// statement the core re-checks after; with no `expired_at` it is served
+/// like any other (proposed ADR-0059 d3).
+pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let row =
+        |id: u128, body: &str| held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
+    let ended = Uuid::from_u128(0x7101);
+    let current = Uuid::from_u128(0x7102);
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7101, "billing deploy freeze"),
+            Some("2014"),
+            Some("2015"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(row(0x7102, "billing deploy window"), Some("2014"), None),
+    )
+    .await;
+    let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
+    let window = oml_app::domain::valid_time::parse_window("in 2015", now).expect("a window");
+    for kind in store.retrievers() {
+        if kind == RetrieverKind::KeywordAll {
+            continue;
+        }
+        for expired_at in [Some(now), None] {
+            let scope = CandidateScope {
+                expired_at,
+                ..scope_of(wa, None)
+            };
+            if kind == RetrieverKind::Sparse {
+                encode_sparse_backlog(store).await;
+            }
+            let sparse = if kind == RetrieverKind::Sparse {
+                oml_app::ports::SparseEncoder::encode_query(
+                    &FakeSparseEncoder::new(),
+                    "billing deploy",
+                )
+            } else {
+                Vec::new()
+            };
+            let got: Vec<Uuid> = store
+                .retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query: "billing deploy",
+                        match_mode: MatchMode::Any,
+                        k: 50,
+                        sparse: &sparse,
+                        window: Some(&window),
+                        within: &[ended, current],
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .collect();
+            assert!(
+                got.contains(&current),
+                "{kind:?}: the current row is served"
+            );
+            assert_eq!(
+                got.contains(&ended),
+                expired_at.is_none(),
+                "{kind:?} {expired_at:?}: the ended row is hidden exactly when the scope says"
+            );
+        }
+    }
+}
+
+/// The `time` leg reads only the rows the text list found, named by id, so
+/// its cost is bounded by that list and a window holding more rows than any
+/// read cap still answers every one of them it holds; ties break by id,
+/// so equal input gives equal output (proposed ADR-0059 d7).
+pub async fn the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(434);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let mut ids = Vec::new();
+    for i in 0..205_u128 {
+        let mut m = held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0x7300 + i),
+            "rita",
+            other,
+            "a dated note",
+        );
+        *m.valid =
+            oml_app::domain::valid_time::ValidTime::parse(Some("2015-06"), None).expect("ends");
+        hold_and_promote(&mut rig, store, m).await;
+        ids.push(Uuid::from_u128(0x7300 + i));
+    }
+    let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // The text list found the last row and one outside the window's rows.
+    let within = vec![ids[204], ids[3], Uuid::from_u128(0x7FFF)];
+    let read = || async {
+        store
+            .retrieve(
+                tenant,
+                RetrieverKind::Time,
+                &scope_of(wa, None),
+                RetrievalQuery {
+                    query: "in 2015",
+                    match_mode: MatchMode::Any,
+                    k: 50,
+                    sparse: &[],
+                    window: Some(&window),
+                    within: &within,
+                },
+            )
+            .await
+            .expect("retrieve")
+            .candidates
+            .iter()
+            .map(|c| c.memory_id)
+            .collect::<Vec<_>>()
+    };
+    let first = read().await;
+    assert_eq!(
+        first,
+        vec![ids[3], ids[204]],
+        "the text list's rows the window holds, by id"
+    );
+    assert_eq!(read().await, first, "equal input, equal output");
+}
+
 pub async fn run_retriever_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -11113,6 +11575,10 @@ where
     bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word(&new_store().await).await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
+        .await;
+    the_time_leg_never_returns_a_row_outside_the_scope(&new_store().await).await;
+    an_expired_memory_is_outside_every_retrievers_scope(&new_store().await).await;
+    the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds(&new_store().await)
         .await;
 }
 
@@ -11334,6 +11800,8 @@ pub async fn an_encoded_version_follows_promotion_supersession_and_retirement<S:
                             &FakeSparseEncoder::new(),
                             "quokka",
                         ),
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await

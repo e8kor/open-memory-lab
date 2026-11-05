@@ -1,0 +1,24 @@
+# Migrations that predate the lint; a new migration is never listed here.
+0001_init.sql
+0002_poc_adapter.sql
+0003_lead_startup.sql
+0004_grants.sql
+0005_claim_versions.sql
+0006_names.sql
+0007_role_split.sql
+0008_tenant_keys.sql
+0009_memories_partitions.sql
+0012_connections.sql
+0013_oauth_clients.sql
+0014_user_roots.sql
+0015_web.sql
+0016_guardrails.sql
+0017_workarea_transitions.sql
+0018_claim_edges.sql
+0019_brief_edges.sql
+0020_search.sql
+0021_search_postings.sql
+0022_search_sparse_queue.sql
+0023_recall_telemetry.sql
+0024_review_queue_order.sql
+0025_source_anchors.sql

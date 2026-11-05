@@ -326,6 +326,8 @@ where
                     max_tokens: None,
                     search: Some(pipeline.as_str().to_owned()),
                     match_mode: MatchMode::Any,
+                    include_expired: false,
+                    now: None,
                     anchor: AnchorFilter::default(),
                 };
                 // A scope the key no longer reads answers nothing, which

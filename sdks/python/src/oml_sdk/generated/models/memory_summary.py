@@ -76,6 +76,13 @@ class MemorySummary:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
+            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
+        valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
+            it at; null when open (proposed ADR-0059 d2, d4).
+        replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
+            replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
+            approving ends nothing (proposed ADR-0059 d4).
     """
 
     artifact_id: str
@@ -106,6 +113,9 @@ class MemorySummary:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    valid_from: None | str | Unset = UNSET
+    valid_until: None | str | Unset = UNSET
+    replaces_valid_until: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -214,6 +224,20 @@ class MemorySummary:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        valid_from: None | str | Unset
+        if isinstance(self.valid_from, Unset):
+            valid_from = UNSET
+        else:
+            valid_from = self.valid_from
+
+        valid_until: None | str | Unset
+        if isinstance(self.valid_until, Unset):
+            valid_until = UNSET
+        else:
+            valid_until = self.valid_until
+
+        replaces_valid_until = self.replaces_valid_until
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -258,6 +282,12 @@ class MemorySummary:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
+        if replaces_valid_until is not UNSET:
+            field_dict["replaces_valid_until"] = replaces_valid_until
 
         return field_dict
 
@@ -444,6 +474,26 @@ class MemorySummary:
 
                 attachments.append(attachments_item)
 
+        def _parse_valid_from(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_from = _parse_valid_from(d.pop("valid_from", UNSET))
+
+        def _parse_valid_until(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
+
+        replaces_valid_until = d.pop("replaces_valid_until", UNSET)
+
         memory_summary = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -473,6 +523,9 @@ class MemorySummary:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            replaces_valid_until=replaces_valid_until,
         )
 
         memory_summary.additional_properties = d

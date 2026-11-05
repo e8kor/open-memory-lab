@@ -2694,6 +2694,8 @@ components:
         verb: { type: string, enum: [remember, learn], description: "Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact." }
         claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], default: memory, description: "guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1)." }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
         body: { type: string, description: 'Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml).' }
@@ -2788,6 +2790,14 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/SourceChecked' }
             - { type: 'null' }
+        valid_from: { type: [string, 'null'], description: "When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2)." }
+        valid_until: { type: [string, 'null'], description: "When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4)." }
+        replaces_valid_until: { type: string, description: "On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4)." }
+
+    ValidEnd:
+      type: string
+      pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?([Zz]|[+-][0-9]{2}:[0-9]{2}))?)?)?$'
+      description: 'YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).'
 
     Memory:
       allOf:
@@ -2843,11 +2853,11 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         search:
           type: string
-          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse]
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time]
           description: >-
             The search pipeline, among those the deployment serves (search.enabled); omitted, the
             tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not
+            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0059 d7). A name the deployment does not
             serve is request.validation with details.field /search and details.served.
         match:
           type: string
@@ -2857,6 +2867,8 @@ components:
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
+        include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).' }
+        now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5)." }
 
     Feedback:
       type: object
@@ -2906,7 +2918,7 @@ components:
       properties:
         terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
         of: { type: integer, minimum: 0, description: How many words the query had. }
-        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse] }, description: The retrievers whose lists held the row. }
+        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse, time] }, description: 'The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0059 d7).' }
         rerank: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'The reranker''s relevance of the row to the query, when a reranking pipeline scored it; the hit''s score is then this relevance (ADR-0053 d7).' }
         rank_before: { type: [integer, 'null'], minimum: 1, description: 'The row''s rank in the first stage''s list, from 1, when the reranker scored it (ADR-0053 d7).' }
         tokens:
@@ -2928,13 +2940,22 @@ components:
       description: What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
       required: [pipeline, match, terms, fallback, did_you_mean, access, pruned, rerank, rerank_reason, floor, below_floor]
       properties:
-        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse] }
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time] }
         match: { type: string, enum: [any, all] }
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
         did_you_mean: { type: array, items: { type: string }, description: 'Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty.' }
         access: { type: string, enum: [postings, scan], description: 'postings when every list was read from integer postings by their index; scan when any list scanned the rows in scope, as every pipeline but bm25-postings does, and as bm25-postings does when every query word was pruned (ADR-0052 d6).' }
         pruned: { type: array, items: { type: string }, description: 'The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11).' }
+        window:
+          type: [object, 'null']
+          additionalProperties: false
+          description: 'The date window read from the query by rule oml-when/1, anchored to the recall''s now; null when the query names no date (proposed ADR-0059 d6).'
+          required: [from, until, phrase]
+          properties:
+            from: { type: [string, 'null'], format: date-time, description: The window's first instant; null when open. }
+            until: { type: [string, 'null'], format: date-time, description: The instant after its last; null when open. }
+            phrase: { type: string, description: The query's words the window was read from. }
         rerank:
           description: 'applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage''s order was served; null when the pipeline does not rerank or found nothing.'
           oneOf:
@@ -2968,6 +2989,14 @@ components:
         tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
         effective: { type: string, description: The pipeline a recall naming none runs now. }
         postings: { $ref: '#/components/schemas/PostingsHealth' }
+        valid_time:
+          type: object
+          additionalProperties: false
+          description: 'The tenant''s served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).'
+          required: [declared, expired]
+          properties:
+            declared: { type: integer, minimum: 0 }
+            expired: { type: integer, minimum: 0 }
 
     UsageSettings:
       type: object
@@ -3105,6 +3134,8 @@ components:
         reason: { type: string }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
 
     Anchor:
       type: object

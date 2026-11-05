@@ -106,9 +106,10 @@ use crate::types::{
 
 use crate::search::{
     Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
-    OwnHeldScope, Pipeline, RetrievalQuery, SearchConfig, apply_floor, fuse_capped,
-    pipeline_access, pruned_words, query_terms, rerank_order,
+    OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_DEPTH, apply_floor,
+    fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
+use oml_domain::valid_time::{ValidTime, Window, parse_now, parse_window, ratified_end};
 
 /// One pipeline's answer before the cuts: the fused candidates, the query's
 /// terms, whether `match: all` fell back to any word, how the lists were
@@ -483,7 +484,17 @@ fn submit_request_digest(
         "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "workarea_id": workarea_id.to_string(),
     });
-    let doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
+    let mut doc = with_guardrail_fields(doc, req.severity, req.rule.as_ref());
+    if let Some(members) = doc.as_object_mut() {
+        for (name, value) in [
+            ("valid_from", &req.valid_from),
+            ("valid_until", &req.valid_until),
+        ] {
+            if let Some(value) = value {
+                members.insert(name.to_owned(), Value::from(value.as_str()));
+            }
+        }
+    }
     let doc = with_anchor(doc, req.anchor.as_ref());
     sha256_digest_string(doc.to_string().as_bytes())
 }
@@ -575,6 +586,37 @@ fn guardrail_payload(
     Ok(())
 }
 
+/// A version's valid time as sent, parsed and checked against its kind
+/// (proposed ADR-0059 d2): `request.validation` naming the field for an end
+/// in no accepted form, an empty interval, or valid time on a kind or a
+/// retirement that takes none.
+fn valid_time(
+    from: Option<&str>,
+    until: Option<&str>,
+    kind: MemoryKind,
+    retirement: bool,
+) -> Result<ValidTime, AppError> {
+    let valid = ValidTime::parse(from, until).map_err(AppError::ValidTime)?;
+    valid
+        .check_kind(kind, retirement)
+        .map_err(AppError::ValidTime)?;
+    Ok(valid)
+}
+
+/// The submission payload's and the request digest's valid-time members:
+/// each end's normalized form, only when declared, so a version that
+/// declares none signs and digests as it did before (proposed ADR-0059 d2).
+fn with_valid_time(doc: &mut Value, valid: &ValidTime) {
+    if let Some(members) = doc.as_object_mut() {
+        if let Some(from) = &valid.from {
+            members.insert("valid_from".to_owned(), Value::from(from.as_str()));
+        }
+        if let Some(until) = &valid.until {
+            members.insert("valid_until".to_owned(), Value::from(until.as_str()));
+        }
+    }
+}
+
 /// The request digest of a supersession: SHA-256 over the RFC 8785 JSON of
 /// the method, the route template, the path parameters and the parsed body,
 /// so one Idempotency-Key reused for two targets never replays the first
@@ -597,6 +639,16 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
+        if let Some(members) = body.as_object_mut() {
+            for (name, value) in [
+                ("valid_from", &req.valid_from),
+                ("valid_until", &req.valid_until),
+            ] {
+                if let Some(value) = value {
+                    members.insert(name.to_owned(), Value::from(value.as_str()));
+                }
+            }
+        }
     }
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
@@ -825,6 +877,17 @@ fn recall_query_digest(
             MatchMode::All => "all",
         },
     });
+    // The two members of proposed ADR-0059 d3 and d5, only when sent, so a
+    // recall that sends neither digests as it did before.
+    let mut doc = doc;
+    if let Some(members) = doc.as_object_mut() {
+        if req.include_expired {
+            members.insert("include_expired".to_owned(), Value::from(true));
+        }
+        if let Some(now) = &req.now {
+            members.insert("now".to_owned(), Value::from(now.as_str()));
+        }
+    }
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
 
@@ -1602,6 +1665,7 @@ where
         }
         memory.derives_from = derives_from;
         let mut replaces = None;
+        let mut replaces_valid_until = None;
         if let Some(id) = memory.replaces
             && let Some(m) = self.journal.memory(tenant_id, id).await?
             && (!anonymous || m.workarea_id == memory.workarea_id)
@@ -1611,6 +1675,11 @@ where
                 artifact_id: id,
                 version: m.version,
             });
+            // What approving a held successor does to the version it
+            // replaces, shown before the verdict (proposed ADR-0059 d4).
+            if memory.status == MemoryStatus::Held {
+                replaces_valid_until = ratified_end(&m.valid, &memory.valid);
+            }
         }
         if anonymous {
             memory.author_principal = String::new();
@@ -1624,6 +1693,7 @@ where
         Ok(ServedMemory {
             memory,
             replaces,
+            replaces_valid_until,
             workarea_path,
             anonymous,
             load_warning,
@@ -4318,6 +4388,12 @@ where
         // A guardrail's fields, then its two scan classes, before the
         // scanner port: a veto journals nothing (proposed ADR-0037 d10).
         let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
+        let valid = valid_time(
+            req.valid_from.as_deref(),
+            req.valid_until.as_deref(),
+            req.kind,
+            false,
+        )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
@@ -4397,6 +4473,7 @@ where
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
             guardrail,
+            valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
         };
@@ -4429,6 +4506,7 @@ where
             },
         });
         guardrail_payload(&mut payload, memory.guardrail.as_deref())?;
+        with_valid_time(&mut payload, &memory.valid);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -5049,9 +5127,23 @@ where
                         MetadataFold::TipSuperseded {
                             successor: memory_id,
                             replaced: target.memory_id,
+                            replaced_valid_until: ratified_end(&target.valid, &memory.valid)
+                                .map(Box::new),
                         },
                     ),
                 };
+                // The end this ratification gives the replaced version,
+                // signed in its event, only when it gives one (proposed
+                // ADR-0059 d4).
+                let mut payload = payload;
+                if let MetadataFold::TipSuperseded {
+                    replaced_valid_until: Some(end),
+                    ..
+                } = &fold
+                    && let Some(members) = payload.as_object_mut()
+                {
+                    members.insert("replaces_valid_until".to_owned(), Value::from(end.as_str()));
+                }
                 let ratification = self.seal(
                     Some(&verdict_event),
                     key.tenant_id,
@@ -5236,6 +5328,14 @@ where
         // The query is its NFC text, searched and digested alike (ADR-0025
         // d9).
         let query = nfc(&req.query);
+        // One now for the recall: the expiry cut and the query's relative
+        // dates (proposed ADR-0059 d5); then the window the
+        // query names, by rule (d6).
+        let now_us = match req.now.as_deref() {
+            Some(sent) => parse_now(sent).ok_or(AppError::NowUnparsable)?,
+            None => self.clock.now().unix_micros(),
+        };
+        let window = parse_window(&query, now_us);
 
         // The scope's ancestry runs node to root, so each ancestor's own
         // ancestry is its suffix; the store is handed the readable ones root
@@ -5312,13 +5412,23 @@ where
                 },
                 any_author,
             }),
+            // An ended version is outside the scope unless asked for: a
+            // visibility rule, never a weight (proposed ADR-0059 d3).
+            expired_at: (!req.include_expired).then_some(now_us),
             anchor: req.anchor.clone(),
         };
         let pipeline = self
             .pipeline_for(key.tenant_id, req.search.as_deref())
             .await?;
         let ran = self
-            .run_pipeline(key.tenant_id, pipeline, &candidate_scope, &query, req)
+            .run_pipeline(
+                key.tenant_id,
+                pipeline,
+                &candidate_scope,
+                &query,
+                window.as_ref(),
+                req,
+            )
             .await?;
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
         self.observer
@@ -5341,7 +5451,10 @@ where
                 }
                 _ => false,
             };
-            admitted && !m.retirement && kinds.contains(&m.kind)
+            admitted
+                && !m.retirement
+                && kinds.contains(&m.kind)
+                && (req.include_expired || !m.valid.expired_at(now_us))
         };
         // The reranking stage, after fusion and before the cuts: the head
         // of the first stage's list, hydrated and admitted by the core,
@@ -5533,6 +5646,7 @@ where
             below_floor,
             access: ran.access,
             pruned: ran.pruned,
+            window,
         })
     }
 
@@ -5781,6 +5895,7 @@ where
         pipeline: Pipeline,
         scope: &CandidateScope,
         query: &str,
+        window: Option<&Window>,
         req: &RecallRequest,
     ) -> Result<PipelineRun, AppError> {
         let depth = match pipeline.fusion() {
@@ -5815,6 +5930,48 @@ where
         for (attempt, mode) in modes.into_iter().enumerate() {
             let mut lists = Vec::with_capacity(pipeline.retrievers().len());
             for &kind in pipeline.retrievers() {
+                // The time leg reads only when the query names a window, and
+                // then its own depth; the core orders it by the text list
+                // and caps it (proposed ADR-0059 d7).
+                if kind == RetrieverKind::Time {
+                    let list = match window {
+                        None => crate::search::Retrieved::default(),
+                        Some(window) => {
+                            // The leg reads only the rows the text list
+                            // found, by id: its cost is that list's, and a
+                            // window holding more rows loses none of them
+                            // (proposed ADR-0059 d7).
+                            let found: Vec<Uuid> = lists
+                                .first()
+                                .map(|(_, text): &(RetrieverKind, crate::search::Retrieved)| {
+                                    text.candidates.iter().map(|c| c.memory_id).collect()
+                                })
+                                .unwrap_or_default();
+                            let time = self
+                                .journal
+                                .retrieve(
+                                    tenant_id,
+                                    kind,
+                                    scope,
+                                    RetrievalQuery {
+                                        query,
+                                        match_mode: mode,
+                                        k: TIME_DEPTH,
+                                        sparse: &sparse,
+                                        window: Some(window),
+                                        within: &found,
+                                    },
+                                )
+                                .await?;
+                            match lists.first() {
+                                Some((_, text)) => order_time_list(time, text),
+                                None => time,
+                            }
+                        }
+                    };
+                    lists.push((kind, list));
+                    continue;
+                }
                 let list = self
                     .journal
                     .retrieve(
@@ -5826,6 +5983,8 @@ where
                             match_mode: mode,
                             k: depth,
                             sparse: &sparse,
+                            window,
+                            within: &[],
                         },
                     )
                     .await?;
@@ -6268,6 +6427,14 @@ where
         let body = nfc(&req.body);
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
+        // The successor's own valid time: it inherits none (proposed
+        // ADR-0059 d2, d4).
+        let valid = valid_time(
+            req.valid_from.as_deref(),
+            req.valid_until.as_deref(),
+            kind,
+            req.retirement,
+        )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
@@ -6348,6 +6515,7 @@ where
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
             guardrail,
+            valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
         };
@@ -6386,6 +6554,7 @@ where
             },
         });
         guardrail_payload(&mut payload, successor.guardrail.as_deref())?;
+        with_valid_time(&mut payload, &successor.valid);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,

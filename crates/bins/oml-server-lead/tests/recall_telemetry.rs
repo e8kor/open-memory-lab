@@ -306,6 +306,8 @@ impl World {
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                 },
             )
             .await
@@ -1165,6 +1167,8 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,
+        include_expired: false,
+        now: None,
     };
     // The router's app holds the writer; the side app holds none. Both
     // run the same recall against the same store, interleaved.

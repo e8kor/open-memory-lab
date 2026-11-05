@@ -1,8 +1,8 @@
 -- In-progress workareas and the curator key profile (ADR-0030 r2 d1, d8,
 -- d14).
 --
--- NUMBERING: 0026 is taken by the open lanes (lake writer, valid time,
--- similar keys); this file renumbers to the next free number at merge.
+-- NUMBERING: 0026 is valid time and 0027 the similar keys; this is the
+-- next free number.
 --
 -- workareas.mode is `standard` unless a person's key put the node in
 -- progress, journalled as workarea.mode_set and folded here alone.

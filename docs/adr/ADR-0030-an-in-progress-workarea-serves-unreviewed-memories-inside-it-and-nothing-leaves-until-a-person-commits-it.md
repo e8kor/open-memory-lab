@@ -55,7 +55,7 @@ scope and may only narrow — retire, reject, flag, propose — never promote ou
 person.
 
 Questions revision 1 left open are settled below at their recommended answers, each marked
-*recommended answer*. Decided; built on `feat/in-progress-r2` for v0.6.0.
+*recommended answer*. Decided; built on `feat/in-progress-r2-r2` for v0.6.0.
 
 ## Decision
 
@@ -250,8 +250,8 @@ Questions revision 1 left open are settled below at their recommended answers, e
 - **d14 — Migration and doctor.** One forward-only migration adds `workareas.mode` (`text NOT
   NULL DEFAULT 'standard'`, checked) and `api_keys.profile` (nullable, checked); both default to
   today's behaviour, so the migration rewrites no row's meaning and is safe on live. It is
-  numbered after main's highest and the open lanes' (`0027_in_progress.sql`, noted for
-  renumbering at merge). `oml doctor` gains: whether the key's default workarea lies inside an
+  numbered after main's highest and the open lanes' (`0028_in_progress.sql`, after valid
+  time's 0026 and the similar keys' 0027). `oml doctor` gains: whether the key's default workarea lies inside an
   in-progress workarea, and its root; for a person's reviewer key, that it may set the mode and
   how many held items it can review block the commit (one page of `GET /v2/review/held`); and a
   curator key whose default workarea is not in progress, which can do nothing there. Naming
