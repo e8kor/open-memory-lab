@@ -1076,13 +1076,17 @@ static RULES: std::sync::LazyLock<oml_scan::RuleSet> =
 /// The PoC's `[oml:veto]` and `[oml:hold]` markers stay as rules (d10).
 pub struct RuleScanner;
 
+fn scanned_field(envelope: &AdmissionEnvelope<'_>) -> &'static str {
+    if envelope.kind == "anchor" {
+        "/anchor"
+    } else {
+        "/body"
+    }
+}
+
 impl Scanner for RuleScanner {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome {
-        let field = if envelope.kind == "anchor" {
-            "/anchor"
-        } else {
-            "/body"
-        };
+        let field = scanned_field(envelope);
         let verdict = RULES.scan(&[(field, envelope.body)]);
         match (&verdict, verdict.reason()) {
             (oml_scan::Verdict::Veto(_), Some(reason)) => ScanOutcome::Veto(reason),
@@ -1093,6 +1097,27 @@ impl Scanner for RuleScanner {
 
     fn version(&self) -> Option<&'static str> {
         Some(oml_scan::RULESET)
+    }
+
+    fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<oml_app::ports::ScanFinding> {
+        RULES
+            .findings(scanned_field(envelope), envelope.body)
+            .into_iter()
+            .map(|f| oml_app::ports::ScanFinding {
+                class: f.class.to_owned(),
+                rule: f.rule.to_owned(),
+                veto: f.action == oml_scan::Action::Veto,
+                at: f.location(),
+            })
+            .collect()
+    }
+
+    fn info(&self) -> Option<oml_app::ports::ScannerInfo> {
+        Some(oml_app::ports::ScannerInfo {
+            version: oml_scan::RULESET,
+            rules: RULES.rules(),
+            pii: RULES.options().pii,
+        })
     }
 }
 

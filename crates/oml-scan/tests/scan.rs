@@ -545,3 +545,10 @@ fn a_typical_claim_scans_well_under_a_millisecond() {
     // 1 ms per typical claim in either.
     assert!(per.as_micros() < 1000, "{per:?} per claim");
 }
+
+#[test]
+fn the_set_reports_how_many_rules_it_runs() {
+    let all = rule_ids().len();
+    assert_eq!(RuleSet::new(Options { pii: true }).rules(), all);
+    assert_eq!(RuleSet::new(Options::default()).rules(), all - 2);
+}

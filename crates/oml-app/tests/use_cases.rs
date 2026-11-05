@@ -13520,3 +13520,60 @@ async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it
         "six hits read what one hit reads"
     );
 }
+
+#[tokio::test]
+async fn a_rescan_reports_a_stored_version_by_rule_and_changes_nothing() {
+    // A version stored by a scanner whose veto marker it never carried,
+    // then rescanned by one that vetoes it (ADR-0065 d13).
+    let store = MemStore::new();
+    let before = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner {
+            veto_marker: "[never-matches]".to_owned(),
+            hold_marker: "[never-matches]".to_owned(),
+        },
+    );
+    let (boot, crew) = tenant(&before).await;
+    let admin = boot.admin_key.value.clone();
+    let writer = issue(&before, &admin, Role::Writer, "wanda", crew).await;
+    let stored = before
+        .submit_memory(
+            &writer.value,
+            &submit_req("old", "deploy key -----BEGIN PRIVATE KEY----- kept"),
+        )
+        .await
+        .expect("stored before the rule set")
+        .receipt;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let now = app_over(store.clone());
+    let report = now.rescan(&admin, 0, 1000).await.expect("rescan");
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.next_after_seq, None);
+    assert_eq!(report.hits.len(), 1);
+    let hit = &report.hits[0];
+    assert_eq!(hit.artifact_id, stored.memory_id);
+    assert!(hit.finding.veto);
+    assert!(
+        !format!("{report:?}").contains("kept"),
+        "no text: {report:?}"
+    );
+    assert_eq!(report.by_rule.len(), 1);
+    assert_eq!(report.by_rule[0].3, 1);
+
+    // Nothing journalled, nothing changed: the row is still held.
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let row = now
+        .get_memory(&writer.value, stored.memory_id)
+        .await
+        .expect("still there")
+        .memory;
+    assert_eq!(row.status, MemoryStatus::Held);
+
+    // A writer is refused the verb.
+    let err = now.rescan(&writer.value, 0, 10).await.unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}

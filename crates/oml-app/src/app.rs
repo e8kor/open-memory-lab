@@ -6,11 +6,13 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod rescan;
 mod search;
 mod sparse;
 mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
@@ -1124,6 +1126,13 @@ where
     #[must_use]
     pub fn with_search(self, search: SearchConfig) -> Self {
         Self { search, ..self }
+    }
+
+    /// The scanner's version, rule count and personal-data setting, for
+    /// `/readyz` and doctor's scan line (ADR-0065 d11).
+    #[must_use]
+    pub fn scanner_info(&self) -> Option<crate::ports::ScannerInfo> {
+        self.scanner.info()
     }
 
     /// The deployment's search settings.

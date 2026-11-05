@@ -57,6 +57,14 @@ pub struct Finding {
     pub line: usize,
 }
 
+impl Finding {
+    /// Where the finding fired: `/body line 3`.
+    #[must_use]
+    pub fn location(&self) -> String {
+        format!("{} line {}", self.field, self.line)
+    }
+}
+
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -157,6 +165,24 @@ impl RuleSet {
             options,
             counts: Mutex::default(),
         }
+    }
+
+    /// How many rules this set runs: every compiled rule, less the
+    /// personal-data rules while they are off (d6, d11).
+    #[must_use]
+    pub fn rules(&self) -> usize {
+        rule_ids().len()
+            - if self.options.pii {
+                0
+            } else {
+                RULES.iter().filter(|r| r.pii).count()
+            }
+    }
+
+    /// The options this set was built with.
+    #[must_use]
+    pub const fn options(&self) -> Options {
+        self.options
     }
 
     /// The version this set reports.

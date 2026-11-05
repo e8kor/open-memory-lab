@@ -620,6 +620,11 @@ enum AdminCommand {
         #[arg(long)]
         state: Option<String>,
     },
+    /// Rescan every stored version with the server's rule set and report
+    /// what it would refuse or hold, by rule and place, never the text
+    /// (ADR-0065 d13). Changes nothing: a version it would refuse stays,
+    /// for a person to retire.
+    Rescan,
 }
 
 #[derive(Subcommand)]
@@ -2990,18 +2995,94 @@ fn run_crews(
 /// `oml admin read` (cli/reference.md `oml admin`; ADR-0045 d21): one
 /// memory by id, or every page of a search, each answer journalled by the
 /// server as `memory.admin_read`.
+/// `oml admin rescan`: every window of the journal, summed by rule, each
+/// finding listed by artifact, version, state and place (ADR-0065 d13).
+/// Exits 1 when any stored version would be refused, so a script notices.
+fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
+    let mut after = 0_u64;
+    let mut scanned = 0_u64;
+    let mut version;
+    let mut findings: Vec<Value> = Vec::new();
+    let mut by_rule: std::collections::BTreeMap<(String, String, String), u64> =
+        std::collections::BTreeMap::new();
+    loop {
+        let (_, page) = client.get(&format!("/v2/admin/rescan?after_seq={after}"))?;
+        version = page["scanner_version"].clone();
+        scanned += page["scanned"].as_u64().unwrap_or(0);
+        findings.extend(page["findings"].as_array().cloned().unwrap_or_default());
+        for r in page["by_rule"].as_array().into_iter().flatten() {
+            *by_rule
+                .entry((
+                    field(r, "class").to_owned(),
+                    field(r, "rule").to_owned(),
+                    field(r, "action").to_owned(),
+                ))
+                .or_default() += r["count"].as_u64().unwrap_or(0);
+        }
+        match page["next_after_seq"].as_u64() {
+            Some(next) if next > after => after = next,
+            _ => break,
+        }
+    }
+    let vetoes = findings.iter().filter(|f| f["action"] == "veto").count();
+    if cli.json {
+        print_json(&json!({
+            "scanner_version": version,
+            "scanned": scanned,
+            "by_rule": by_rule.iter().map(|((class, rule, action), count)| json!({
+                "class": class, "rule": rule, "action": action, "count": count,
+            })).collect::<Vec<_>>(),
+            "findings": findings,
+        }));
+    } else {
+        println!(
+            "rescan      : {scanned} stored version(s) under {}, {} finding(s)",
+            version.as_str().unwrap_or("no pinned rule set"),
+            findings.len()
+        );
+        for ((class, rule, action), count) in &by_rule {
+            println!("  {action:<4} {class}: {rule} ×{count}");
+        }
+        for f in &findings {
+            println!(
+                "  {}  v{}  {}  {}  {}: {} at {}",
+                field(f, "artifact_id"),
+                f["version"],
+                field(f, "state"),
+                field(f, "action"),
+                field(f, "class"),
+                field(f, "rule"),
+                field(f, "at")
+            );
+        }
+        if vetoes > 0 {
+            println!(
+                "next        : {vetoes} finding(s) the scan would refuse today; nothing was changed. Read each with oml admin read <artifact_id> and retire or demote it"
+            );
+        }
+    }
+    Ok(if vetoes > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 fn run_admin(
     cli: &Cli,
     stored: &Credentials,
     command: &AdminCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let AdminCommand::Read {
-        memory,
-        query,
-        workarea,
-        state,
-    } = command;
+    let (memory, query, workarea, state) = match command {
+        AdminCommand::Rescan => return run_rescan(cli, &client),
+        AdminCommand::Read {
+            memory,
+            query,
+            workarea,
+            state,
+        } => (memory, query, workarea, state),
+    };
     let line = |m: &Value| {
         format!(
             "{}  {}  {}  {}  {}",
@@ -4156,6 +4237,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let telemetry = telemetry_doctor(scrape.as_ref());
+    let scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
@@ -4188,6 +4271,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || scan_warn
         || sync_warn
         || sources_warn
     {
@@ -4233,6 +4317,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "review": review,
             "sync": sync,
             "telemetry": telemetry,
+            "scan": scan,
             "sources": sources,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
@@ -4338,6 +4423,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &scan {
+            println!("scan        : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -4563,6 +4651,70 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         lines.push(format!(
             "on: {written} recall events written since start, none dropped past 1%"
         ));
+    }
+    lines
+}
+
+/// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
+/// many rules it loaded and whether the personal-data rules are on; and,
+/// where `OML_METRICS_URL` names the metrics listener, the findings since
+/// start by action and the rules that fired most. Counts only: no finding
+/// carries what it matched.
+fn scan_doctor(ready: Option<&(u16, Value)>, scrape: Option<&Scrape>) -> Vec<String> {
+    let Some((_, body)) = ready else {
+        return vec!["not probed (no URL)".to_owned()];
+    };
+    let scan = &body["scan"];
+    let Some(version) = scan["version"].as_str() else {
+        return vec![
+            "warn scan_ruleset: the server names no rule set; one before v0.6.0 scans for two test markers only"
+                .to_owned(),
+        ];
+    };
+    let rules = scan["rules"].as_u64().unwrap_or(0);
+    let mut lines = vec![format!(
+        "{version}, {rules} rules loaded, personal-data rules {}",
+        if scan["pii"] == true {
+            "on (hold)"
+        } else {
+            "off"
+        }
+    )];
+    if rules == 0 {
+        lines.push(format!(
+            "warn scan_rules: {version} loaded no rules, so every write passes unscanned; this build is defective"
+        ));
+    }
+    match scrape {
+        None => lines.push(
+            "findings not read: set OML_METRICS_URL to the lead's metrics listener".to_owned(),
+        ),
+        Some(scrape) => {
+            let vetoes = scrape.sum("oml_scan_findings_total", &[("action", "veto")]);
+            let holds = scrape.sum("oml_scan_findings_total", &[("action", "hold")]);
+            let mut top: Vec<(String, u64)> = scrape
+                .samples("oml_scan_findings_total", &[])
+                .filter_map(|(set, n)| {
+                    let rule = set
+                        .split(',')
+                        .find_map(|pair| pair.strip_prefix("rule=\""))?
+                        .trim_end_matches('"');
+                    Some((rule.to_owned(), n))
+                })
+                .collect();
+            top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let named = top
+                .iter()
+                .take(3)
+                .map(|(rule, n)| format!("{rule} ×{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(if named.is_empty() {
+                "findings since start: none".to_owned()
+            } else {
+                format!("findings since start: {vetoes} refused, {holds} held; most: {named}")
+            });
+        }
     }
     lines
 }
@@ -4975,6 +5127,41 @@ mod tests {
             vec!["on: 7 recall events written since start, none dropped past 1%".to_owned()]
         );
         assert!(telemetry_doctor(None)[0].contains("OML_METRICS_URL"));
+    }
+
+    #[test]
+    fn the_scan_doctor_names_the_rule_set_the_pii_setting_and_the_findings_by_rule() {
+        let ready = (
+            200,
+            json!({"scan": {"version": "oml-scan/1", "rules": 41, "pii": false}}),
+        );
+        let scrape = Scrape(
+            "oml_scan_findings_total{class=\"secret.api_token\",rule=\"github-token\",action=\"veto\"} 3\n\
+             oml_scan_findings_total{class=\"injection.override\",rule=\"ignore-instructions\",action=\"hold\"} 5\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            scan_doctor(Some(&ready), Some(&scrape)),
+            vec![
+                "oml-scan/1, 41 rules loaded, personal-data rules off".to_owned(),
+                "findings since start: 3 refused, 5 held; most: ignore-instructions ×5, github-token ×3"
+                    .to_owned(),
+            ]
+        );
+        assert!(scan_doctor(Some(&ready), None)[1].contains("OML_METRICS_URL"));
+        let none = (
+            200,
+            json!({"scan": {"version": "oml-scan/1", "rules": 0, "pii": true}}),
+        );
+        let lines = scan_doctor(Some(&none), Some(&Scrape(String::new())));
+        assert!(
+            lines[0].ends_with("personal-data rules on (hold)"),
+            "{lines:?}"
+        );
+        assert!(lines[1].starts_with("warn scan_rules:"), "{lines:?}");
+        assert_eq!(lines[2], "findings since start: none");
+        let old = (200, json!({"status": "ok"}));
+        assert!(scan_doctor(Some(&old), None)[0].starts_with("warn scan_ruleset:"));
     }
 
     #[test]
