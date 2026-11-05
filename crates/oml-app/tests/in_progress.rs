@@ -6,15 +6,20 @@
 
 use oml_app::App;
 use oml_app::domain::access::Covers;
+use oml_app::domain::access::Grant;
 use oml_app::domain::in_progress::{CuratorRefusal, InProgressReason, KeyProfile, WorkareaMode};
 use oml_app::domain::name::{Name, Reference};
-use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, event_types};
+use oml_app::domain::{EventDraft, HeldBy, MemoryKind, MemoryStatus, Role, event_types};
+use oml_app::domain::{WorkareaStatus, next_envelope, sign};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
-use oml_app::ports::JournalStore as _;
+use oml_app::ed25519_dalek::SigningKey;
+use oml_app::ports::{CommitRequest, JournalStore as _, MetadataFold, OutboxRow};
 use oml_app::types::{
     AppError, BootstrapRequest, BootstrapResult, GrantRequest, IssueKeyRequest, IssuedKey,
     ListRequest, ProposeClaimEdge, RecallRequest, SubmitRequest, SupersedeRequest, Verdict,
 };
+use oml_app::types::{ClaimEdgeQuery, ProposeBriefEdge};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -795,4 +800,473 @@ async fn the_curator_profile_needs_a_dreamer_key_held_by_an_agent() {
         .unwrap_err();
         assert!(matches!(err, AppError::ProfileMismatch { .. }), "{err:?}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Review of #79: the cases a mark must not open (H1, M1–M4) and the curator
+// checks the first laws left unkilled.
+// ---------------------------------------------------------------------------
+
+/// Seals one event on the tenant's head and commits it with `fold`, as the
+/// lead would: the cases built beneath the use cases, through the store.
+static FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+async fn seal_onto(w: &World, event_type: &str, payload: Value, fold: MetadataFold) {
+    let events = w.app_journal().await;
+    let last = events.last().expect("a chain");
+    let draft = EventDraft {
+        tenant_id: w.boot.tenant_id,
+        event_id: Uuid::from_u128(
+            0xF1C5_0000 + u128::from(FIXTURE.fetch_add(1, Ordering::Relaxed)),
+        ),
+        event_type: event_type.to_owned(),
+        principal: "fixture".to_owned(),
+        api_key_id: None,
+        at: last.envelope.at.clone(),
+        payload,
+    };
+    let envelope = next_envelope(Some(last), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    let seq = event.envelope.seq;
+    w.store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event_type.to_owned(),
+                payload: json!({ "seq": seq }),
+            },
+            event,
+            fold,
+            idempotency: None,
+        })
+        .await
+        .expect("the fixture commit");
+}
+
+impl World {
+    /// A second person's reviewer key, another principal, for two-identity acts.
+    async fn second_person(&self) -> IssuedKey {
+        key(
+            &self.app,
+            &self.boot.admin_key.value,
+            Role::Dreamer,
+            HeldBy::Human,
+            None,
+            "quinn",
+            vec![
+                grant(self.crew, Role::Dreamer),
+                grant(self.crew, Role::Reader),
+            ],
+        )
+        .await
+        .expect("second person")
+    }
+
+    async fn promoted(&self, key: &IssuedKey, idem: &str, body: &str, node: Uuid) -> Uuid {
+        let id = self.write(key, idem, body, node).await;
+        self.app
+            .post_verdict(self.person.value.as_str(), id, Verdict::Approve, None)
+            .await
+            .expect("approve");
+        id
+    }
+
+    async fn edges(
+        &self,
+        key: &IssuedKey,
+        workarea: Option<Uuid>,
+        artifact: Option<Uuid>,
+    ) -> usize {
+        self.app
+            .claim_edges(
+                key.value.as_str(),
+                ClaimEdgeQuery {
+                    workarea: workarea.map(Into::into),
+                    artifact_id: artifact,
+                },
+                None,
+                50,
+            )
+            .await
+            .expect("edge read")
+            .items
+            .len()
+    }
+
+    async fn flag(&self, key: &IssuedKey, from: Uuid, to: Uuid) -> Result<Uuid, AppError> {
+        self.app
+            .propose_claim_edge(
+                key.value.as_str(),
+                &ProposeClaimEdge {
+                    from_artifact_id: from,
+                    to_artifact_id: to,
+                    label: "contradicts".to_owned(),
+                },
+                None,
+            )
+            .await
+            .map(|o| o.proposal.edge_id)
+    }
+}
+
+/// H1: a mark is refused while any node beneath it is not `development`, so
+/// R3 holds in every `committed` and `validated` workarea: another author's
+/// held row there is served neither by get nor by recall.
+#[tokio::test]
+async fn marking_is_refused_over_a_committed_node_and_r3_holds_there() {
+    let w = world().await;
+    let kid = workarea(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
+    let quinn = w.second_person().await;
+    let proposal = w
+        .app
+        .propose_transition(
+            w.person.value.as_str(),
+            Reference::Id(kid),
+            WorkareaStatus::Committed,
+        )
+        .await
+        .expect("propose");
+    w.app
+        .ratify_transition(
+            quinn.value.as_str(),
+            Reference::Id(kid),
+            proposal.transition_id,
+        )
+        .await
+        .expect("ratify");
+    let id = w.write(&w.ann, "k1", "the canary drains in kid", kid).await;
+    let err = w
+        .app
+        .set_workarea_mode(
+            w.person.value.as_str(),
+            Reference::Id(w.proj),
+            WorkareaMode::InProgress,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::InProgressRefused {
+                reason: InProgressReason::Status,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(matches!(
+        w.app.get_memory(w.bob.value.as_str(), id).await,
+        Err(AppError::NotFound)
+    ));
+    assert!(
+        w.recall_with(&w.bob, "canary", w.proj, Some(true))
+            .await
+            .is_empty()
+    );
+}
+
+/// H1, defence in depth: a mark over a committed node, forced through the
+/// store, still relaxes R3 on `development` nodes only, every node from the
+/// row's up to the mark included.
+#[tokio::test]
+async fn a_committed_node_under_a_mark_forced_through_the_store_keeps_r3() {
+    let w = world().await;
+    let kid = workarea(&w.app, &w.boot.admin_key.value, "kid", w.proj).await;
+    let grandkid = workarea(&w.app, &w.boot.admin_key.value, "grandkid", kid).await;
+    let quinn = w.second_person().await;
+    let proposal = w
+        .app
+        .propose_transition(
+            w.person.value.as_str(),
+            Reference::Id(kid),
+            WorkareaStatus::Committed,
+        )
+        .await
+        .expect("propose");
+    w.app
+        .ratify_transition(
+            quinn.value.as_str(),
+            Reference::Id(kid),
+            proposal.transition_id,
+        )
+        .await
+        .expect("ratify");
+    let in_kid = w.write(&w.ann, "k1", "the canary drains in kid", kid).await;
+    let below = w
+        .write(&w.ann, "g1", "the canary drains below kid", grandkid)
+        .await;
+    let in_proj = w
+        .write(&w.ann, "p1", "the canary drains in proj", w.proj)
+        .await;
+    seal_onto(
+        &w,
+        event_types::WORKAREA_MODE_SET,
+        json!({ "workarea_id": w.proj.to_string(), "mode": "in_progress", "from": "standard" }),
+        MetadataFold::WorkareaModeSet {
+            workarea_id: w.proj,
+            in_progress: true,
+        },
+    )
+    .await;
+    for id in [in_kid, below] {
+        assert!(matches!(
+            w.app.get_memory(w.bob.value.as_str(), id).await,
+            Err(AppError::NotFound)
+        ));
+    }
+    assert_eq!(
+        World::ids(&w.recall_with(&w.bob, "canary", w.proj, Some(true)).await),
+        vec![in_proj],
+        "only the development node's held row"
+    );
+}
+
+/// M1: a brief edge ratified before a mark serves no claim from inside the
+/// subtree at a node outside it, in the brief read or the workarea read.
+#[tokio::test]
+async fn a_brief_edge_made_before_a_mark_serves_no_inside_claim_outside() {
+    let w = world().await;
+    let quinn = w.second_person().await;
+    let claim = w
+        .promoted(&w.ann, "a1", "the canary drains first", w.proj)
+        .await;
+    let edge = w
+        .app
+        .propose_brief_edge(
+            w.person.value.as_str(),
+            &ProposeBriefEdge {
+                artifact_id: claim,
+                workarea: w.side.into(),
+            },
+            None,
+        )
+        .await
+        .expect("propose brief")
+        .proposal
+        .edge_id;
+    w.app
+        .ratify_brief_edge(quinn.value.as_str(), edge, None)
+        .await
+        .expect("ratify brief");
+    w.mark(w.proj).await;
+    let page = w
+        .app
+        .brief_edges(w.bob.value.as_str(), Reference::Id(w.side), None, 50)
+        .await
+        .expect("brief read");
+    assert!(page.items.is_empty(), "{:?}", page.items);
+    let info = w
+        .app
+        .workarea_info(w.bob.value.as_str(), Some(Reference::Id(w.side)))
+        .await
+        .expect("workarea read");
+    assert!(info.brief.items.is_empty());
+}
+
+/// M2 and d7: an edge across the boundary is refused when proposed after a
+/// mark, and a pending one proposed before it is refused at ratification.
+#[tokio::test]
+async fn an_edge_across_the_boundary_is_neither_proposed_nor_ratified_after_a_mark() {
+    let w = world().await;
+    let quinn = w.second_person().await;
+    let inside = w
+        .promoted(&w.ann, "a1", "the canary drains first", w.proj)
+        .await;
+    let outside = w
+        .promoted(&w.bob, "b1", "the canary never drains", w.side)
+        .await;
+    let pending = w
+        .flag(&w.person, inside, outside)
+        .await
+        .expect("proposed before");
+    let brief = w
+        .app
+        .propose_brief_edge(
+            w.person.value.as_str(),
+            &ProposeBriefEdge {
+                artifact_id: inside,
+                workarea: w.side.into(),
+            },
+            None,
+        )
+        .await
+        .expect("brief proposed before")
+        .proposal
+        .edge_id;
+    w.mark(w.proj).await;
+    let crossing = |err: AppError| {
+        assert!(
+            matches!(
+                err,
+                AppError::InProgressRefused {
+                    reason: InProgressReason::EdgeCrosses,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    };
+    crossing(w.flag(&w.person, inside, outside).await.unwrap_err());
+    crossing(
+        w.app
+            .ratify_claim_edge(quinn.value.as_str(), pending, None)
+            .await
+            .unwrap_err(),
+    );
+    crossing(
+        w.app
+            .ratify_brief_edge(quinn.value.as_str(), brief, None)
+            .await
+            .unwrap_err(),
+    );
+}
+
+/// M3: a curator's `contradicts` flag between two held claims is served to
+/// the readers inside, the person who commits included, and to no read
+/// scoped outside.
+#[tokio::test]
+async fn a_curator_flag_between_held_claims_is_served_to_readers_inside() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let a = w
+        .write(&w.ann, "a1", "the canary drains first", w.proj)
+        .await;
+    let b = w
+        .write(&w.bob, "b1", "the canary never drains", w.proj)
+        .await;
+    w.flag(&w.curator, a, b).await.expect("curator flags");
+    assert_eq!(
+        w.edges(&w.person, Some(w.proj), Some(a)).await,
+        1,
+        "the person"
+    );
+    assert_eq!(
+        w.edges(&w.bob, Some(w.proj), Some(a)).await,
+        1,
+        "a reader inside"
+    );
+    assert_eq!(
+        w.edges(&w.person, Some(w.crew), Some(a)).await,
+        0,
+        "from the parent"
+    );
+}
+
+/// M4: an edge read with no scope and no default workarea leaves every
+/// in-progress subtree out; the key is built through the store, since
+/// issuance always gives a granted key a default.
+#[tokio::test]
+async fn an_unscoped_edge_read_without_a_default_leaves_every_in_progress_subtree_out() {
+    let w = world().await;
+    let quinn = w.second_person().await;
+    w.mark(w.proj).await;
+    let a = w
+        .promoted(&w.ann, "a1", "the canary drains first", w.proj)
+        .await;
+    let b = w
+        .promoted(&w.bob, "b1", "the canary never drains", w.proj)
+        .await;
+    let edge = w.flag(&w.person, a, b).await.expect("inside edge");
+    w.app
+        .ratify_claim_edge(quinn.value.as_str(), edge, None)
+        .await
+        .expect("ratify inside");
+    let bare = key(
+        &w.app,
+        &w.boot.admin_key.value,
+        Role::Reader,
+        HeldBy::Agent,
+        None,
+        "nemo",
+        Vec::new(),
+    )
+    .await
+    .expect("a zero-grant key, no default workarea");
+    let grant_id = Uuid::from_u128(0x6A47_0001);
+    seal_onto(
+        &w,
+        event_types::GRANT_ISSUED,
+        json!({ "key_id": bare.key_id.to_string(), "grant_id": grant_id.to_string() }),
+        MetadataFold::GrantIssued {
+            key_id: bare.key_id,
+            grant: Grant {
+                grant_id,
+                node: w.crew,
+                role: Role::Reader,
+                deny: Vec::new(),
+                covers: Covers::Subtree,
+            },
+        },
+    )
+    .await;
+    assert_eq!(
+        w.edges(&w.bob, Some(w.proj), None).await,
+        1,
+        "served inside"
+    );
+    assert_eq!(w.edges(&bare, None, None).await, 0, "unscoped, no default");
+}
+
+/// The curator's R2 by principal: a row another key of the curator's
+/// principal wrote is never the curator's to flag.
+#[tokio::test]
+async fn a_curator_never_flags_a_row_its_principal_wrote_through_another_key() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let twin = key(
+        &w.app,
+        &w.boot.admin_key.value,
+        Role::Writer,
+        HeldBy::Agent,
+        None,
+        "cora",
+        vec![grant(w.crew, Role::Writer), grant(w.crew, Role::Reader)],
+    )
+    .await
+    .expect("same principal, another key");
+    let mine = w
+        .write(&twin, "t1", "the canary drains first", w.proj)
+        .await;
+    let other = w
+        .write(&w.ann, "a1", "the canary never drains", w.proj)
+        .await;
+    let err = w.flag(&w.curator, mine, other).await.unwrap_err();
+    assert!(matches!(err, AppError::AuthorInLineage), "{err:?}");
+}
+
+/// The curator's R2 over the lineage closure: a row derived from the
+/// curator's own write is never the curator's to flag.
+#[tokio::test]
+async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let own = w
+        .write(&w.curator, "c1", "the canary summary", w.proj)
+        .await;
+    let derived = w
+        .app
+        .submit_memory(
+            w.ann.value.as_str(),
+            &SubmitRequest {
+                anchor: None,
+                idempotency_key: "a1".to_owned(),
+                claim_key: Some("claim-a1".to_owned()),
+                verb: None,
+                kind: MemoryKind::Memory,
+                body: "the canary drains, per the summary".to_owned(),
+                workarea: Some(w.proj.into()),
+                derives_from: vec![own],
+                severity: None,
+                rule: None,
+            },
+        )
+        .await
+        .expect("derived")
+        .receipt
+        .memory_id;
+    let other = w
+        .write(&w.bob, "b1", "the canary never drains", w.proj)
+        .await;
+    let err = w.flag(&w.curator, derived, other).await.unwrap_err();
+    assert!(matches!(err, AppError::AuthorInLineage), "{err:?}");
 }
