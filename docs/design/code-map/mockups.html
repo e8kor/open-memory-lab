@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project knowledge and hybrid search — mockups</title>
+<meta name="description" content="Design mockups for the proposed ADR-0047 (project knowledge and a code skeleton that follow the development lifecycle) and ADR-0048 (search in stages; hybrid is its last).">
+<meta name="theme-color" content="#0A0D22">
+<style>
+:root {
+  --ground: #0A0D22; --ground-alt: #0E1230; --panel: #111638; --term: #070918;
+  --ink: #EFE9DA; --ink-dim: #B7B4C6; --ink-faint: #8C8FA8;
+  --rule: #262C52; --rule-soft: #1A1F42;
+  --ice: #9FC6E6; --star: #F6A83E; --ok: #7FD1AE; --bad: #E58A8A;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: var(--ice); text-decoration: none; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.label { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+code, .mono { font-family: var(--mono); }
+code { font-size: .9em; background: var(--rule-soft); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+header.top { border-bottom: 1px solid var(--rule-soft); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 60px; padding: 8px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.pill { font: 11px var(--mono); color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.hero { padding: 40px 0 16px; }
+h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 10px 0 14px; font-weight: 650; }
+h1 em { font-style: normal; color: var(--star); }
+.lede { color: var(--ink-dim); max-width: 46em; margin: 0 0 12px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.toc a { display: inline-block; font: 13px var(--mono); color: var(--ink-dim); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+section { border-top: 1px solid var(--rule-soft); padding: 44px 0; }
+h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.2; margin: 8px 0 10px; font-weight: 620; }
+h3 { font-size: 17px; margin: 0 0 8px; }
+.sub { color: var(--ink-dim); max-width: 46em; margin: 0 0 24px; }
+.cite { font: 12px var(--mono); color: var(--ink-faint); }
+
+/* diagram */
+.fig { background: var(--ground-alt); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; }
+.fig svg { width: 100%; height: auto; display: block; }
+.fig .tall { display: none; }
+@media (max-width: 760px) { .fig .wide { display: none; } .fig .tall { display: block; max-width: 380px; margin: 0 auto; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font: 12px var(--mono); color: var(--ink-faint); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+/* terminal */
+.term { background: var(--term); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .tb { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rule-soft); font: 12px var(--mono); color: var(--ink-faint); flex-wrap: wrap; }
+.term pre { margin: 0; padding: 14px 16px 16px; font: 13px/1.65 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.c { color: var(--ink-faint); } .p { color: var(--star); } .o { color: var(--ok); } .h { color: var(--star); } .i { color: var(--ice); } .b { color: var(--bad); }
+.you { color: var(--ink); font-weight: 600; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+/* pull request mock */
+.pr { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--ground-alt); }
+.pr .head { padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.pr .head b { font-weight: 600; }
+.pr .cols { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) { .pr .cols { grid-template-columns: 1fr; } }
+.pr .col { padding: 14px 16px; min-width: 0; }
+.pr .col + .col { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 860px) { .pr .col + .col { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.diff { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .ctx { color: var(--ink-faint); }
+.fact { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; background: var(--panel); }
+.fact .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font: 12px var(--mono); color: var(--ink-faint); margin-bottom: 6px; }
+.fact p { margin: 0 0 8px; font-size: 14.5px; }
+.fact .old { color: var(--ink-faint); text-decoration: line-through; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 13px var(--sans); border-radius: 7px; padding: 5px 12px; border: 1px solid var(--rule); color: var(--ink); background: transparent; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #0B1A13; }
+.btn.star { background: var(--star); border-color: var(--star); color: #1A1206; }
+.tag { display: inline-block; font: 12px var(--mono); padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; line-height: 1.6; }
+.t-add { color: var(--ok); } .t-upd { color: var(--ice); } .t-stale { color: var(--star); } .t-ret { color: var(--bad); } .t-dim { color: var(--ink-faint); }
+
+/* search */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip { font: 12px var(--mono); border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; color: var(--ink-dim); background: var(--panel); }
+.chip b { color: var(--ice); font-weight: 400; }
+.hit { display: grid; grid-template-columns: 36px 1fr; gap: 10px; border-top: 1px solid var(--rule-soft); padding: 12px 0; }
+.hit .n { font: 13px var(--mono); color: var(--ink-faint); }
+.hit p { margin: 0 0 6px; }
+.why { display: flex; flex-wrap: wrap; gap: 6px; font: 12px var(--mono); }
+.why span { border-radius: 6px; padding: 0 7px; background: var(--rule-soft); color: var(--ink-dim); }
+.why .kw { color: var(--ice); } .why .se { color: var(--ok); } .why .an { color: var(--star); }
+
+/* user page mock (ADR-0045 chrome) */
+.page { border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--ground); }
+.page .ph { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--rule-soft); }
+.page .ph .b2 { font-weight: 600; } .page .ph .b2 b { color: var(--star); font-weight: 600; }
+.page .who { font: 12px var(--mono); color: var(--ink-faint); }
+.page main { padding: 18px; }
+nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--rule-soft); margin: 0 0 18px; }
+nav.tabs a { padding: 8px 12px; color: var(--ink-dim); font-size: 14px; border-bottom: 2px solid transparent; }
+nav.tabs a.on { color: var(--ink); border-bottom-color: var(--star); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 18px; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: var(--ground-alt); }
+.stat .v { font: 600 22px var(--mono); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th { text-align: left; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+table.t td { padding: 9px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  table.t thead { display: none; }
+  table.t tr { display: block; border: 1px solid var(--rule-soft); border-radius: 10px; margin: 0 0 10px; padding: 6px 4px; }
+  table.t td { display: flex; gap: 10px; border: 0; padding: 4px 8px; }
+  table.t td::before { content: attr(data-l); flex: 0 0 7.5em; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding-top: 2px; }
+}
+.note { font-size: 13px; color: var(--ink-faint); margin: 10px 0 0; }
+footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: var(--ink-faint); font: 12px var(--mono); }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap bar">
+  <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>Open Memory Lab <span class="pill">design mockups</span></span>
+  <span class="pill">ADR-0047 · ADR-0048 · proposed 2026-11-04</span>
+</div></header>
+
+<main class="wrap">
+<div class="hero">
+  <p class="label">Design artefact, not a built feature</p>
+  <h1>Project knowledge that <em>follows the branch</em>, and search that finds it</h1>
+  <p class="lede">What an agent learns about a codebase is written while it works, read by its teammates' agents at once inside the branch, reviewed beside the code in the pull request, and promoted when the branch merges. A change to the code it describes marks it stale. Recall finds it by words, by meaning and by location.</p>
+  <ul class="toc">
+    <li><a href="#flow">Lifecycle</a></li><li><a href="#session">Claude Code</a></li><li><a href="#pr">Pull request</a></li><li><a href="#ci">CI gate</a></li><li><a href="#search">Hybrid search</a></li><li><a href="#page">User page</a></li><li><a href="#config">Config</a></li><li><a href="#stored">Stored entries</a></li>
+  </ul>
+</div>
+
+<section id="flow">
+  <p class="label">ADR-0047 d5–d11</p>
+  <h2>The development lifecycle, mapped onto workareas</h2>
+  <p class="sub">A branch is an in-progress workarea; a pull request is its review batch; the merge is the workarea's commit; a release freezes a release record. No agent key promotes anything; every step that changes what others read needs a second identity.</p>
+  <div class="fig">
+    <svg class="wide" viewBox="0 0 1000 400" role="img" aria-label="Lifecycle flow: edit on a branch, held entries in an in-progress workarea, pull request review batch, merge commit, release validated">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8C8FA8"/></marker></defs>
+      <g font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#EFE9DA">
+        <rect x="20" y="40" width="170" height="110" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="36" y="66" fill="#8C8FA8" font-size="11" letter-spacing="1.5">1 · BRANCH</text>
+        <text x="36" y="90">agent edits code</text><text x="36" y="110">writes a gotcha</text>
+        <text x="36" y="130" fill="#9FC6E6">anchor filled locally</text>
+        <rect x="230" y="40" width="190" height="110" rx="12" fill="#111638" stroke="#F6A83E"/>
+        <text x="246" y="66" fill="#8C8FA8" font-size="11" letter-spacing="1.5">2 · IN PROGRESS</text>
+        <text x="246" y="90">held in the branch</text><text x="246" y="110">workarea; team's</text>
+        <text x="246" y="130" fill="#F6A83E">agents read it now</text>
+        <rect x="460" y="40" width="190" height="110" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="476" y="66" fill="#8C8FA8" font-size="11" letter-spacing="1.5">3 · PULL REQUEST</text>
+        <text x="476" y="90">review batch, capped</text><text x="476" y="110">beside the code diff</text>
+        <text x="476" y="130" fill="#9FC6E6">person approves</text>
+        <rect x="690" y="40" width="130" height="110" rx="12" fill="#111638" stroke="#7FD1AE"/>
+        <text x="706" y="66" fill="#8C8FA8" font-size="11" letter-spacing="1.5">4 · MERGE</text>
+        <text x="706" y="90">commit</text><text x="706" y="110">transition</text>
+        <text x="706" y="130" fill="#7FD1AE">promoted</text>
+        <rect x="850" y="40" width="130" height="110" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="866" y="66" fill="#8C8FA8" font-size="11" letter-spacing="1.5">5 · RELEASE</text>
+        <text x="866" y="90">release record</text><text x="866" y="110">validated,</text>
+        <text x="866" y="130">frozen</text>
+        <path d="M190 95 H226" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar)"/>
+        <path d="M420 95 H456" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar)"/>
+        <path d="M650 95 H686" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar)"/>
+        <path d="M820 95 H846" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar)"/>
+        <rect x="20" y="200" width="400" height="74" rx="12" fill="#0E1230" stroke="#262C52" stroke-dasharray="4 4"/>
+        <text x="36" y="226" fill="#F6A83E">stale check, local</text>
+        <text x="36" y="248" fill="#B7B4C6" font-size="12">an edit changes an anchored symbol's hash;</text>
+        <text x="36" y="264" fill="#B7B4C6" font-size="12">at Stop the agent confirms, updates or retires</text>
+        <path d="M110 150 V196" stroke="#8C8FA8" stroke-width="1.4" marker-end="url(#ar)"/>
+        <rect x="460" y="200" width="360" height="74" rx="12" fill="#0E1230" stroke="#262C52" stroke-dasharray="4 4"/>
+        <text x="476" y="226" fill="#F6A83E">merge gate, CI</text>
+        <text x="476" y="248" fill="#B7B4C6" font-size="12">fails while a changed symbol has an</text>
+        <text x="476" y="264" fill="#B7B4C6" font-size="12">unanswered entry, or the batch is over its cap</text>
+        <path d="M555 150 V196" stroke="#8C8FA8" stroke-width="1.4" marker-end="url(#ar)"/>
+        <text x="20" y="318" fill="#8C8FA8" font-size="12">Who acts:  agent key writes only (R1)  ·  reviewer's key approves and proposes the commit  ·  CI key ratifies at merge,</text>
+        <text x="20" y="338" fill="#8C8FA8" font-size="12">rejects an abandoned batch, approves only skeleton facts it re-derives  ·  read at the repository: brief + hybrid recall (ADR-0048)</text>
+        <text x="20" y="372" fill="#B7B4C6" font-size="12">Abandoned branch → CI rejects its held entries as branch_abandoned; nothing promoted.</text>
+      </g>
+    </svg>
+    <svg class="tall" viewBox="0 0 360 820" role="img" aria-label="Lifecycle flow, stacked">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8C8FA8"/></marker></defs>
+      <g font-family="ui-monospace, Menlo, monospace" font-size="14" fill="#EFE9DA">
+        <rect x="10" y="10" width="340" height="80" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="26" y="36" fill="#8C8FA8" font-size="12">1 · BRANCH</text><text x="26" y="60">agent edits, writes a gotcha</text><text x="26" y="80" fill="#9FC6E6" font-size="13">anchor filled locally</text>
+        <path d="M180 90 V116" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar2)"/>
+        <rect x="10" y="120" width="340" height="80" rx="12" fill="#111638" stroke="#F6A83E"/>
+        <text x="26" y="146" fill="#8C8FA8" font-size="12">2 · IN PROGRESS</text><text x="26" y="170">held in the branch workarea</text><text x="26" y="190" fill="#F6A83E" font-size="13">team's agents read it now</text>
+        <rect x="30" y="214" width="300" height="62" rx="10" fill="#0E1230" stroke="#262C52" stroke-dasharray="4 4"/>
+        <text x="44" y="238" fill="#F6A83E" font-size="13">stale check at Stop</text><text x="44" y="260" fill="#B7B4C6" font-size="12">confirm · update · retire</text>
+        <path d="M180 276 V302" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar2)"/>
+        <rect x="10" y="306" width="340" height="80" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="26" y="332" fill="#8C8FA8" font-size="12">3 · PULL REQUEST</text><text x="26" y="356">review batch beside the diff</text><text x="26" y="376" fill="#9FC6E6" font-size="13">person approves, capped</text>
+        <rect x="30" y="400" width="300" height="62" rx="10" fill="#0E1230" stroke="#262C52" stroke-dasharray="4 4"/>
+        <text x="44" y="424" fill="#F6A83E" font-size="13">merge gate in CI</text><text x="44" y="446" fill="#B7B4C6" font-size="12">no unanswered stale entry</text>
+        <path d="M180 462 V488" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar2)"/>
+        <rect x="10" y="492" width="340" height="80" rx="12" fill="#111638" stroke="#7FD1AE"/>
+        <text x="26" y="518" fill="#8C8FA8" font-size="12">4 · MERGE</text><text x="26" y="542">commit transition</text><text x="26" y="562" fill="#7FD1AE" font-size="13">reviewer proposes, CI ratifies</text>
+        <path d="M180 572 V598" stroke="#8C8FA8" stroke-width="1.6" marker-end="url(#ar2)"/>
+        <rect x="10" y="602" width="340" height="80" rx="12" fill="#111638" stroke="#262C52"/>
+        <text x="26" y="628" fill="#8C8FA8" font-size="12">5 · RELEASE</text><text x="26" y="652">release record validated</text><text x="26" y="672" fill="#B7B4C6" font-size="13">living knowledge stays editable</text>
+        <text x="10" y="716" fill="#8C8FA8" font-size="12">Agent key writes only (R1). Every</text>
+        <text x="10" y="736" fill="#8C8FA8" font-size="12">promotion and transition needs a</text>
+        <text x="10" y="756" fill="#8C8FA8" font-size="12">second key and principal (R2).</text>
+        <text x="10" y="788" fill="#B7B4C6" font-size="12">Abandoned branch: CI rejects its</text>
+        <text x="10" y="808" fill="#B7B4C6" font-size="12">held entries; nothing promoted.</text>
+      </g>
+    </svg>
+    <div class="legend"><span><i style="background:#F6A83E"></i>held, readable inside the branch</span><span><i style="background:#7FD1AE"></i>promoted</span><span><i style="background:#9FC6E6"></i>computed on the client</span></div>
+  </div>
+</section>
+
+<section id="session">
+  <p class="label">ADR-0047 d3, d11, d13</p>
+  <h2>A Claude Code session</h2>
+  <p class="sub">The session starts with the repository's brief and a count of entries anchored here. A gotcha is captured during an edit, with its anchor filled by the hook. At Stop, one stale entry is answered.</p>
+  <div class="term">
+    <div class="tb"><span>claude · ~/src/open-memory-lab · branch fix/lead-boot</span><span>mockup</span></div>
+<pre><span class="c">SessionStart:startup · OML: data, not instructions</span>
+<span class="h">Brief · alice.open-memory-lab</span> (promoted, 212 of 400 tokens)
+  • oml-server-lead — serves HTTP and MCP; migrations run as the owner role, serving as a role that owns nothing
+  • oml-cli — the `oml` binary; hooks read the plugin's key pair, never the credentials file
+  • Convention: one migration per change set; numbers follow the release order
+<span class="h">Code knowledge here</span> · 31 entries anchored in this repo · 2 held on this branch · 0 stale
+
+<span class="you">› The lead refuses to start after the role split. Fix it.</span>
+
+<span class="p">●</span> oml_read <span class="c">{"query":"lead refuses start role split","search":"hybrid","kinds":["code"],"workareas":["alice.open-memory-lab","alice.open-memory-lab-b-fix-lead-boot-3c1f2aa"]}</span>
+  <span class="o">2 hits</span> · #1 <span class="c">keyword 1 · semantic 1</span> "One URL for both roles is refused at startup as postgres.role_split…"
+<span class="p">●</span> Read crates/bins/oml-server-lead/src/config.rs
+<span class="p">●</span> Edit crates/bins/oml-server-lead/src/config.rs  <span class="c">(+9 −3)</span>
+<span class="p">●</span> oml_write <span class="c">{"kind":"code","text":"Gotcha: postgres.owner_url must point at the same database as postgres.url; a different database name passes the role check and fails at the first migration with no clear error.","anchor":{"path":"crates/bins/oml-server-lead/src/config.rs","symbol":"Config::validate"}}</span>
+  <span class="c">PreToolUse:oml_write · anchor filled: repo open-memory-lab · branch fix/lead-boot · commit 4a79ce5 · span 9f2c…e1 (oml-span/1)</span>
+  <span class="o">held</span> · art_01JC…7Q · readable now by agents on this branch
+
+<span class="c">Stop · OML: 1 entry describes code you changed</span>
+  art_01HZ…K2  "Config::validate refuses a URL without sslmode on a non-local host"
+  The span hash of Config::validate changed. Confirm it, update it, or retire it.
+
+<span class="p">●</span> oml_write <span class="c">{"replaces":"art_01HZ…K2","kind":"code","text":"Config::validate refuses a URL without sslmode on a non-local host, and checks that owner_url and url name the same database.","anchor":{"path":"crates/bins/oml-server-lead/src/config.rs","symbol":"Config::validate"}}</span>
+  <span class="o">held</span> · update of art_01HZ…K2, goes to this branch's review batch
+
+<span class="you">Done.</span> Fixed the check and recorded one gotcha; one existing entry updated. Both wait for review in the pull request.</pre>
+  </div>
+</section>
+
+<section id="pr">
+  <p class="label">ADR-0047 d6, d7</p>
+  <h2>The pull request's knowledge review, beside the code</h2>
+  <p class="sub">The reviewer reads the code diff and the knowledge diff in one sitting, under their own review key. Approving the last entry offers to propose the merge commit; CI ratifies it when the pull request merges.</p>
+  <div class="pr">
+    <div class="head"><b>#212 Refuse a lead config whose owner and serving URLs name different databases</b><span class="tag t-dim">fix/lead-boot</span><span class="cite">batch: 1 added · 1 updated · 0 retired · 0 stale unanswered · cap 20</span></div>
+    <div class="cols">
+      <div class="col">
+        <p class="label">Code</p>
+<pre class="diff"><span class="ctx">crates/bins/oml-server-lead/src/config.rs</span>
+<span class="ctx">@@ impl Config @@</span>
+<span class="ctx">     pub fn validate(&amp;self) -&gt; Result&lt;(), ConfigError&gt; {</span>
+<span class="del">-        if self.owner_url == self.url {</span>
+<span class="add">+        let (owner, serving) = (parse(&amp;self.owner_url)?, parse(&amp;self.url)?);</span>
+<span class="add">+        if owner.role == serving.role {</span>
+<span class="ctx">             return Err(ConfigError::RoleSplit);</span>
+<span class="ctx">         }</span>
+<span class="add">+        if owner.database != serving.database {</span>
+<span class="add">+            return Err(ConfigError::DatabaseMismatch);</span>
+<span class="add">+        }</span></pre>
+      </div>
+      <div class="col">
+        <p class="label">Knowledge</p>
+        <div class="fact">
+          <div class="meta"><span class="tag t-add">added</span><span>gotcha</span><span>config.rs#Config::validate</span></div>
+          <p>postgres.owner_url must point at the same database as postgres.url; a different database name passes the role check and fails at the first migration with no clear error.</p>
+          <div class="acts"><span class="btn ok">Approve</span><span class="btn">Reject</span></div>
+        </div>
+        <div class="fact">
+          <div class="meta"><span class="tag t-upd">updated</span><span>was stale</span><span>config.rs#Config::validate</span></div>
+          <p class="old">Config::validate refuses a URL without sslmode on a non-local host.</p>
+          <p>Config::validate refuses a URL without sslmode on a non-local host, and checks that owner_url and url name the same database.</p>
+          <div class="acts"><span class="btn ok">Approve</span><span class="btn">Reject</span></div>
+        </div>
+        <div class="acts"><span class="btn star">Approve all and propose the merge commit</span></div>
+        <p class="note">Signed in as alice-review. You never review an entry your key wrote or one that derives from it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ci">
+  <p class="label">ADR-0047 d6, d7, d9, d11</p>
+  <h2>The CI gate</h2>
+  <div class="two">
+    <div class="term"><div class="tb"><span>pull_request · oml code pr + check</span><span>mockup</span></div>
+<pre><span class="c">$</span> oml code check --base origin/main
+symbols changed in this diff ........ 3
+entries anchored to them ............ 2
+  art_01HZ…K2  answered (update art_01JC…9M)
+  art_01HY…P4  <span class="b">unanswered</span>  "owner and serving roles must differ"
+batch ............................... 2 held · cap 20
+<span class="b">✗ 1 entry describes changed code and has no
+  confirmation, update or retirement</span>
+  answer it in a session, or:
+  oml code stale --list</pre></div>
+    <div class="term"><div class="tb"><span>push to main · merge job</span><span>mockup</span></div>
+<pre><span class="c">$</span> oml code merge --branch fix/lead-boot
+branch workarea .... alice.open-memory-lab-b-fix-lead-boot-3c1f2aa
+held inside ........ 0
+skeleton re-derived  oml-server-lead entry points: <span class="o">byte-equal, approved</span>
+transition ......... development → committed
+  proposed by ...... alice-review
+  ratified by ...... open-memory-lab-ci  <span class="c">(held_by agent)</span>
+<span class="o">✓ committed · 3 entries now served at
+  alice.open-memory-lab</span></pre></div>
+  </div>
+</section>
+
+<section id="search">
+  <p class="label">ADR-0048 S7: d8, d9, d10 · <a href="https://github.com/e8kor/open-memory-lab/blob/archive/feat/code-map/docs/design/search/mockups.html">the staged search mockups</a></p>
+  <h2>Hybrid search, the last stage: filters, then keywords and meaning, fused</h2>
+  <p class="sub">The filters decide what may be a candidate before anything is ranked. Each hit says which list found it and at what rank. No score is shown, because scores from different lists do not compare.</p>
+  <div class="fig">
+    <p class="label" style="margin:0 0 8px">oml_read · recall</p>
+    <p style="margin:0 0 10px;font-family:var(--mono);font-size:14px">“server won't boot after splitting the database roles”</p>
+    <div class="filters"><span class="chip">search <b>hybrid</b></span><span class="chip">kinds <b>code, memory</b></span><span class="chip">workareas <b>2</b></span><span class="chip">anchor_repo <b>open-memory-lab</b></span><span class="chip">k <b>5</b></span><span class="chip">max_tokens <b>600</b></span></div>
+    <div class="hit"><span class="n">#1</span><div><p>One URL for both roles is refused at startup as <code>postgres.role_split</code>; set <code>postgres.owner_url</code> for migrations.</p><div class="why"><span class="kw">keyword 2</span><span class="se">semantic 1</span><span class="an">anchor config.rs</span><span>promoted</span></div></div></div>
+    <div class="hit"><span class="n">#2</span><div><p>postgres.owner_url must point at the same database as postgres.url; a different database name fails at the first migration.</p><div class="why"><span class="se">semantic 2</span><span class="an">anchor config.rs#Config::validate</span><span style="color:var(--star)">held · this branch</span></div></div></div>
+    <div class="hit"><span class="n">#3</span><div><p>After the live host's role split of 2026-11-03, the serving role needs CONNECT on the database.</p><div class="why"><span class="kw">keyword 1</span><span class="se">semantic 4</span><span>memory · operational</span><span>promoted</span></div></div></div>
+    <div class="hit"><span class="n">#4</span><div><p>Lead startup order: fork check, migrations as owner, then serve as the role that owns nothing.</p><div class="why"><span class="se">semantic 3</span><span>code · skeleton</span><span>promoted</span></div></div></div>
+    <p class="note">Hit #2 is held: it is served only because this key reads the branch's in-progress workarea, and it ranks where it would rank once promoted. With <code>search: keyword</code>, hits #2 and #4 would not appear: their words differ from the query's.</p>
+  </div>
+</section>
+
+<section id="page">
+  <p class="label">ADR-0047 d6, ADR-0045 d9</p>
+  <h2>The user page: Project knowledge</h2>
+  <div class="page">
+    <div class="ph"><span class="b2">Open <b>Memory</b> Lab</span><span class="who">alice · alice-web</span></div>
+    <main>
+      <nav class="tabs"><a>Keys</a><a>Set up</a><a>Memories</a><a class="on">Project knowledge</a><a>Review</a><a>Workarea</a></nav>
+      <p class="label">Project knowledge</p>
+      <h3 style="font-size:24px;margin:4px 0 6px">open-memory-lab</h3>
+      <p class="lede" style="font-size:15px">What your agents learned about this repository, by branch. Stale entries are found on a clone, by hash; here you see the ones an agent has already answered and that wait for you.</p>
+      <div class="stats">
+        <div class="stat"><div class="label">Promoted</div><div class="v" style="color:var(--ok)">31</div></div>
+        <div class="stat"><div class="label">Held</div><div class="v" style="color:var(--star)">5</div></div>
+        <div class="stat"><div class="label">Stale, answered</div><div class="v" style="color:var(--ice)">2</div></div>
+        <div class="stat"><div class="label">Skeleton</div><div class="v">7</div></div>
+      </div>
+      <table class="t">
+        <thead><tr><th>Branch</th><th>Workarea</th><th>Held</th><th>Pull request</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Branch" class="mono">fix/lead-boot</td><td data-l="Workarea" class="mono">open-memory-lab-b-fix-lead-boot-3c1f2aa</td><td data-l="Held"><span class="tag t-stale">2</span></td><td data-l="PR"><a>#212 · review 2</a></td><td data-l="State">in progress</td></tr>
+          <tr><td data-l="Branch" class="mono">feat/hybrid-search</td><td data-l="Workarea" class="mono">open-memory-lab-b-feat-hybrid-search-81d0e4b</td><td data-l="Held"><span class="tag t-stale">3</span></td><td data-l="PR"><span class="t-dim">none yet</span></td><td data-l="State">in progress</td></tr>
+          <tr><td data-l="Branch" class="mono">feat/v0.5.2</td><td data-l="Workarea" class="mono">open-memory-lab-b-feat-v0-5-2-7ddd0a8</td><td data-l="Held">0</td><td data-l="PR">#41 merged</td><td data-l="State"><span class="t-add">committed</span></td></tr>
+          <tr><td data-l="Branch" class="mono">exp/sqlite</td><td data-l="Workarea" class="mono">open-memory-lab-b-exp-sqlite-0b77c21</td><td data-l="Held">0</td><td data-l="PR">#30 closed</td><td data-l="State"><span class="t-ret">abandoned · 4 rejected</span></td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin:22px 0 8px">Recent entries</h3>
+      <table class="t">
+        <thead><tr><th>Entry</th><th>Anchor</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Entry">Gotcha: owner_url and url must name the same database…</td><td data-l="Anchor" class="mono">config.rs#Config::validate</td><td data-l="State"><span class="tag t-stale">held</span></td></tr>
+          <tr><td data-l="Entry">Decision: brief edges bind a version, so a supersession drops it from the brief</td><td data-l="Anchor" class="mono">docs/adr/ADR-0046…</td><td data-l="State"><span class="tag t-add">promoted</span></td></tr>
+          <tr><td data-l="Entry">Abandoned: SQLite for the single-host profile; RLS has no equivalent</td><td data-l="Anchor" class="mono">repo</td><td data-l="State"><span class="tag t-add">promoted</span></td></tr>
+        </tbody>
+      </table>
+      <p class="note">This view reads and writes nothing else. Review opens under alice-review.</p>
+    </main>
+  </div>
+</section>
+
+<section id="config">
+  <p class="label">ADR-0047 d16</p>
+  <h2>Configuration and setup</h2>
+  <div class="two">
+    <div class="term"><div class="tb"><span>.oml/code.toml · committed</span><span>no server, key or workarea</span></div>
+<pre><span class="c"># Shared by the team. Cloning this file maps nothing:
+# each clone opts in with `oml code init`.</span>
+repo = <span class="i">"open-memory-lab"</span>
+
+[capture]
+max_per_session = <span class="i">5</span>      <span class="c"># FR-79</span>
+exclude = [<span class="i">"deploy/secrets/**"</span>, <span class="i">"testing/fixtures/**"</span>]
+
+[review]
+pr_max_entries = <span class="i">20</span>      <span class="c"># fails the check above it</span>
+post_text = <span class="i">false</span>        <span class="c"># counts and a link only</span>
+
+[skeleton]
+components = [<span class="i">"crates/*"</span>, <span class="i">"plugins/*"</span>, <span class="i">"kit"</span>]
+symbols = <span class="i">"ctags"</span>           <span class="c"># or "lsp"; no own grammars</span>
+
+[import]
+files = [<span class="i">"AGENTS.md"</span>, <span class="i">"docs/adr/*.md"</span>]
+export = <span class="i">"AGENTS.md"</span>        <span class="c"># generated section</span></pre></div>
+    <div class="term"><div class="tb"><span>oml code init</span><span>mockup</span></div>
+<pre><span class="c">$</span> oml code init
+server ........ https://oml.internal.example  <span class="o">self-hosted</span>
+key ........... alice-claude (writer)  user alice
+repository .... open-memory-lab
+workarea ...... alice.open-memory-lab  <span class="c">(branch parent)</span>
+symbols ....... universal-ctags 6.1  <span class="o">ok</span>
+git hooks ..... post-merge  <span class="o">installed</span>
+
+What the server side can see:
+  · every entry's text, to its admins (journalled)
+  · paths and symbol names in anchors
+  · nothing written can be erased yet
+No source body, diff or string literal is sent.
+
+<span class="o">enabled for this clone</span> · .git/oml/code.local.toml</pre></div>
+  </div>
+</section>
+
+<section id="stored">
+  <p class="label">ADR-0047 d1–d3, d9</p>
+  <h2>Stored entries</h2>
+  <p class="sub">Kind <code>code</code>, outside ordinary recall unless asked. Prose a person can review, and an anchor the client completed. No per-file structure.</p>
+  <div class="two">
+    <div class="term"><div class="tb"><span>knowledge · gotcha · held</span><span>branch workarea</span></div>
+<pre>{
+  <span class="i">"artifact_id"</span>: "art_01JC…7Q",
+  <span class="i">"kind"</span>: "code",
+  <span class="i">"state"</span>: "held",
+  <span class="i">"reviewed"</span>: false,
+  <span class="i">"workarea"</span>: "alice.open-memory-lab-b-fix-lead-boot-3c1f2aa",
+  <span class="i">"text"</span>: "Gotcha: postgres.owner_url must point at the same database as postgres.url; a different database name passes the role check and fails at the first migration with no clear error.",
+  <span class="i">"anchor"</span>: {
+    "repo": "open-memory-lab",
+    "branch": "fix/lead-boot",
+    "path": "crates/bins/oml-server-lead/src/config.rs",
+    "symbol": "Config::validate",
+    "commit": "4a79ce5f0c…",
+    "hash": "9f2c7d…e1",
+    "hasher": "oml-span/1"
+  }
+}</pre></div>
+    <div class="term"><div class="tb"><span>skeleton · mechanical · promoted</span><span>approved by the CI key</span></div>
+<pre>{
+  <span class="i">"artifact_id"</span>: "art_01HQ…3D",
+  <span class="i">"kind"</span>: "code",
+  <span class="i">"state"</span>: "promoted",
+  <span class="i">"workarea"</span>: "alice.open-memory-lab-b-feat-v0-5-2-7ddd0a8",
+  <span class="i">"text"</span>: "Component oml-server-lead (crates/bins/oml-server-lead). Entry points: binary oml-server-lead. Depends on: oml-app, oml-domain, oml-transport-http, oml-adapter-postgres.",
+  <span class="i">"anchor"</span>: {
+    "repo": "open-memory-lab",
+    "branch": "feat/v0.5.2",
+    "path": "crates/bins/oml-server-lead/",
+    "commit": "7ddd0a81b2…"
+  }
+}
+<span class="c">// its purpose line is a separate entry,
+// written by the agent, approved by a person:
+// "Serves HTTP and MCP for one tenant set;
+//  migrates as the owner role and serves
+//  as a role that owns nothing."</span></pre></div>
+  </div>
+</section>
+</main>
+<footer><div class="wrap">Open Memory Lab · design mockups for proposed ADR-0047 and ADR-0048 · 2026-11-04 · every value on this page is illustrative</div></footer>
+</body>
+</html>

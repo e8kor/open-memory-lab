@@ -181,6 +181,7 @@ nav:
       - ADR-0044: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md
       - ADR-0045: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md
       - ADR-0046: adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md
+      - ADR-0047: adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md
       - ADR-0048: adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md
       - ADR-0049: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md
       - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
