@@ -16,36 +16,11 @@ use oml_app::ports::{RerankError, RerankFuture, Reranker};
 
 use crate::{
     BATCH, Limits, LoadError, MAX_TOKENS, MODEL_FILES, ModelSpec, QUERY_SHARE, cut_passage,
-    sha256_hex,
 };
 
 /// Reads `dir/file` and checks it is the file `spec` pins.
 fn read_checked(dir: &Path, spec: &ModelSpec, i: usize) -> Result<Vec<u8>, LoadError> {
-    let file = MODEL_FILES[i];
-    let path = dir.join(file);
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(LoadError::Missing {
-                dir: dir.display().to_string(),
-                file,
-                model: spec.name,
-                repo: spec.repo,
-            });
-        }
-        Err(e) => return Err(LoadError::Io(format!("{}: {e}", path.display()))),
-    };
-    let found = sha256_hex(&bytes);
-    if found != spec.files[i] {
-        return Err(LoadError::Digest {
-            dir: dir.display().to_string(),
-            file,
-            model: spec.name,
-            expected: spec.files[i],
-            found,
-        });
-    }
-    Ok(bytes)
+    crate::read_pinned(dir, MODEL_FILES[i], spec.files[i], spec.name, spec.repo)
 }
 
 /// The network: a BERT encoder, its pooler and the one-logit classifier

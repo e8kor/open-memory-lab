@@ -371,6 +371,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         query,
                         match_mode: MatchMode::Any,
                         k,
+                        sparse: &[],
                     },
                 )
                 .await
@@ -7212,6 +7213,7 @@ async fn bm25_list(
                 query,
                 match_mode: MatchMode::Any,
                 k: 50,
+                sparse: &[],
             },
         )
         .await
@@ -7990,6 +7992,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         query,
                         match_mode: MatchMode::Any,
                         k: 50,
+                        sparse: &[],
                     },
                 )
                 .await

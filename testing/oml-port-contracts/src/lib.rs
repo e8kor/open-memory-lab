@@ -29,6 +29,7 @@ use oml_app::domain::{
     SignedEnvelope, WorkareaStatus, event_types, key_fingerprint, next_envelope,
     sha256_digest_string, sign, verify_chain,
 };
+use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
@@ -943,6 +944,7 @@ pub trait KeywordAllReads: Retriever {
                     query: &query,
                     match_mode: MatchMode::All,
                     k,
+                    sparse: &[],
                 },
             )
             .await
@@ -977,6 +979,7 @@ pub trait KeywordAllReads: Retriever {
                     query: &query,
                     match_mode: MatchMode::All,
                     k,
+                    sparse: &[],
                 },
             )
             .await
@@ -9408,6 +9411,14 @@ async fn run<S: Retriever>(
     query: &str,
     match_mode: MatchMode,
 ) -> Retrieved {
+    // A sparse list reads what the encoder wrote, so every waiting version
+    // is encoded first, by the deterministic double (ADR-0052 d16).
+    let sparse = if kind == RetrieverKind::Sparse {
+        encode_sparse_backlog(store).await;
+        oml_app::ports::SparseEncoder::encode_query(&FakeSparseEncoder::new(), query)
+    } else {
+        Vec::new()
+    };
     store
         .retrieve(
             tenant,
@@ -9417,10 +9428,40 @@ async fn run<S: Retriever>(
                 query,
                 match_mode,
                 k: 50,
+                sparse: &sparse,
             },
         )
         .await
         .expect("retrieve")
+}
+
+/// Writes every waiting version's kind 2 postings with
+/// [`FakeSparseEncoder`], as the lead's encoder task would; returns how
+/// many it wrote (ADR-0052 d15).
+pub async fn encode_sparse_backlog<S: Retriever>(store: &S) -> u64 {
+    let mut written = 0;
+    for tenant in store.sparse_tenants().await.expect("sparse tenants") {
+        loop {
+            let pending = store
+                .sparse_pending(tenant, 256)
+                .await
+                .expect("sparse pending");
+            if pending.is_empty() {
+                break;
+            }
+            for p in &pending {
+                let postings = FakeSparseEncoder::document(&p.claim);
+                if store
+                    .sparse_write(tenant, p, &postings)
+                    .await
+                    .expect("sparse write")
+                {
+                    written += 1;
+                }
+            }
+        }
+    }
+    written
 }
 
 const LAW_QUERIES: [&str; 6] = [
@@ -10301,6 +10342,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                                 query,
                                 match_mode: mode,
                                 k,
+                                sparse: &[],
                             },
                         )
                     };
@@ -10639,6 +10681,7 @@ pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: Jo
                             query,
                             match_mode: MatchMode::Any,
                             k,
+                            sparse: &[],
                         },
                     )
                 };

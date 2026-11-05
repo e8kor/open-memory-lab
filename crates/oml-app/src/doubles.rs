@@ -110,6 +110,7 @@ fn keyword_ranked<'a>(
                 body_bytes: m.body_bytes,
                 score,
                 matched,
+                tokens: Vec::new(),
             })
         })
         .collect();
@@ -3915,6 +3916,110 @@ impl crate::ports::Reranker for FakeReranker {
                 .iter()
                 .map(|p| (self.relevance)(&query, p))
                 .collect())
+        })
+    }
+}
+
+/// The sparse encoder double (ADR-0052 d16): deterministic and model free,
+/// so the laws can predict a list. A word's token is a hash of its
+/// lower-cased letters; a query weighs each distinct word a quarter of its
+/// length; a document weighs each distinct word by how often it says it,
+/// and adds, for a word ending in `s`, the word without it at 0.5 as an
+/// expansion its text does not hold, unless it does.
+#[derive(Debug, Default)]
+pub struct FakeSparseEncoder {
+    fail: Option<String>,
+}
+
+impl FakeSparseEncoder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The double whose document encodes all fail with `reason`.
+    #[must_use]
+    pub fn failing(reason: &str) -> Self {
+        Self {
+            fail: Some(reason.to_owned()),
+        }
+    }
+
+    fn words(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    }
+
+    /// The double's token id of `word`: FNV-1a, folded into the model's
+    /// vocabulary range.
+    #[must_use]
+    pub fn token(word: &str) -> u32 {
+        let mut h: u32 = 0x811c_9dc5;
+        for b in word.bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        h % 30_522
+    }
+
+    /// The double's postings of `text`, sorted by token.
+    #[must_use]
+    pub fn document(text: &str) -> Vec<crate::search::SparsePosting> {
+        let words = Self::words(text);
+        let mut by: BTreeMap<u32, (f32, bool)> = BTreeMap::new();
+        for w in &words {
+            by.entry(Self::token(w)).or_insert((0.0, true)).0 += 1.0;
+        }
+        for w in &words {
+            if let Some(stem) = w.strip_suffix('s').filter(|s| !s.is_empty()) {
+                by.entry(Self::token(stem)).or_insert((0.5, false));
+            }
+        }
+        by.into_iter()
+            .map(
+                |(token_id, (weight, in_text))| crate::search::SparsePosting {
+                    token_id,
+                    weight,
+                    in_text,
+                },
+            )
+            .collect()
+    }
+}
+
+impl crate::ports::SparseEncoder for FakeSparseEncoder {
+    fn model(&self) -> &str {
+        "fake-word-hash"
+    }
+
+    fn encode_query(&self, query: &str) -> Vec<crate::search::SparseTerm> {
+        let mut seen = BTreeSet::new();
+        let mut terms: Vec<crate::search::SparseTerm> = Self::words(query)
+            .into_iter()
+            .filter(|w| seen.insert(w.clone()))
+            .map(|w| {
+                #[allow(clippy::cast_precision_loss, reason = "words are short")]
+                let weight = w.chars().count() as f32 / 4.0;
+                crate::search::SparseTerm {
+                    token_id: Self::token(&w),
+                    weight,
+                    piece: w,
+                }
+            })
+            .collect();
+        terms.sort_by_key(|t| t.token_id);
+        terms.dedup_by_key(|t| t.token_id);
+        terms
+    }
+
+    fn encode_documents(&self, texts: Vec<String>) -> crate::ports::SparseFuture<'_> {
+        Box::pin(async move {
+            if let Some(reason) = &self.fail {
+                return Err(reason.clone());
+            }
+            Ok(texts.iter().map(|t| Self::document(t)).collect())
         })
     }
 }

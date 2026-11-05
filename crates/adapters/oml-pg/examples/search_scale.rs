@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             k: item["k"]
                 .as_u64()
                 .map_or(10, |k| usize::try_from(k).unwrap_or(10)),
+            sparse: &[],
         };
         store.retrieve(tenant, kind, &scope, query).await?;
         let started = Instant::now();

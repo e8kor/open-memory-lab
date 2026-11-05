@@ -36,6 +36,11 @@ mod model;
 #[cfg(feature = "model")]
 pub use model::CrossEncoder;
 
+/// The learned sparse encoder of ADR-0052 d14: its pins and fetch always,
+/// its network behind the `model` feature.
+mod sparse;
+pub use sparse::*;
+
 /// The files a model directory holds, in the order [`ModelSpec::files`]
 /// pins them.
 pub const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
@@ -166,25 +171,44 @@ pub fn fetch_missing(
     spec: &ModelSpec,
     get: impl Fn(&str) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<&'static str>, LoadError> {
+    fetch_files(
+        dir,
+        spec.name,
+        &MODEL_FILES,
+        &spec.files,
+        |f| spec.url(f),
+        get,
+    )
+}
+
+/// The fetch both model kinds share (ADR-0053 d3; ADR-0052 d14).
+pub(crate) fn fetch_files(
+    dir: &Path,
+    model: &'static str,
+    files: &[&'static str],
+    digests: &[&'static str],
+    url_of: impl Fn(&str) -> String,
+    get: impl Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<Vec<&'static str>, LoadError> {
     std::fs::create_dir_all(dir).map_err(|e| LoadError::Io(format!("{}: {e}", dir.display())))?;
     let mut fetched = Vec::new();
-    for (i, file) in MODEL_FILES.into_iter().enumerate() {
+    for (&file, &expected) in files.iter().zip(digests) {
         let path = dir.join(file);
         if path.exists() {
             continue;
         }
-        let url = spec.url(file);
+        let url = url_of(file);
         let bytes = get(&url).map_err(|reason| LoadError::Fetch {
             url: url.clone(),
             reason,
         })?;
         let found = sha256_hex(&bytes);
-        if found != spec.files[i] {
+        if found != expected {
             return Err(LoadError::Digest {
                 dir: dir.display().to_string(),
                 file,
-                model: spec.name,
-                expected: spec.files[i],
+                model,
+                expected,
                 found,
             });
         }
@@ -195,6 +219,41 @@ pub fn fetch_missing(
         fetched.push(file);
     }
     Ok(fetched)
+}
+
+/// Reads `dir/file` and checks it against `expected`, before any byte of it
+/// is parsed (ADR-0053 d3; ADR-0052 d14).
+pub(crate) fn read_pinned(
+    dir: &Path,
+    file: &'static str,
+    expected: &'static str,
+    model: &'static str,
+    repo: &'static str,
+) -> Result<Vec<u8>, LoadError> {
+    let path = dir.join(file);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(LoadError::Missing {
+                dir: dir.display().to_string(),
+                file,
+                model,
+                repo,
+            });
+        }
+        Err(e) => return Err(LoadError::Io(format!("{}: {e}", path.display()))),
+    };
+    let found = sha256_hex(&bytes);
+    if found != expected {
+        return Err(LoadError::Digest {
+            dir: dir.display().to_string(),
+            file,
+            model,
+            expected,
+            found,
+        });
+    }
+    Ok(bytes)
 }
 
 /// The cap, the threads and the deadline a [`CrossEncoder`] serves under

@@ -1395,6 +1395,10 @@ pub struct RecallHit {
     pub matched: Vec<String>,
     /// `matched.via`: the retrievers whose lists held the row.
     pub via: Vec<RetrieverKind>,
+    /// `matched.tokens`: the learned sparse tokens that scored the row,
+    /// with their contributions and whether the encoder added them
+    /// (ADR-0052 d17); empty for a hit no sparse list held.
+    pub tokens: Vec<crate::search::MatchedToken>,
     /// `matched.rerank`: the reranker's relevance in `[0, 1]`, for a hit it
     /// scored; the hit's `score` is then this relevance (ADR-0053 d7).
     pub rerank: Option<f32>,

@@ -46,6 +46,11 @@ pub enum RetrieverKind {
     /// still scored for the rows the others reach, and a query of only such
     /// words is answered by `Bm25`'s scan (ADR-0052 d4, d6).
     Bm25Postings,
+    /// Learned sparse weights of `doc-v3-distill`, kind 2 postings read by
+    /// the same index under the same scope, scored by the sum over the
+    /// query's tokens of the shipped idf times the document's weight; no
+    /// corpus statistic is read (ADR-0052 d14, d16).
+    Sparse,
 }
 
 impl RetrieverKind {
@@ -58,6 +63,7 @@ impl RetrieverKind {
             Self::Bm25 => "bm25",
             Self::Trigram => "trigram",
             Self::Bm25Postings => "bm25_postings",
+            Self::Sparse => "sparse",
         }
     }
 }
@@ -89,13 +95,18 @@ impl Access {
 /// How a pipeline's lists become one (ADR-0049 d3). Pure: it reads ranks
 /// and scores the adapters returned and nothing else, so no verdict, no
 /// reviewer and no `promoted_at` can reorder a result (ADR-0001 d3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fusion {
     /// One list, served in its own order.
     Single,
     /// Reciprocal rank fusion with constant `k`: a candidate's score is the
     /// sum over the lists holding it of `1 / (k + rank)`, rank from 1.
     Rrf { k: u32 },
+    /// Convex combination: each list's scores min-max normalised over its
+    /// own candidates, then summed with one weight per list in fusion
+    /// order; a list that does not hold a candidate adds nothing
+    /// (ADR-0052 d13).
+    Cc { weights: &'static [f32] },
 }
 
 /// The fusion constant ADR-0048 d4 names, unmeasured on OML beyond the
@@ -105,6 +116,16 @@ pub const RRF_K: u32 = 60;
 /// How deep each list of a fused pipeline is read before fusion: a list cut
 /// at `k` would drop a candidate the other list ranks first.
 pub const FUSION_DEPTH: usize = 50;
+
+/// How deep each list of a convex combination is read: the depth the
+/// offline experiment normalised over, so a leg's minimum is that of its
+/// top 100 (ADR-0052 d13).
+pub const CC_DEPTH: usize = 100;
+
+/// `bm25-sparse`'s weights, `bm25_postings` then `sparse`: tuned on the
+/// synthetic set alone, flat between 0.15 and 0.35 for bm25, and within
+/// 0.007 nDCG@10 of each external set's own best (ADR-0052 d13).
+pub const CC_BM25_SPARSE: [f32; 2] = [0.3, 0.7];
 
 /// A recall serving fewer hits than this, or than its `k` when `k` is
 /// smaller, before the budget cut, is thin: only then does it offer
@@ -133,17 +154,24 @@ pub enum Pipeline {
     /// `bm25-rerank`: `bm25`'s list, its head reordered by a local
     /// cross-encoder (ADR-0048 S6; ADR-0053 d1).
     Bm25Rerank,
+    /// `sparse`: learned sparse postings alone (ADR-0052 d16).
+    Sparse,
+    /// `bm25-sparse`: `bm25-postings` and `sparse` fused by convex
+    /// combination, 0.3 and 0.7 (ADR-0052 d13, d16).
+    Bm25Sparse,
 }
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
         Self::Bm25Trigram,
         Self::Bm25Postings,
         Self::Bm25Rerank,
+        Self::Sparse,
+        Self::Bm25Sparse,
     ];
 
     /// The pipeline's name, as configuration, requests and logs spell it.
@@ -156,6 +184,8 @@ impl Pipeline {
             Self::Bm25Trigram => "bm25-trigram",
             Self::Bm25Postings => "bm25-postings",
             Self::Bm25Rerank => "bm25-rerank",
+            Self::Sparse => "sparse",
+            Self::Bm25Sparse => "bm25-sparse",
         }
     }
 
@@ -175,6 +205,8 @@ impl Pipeline {
             Self::Bm25 | Self::Bm25Rerank => &[RetrieverKind::Bm25],
             Self::Bm25Trigram => &[RetrieverKind::Bm25, RetrieverKind::Trigram],
             Self::Bm25Postings => &[RetrieverKind::Bm25Postings],
+            Self::Sparse => &[RetrieverKind::Sparse],
+            Self::Bm25Sparse => &[RetrieverKind::Bm25Postings, RetrieverKind::Sparse],
         }
     }
 
@@ -186,8 +218,12 @@ impl Pipeline {
             | Self::KeywordAny
             | Self::Bm25
             | Self::Bm25Postings
-            | Self::Bm25Rerank => Fusion::Single,
+            | Self::Bm25Rerank
+            | Self::Sparse => Fusion::Single,
             Self::Bm25Trigram => Fusion::Rrf { k: RRF_K },
+            Self::Bm25Sparse => Fusion::Cc {
+                weights: &CC_BM25_SPARSE,
+            },
         }
     }
 
@@ -205,6 +241,14 @@ impl Pipeline {
     #[must_use]
     pub fn suggests(self) -> bool {
         self != Self::KeywordAll
+    }
+
+    /// Whether the pipeline reads learned sparse postings, so the
+    /// composition must load the sparse encoder before it serves
+    /// (ADR-0052 d16).
+    #[must_use]
+    pub fn needs_sparse(self) -> bool {
+        self.retrievers().contains(&RetrieverKind::Sparse)
     }
 }
 
@@ -291,7 +335,7 @@ impl RerankPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchConfigError {
     #[error(
-        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank)"
+        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse)"
     )]
     Unknown(String),
     #[error("search.enabled is empty: a deployment serves at least one pipeline")]
@@ -312,6 +356,10 @@ pub enum SearchConfigError {
     NoReranker(Pipeline),
     #[error("search.rerank.{0}")]
     Rerank(&'static str),
+    #[error(
+        "search.enabled names {0}, which reads learned sparse postings, and no sparse encoder is loaded: set search.sparse.model_dir to a directory holding the model, or search.sparse.fetch = true (configuration.md search.sparse)"
+    )]
+    NoSparseEncoder(Pipeline),
 }
 
 impl SearchConfig {
@@ -369,6 +417,27 @@ impl SearchConfig {
     pub fn require_reranker(&self, loaded: bool) -> Result<(), SearchConfigError> {
         match self.enabled.iter().find(|p| p.reranks()) {
             Some(&pipeline) if !loaded => Err(SearchConfigError::NoReranker(pipeline)),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether any served pipeline reads learned sparse postings.
+    #[must_use]
+    pub fn needs_sparse(&self) -> bool {
+        self.enabled.iter().any(|p| p.needs_sparse())
+    }
+
+    /// Refuses a configuration serving a sparse pipeline with no encoder
+    /// loaded: it fails closed, never falling back to another pipeline
+    /// (ADR-0052 d16).
+    ///
+    /// # Errors
+    ///
+    /// [`SearchConfigError::NoSparseEncoder`] naming the first such
+    /// pipeline.
+    pub fn require_sparse(&self, loaded: bool) -> Result<(), SearchConfigError> {
+        match self.enabled.iter().find(|p| p.needs_sparse()) {
+            Some(&pipeline) if !loaded => Err(SearchConfigError::NoSparseEncoder(pipeline)),
             _ => Ok(()),
         }
     }
@@ -474,15 +543,61 @@ pub struct PostingsHealth {
     pub workarea_drift: u64,
     pub term_drift: u64,
     pub terms_checked: u64,
+    /// Versions waiting for the sparse encoder, due now or later
+    /// (ADR-0052 d15).
+    pub sparse_backlog: u64,
+    /// Of them, the ones whose last encode or write failed.
+    pub sparse_failing: u64,
 }
 
 /// One retrieval: the query, whether every term must match, and how many
 /// candidates to return at most.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RetrievalQuery<'a> {
     pub query: &'a str,
     pub match_mode: MatchMode,
     pub k: usize,
+    /// The query's learned sparse tokens, encoded by the core for a
+    /// pipeline that reads them; empty otherwise (ADR-0052 d16).
+    pub sparse: &'a [SparseTerm],
+}
+
+/// One query token of the learned sparse encoder: its vocabulary id, its
+/// shipped idf weight and its word piece (ADR-0052 d14).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparseTerm {
+    pub token_id: u32,
+    pub weight: f32,
+    pub piece: String,
+}
+
+/// One document posting the sparse encoder writes: its token, its weight,
+/// and whether the version's own tokens hold it, so a match by the
+/// encoder's expansion is named as one (ADR-0052 d14, d17).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SparsePosting {
+    pub token_id: u32,
+    pub weight: f32,
+    pub in_text: bool,
+}
+
+/// A version waiting for the sparse encoder: its claim, and the
+/// `enqueued_at` its write must match (ADR-0052 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SparsePending {
+    pub memory_id: Uuid,
+    pub claim: String,
+    pub enqueued_at_us: i64,
+}
+
+/// A query token that scored a hit, with its contribution and whether the
+/// encoder added it to a text that does not hold it (`matched.tokens`;
+/// ADR-0052 d17).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchedToken {
+    pub token: String,
+    pub weight: f32,
+    pub expanded: bool,
 }
 
 /// One retriever's ranked list: the query's terms as this retriever reads
@@ -507,6 +622,9 @@ pub struct Candidate {
     pub score: f32,
     /// The query terms the row holds, as the retriever reads terms.
     pub matched: Vec<String>,
+    /// The learned sparse tokens that scored it, largest first; empty for
+    /// every other retriever (ADR-0052 d17).
+    pub tokens: Vec<MatchedToken>,
 }
 
 /// A fused candidate: its fused score, the terms it matched across the
@@ -518,6 +636,8 @@ pub struct Fused {
     pub score: f32,
     pub matched: Vec<String>,
     pub via: Vec<RetrieverKind>,
+    /// `matched.tokens`: the sparse tokens that scored it (ADR-0052 d17).
+    pub tokens: Vec<MatchedToken>,
     /// The reranker's relevance, for a candidate the reranker scored
     /// (`matched.rerank`; ADR-0053 d7).
     pub rerank: Option<f32>,
@@ -532,10 +652,27 @@ pub struct Fused {
 #[must_use]
 pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> {
     let mut by_id: BTreeMap<Uuid, Fused> = BTreeMap::new();
-    for (kind, list) in lists {
+    for (i, (kind, list)) in lists.iter().enumerate() {
+        // Min-max over this list's own candidates alone, so no other list,
+        // query or row outside the scope sets its range (ADR-0052 d13).
+        let (lo, hi) = list
+            .candidates
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), c| {
+                (lo.min(c.score), hi.max(c.score))
+            });
         for (rank, c) in list.candidates.iter().enumerate() {
             let contribution = match fusion {
                 Fusion::Single => c.score,
+                Fusion::Cc { weights } => {
+                    let weight = weights.get(i).copied().unwrap_or(0.0);
+                    let normalised = if hi > lo {
+                        (c.score - lo) / (hi - lo)
+                    } else {
+                        1.0
+                    };
+                    weight * normalised
+                }
                 Fusion::Rrf { k } => {
                     let rank = u32::try_from(rank).unwrap_or(u32::MAX).saturating_add(1);
                     #[allow(clippy::cast_precision_loss, reason = "ranks are small")]
@@ -549,6 +686,7 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
                 score: 0.0,
                 matched: Vec::new(),
                 via: Vec::new(),
+                tokens: Vec::new(),
                 rerank: None,
                 rank_before: None,
             });
@@ -561,6 +699,7 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
             if !entry.via.contains(kind) {
                 entry.via.push(*kind);
             }
+            entry.tokens.extend(c.tokens.iter().cloned());
         }
     }
     let mut fused: Vec<Fused> = by_id.into_values().collect();
@@ -661,6 +800,7 @@ mod tests {
             body_bytes: 10,
             score,
             matched: matched.iter().map(|s| (*s).to_owned()).collect(),
+            tokens: Vec::new(),
         }
     }
 
@@ -736,6 +876,111 @@ mod tests {
     }
 
     #[test]
+    fn cc_normalises_each_list_over_its_own_candidates() {
+        // bm25 scores 10 / 6 / 2 normalise to 1 / 0.5 / 0; sparse 4 / 1 to
+        // 1 / 0. Weights 0.3 and 0.7.
+        let fused = fuse(
+            &[
+                (
+                    RetrieverKind::Bm25Postings,
+                    list(vec![
+                        cand(1, 10.0, &["a"]),
+                        cand(2, 6.0, &["b"]),
+                        cand(3, 2.0, &[]),
+                    ]),
+                ),
+                (
+                    RetrieverKind::Sparse,
+                    list(vec![cand(3, 4.0, &[]), cand(2, 1.0, &[])]),
+                ),
+            ],
+            Fusion::Cc {
+                weights: &CC_BM25_SPARSE,
+            },
+        );
+        let got: Vec<(u128, f32)> = fused
+            .iter()
+            .map(|f| (f.memory_id.as_u128(), f.score))
+            .collect();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].0, 3, "{got:?}");
+        assert!((got[0].1 - 0.7).abs() < 1e-6, "{got:?}");
+        assert_eq!(got[1].0, 1);
+        assert!((got[1].1 - 0.3).abs() < 1e-6);
+        assert_eq!(got[2].0, 2);
+        assert!((got[2].1 - 0.15).abs() < 1e-6);
+        assert_eq!(
+            fused[2].via,
+            vec![RetrieverKind::Bm25Postings, RetrieverKind::Sparse]
+        );
+        // Scaling one list's scores, as a statistic over other rows would,
+        // changes nothing: only its own range normalises it.
+        let scaled = fuse(
+            &[
+                (
+                    RetrieverKind::Bm25Postings,
+                    list(vec![
+                        cand(1, 100.0, &["a"]),
+                        cand(2, 60.0, &["b"]),
+                        cand(3, 20.0, &[]),
+                    ]),
+                ),
+                (
+                    RetrieverKind::Sparse,
+                    list(vec![cand(3, 4.0, &[]), cand(2, 1.0, &[])]),
+                ),
+            ],
+            Fusion::Cc {
+                weights: &CC_BM25_SPARSE,
+            },
+        );
+        let order = |f: &[Fused]| f.iter().map(|x| x.memory_id).collect::<Vec<_>>();
+        assert_eq!(order(&fused), order(&scaled));
+    }
+
+    #[test]
+    fn cc_gives_a_flat_list_full_weight_and_a_missing_candidate_nothing() {
+        let fused = fuse(
+            &[
+                (RetrieverKind::Bm25Postings, list(vec![cand(7, 3.0, &[])])),
+                (
+                    RetrieverKind::Sparse,
+                    list(vec![cand(8, 2.0, &[]), cand(9, 2.0, &[])]),
+                ),
+            ],
+            Fusion::Cc {
+                weights: &CC_BM25_SPARSE,
+            },
+        );
+        let got: Vec<(u128, f32)> = fused
+            .iter()
+            .map(|f| (f.memory_id.as_u128(), f.score))
+            .collect();
+        assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), vec![8, 9, 7]);
+        assert!((got[0].1 - 0.7).abs() < 1e-6 && (got[2].1 - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_sparse_pipeline_with_no_encoder_loaded_is_refused_by_name() {
+        let config = SearchConfig::new(
+            &[Pipeline::Bm25Postings, Pipeline::Bm25Sparse],
+            Pipeline::Bm25Postings,
+        )
+        .unwrap();
+        assert!(config.needs_sparse());
+        let err = config.require_sparse(false).unwrap_err();
+        assert_eq!(
+            err,
+            SearchConfigError::NoSparseEncoder(Pipeline::Bm25Sparse)
+        );
+        assert!(err.to_string().contains("search.sparse.model_dir"), "{err}");
+        assert_eq!(config.require_sparse(true), Ok(()));
+        let plain = SearchConfig::new(&[Pipeline::Bm25Postings], Pipeline::Bm25Postings).unwrap();
+        assert!(!plain.needs_sparse());
+        assert_eq!(plain.require_sparse(false), Ok(()));
+    }
+
+    #[test]
     fn every_pipeline_name_round_trips_and_an_unknown_name_is_none() {
         for p in Pipeline::ALL {
             assert_eq!(Pipeline::parse(p.as_str()), Some(p));
@@ -771,6 +1016,7 @@ mod tests {
             score,
             matched: vec!["a".to_owned()],
             via: vec![RetrieverKind::Bm25],
+            tokens: Vec::new(),
             rerank: None,
             rank_before: None,
         }

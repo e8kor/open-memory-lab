@@ -30,7 +30,10 @@ use crate::types::{
 };
 use oml_domain::web::Provider;
 
-use crate::search::{CandidateScope, PostingsHealth, RetrievalQuery, Retrieved, RetrieverKind};
+use crate::search::{
+    CandidateScope, PostingsHealth, RetrievalQuery, Retrieved, RetrieverKind, SparsePending,
+    SparsePosting, SparseTerm,
+};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -579,6 +582,57 @@ pub trait Retriever: Send + Sync {
     ) -> impl Future<Output = Result<Option<PostingsHealth>, StoreError>> + Send {
         let _ = tenant_id;
         async { Ok(None) }
+    }
+
+    /// The tenants whose sparse queue holds an entry due now, for the
+    /// encoder's pass (ADR-0052 d15); none from an adapter that keeps no
+    /// learned sparse postings.
+    fn sparse_tenants(&self) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    /// Up to `limit` of the tenant's versions due for the sparse encoder,
+    /// oldest first, each with its claim (ADR-0052 d15).
+    fn sparse_pending(
+        &self,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<SparsePending>, StoreError>> + Send {
+        let _ = (tenant_id, limit);
+        async { Ok(Vec::new()) }
+    }
+
+    /// Writes one version's kind 2 postings with the version's current
+    /// state and takes it off the queue, in one transaction; `false`, and
+    /// nothing written, when its entry is gone or was enqueued again since
+    /// it was read (ADR-0052 d15).
+    fn sparse_write(
+        &self,
+        tenant_id: Uuid,
+        pending: &SparsePending,
+        postings: &[SparsePosting],
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        let _ = (tenant_id, pending, postings);
+        async { Ok(false) }
+    }
+
+    /// Keeps a version on the queue after a failed encode, counting the
+    /// attempt, naming the reason and putting the next try off (ADR-0052
+    /// d15).
+    fn sparse_failed(
+        &self,
+        tenant_id: Uuid,
+        pending: &SparsePending,
+        reason: &str,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        let _ = (tenant_id, pending, reason);
+        async { Ok(()) }
+    }
+
+    /// The entries due now across every tenant, the encoder's backlog
+    /// gauge (ADR-0052 d15).
+    fn sparse_backlog(&self) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        async { Ok(0) }
     }
 }
 
@@ -1579,4 +1633,25 @@ pub trait Reranker: Send + Sync {
 
     /// Scores each passage against `query`.
     fn score(&self, query: String, passages: Vec<String>) -> RerankFuture<'_>;
+}
+
+/// What one document encode returns: per text, its postings.
+pub type SparseFuture<'a> =
+    core::pin::Pin<Box<dyn Future<Output = Result<Vec<Vec<SparsePosting>>, String>> + Send + 'a>>;
+
+/// The learned sparse encoder (ADR-0052 d14): a query is its tokenizer's
+/// ids weighted by the model's shipped idf table, with no model run and no
+/// corpus statistic; a document is the model's weights, written off the
+/// commit path by the lead's encoder task (d15). It stores nothing and
+/// decides no visibility. Held as `Arc<dyn SparseEncoder>`, as the
+/// reranker is: a deployment may run without one.
+pub trait SparseEncoder: Send + Sync {
+    /// The model's name, as `oml doctor` and `/readyz` spell it.
+    fn model(&self) -> &str;
+
+    /// The query's tokens, each once, with its idf weight and word piece.
+    fn encode_query(&self, query: &str) -> Vec<SparseTerm>;
+
+    /// Each text's postings, floored and capped (ADR-0052 d14).
+    fn encode_documents(&self, texts: Vec<String>) -> SparseFuture<'_>;
 }
