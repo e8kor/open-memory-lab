@@ -45,8 +45,9 @@ class RecallRequest:
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
-                omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the
-                deployment does not serve is request.validation with details.field /search and details.served.
+                omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
+                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does
+                not serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not

@@ -43,6 +43,12 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 "workarea_drift": h.workarea_drift,
                 "term_drift": h.term_drift,
                 "terms_checked": h.terms_checked,
+                // The learned sparse encoder's queue for this tenant
+                // (ADR-0052 d15).
+                "sparse_backlog": h.sparse_backlog,
+                "sparse_failing": h.sparse_failing,
+                "sparse_parked": h.sparse_parked,
+                "sparse_enabled": h.sparse_enabled,
             }),
         );
     }

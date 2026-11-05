@@ -753,7 +753,7 @@ ADR-0021). Response separates what is ranked from what is not:
   "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
   "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.032,
               "matched": {"terms": ["deploy", "window"], "of": 2, "via": ["bm25_postings"],
-                          "rerank": null, "rank_before": null}} ],
+                          "rerank": null, "rank_before": null, "tokens": [], "expanded": []}} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
   "recall_id": "0193…",
@@ -787,6 +787,15 @@ both `null`. Where the deployment sets a relevance floor and the rerank applied,
 names it and `search.below_floor` counts the first `k` candidates it withheld: an answer with no
 hit and `below_floor` above 0 means nothing scored above the floor, not that nothing matched a
 word. The relevance reads the query and the memory's text alone, never a review.
+
+*Since v0.5.7 ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13 to d17), served where a deployment enables `sparse` or `bm25-sparse`:*
+a hit a learned sparse list found carries `matched.tokens`, the model's word pieces that scored it,
+largest contribution first, each with its `weight` (the weight the model ships for the query's
+token times the memory's own) and `expanded`, true when the model added the piece and the memory's
+text does not hold it; `matched.expanded` lists those pieces, so a match by expansion never reads
+as a word the memory says. Both are `[]` for a hit no sparse list held. `bm25-sparse` fuses
+`bm25-postings` and `sparse` by a convex combination of their scores, each normalised over that
+list's own candidates for the query, so its `score` lies between 0 and 1.
 
 Steering rows precede hits and carry no score — the recall-ordering contract: the gate changes
 visibility, not ranking (R3/D12). Which steering applies, the total order of hits and the budget

@@ -1,5 +1,5 @@
 //! The recall telemetry's writer, labeller and partitions (ADR-0054 d2,
-//! d3, d5, d6, as accepted; migration 0022).
+//! d3, d5, d6, as accepted; migration 0023).
 //!
 //! A recall hands its event to a bounded queue and never waits: a task
 //! writes the queue in batches, at most [`BATCH`] items or every second,
@@ -899,7 +899,7 @@ fn tenant_partition(table: &str, tenant_id: Uuid) -> String {
 
 /// The DDL of `tenant_id`'s two telemetry partitions, fenced before each is
 /// attached, with no statistics on the columns that hold a reader's words or
-/// names, as 0022 builds every existing tenant's.
+/// names, as 0023 builds every existing tenant's.
 pub(crate) fn tenant_partitions_ddl(tenant_id: Uuid) -> Vec<String> {
     TABLES
         .iter()
@@ -951,7 +951,7 @@ pub(crate) async fn ensure_tenant(
 
 /// At the lead's start, after migrating: the telemetry partitions of every
 /// tenant whose memories partition exists and whose telemetry ones do not,
-/// as a lead built before 0022 leaves a tenant it creates; each tenant in an
+/// as a lead built before 0023 leaves a tenant it creates; each tenant in an
 /// owner transaction of its own, so one lock timeout stops only that one.
 /// Boot-time DDL alone, as ADR-0034 d4 allows; nothing runs on a schedule.
 /// Returns the tenants repaired.

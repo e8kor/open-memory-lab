@@ -20,7 +20,8 @@ use oml_fetch::PinnedFetcher;
 use oml_pg::{PgStore, RoleSplitReason};
 use oml_server_lead::otlp::Export;
 use oml_server_lead::{
-    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot, start_lead_with,
+    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot,
+    start_lead_with_models,
 };
 use oml_transport_http::traffic::Traffic;
 
@@ -176,7 +177,29 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
             "reranker loaded"
         );
     }
-    let start = start_lead_with(
+    // The learned sparse encoder loads before the lead serves, as the
+    // reranker does: a sparse pipeline without its pinned model stops the
+    // start, naming the file and the remedy (ADR-0052 d14, d16).
+    let sparse = {
+        let (search, settings) = (config.search.clone(), config.sparse.clone());
+        tokio::task::spawn_blocking(move || {
+            oml_server_lead::load_sparse(&search, &settings, oml_server_lead::fetch_model_file)
+        })
+        .await
+        .map_err(|e| format!("search.sparse: {e}"))?
+        .map_err(|e| format!("search.sparse: {e}"))?
+    };
+    if let Some(model) = &sparse {
+        tracing::info!(
+            event = "sparse_model_loaded",
+            model = model.model(),
+            model_dir = ?config.sparse.model_dir,
+            threads = config.sparse.threads,
+            "sparse encoder loaded"
+        );
+    }
+    let metrics = traffic.metrics().clone();
+    let start = start_lead_with_models(
         &store,
         signing_key,
         config.oauth_issuer.clone(),
@@ -186,8 +209,13 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         config.brief_max_tokens,
         Some(config.search.clone()),
         reranker,
+        sparse.clone(),
     )
     .await?;
+    // The encoder drains the queue every write fills, off the commit path
+    // (ADR-0052 d15).
+    let _encoder = sparse
+        .map(|encoder| oml_server_lead::spawn_sparse_encoder(store.clone(), encoder, metrics));
     match &start.fork_check {
         Ok(()) => tracing::info!(tenants = start.tenants.len(), "startup fork check passed"),
         // ADR-0002 d7: never sign on top of a fork. Writes are refused

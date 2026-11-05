@@ -3919,6 +3919,7 @@ fn search_doctor(
             }
         }
     }
+    lines.extend(sparse_doctor(body, &enabled, settings));
     if default == "keyword-all" {
         lines.push(
             "warn search: the default is keyword-all, every word exactly, kept for comparison; set search.default"
@@ -4009,6 +4010,62 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     if lines.is_empty() {
         lines.push(format!(
             "on: {written} recall events written since start, none dropped past 1%"
+        ));
+    }
+    lines
+}
+
+/// The learned sparse doctor lines (ADR-0052 d15, d16), where a served
+/// pipeline reads kind 2: the encoder `/readyz` names, or a warning that
+/// none is loaded; and, read by an admin key, the tenant's versions still
+/// waiting for the encoder and those whose encode failed.
+fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
+    let sparse: Vec<&str> = enabled
+        .iter()
+        .copied()
+        .filter(|p| matches!(*p, "sparse" | "bm25-sparse"))
+        .collect();
+    let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
+    let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
+    if sparse.is_empty() {
+        // A backlog where no sparse pipeline is served has nothing to drain
+        // it: another lead serving one is enqueueing, or this lead has not
+        // restarted since one stopped (ADR-0052 d15).
+        if n("sparse_backlog") > 0 {
+            return vec![format!(
+                "warn search_sparse_undrained: {} memory versions wait for a sparse encoder and this lead serves no sparse pipeline, so nothing drains them; serve sparse or bm25-sparse on every lead, or restart the leads without it, whose start turns the queue off and empties it (ADR-0052 d15)",
+                n("sparse_backlog")
+            )];
+        }
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let Some(model) = body["search"]["sparse"]["model"].as_str() else {
+        return vec![format!(
+            "warn search_sparse_model: search.enabled names {} and /readyz names no sparse encoder, so those recalls cannot be served; place the model's files in search.sparse.model_dir (scripts/fetch_sparse_model.sh) or set search.sparse.fetch = true, then restart (ADR-0052 d16)",
+            sparse.join(", ")
+        )];
+    };
+    match h {
+        Some(_) => lines.push(format!("sparse {model}, backlog {}", n("sparse_backlog"))),
+        None => lines.push(format!("sparse {model}")),
+    }
+    if n("sparse_backlog") > 0 {
+        lines.push(format!(
+            "warn search_sparse_backlog: {} memory versions wait for the sparse encoder, so sparse lists miss them until it reaches them; bm25-postings still finds them; it drains on its own, oldest first (oml_sparse_backlog on the metrics listener)",
+            n("sparse_backlog")
+        ));
+    }
+    if n("sparse_parked") > 0 {
+        lines.push(format!(
+            "warn search_sparse_parked: {} memory versions failed to encode too often and are parked, so sparse lists never hold them until they are written again; search_sparse_queue.last_error names each reason (oml_sparse_encoded_total{{outcome=\"parked\"}})",
+            n("sparse_parked")
+        ));
+    }
+    if n("sparse_failing") > 0 {
+        lines.push(format!(
+            "warn search_sparse_failed: {} memory versions failed to encode and are retried after at most an hour, each parked after five failures; search_sparse_queue.last_error names each reason, and the lead's log event sparse_encode_failed counts them",
+            n("sparse_failing")
         ));
     }
     lines

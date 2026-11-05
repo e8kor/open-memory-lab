@@ -19,7 +19,9 @@ use std::time::Instant;
 
 use oml_app::domain::MemoryKind;
 use oml_app::ports::Retriever as _;
-use oml_app::search::{CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, RetrieverKind};
+use oml_app::search::{
+    CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, RetrieverKind, SparseTerm,
+};
 use oml_pg::{PgStore, PruneLimits};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -43,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kind = match retriever.as_str() {
         "bm25" => RetrieverKind::Bm25,
         "bm25_postings" => RetrieverKind::Bm25Postings,
+        "sparse" => RetrieverKind::Sparse,
         other => return Err(format!("unknown retriever {other}").into()),
     };
     let limits = match rest {
@@ -65,6 +68,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nodes: uuids(&item["own_nodes"]),
             }),
         };
+        // A sparse workload carries each query's tokens, encoded by
+        // oml-rerank's sparse_encode example (ADR-0052 d14).
+        let sparse: Vec<SparseTerm> = item["sparse"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| {
+                        #[allow(clippy::cast_possible_truncation, reason = "ids and weights fit")]
+                        Some(SparseTerm {
+                            token_id: u32::try_from(t[0].as_u64()?).ok()?,
+                            weight: t[1].as_f64()? as f32,
+                            piece: t[2].as_str()?.to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let query = RetrievalQuery {
             query: item["query"].as_str().unwrap_or_default(),
             match_mode: if item["match"].as_str() == Some("all") {
@@ -75,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             k: item["k"]
                 .as_u64()
                 .map_or(10, |k| usize::try_from(k).unwrap_or(10)),
+            sparse: &sparse,
         };
         store.retrieve(tenant, kind, &scope, query).await?;
         let started = Instant::now();

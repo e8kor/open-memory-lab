@@ -6,6 +6,7 @@ class RecallMatchedViaItem(StrEnum):
     BM25_POSTINGS = "bm25_postings"
     KEYWORD_ALL = "keyword_all"
     KEYWORD_ANY = "keyword_any"
+    SPARSE = "sparse"
     TRIGRAM = "trigram"
 
     def __str__(self) -> str:

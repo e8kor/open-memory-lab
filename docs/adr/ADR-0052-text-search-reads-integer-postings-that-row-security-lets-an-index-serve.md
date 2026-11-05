@@ -9,7 +9,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** introduced in v0.5.6 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) in v0.5.7 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's
@@ -226,7 +226,7 @@ d11). Decided, not built.
   the trigger's lock on `memories` for its fill, so writes wait for it; the fill time at 100,000 and
   1,000,000 rows is measured before the release that carries 0021 (FR-100); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, FR-103). Kind
   2 is filled by the encoder after start, oldest first. `bm25-postings` enters the build disabled
-  (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; `sparse` and `bm25-sparse` are refused at start while the backlog is above zero.
+  (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; ~~`sparse` and `bm25-sparse` are refused at start while the backlog is above zero.~~ *Replaced by d15 (2026-11-05):* they are served while the backlog drains.
 
 - **d9 — Two retriever kinds behind the `Retriever` port, three named pipelines, and the default moved
   by evidence.** `RetrieverKind` gains `Bm25Postings` and, with the encoder, `Sparse`. `PgStore`
@@ -329,6 +329,186 @@ d11). Decided, not built.
   `concurrent_count_updates_without_the_chain_lock_never_deadlock`, `readyz_names_no_recall_counts`,
   `doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_when_all_is_well`.
 
+### Kind 2 built (v0.5.7), amended 2026-11-05
+
+The learned-sparse offline experiment (`eval/bench/results/offline/REPORT.md`, open question 6)
+answered where kind 2's model comes from, its floor and its cap, and recommended serving it fused
+with `bm25` by a convex combination rather than by reciprocal rank. The operator approved building
+it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for `bm25-sparse`
+(reciprocal rank, 60) and d8's start refusal while the backlog is above zero.
+
+- **d13 — Convex combination is a core fusion beside reciprocal rank** (amends ADR-0049 d3).
+  `search::Fusion` gains `Cc { weights }`, one weight per list in fusion order, summing to 1. Each
+  list is normalised by min-max over **its own candidates for this query**, which are the readable
+  candidates the core's scope let that retriever return, so no row outside the scope, and no other
+  query, sets a leg's minimum or maximum; a list whose candidates all score alike normalises each
+  to 1. A candidate's fused score is the sum over the lists that hold it of `weight × normalised
+  score`; a list that does not hold it adds nothing. Ties break by id, as every fusion's do, so
+  equal input gives equal output, and it reads scores alone, never a verdict (ADR-0001 d3). A
+  CC pipeline reads each list `CC_DEPTH` = 100 deep (or `k`, when larger), the depth the experiment
+  normalised over; reciprocal rank keeps 50. **The weights of `bm25-sparse` are 0.3 for
+  `bm25_postings` and 0.7 for `sparse`**, the experiment's: tuned on the synthetic set alone
+  (grid 0.05, nDCG@10), whose curve is flat between bm25 weights 0.15 and 0.35 (0.908 to 0.912),
+  and applied unchanged to SciFact, NFCorpus and LoCoMo, where it lands within 0.007 of each set's
+  own best weight (0.730 against 0.737, 0.353 against 0.353, 0.552 against 0.556). CC beat
+  reciprocal rank in 30 of 32 fused cells there. Laws: `cc_normalises_each_list_over_its_own_candidates`,
+  `cc_gives_a_flat_list_full_weight_and_a_missing_candidate_nothing`, in `oml_app::search`.
+  Rejected: reciprocal rank for this pair (0.897 / 0.727 / 0.346 / 0.535 against CC's 0.912 /
+  0.730 / 0.353 / 0.552 nDCG@10); per-tenant weights (a weight tuned on a tenant's own rows would
+  need its own labels, which no tenant has); z-score normalisation (it needs a list's variance,
+  undefined for one candidate, and the experiment measured min-max).
+
+- **d14 — The encoder: `doc-v3-distill` in candle, pinned by digest, Apache-2.0.** The model is
+  `opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill` at revision
+  `babf71f3c48695e2e53a978208e8aba48335e3c0`, licensed Apache-2.0 (its model card, `license:
+  apache-2.0`), a 67M DistilBERT masked-language model; `oml-rerank` pins the SHA-256 of its
+  `config.json`, `tokenizer.json`, `model.safetensors` and `idf.json` and reuses the reranker's
+  plumbing (ADR-0053 d3): an absolute `search.sparse.model_dir` (default
+  `<state>/models/opensearch-neural-sparse-encoding-doc-v3-distill`), every digest checked before a
+  byte is parsed, `search.sparse.fetch` (default `false`) fetching the missing files from the pinned
+  revision through `.partial` names, and a pool of its own, `search.sparse.threads` (default 2).
+  The crate keeps candle behind its `model` feature, so the CLI still compiles no model crate
+  (ADR-0053 d2). **A document** is the card's method, as the experiment ran it: the tokenizer's ids
+  truncated to 512, the masked-language logits, the maximum over the tokens, `ln(1 + ln(1 +
+  relu(x)))`, the special tokens zeroed; then the weights below `SPARSE_FLOOR` 0.1 dropped and at
+  most `SPARSE_MAX_TOKENS` 128 kept, the largest, about 100 postings per memory for at most 0.003
+  of fused nDCG@10 (the experiment's prune table). The network is written out in the adapter
+  rather than taken from `candle-transformers`' DistilBERT, whose activation is the tanh
+  approximation of GELU where the checkpoint was trained with the exact one. **A query** runs no
+  model: the tokenizer's ids, special tokens dropped, each once, weighted by `idf.json`
+  (0.04 ms in the experiment). **Parity**: `eval/bench/offline/sparse_fixture.py` encodes a fixed
+  sample (twelve corpus memories, an empty claim, one past 512 tokens, one Polish line, twelve
+  queries) with the experiment's PyTorch reference into
+  `crates/adapters/oml-rerank/tests/fixtures/doc-v3-distill.json`; the adapter's test
+  `the_sparse_encoder_matches_the_python_reference` holds the token ids identical and every weight
+  within 1e-4, and the query weights equal. English only: the experiment's reach table stands, and
+  kind 2 stays a pipeline a tenant chooses.
+
+- **d15 — Kind 2 is written by an outbox the lead drains, off the commit path.** Migration 0022
+  creates `search_sparse_queue (tenant_id, memory_id, enqueued_at, attempts, next_at,
+  last_error)`, fenced like the count tables, and replaces 0021's trigger function so that a
+  version that gets postings is enqueued in its own write's transaction, and a version whose
+  postings leave (deleted, erased, no longer a hit kind) leaves the queue; a version whose words
+  change is enqueued again with a new `enqueued_at`. 0022 enqueues every existing version that has
+  postings, and replaces 0021's refill so that it rebuilds kind 1 alone and brings kind 2's states
+  to their versions' (kind 2 is the encoder's, not a function of the stored lexemes). A lead that
+  serves a sparse pipeline runs one encoder task: each pass enumerates the tenants, takes up to 16
+  due entries per tenant, oldest first, encodes their claims on the encoder's pool, and writes each
+  version's postings in a transaction of its own that deletes the entry only if its `enqueued_at`
+  is the one read (so a re-enqueue is never lost), reads the version's state `FOR SHARE` (so a
+  flip waits for it or precedes it), and writes kind 2 rows with that state, `doc_len` 1 where the
+  version's own tokens hold the token and 0 where the encoder added it (d17). A failure keeps the
+  entry, counts the attempt, names the reason in `last_error` and retries after `2^attempts`
+  seconds, at most an hour. Counters `oml_sparse_encoded_total{outcome}` (`written`, `failed`, `parked`) and
+  the gauge `oml_sparse_backlog` (entries waiting) on the metrics listener; the tenant's backlog and
+  failing entries in the admin's postings health, which doctor reads: `search_sparse_backlog`
+  warns while entries wait, `search_sparse_failed` when any failed, naming `last_error`'s place.
+  A version not yet encoded is absent from the `sparse` list only; `bm25_postings` still finds it.
+  So the pipelines are served while the backlog drains, rather than refused at start as d8 first
+  read: a refusal would stop the lead whose encoder empties the queue. A deployment that serves no
+  sparse pipeline runs no encoder and reads no model file.
+
+  *Amended on review, 2026-11-05 (HIGH-1, HIGH-2, MEDIUM-1, MEDIUM-3, L1).* **Nothing is queued
+  where no sparse pipeline is served.** `search_sparse_state (tenant_id, enabled, backfill_after,
+  backfilled_at)` records per tenant whether the queue is on and how far its backfill went; the
+  trigger and the refill enqueue only for a tenant whose state is on, and 0022 fills nothing. A lead
+  serving no sparse pipeline turns every state off and empties the queue at start
+  (`sparse_queue_off`); one serving a sparse pipeline turns each tenant's on in its encoder's first
+  pass and backfills the versions written before, `SPARSE_BACKFILL_STEP` (1,000) versions per
+  pass, resuming after the last id read, until a step reads fewer than that and `backfilled_at` is
+  set. **One bad claim fails alone**: the encoder answers each text's postings or its own failure, a
+  panic included; a call that fails whole is split and each text tried alone; an entry failing
+  `SPARSE_MAX_ATTEMPTS` (5) times is **parked** (`parked_at`), a dead letter kept with its reason,
+  counted as `oml_sparse_encoded_total{outcome="parked"}` and by doctor's `search_sparse_parked`,
+  and never taken again until its version is written again. **Lock order**: the drain holds the
+  version `FOR SHARE` first, then takes its queue entry, the order a version's update or delete and
+  its trigger take them, so the drain and an erase never deadlock (`SPARSE_WRITE_ORDER`). **Idle
+  cost**: one statement per pass finds every tenant with work across tenants (under the
+  `oml.startup_check` marker 0003 introduced, with a SELECT-only policy on the queue and the state:
+  ids, times and reasons, no claim), an idle pass doubles its wait up to 30 s, and the gauge is
+  read every 30 s; the drain reads oldest first by `search_sparse_queue_order (tenant_id,
+  enqueued_at, memory_id) WHERE parked_at IS NULL`. **Several leads**: a pass takes its entries
+  `FOR UPDATE SKIP LOCKED` and leases them for 5 minutes, so another lead's pass skips them; the
+  `enqueued_at` guard keeps the result right either way. Doctor's `search_sparse_undrained` warns
+  when a tenant's queue holds entries and this lead serves no sparse pipeline.
+
+- **d16 — The pipelines, the laws, and what a missing model does.** `RetrieverKind::Sparse`
+  (`sparse`) reads the query's token ids' kind 2 postings by the served index, as `bm25_postings`
+  reads kind 1's, scope and state alike, and the own held rows' by the `(memory_id)` index, and
+  scores `sum(idf × weight)`; it keeps no count and reads no corpus statistic. `sparse` serves it
+  alone; `bm25-sparse` fuses `bm25_postings` (0.3) and `sparse` (0.7) by d13. Both enter disabled.
+  Under `match: all` a sparse candidate must hold every query token. The in-memory store serves
+  neither, so a composition over it that enables one is refused at start. Laws, run by
+  `pg_store.rs` with a deterministic test encoder: d12's scope and no-leak laws over `sparse`;
+  `sparse_scores_each_row_by_its_own_postings_alone`; `a_sparse_list_never_holds_a_version_its_scope_excludes`;
+  `a_version_is_enqueued_with_its_write_and_leaves_the_queue_with_its_postings`;
+  `an_encoded_version_follows_promotion_supersession_and_retirement` (demotion is not built);
+  `a_refill_keeps_the_encoders_postings`; and, added on review,
+  `with_sparse_never_served_writes_and_refills_enqueue_nothing`,
+  `a_queue_turned_off_stays_empty_and_one_turned_on_backfills_in_resumable_steps`,
+  `a_claim_the_model_fails_on_fails_alone_and_its_batch_is_written`,
+  `a_failed_encode_stays_queued_and_a_stale_read_writes_nothing` (parked at the ceiling),
+  `a_version_enqueued_again_after_its_read_is_not_written_with_the_older_claim`,
+  `a_removed_queued_version_leaves_the_queue`, `the_drains_write_and_an_erase_never_deadlock` and
+  `two_tenants_sparse_queues_never_meet`. A sparse list's `search.terms` and `matched.terms` are
+  the query's words as `bm25` reads them, never word pieces, so `did_you_mean` never offers a
+  spelling for a piece. **A missing model fails closed**: a lead whose
+  `search.enabled` names `sparse` or `bm25-sparse` and whose model files are absent or differ
+  refuses to start, naming the file and the remedy, as ADR-0053 d8 does for the reranker; doctor
+  prints `search: sparse <model>, backlog <n>` and warns `search_sparse_model` when a served sparse
+  pipeline has no loaded model on `/readyz`. A silent fall back to `bm25-postings` was rejected:
+  an answer would rank by another pipeline than the one it names, which ADR-0049 d4 refuses for an
+  unknown name for the same reason. A lead whose settings name no sparse pipeline reads no model
+  file and serves as before.
+
+- **d17 — A sparse hit names its tokens.** Each hit's `matched` gains `tokens`: the query word
+  pieces whose postings scored it, each with its contribution (`idf × weight`) and `expanded`, true
+  when the encoder added the piece and the memory's own text does not hold it, largest first;
+  `[]` for a hit no sparse list held. `matched.expanded` lists the pieces matched only by
+  expansion. `matched.terms` of a sparse list holds the pieces the text holds. This replaces d11's
+  first reading ("word pieces are not shown"): the experiment found a hit's expansions are most of
+  its tokens, and naming them is what keeps a match by expansion from reading as a word the memory
+  says.
+
+- **Measured on 2026-11-05, and the default stays `bm25-postings`.** Served through `oml_read`
+  on this branch's release build, PostgreSQL 18.6, 8 vCPU (`eval/recall/results/served_*.json`,
+  `eval/bench/results/*/sparse.json` and `bm25-sparse.json`, `bench/scale/results/sparse-*.json`):
+
+    | set (queries) | `bm25-postings` nDCG@10 | `sparse` | `bm25-sparse` | offline CC |
+    |---|---:|---:|---:|---:|
+    | recall eval (121), S@1 / S@5 | 0.826 / 0.934 | 0.818 / 0.967 | **0.860 / 0.983** | 0.868 / 0.984 |
+    | synthetic, bench scorer | 0.874 | 0.891 | **0.909** | 0.912 |
+    | SciFact (300) | 0.685 | 0.710 | **0.730** | 0.730 |
+    | NFCorpus (323) | 0.321 | 0.343 | **0.349** | 0.353 |
+    | LoCoMo, categories 1–4 (1,535) | 0.503 | 0.530 | **0.550** | 0.552 |
+
+    The served pipeline lands within 0.004 of the experiment's floor-0.1, 128-token row on every
+    set; LoCoMo by category (nDCG@10, `bm25-postings` → `bm25-sparse`): multi-hop 0.289 → 0.341,
+    temporal 0.594 → 0.648, open-domain 0.233 → 0.312, single-hop 0.571 → 0.609, adversarial
+    0.562 → 0.462, the loss the experiment found. CI's recall-eval job reproduced 0.860 / 0.983.
+    So `bm25-sparse` passes ADR-0049's gate and ranks above the default on every external set.
+    **It misses d9's latency bar.** At 100,000 memories (60,341 readable at universe scope, about
+    104 kind 2 postings per version, 9.7 million in all; load average 1.7 to 2.1), p95 by scope
+    of one retrieve, warm: `bm25_postings` at k 10 29.2 ms universe, 20.4 ms over all scopes;
+    `sparse` at k 10 164 ms universe, 78 ms all; the two lists `bm25-sparse` reads, each 100 deep,
+    272 ms universe, 114 ms all. At 10,000 memories (6,104 readable at universe; load average 11,
+    so an upper bound) the two lists took 28.3 ms universe p95. The sparse leg reads every
+    posting of each query token among the readable rows, no token is pruned (kind 2 keeps no
+    counts to prune by), and the encoder's expansions make a common token's postings many. The
+    100,000 point reuses the 10,000 point's encodings (each version takes one of 9,189 encoded
+    texts by its text's digest: the shape and the per-token shares are the encoded sample's; the
+    encoder at about 13 claims a second could not encode 90,000 more in this lane's time), so it
+    measures the read's cost, not the ranking. `bm25-sparse` therefore stays opt-in, and with the
+    default unchanged a lead with default settings reads no model file (law
+    `a_sparse_pipeline_without_its_model_stops_the_start_and_the_default_needs_none`). What
+    moves it: a bound on the kind 2 postings a query reads (query tokens by the shipped idf, or
+    impact-ordered postings), measured for its nDCG cost, FR-118. **Encode cost** (FR-101): 12.7
+    claims a second at 2 threads and 17.4 at 8 on 200 recall-eval claims (121 characters on
+    average; load average 1.4 to 2.5), one claim at a time; served, the lead's encoder at 4
+    threads drained LoCoMo's 5,882 turns 544 s after their load ended and SciFact's 5,183 abstracts
+    1,973 s after theirs, while other lanes held the load average at 9 to 14. Postings space: the
+    kind 2 heap 1,276 MiB and the served index 985 MiB at 100,000 memories.
+
 ## Consequences
 
 - **Pages changed when this record is accepted**: [retrieval](../architecture/retrieval.md) (the
@@ -341,7 +521,8 @@ d11). Decided, not built.
   extrapolated: latency by scope, the prune constants, the `scan` share, space per kind, the fill
   time), FR-101 (the encoder's CPU per write and the kind 2 backfill rate), FR-102 (the count rows
   under concurrent promotions in one workarea), FR-103 (a batched, resumable fill before any tenant
-  reaches 1,000,000 rows; added 2026-11-05). Numbered after FR-99, which `feat/ontology-metadata`
+  reaches 1,000,000 rows; added 2026-11-05), FR-118 (a bound on the kind 2 postings a query reads,
+  so `bm25-sparse` meets d9's latency bar; added 2026-11-05 with d13–d17). Numbered after FR-99, which `feat/ontology-metadata`
   holds.
 - **Costs**: a second copy of every version's words, larger than the table it indexes (d10); a
   trigger and counts on every write and state change (d5, d8); a migration whose fill holds writes

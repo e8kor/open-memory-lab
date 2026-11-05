@@ -82,10 +82,10 @@ this section governs.
   reranks and the failed sign-in exchanges are metrics, never in a probe that answers anyone.
   The dashboard is committed as `docs/operations/dashboards/oml-quality.json`, beside the
   observability page; the operator imports it, and the chart's provisioning is *not built*.
-- **d2.** The tables are `recall_events` and `recall_outcomes`, migration 0022, list-partitioned by
+- **d2.** The tables are `recall_events` and `recall_outcomes`, migration 0023, list-partitioned by
   tenant alone (question 2); every partition has `ENABLE` and `FORCE ROW LEVEL SECURITY` and the
   `tenant_isolation` policy, and is created with its tenant by the owner path of ADR-0034 d11,
-  or, for a tenant a lead before 0022 created, at the lead's next start; no owner connection
+  or, for a tenant a lead before 0023 created, at the lead's next start; no owner connection
   opens on a schedule, so ADR-0034 d4 holds as written. `usage_applied` and `interleaved` belong
   to the ranking half and are not created. `pipeline` and `access` are text checked against
   their closed spellings, not codes, so a pipeline another branch adds needs no code table. A
@@ -252,7 +252,7 @@ Decided, not built.
     rejection rate in Grafana cannot have it, by design; the admin page and the CLI have it.
 
 - **d2 — `recall_events` records each recall, partitioned by tenant and by day, under row
-  security; it is telemetry, not a claim, and it is kept 30 days.** Migration 0022 creates:
+  security; it is telemetry, not a claim, and it is kept 30 days.** Migration 0023 creates:
 
     | Column | Type | Holds |
     |---|---|---|
@@ -478,7 +478,7 @@ Decided, not built.
 
     | Pipeline | Legs | Fusion | Enters |
     |---|---|---|---|
-    | `bm25-postings-usage` | `bm25_postings`, then `usage` over its candidates | convex combination, text `1 − w`, usage `w` (starting `w` 0.1) | with 0022, disabled |
+    | `bm25-postings-usage` | `bm25_postings`, then `usage` over its candidates | convex combination, text `1 − w`, usage `w` (starting `w` 0.1) | with 0023, disabled |
 
     A request, a tenant or a deployment chooses it by name (ADR-0049 d4). A hit gains
     `matched.usage: {u, contribution, credits, examinations, prior: bool}`, where `contribution` is
@@ -581,7 +581,7 @@ Decided, not built.
 - **Pages changed when this record is accepted**: [retrieval](../architecture/retrieval.md)
   (the usage leg, convex fusion, and how a recall event differs from the read log),
   [observability](../operations/observability.md) (the metric families of d1 and the dashboard),
-  the PostgreSQL schema page (four tables, their partitions and grants, migration 0022), the
+  the PostgreSQL schema page (four tables, their partitions and grants, migration 0023), the
   [configuration](../operations/configuration.md) page (`telemetry.query_text`,
   `telemetry.experiments`, the 30-day retention, the rotation timer), the
   [HTTP API](../api/http-api.md), [MCP plugin](../api/mcp-plugin.md), `mcp-tools.json` and
@@ -602,7 +602,7 @@ Decided, not built.
 - **What stays**: the read log's design and its sentence; `bm25-postings` as the default;
   ADR-0042's labels and 30 days; the three tools.
 - **Numbering**: ADR-0050 to ADR-0053 are taken on `main` or branches, so this record is ADR-0054;
-  its migration is 0022, the next after ADR-0052's 0021; its roadmap rows follow FR-103.
+  its migration is 0023, the next after ADR-0052's 0021 and 0022; its roadmap rows follow FR-103.
 
 ### Cost at 1,000,000 memories and 100 recalls a second
 

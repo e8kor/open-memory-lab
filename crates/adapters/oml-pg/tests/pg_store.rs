@@ -265,6 +265,18 @@ async fn retriever_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The learned sparse laws on PostgreSQL, as the serving role under row
+/// security (ADR-0052 d15, d16, d17).
+#[tokio::test]
+async fn sparse_contract_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::run_sparse_suite(|| fresh_search_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
 /// `keyword-all` returns exactly what the v0.5.0 recall returned: the rows
 /// and the order of its two statements, merged and cut to `k` as the core
 /// merged them, for every query of a fixture (ADR-0049 d7).
@@ -371,6 +383,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         query,
                         match_mode: MatchMode::Any,
                         k,
+                        sparse: &[],
                     },
                 )
                 .await
@@ -2526,7 +2539,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
     let mut rows = Vec::new();
     for table in POC_TABLES.iter().copied().chain(["journal"]) {
         let row = match (renamed, table) {
-            // 0020 adds search_default and 0022 telemetry_query_text_since,
+            // 0020 adds search_default and 0023 telemetry_query_text_since,
             // null for every tenant they find
             // (ADR-0049 d4).
             (true, "tenants") => {
@@ -5857,7 +5870,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7214,6 +7227,7 @@ async fn bm25_list(
                 query,
                 match_mode: MatchMode::Any,
                 k: 50,
+                sparse: &[],
             },
         )
         .await
@@ -7294,7 +7308,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7955,7 +7969,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7992,6 +8006,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         query,
                         match_mode: MatchMode::Any,
                         k: 50,
+                        sparse: &[],
                     },
                 )
                 .await
@@ -8420,5 +8435,403 @@ async fn concurrent_count_updates_without_the_chain_lock_never_deadlock() {
             "no deadlock and no count below zero: {done:?}"
         );
     }
+    drop_dbs(&created).await;
+}
+
+/// Rows of `search_sparse_queue` for `tenant`, and kind 2 postings per
+/// version, as the owner sees them (ADR-0052 d15).
+async fn sparse_state_of(store: &PgStore, tenant: Uuid) -> (i64, BTreeMap<Uuid, i64>) {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM search_sparse_queue WHERE tenant_id = $1")
+            .bind(tenant)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("queue");
+    let kind2: Vec<(Uuid, i64)> = sqlx::query_as(
+        "SELECT memory_id, count(*) FROM search_postings WHERE tenant_id = $1 AND kind = 2 \
+          GROUP BY memory_id",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("kind 2");
+    tx.commit().await.expect("commit");
+    (queued, kind2.into_iter().collect())
+}
+
+/// With no sparse pipeline ever served, nothing is queued for the encoder:
+/// not by a write, a promotion, a supersession, nor by the owner's refill,
+/// so a deployment on the default pipelines keeps no queue (ADR-0052 d15,
+/// amended on review).
+#[tokio::test]
+async fn with_sparse_never_served_writes_and_refills_enqueue_nothing() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(581);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    lifecycle_rows(&mut rig, &store).await;
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        0,
+        "writes enqueue nothing"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "SELECT oml_search_postings_refill($1) WHERE $2::uuid IS NOT NULL",
+        Uuid::nil(),
+    )
+    .await;
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        0,
+        "the refill enqueues nothing"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The owner's refill rebuilds kind 1 and keeps the encoder's kind 2
+/// postings, with their versions' states (ADR-0052 d15, d16).
+#[tokio::test]
+async fn a_refill_keeps_the_encoders_postings() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(582);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    lifecycle_rows(&mut rig, &store).await;
+    oml_port_contracts::encode_sparse_backlog(&store).await;
+    let (_, before) = sparse_state_of(&store, tenant).await;
+    assert!(!before.is_empty(), "the encoder wrote kind 2");
+    let states_before = postings_of(&store, tenant).await.0;
+    as_owner(
+        &store,
+        tenant,
+        "SELECT oml_search_postings_refill($1) WHERE $2::uuid IS NOT NULL",
+        Uuid::nil(),
+    )
+    .await;
+    let (queued, after) = sparse_state_of(&store, tenant).await;
+    assert_eq!(after, before, "every version keeps its kind 2 postings");
+    assert_eq!(queued, 0, "nothing encoded is queued again");
+    assert_eq!(
+        postings_of(&store, tenant).await.0,
+        states_before,
+        "one state per version"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Enqueues `id` for the encoder as the owner, as the trigger does where a
+/// sparse pipeline is served.
+async fn enqueue_as_owner(store: &PgStore, tenant: Uuid, id: Uuid) {
+    as_owner(
+        store,
+        tenant,
+        "INSERT INTO search_sparse_queue (tenant_id, memory_id) VALUES ($1, $2) \
+         ON CONFLICT DO NOTHING",
+        id,
+    )
+    .await;
+}
+
+/// A queued version that is erased or deleted leaves the queue with its
+/// postings, so the encoder never writes for it (ADR-0052 d7, d15).
+#[tokio::test]
+async fn a_removed_queued_version_leaves_the_queue() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(583);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let (replaced, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    for id in [served, replaced, Uuid::from_u128(0xB07)] {
+        enqueue_as_owner(&store, tenant, id).await;
+    }
+    assert_eq!(sparse_state_of(&store, tenant).await.0, 3);
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased', is_tip = false WHERE tenant_id = $1 AND id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        replaced,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM memories WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        0,
+        "erased and deleted versions leave the queue"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The drain's write and a version's removal never deadlock: the drain
+/// takes its locks in the trigger's order, the version first, then the
+/// queue entry. Interleaved step by step: the drain's first step, then an
+/// erase-shaped update whose trigger takes the queue entry, then the
+/// drain's second step; both commit (ADR-0052 d15, reviewed).
+#[tokio::test]
+async fn the_drains_write_and_an_erase_never_deadlock() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(584);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let (_, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    enqueue_as_owner(&store, tenant, served).await;
+    let mut drain = store.pool().begin().await.expect("drain");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *drain)
+        .await
+        .expect("tenant");
+    let enqueued: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM enqueued_at) * 1000000)::int8 FROM search_sparse_queue \
+          WHERE tenant_id = $1 AND memory_id = $2",
+    )
+    .bind(tenant)
+    .bind(served)
+    .fetch_one(&mut *drain)
+    .await
+    .expect("entry");
+    let step = |s: oml_pg::SparseWriteStep| match s {
+        oml_pg::SparseWriteStep::TakeEntry => oml_pg::SPARSE_TAKE_ENTRY,
+        oml_pg::SparseWriteStep::HoldVersion => oml_pg::SPARSE_HOLD_VERSION,
+    };
+    let [first, second] = oml_pg::SPARSE_WRITE_ORDER;
+    let first_sql = step(first);
+    let q = sqlx::query(first_sql).bind(tenant).bind(served);
+    let q = if first == oml_pg::SparseWriteStep::TakeEntry {
+        q.bind(enqueued)
+    } else {
+        q
+    };
+    q.execute(&mut *drain)
+        .await
+        .expect("the drain's first step");
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("db");
+    let erase = tokio::spawn(async move {
+        let mut owner = PgConnection::connect(&owner_url(&db)).await.expect("owner");
+        let mut tx = owner.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        sqlx::query(
+            "UPDATE memories SET status = 'erased', is_tip = false \
+              WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant)
+        .bind(served)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let q = sqlx::query(step(second)).bind(tenant).bind(served);
+    let q = if second == oml_pg::SparseWriteStep::TakeEntry {
+        q.bind(enqueued)
+    } else {
+        q
+    };
+    let drained = q.execute(&mut *drain).await;
+    let drained = match drained {
+        Ok(_) => drain.commit().await.map(|_| ()),
+        Err(e) => Err(e),
+    };
+    let erased = erase.await.expect("join");
+    assert!(drained.is_ok(), "the drain's write: {drained:?}");
+    assert!(erased.is_ok(), "the erase: {erased:?}");
+    assert_eq!(sparse_state_of(&store, tenant).await.0, 0);
+    drop_dbs(&created).await;
+}
+
+/// Turned off, as a lead serving no sparse pipeline turns it at start, the
+/// queue empties and stays empty through writes and refills; turned on
+/// again by the encoder's pass, a bounded backfill resumes step by step
+/// until every version written meanwhile is queued, and the pass encodes
+/// them (ADR-0052 d15, HIGH-1 on review).
+#[tokio::test]
+async fn a_queue_turned_off_stays_empty_and_one_turned_on_backfills_in_resumable_steps() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(585);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    oml_port_contracts::encode_sparse_backlog(&store).await;
+    oml_port_contracts::hold(
+        &mut rig,
+        &store,
+        oml_port_contracts::held_memory(tenant, wa, Uuid::from_u128(0xC01), "rita", key, "kowari"),
+    )
+    .await
+    .expect("hold");
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        1,
+        "queued while on"
+    );
+    assert_eq!(store.sparse_off().await.expect("off"), 1);
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        0,
+        "off empties the queue"
+    );
+    for i in 0..5_u128 {
+        oml_port_contracts::hold(
+            &mut rig,
+            &store,
+            oml_port_contracts::held_memory(
+                tenant,
+                wa,
+                Uuid::from_u128(0xC10 + i),
+                "rita",
+                key,
+                "kowari burrow",
+            ),
+        )
+        .await
+        .expect("hold");
+    }
+    as_owner(
+        &store,
+        tenant,
+        "SELECT oml_search_postings_refill($1) WHERE $2::uuid IS NOT NULL",
+        Uuid::nil(),
+    )
+    .await;
+    assert_eq!(
+        sparse_state_of(&store, tenant).await.0,
+        0,
+        "nothing queued while off"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("postings");
+    assert!(!health.sparse_enabled, "{health:?}");
+    // On again: two versions a step, resumed where the last stopped.
+    let mut steps = 0;
+    let mut queued = 0;
+    loop {
+        let (n, done) = store.sparse_backfill(tenant, 2).await.expect("step");
+        queued += n;
+        steps += 1;
+        if done {
+            break;
+        }
+        assert!(steps < 20, "the backfill ends");
+    }
+    assert!(steps >= 3, "bounded: {steps} steps");
+    assert_eq!(queued, 6, "every version without kind 2 is queued once");
+    assert_eq!(oml_port_contracts::encode_sparse_backlog(&store).await, 6);
+    assert_eq!(sparse_state_of(&store, tenant).await.1.len(), 6);
+    drop_dbs(&created).await;
+}
+
+/// A version enqueued again after the drain read it is not written with
+/// the claim read before: the guarded take finds a newer entry, writes
+/// nothing, and the next read carries the new claim (ADR-0052 d15; L3 on
+/// review).
+#[tokio::test]
+async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_claim() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(586);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    oml_port_contracts::encode_sparse_backlog(&store).await;
+    let id = Uuid::from_u128(0xC21);
+    oml_port_contracts::hold(
+        &mut rig,
+        &store,
+        oml_port_contracts::held_memory(
+            tenant,
+            Uuid::from_u128(0xE2),
+            id,
+            "rita",
+            Uuid::from_u128(0xE5),
+            "mulgara notes",
+        ),
+    )
+    .await
+    .expect("hold");
+    let read = store.sparse_pending(tenant, 10).await.expect("pending");
+    assert_eq!(read.len(), 1);
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET claim = claim || ' revised' WHERE tenant_id = $1 AND id = $2",
+        id,
+    )
+    .await;
+    assert!(
+        !store
+            .sparse_write(
+                tenant,
+                &read[0],
+                &oml_app::doubles::FakeSparseEncoder::document(&read[0].claim)
+            )
+            .await
+            .expect("write"),
+        "the older read writes nothing"
+    );
+    assert!(sparse_state_of(&store, tenant).await.1.is_empty());
+    assert_eq!(oml_port_contracts::encode_sparse_backlog(&store).await, 1);
+    let list = store.sparse_pending(tenant, 10).await.expect("pending");
+    assert!(list.is_empty(), "written with the new claim and dequeued");
     drop_dbs(&created).await;
 }

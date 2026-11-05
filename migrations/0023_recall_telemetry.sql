@@ -1,4 +1,4 @@
--- 0022_recall_telemetry — each recall recorded for 30 days under row
+-- 0023_recall_telemetry — each recall recorded for 30 days under row
 -- security, the labels of what its reader did next, and the tenant's opt-in
 -- to keeping the query text (ADR-0054 d2, d3, d4, d5, as accepted).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file

@@ -9,7 +9,7 @@ answers: where reads are served from and in what order; how recall ranks, throug
 
 **Status:** design draft for review · decided, not built
 
-**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines since v0.5.5, `bm25-postings` and `bm25-rerank` since v0.5.6 ([releases](../product/releases.md)).
+**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines since v0.5.5, `bm25-postings` and `bm25-rerank` since v0.5.6, `sparse` and `bm25-sparse` since v0.5.7 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the read path (D12): where reads
 are served from, how the serving indexes are laid out, what order results come
@@ -206,7 +206,7 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
               │
               └── pipeline (search, else tenant default, else search.default)
                      ├── Retriever.retrieve(kind, scope, query)   one ranked list per kind
-                     ├── fuse: single | reciprocal rank (60)      pure, in the core
+                     ├── fuse: single | reciprocal rank (60) | convex combination   pure, in the core
                      ├── match all → every word; none → any word, fallback: any_term
                      └── rerank (bm25-rerank): hydrate the head, admit it (R3), Reranker.score,
                          reorder; busy, late or failed → first stage's order, rerank: skipped
@@ -221,6 +221,8 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
 | `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
 | `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
 | `bm25-postings` | *Since v0.5.6 ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)).* `bm25`'s score, read from integer postings an index serves under row security: the readable rows' counts, kept per workarea, decide which words are frequent; those are left out of the postings read and still scored for every row the other words reach; a query of only frequent words is answered by `bm25`'s scan | one list |
+| `sparse` (since v0.5.7, opt-in, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d14, d16) | learned sparse weights of `opensearch-neural-sparse-encoding-doc-v3-distill` (Apache-2.0), written by a local model after each version commits, read from postings an index serves under row security: a row scores the sum over the query's tokens of the weight the model ships for the token times the row's own weight. No corpus statistic is read and no model runs for a query. It matches related words a memory does not say (the model's expansions), English only | one list |
+| `bm25-sparse` (since v0.5.7, opt-in, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13, d16) | `bm25-postings` and `sparse`, each read 100 deep | convex combination: each list's scores min-max normalised over its own candidates for the query, then 0.3 × `bm25-postings` + 0.7 × `sparse` |
 | `bm25-rerank` (since v0.5.6, opt-in, [ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)) | `bm25`'s list, read `search.rerank.depth` deep (10), its head reordered by a local cross-encoder (`ms-marco-MiniLM-L6-v2` on the CPU, pure Rust) over the text of rows the core has admitted; the relevance is between 0 and 1 and reads the query and the text alone | one list, then the reranker |
 
 **Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
@@ -237,8 +239,21 @@ than its `k`), spellings for the words no hit holds, under every pipeline but `k
 come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
 same transaction that promotes, replaces or retires a version; a recall reads the readable
 nodes' vocabulary and never a row, so no spelling names a word only an unreadable row says. Each hit carries `matched`: the
-words it holds, `of` how many the query had, and `via` the retrievers that found it. Scores
-compare within one answer only.
+words it holds, `of` how many the query had, and `via` the retrievers that found it; *since
+v0.5.7*, `tokens`, the learned sparse word pieces that scored it with each contribution and
+whether the model added it (`expanded`), and `expanded`, the pieces it matched only through the
+model's expansion, so a match by expansion never reads as a word the memory says (ADR-0052 d17).
+Scores compare within one answer only.
+
+**Learned sparse postings** *(since v0.5.7, ADR-0052 d14, d15)*. A version that gets postings is
+queued for the encoder in its own write's transaction; the lead's encoder task takes the queue
+oldest first, runs the model on the CPU in its own pool, and writes the version's kind 2 postings
+(its 128 largest weights at or above 0.1) with the version's current state, so promotion,
+supersession, demotion and retirement move them as they move kind 1's. A version not yet encoded
+is absent from `sparse` lists and still found by `bm25-postings`; `oml doctor` names the backlog
+and any failed encode, which is retried after at most an hour. A deployment that names a sparse
+pipeline and lacks the model's files does not start, and names the file; one that names none
+reads no model file.
 
 **Postings, pruning and the scan** *(since v0.5.6, ADR-0052)*. Under row security no text operator
 reaches an index, but integer equality does, so `bm25-postings` reads each version's lexemes as
@@ -285,7 +300,10 @@ ADR-0052 d9's evidence held on the build that ships it: `bm25`'s gate passed (su
 success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
 a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
 ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
-`bm25` stays served as its fallback and comparison.
+`bm25` stays served as its fallback and comparison. *Since v0.5.7:* `bm25-sparse` passes the same gate (success@1 0.860,
+success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685 nDCG@10), NFCorpus
+(0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
+two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; FR-118).
 
 ## The recall-ordering contract: steering rows first, unranked
 

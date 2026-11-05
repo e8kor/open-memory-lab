@@ -90,6 +90,153 @@ pub struct Config {
     /// `search.rerank.*`: the model a reranking pipeline loads and how it
     /// is served (ADR-0053 d3, d5).
     pub rerank: RerankSettings,
+    /// `search.sparse.*`: where the learned sparse model's files are,
+    /// whether the lead may fetch them, and its pool (ADR-0052 d14).
+    pub sparse: SparseSettings,
+}
+
+/// `search.sparse.*` (configuration.md; ADR-0052 d14): the model directory,
+/// the fetch, and the encoder's own threads. A deployment serving no sparse
+/// pipeline reads none of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SparseSettings {
+    pub model_dir: Option<PathBuf>,
+    pub fetch: bool,
+    pub threads: usize,
+}
+
+/// `search.sparse.threads`'s default: two of an 8-vCPU host's cores, as
+/// the reranker's (ADR-0052 d14; ADR-0053 d5).
+pub const DEFAULT_SPARSE_THREADS: usize = 2;
+
+/// How many versions of one tenant the encoder takes per pass (ADR-0052
+/// d15).
+pub const SPARSE_PASS_PER_TENANT: usize = 16;
+
+/// The shortest wait after a pass that found nothing; each idle pass in a
+/// row doubles it up to [`SPARSE_IDLE_MAX_SECONDS`], and a pass with work
+/// resets it, so an idle encoder costs one read every half minute
+/// (ADR-0052 d15; MEDIUM-3 on review).
+pub const SPARSE_IDLE_SECONDS: u64 = 1;
+
+/// The longest wait between idle passes.
+pub const SPARSE_IDLE_MAX_SECONDS: u64 = 30;
+
+/// How often the backlog gauge is read while the passes find nothing; a
+/// pass with work reads it after itself.
+pub const SPARSE_GAUGE_SECONDS: u64 = 30;
+
+impl Default for SparseSettings {
+    fn default() -> Self {
+        Self {
+            model_dir: None,
+            fetch: false,
+            threads: DEFAULT_SPARSE_THREADS,
+        }
+    }
+}
+
+/// Loads the learned sparse encoder a configuration's sparse pipelines
+/// read, or `None` when it serves none, which then reads no file and
+/// fetches nothing: the missing files fetched first when
+/// `search.sparse.fetch` allows it, then every file checked against its
+/// pinned digest (ADR-0052 d14, d16). Blocking: it reads the model's files.
+///
+/// # Errors
+///
+/// The model's file or fetch refusal, naming the file and the remedy; a
+/// sparse pipeline never falls back to another (ADR-0052 d16).
+pub fn load_sparse(
+    search: &SearchConfig,
+    settings: &SparseSettings,
+    get: impl Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<Option<Arc<dyn oml_app::ports::SparseEncoder>>, String> {
+    if !search.needs_sparse() {
+        return Ok(None);
+    }
+    let spec = oml_rerank::DOC_V3_DISTILL;
+    let model_dir = settings.model_dir.as_deref().ok_or_else(|| {
+        "search.sparse.model_dir is unset and no state directory is known (STATE_DIRECTORY, XDG_STATE_HOME or HOME): set an absolute search.sparse.model_dir".to_owned()
+    })?;
+    if settings.fetch {
+        let fetched =
+            oml_rerank::fetch_sparse_missing(model_dir, &spec, get).map_err(|e| e.to_string())?;
+        if !fetched.is_empty() {
+            tracing::info!(
+                event = "sparse_model_fetched",
+                model = spec.name,
+                files = fetched.join(","),
+                "fetched the sparse encoder's files at its pinned revision"
+            );
+        }
+    }
+    #[cfg(feature = "rerank")]
+    {
+        let model = oml_rerank::SparseModel::load(model_dir, &spec, settings.threads)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(Arc::new(model)))
+    }
+    #[cfg(not(feature = "rerank"))]
+    {
+        oml_rerank::check_sparse_files(model_dir, &spec).map_err(|e| e.to_string())?;
+        Err("search.enabled names a sparse pipeline and this lead was built without its local models (the rerank feature)".to_owned())
+    }
+}
+
+/// The encoder task (ADR-0052 d15): a pass over every tenant's due
+/// versions, at once again while a pass finds work, else after
+/// [`SPARSE_IDLE_SECONDS`]; each pass's counts to the metrics, and the
+/// backlog after it. A failed pass is logged and never stops the lead or
+/// the next pass.
+pub fn spawn_sparse_encoder(
+    store: PgStore,
+    encoder: Arc<dyn oml_app::ports::SparseEncoder>,
+    metrics: Arc<oml_transport_http::traffic::Metrics>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut idle = SPARSE_IDLE_SECONDS;
+        let mut gauged: Option<std::time::Instant> = None;
+        loop {
+            let busy = match oml_app::app::encode_sparse_pass(
+                &store,
+                encoder.as_ref(),
+                SPARSE_PASS_PER_TENANT,
+            )
+            .await
+            {
+                Ok(pass) => {
+                    metrics.sparse_pass(pass.written, pass.failed, pass.parked);
+                    if pass.failed > 0 {
+                        tracing::warn!(
+                            event = "sparse_encode_failed",
+                            failed = pass.failed,
+                            parked = pass.parked,
+                            "versions failed to encode; they stay queued with their reason, and one failing too often is parked (search_sparse_queue.last_error, parked_at)"
+                        );
+                    }
+                    pass.busy()
+                }
+                Err(e) => {
+                    tracing::error!(event = "sparse_pass_failed", reason = %e, "the sparse encoder's pass failed; the next pass retries");
+                    false
+                }
+            };
+            // After every pass with work, so the gauge falls to zero as the
+            // queue drains, and every half minute while idle.
+            if busy || gauged.is_none_or(|t| t.elapsed().as_secs() >= SPARSE_GAUGE_SECONDS) {
+                if let Ok(waiting) = store.sparse_backlog().await {
+                    metrics.sparse_backlog(waiting);
+                }
+                gauged = Some(std::time::Instant::now());
+            }
+            if busy {
+                idle = SPARSE_IDLE_SECONDS;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(idle)).await;
+                idle = (idle * 2).min(SPARSE_IDLE_MAX_SECONDS);
+            }
+        }
+    })
 }
 
 /// `search.rerank.*` beyond the policy the core reads (configuration.md;
@@ -299,6 +446,9 @@ const KEY_RERANK_MAX_CONCURRENT: &str = "search.rerank.max_concurrent";
 const KEY_RERANK_TIMEOUT_MS: &str = "search.rerank.timeout_ms";
 const KEY_RERANK_THREADS: &str = "search.rerank.threads";
 const KEY_RERANK_MAX_TOKENS: &str = "search.rerank.max_tokens";
+const KEY_SPARSE_MODEL_DIR: &str = "search.sparse.model_dir";
+const KEY_SPARSE_FETCH: &str = "search.sparse.fetch";
+const KEY_SPARSE_THREADS: &str = "search.sparse.threads";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -601,6 +751,32 @@ impl Config {
                 timeout: std::time::Duration::from_millis(timeout_ms),
             },
         };
+        // The learned sparse encoder: its directory, fetch and pool, each
+        // refused naming the key when it does not parse (configuration.md
+        // search.sparse.*; ADR-0052 d14).
+        let sparse = SparseSettings {
+            model_dir: match lookup(KEY_SPARSE_MODEL_DIR) {
+                None => state_model_dir(env, oml_rerank::DOC_V3_DISTILL.name),
+                Some(dir) if PathBuf::from(&dir).is_absolute() => Some(PathBuf::from(dir)),
+                Some(dir) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "{KEY_SPARSE_MODEL_DIR} {dir:?} is not an absolute path: a relative one would follow the working directory (configuration.md)"
+                    )));
+                }
+            },
+            fetch: match lookup(KEY_SPARSE_FETCH).as_deref().map(str::trim) {
+                None | Some("false") => false,
+                Some("true") => true,
+                Some(other) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "{KEY_SPARSE_FETCH} {other:?} is not true or false (configuration.md)"
+                    )));
+                }
+            },
+            threads: whole(KEY_SPARSE_THREADS, 1)?.map_or(DEFAULT_SPARSE_THREADS, |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            }),
+        };
         let search = SearchConfig::new(&enabled, default)
             .map_err(|e| ConfigError::Invalid(e.to_string()))?
             .with_rerank(policy);
@@ -618,6 +794,7 @@ impl Config {
             brief_max_tokens,
             search,
             rerank,
+            sparse,
         })
     }
 
@@ -1268,6 +1445,44 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     search: Option<SearchConfig>,
     reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
 ) -> Result<LeadStart, String> {
+    start_lead_with_models(
+        store,
+        signing_key,
+        oauth_issuer,
+        fetcher,
+        traffic,
+        web,
+        brief_max_tokens,
+        search,
+        reranker,
+        None,
+    )
+    .await
+}
+
+/// [`start_lead_with`], with the learned sparse encoder the sparse
+/// pipelines read (ADR-0052 d16): a configuration serving one without it
+/// stops the start, naming the setting.
+///
+/// # Errors
+///
+/// As [`start_lead_with`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per setting main composes"
+)]
+pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
+    store: &PgStore,
+    signing_key: SigningKey,
+    oauth_issuer: Option<Issuer>,
+    fetcher: F,
+    traffic: Traffic,
+    web: Option<WebPages>,
+    brief_max_tokens: u64,
+    search: Option<SearchConfig>,
+    reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
+    sparse: Option<Arc<dyn oml_app::ports::SparseEncoder>>,
+) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
     // naming the pipeline and what is missing (ADR-0049 d8).
@@ -1285,6 +1500,28 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     search
         .require_reranker(reranker.is_some())
         .map_err(|e| e.to_string())?;
+    // A sparse pipeline is served only with its encoder loaded, never by
+    // another pipeline in its name (ADR-0052 d16).
+    search
+        .require_sparse(sparse.is_some())
+        .map_err(|e| e.to_string())?;
+    // A lead serving no sparse pipeline turns every tenant's sparse queue
+    // off and empties it, so nothing is queued for an encoder no one runs;
+    // one serving one turns them on through its encoder's backfill
+    // (ADR-0052 d15, HIGH-1 on review).
+    if !search.needs_sparse() {
+        let off = store
+            .sparse_off()
+            .await
+            .map_err(|e| format!("search.sparse: turning the queue off: {e}"))?;
+        if off > 0 {
+            tracing::info!(
+                event = "sparse_queue_off",
+                tenants = off,
+                "no sparse pipeline is served: the learned sparse queue is off and empty"
+            );
+        }
+    }
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
@@ -1302,6 +1539,10 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     let meter: Arc<dyn oml_app::ports::TelemetryMeter> = Arc::clone(traffic.metrics()) as _;
     let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
     let app = app.with_telemetry(telemetry);
+    let app = match sparse {
+        Some(sparse) => app.with_sparse_encoder(sparse),
+        None => app,
+    };
     let app = match oauth_issuer {
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
@@ -1653,6 +1894,78 @@ mod tests {
             .expect("refused");
         assert!(err.contains("offline"), "{err}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A configuration serving no sparse pipeline, the default among them,
+    /// loads no sparse model and reads no file, so the lead starts and
+    /// serves without the model's files; one serving `sparse` or
+    /// `bm25-sparse` with the files absent is refused naming the file and
+    /// the remedy, never served by another pipeline (ADR-0052 d16).
+    #[test]
+    fn a_sparse_pipeline_without_its_model_stops_the_start_and_the_default_needs_none() {
+        let dir = std::env::temp_dir().join(format!("oml-sparse-absent-{}", std::process::id()));
+        let settings = SparseSettings {
+            model_dir: Some(dir.clone()),
+            ..SparseSettings::default()
+        };
+        assert!(
+            !default_search().needs_sparse(),
+            "the default serves no sparse pipeline"
+        );
+        assert!(
+            load_sparse(&default_search(), &settings, |_| panic!("no fetch"))
+                .expect("nothing to load")
+                .is_none()
+        );
+        for pipeline in [Pipeline::Sparse, Pipeline::Bm25Sparse] {
+            let sparse =
+                SearchConfig::new(&[Pipeline::Bm25Postings, pipeline], Pipeline::Bm25Postings)
+                    .unwrap();
+            let err = load_sparse(&sparse, &settings, |_| panic!("fetch is off"))
+                .err()
+                .expect("refused");
+            assert!(err.contains("config.json is missing"), "{err}");
+            assert!(err.contains("search.sparse.fetch"), "{err}");
+            assert_eq!(
+                sparse.require_sparse(false),
+                Err(oml_app::search::SearchConfigError::NoSparseEncoder(
+                    pipeline
+                ))
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `search.sparse.*` defaults to no fetch, two threads and the state
+    /// directory's model path, and refuses a relative path or a fetch that
+    /// is not true or false, naming the key (ADR-0052 d14).
+    #[test]
+    fn sparse_settings_default_to_no_fetch_and_refuse_a_relative_dir() {
+        let base = "[postgres]\nurl = \"postgres://f/db\"\nowner_url = \"postgres://o@f/db\"\n";
+        let env = env_of(&[("HOME", "/home/someone")]);
+        let cfg = Config::from_sources(Some(base), &|k| env.get(k).cloned()).expect("loads");
+        assert!(!cfg.sparse.fetch);
+        assert_eq!(cfg.sparse.threads, DEFAULT_SPARSE_THREADS);
+        assert_eq!(
+            cfg.sparse.model_dir,
+            Some(PathBuf::from(
+                "/home/someone/.local/state/oml/models/opensearch-neural-sparse-encoding-doc-v3-distill"
+            ))
+        );
+        for (key, value, says) in [
+            (
+                "OML_SEARCH__SPARSE__MODEL_DIR",
+                "models/sparse",
+                "search.sparse.model_dir",
+            ),
+            ("OML_SEARCH__SPARSE__FETCH", "yes", "search.sparse.fetch"),
+            ("OML_SEARCH__SPARSE__THREADS", "0", "search.sparse.threads"),
+        ] {
+            let env = env_of(&[(key, value)]);
+            let err =
+                Config::from_sources(Some(base), &|k| env.get(k).cloned()).expect_err("refused");
+            assert!(err.to_string().contains(says), "{err}");
+        }
     }
 
     #[test]

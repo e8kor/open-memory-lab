@@ -44,7 +44,7 @@ where
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "search_settings")?;
         let mut settings = self.settings_of(admin.tenant_id).await?;
-        if self.search.serves(Pipeline::Bm25Postings) {
+        if self.search.serves(Pipeline::Bm25Postings) || self.search.needs_sparse() {
             settings.postings = self.journal.postings_health(admin.tenant_id).await?;
         }
         Ok(settings)

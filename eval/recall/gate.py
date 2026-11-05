@@ -19,6 +19,7 @@ it against its gate, taken from ADR-0048 d1:
   measured 0.835 and 0.934 (ADR-0053 d9), and no reranked query skipped:
   a skipped rerank serves bm25's order, so its numbers would gate bm25.
 - bm25-postings: bm25's gate (ADR-0052 d9).
+- sparse and bm25-sparse: bm25's gate (ADR-0052 d9, d16).
 
 Every pipeline must also keep each category's success@5 within one query
 (1/11) of its committed result, when one is committed.
@@ -43,6 +44,8 @@ GATES = {
         ("typo", "s5", ">=", 0.91),
     ],
     "bm25-rerank": [("overall", "s1", ">=", 0.87), ("overall", "s5", ">=", 0.94)],
+    "sparse": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
+    "bm25-sparse": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
 }
 # One query of a category of 11, plus the 0.001 the summaries' rounding to
 # three decimals can take from a difference (metrics.py): 10/11 is stored as
@@ -103,7 +106,8 @@ def main():
     results, committed_dir = Path(a.results), Path(a.committed)
     failed = False
     seen = []
-    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank"]:
+    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings",
+                     "bm25-rerank", "sparse", "bm25-sparse"]:
         path = results / file_of(pipeline)
         if not path.exists():
             continue

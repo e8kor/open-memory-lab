@@ -107,6 +107,11 @@ struct WebFailureLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SparseLabels {
+    outcome: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -125,6 +130,8 @@ pub struct Metrics {
     reranks: Family<RerankLabels, Counter>,
     web_failures: Family<WebFailureLabels, Counter>,
     quality: Quality,
+    sparse_encoded: Family<SparseLabels, Counter>,
+    sparse_backlog: Gauge,
 }
 
 /// The recall and remember quality families (ADR-0054 d1, as accepted):
@@ -233,6 +240,8 @@ impl Default for Metrics {
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
+        let sparse_encoded = Family::<SparseLabels, Counter>::default();
+        let sparse_backlog = Gauge::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -281,6 +290,19 @@ impl Default for Metrics {
             web_failures.clone(),
         );
         let quality = Quality::register(&mut registry);
+        // The learned sparse encoder's outbox (ADR-0052 d15): versions
+        // written or failed, a closed set, and the entries waiting, summed
+        // over every tenant with no tenant label.
+        registry.register(
+            "oml_sparse_encoded",
+            "versions the learned sparse encoder wrote postings for, failed to, or parked as dead letters",
+            sparse_encoded.clone(),
+        );
+        registry.register(
+            "oml_sparse_backlog",
+            "versions waiting for the learned sparse encoder across the deployment",
+            sparse_backlog.clone(),
+        );
         Self {
             registry,
             http,
@@ -292,6 +314,8 @@ impl Default for Metrics {
             reranks,
             web_failures,
             quality,
+            sparse_encoded,
+            sparse_backlog,
         }
     }
 }
@@ -404,6 +428,26 @@ impl Metrics {
                 verdict: verdict.to_owned(),
             })
             .observe(waited);
+    }
+
+    /// One encoder pass's versions: `written`, `failed`, and of those
+    /// `parked` at the attempts' ceiling (ADR-0052 d15).
+    pub fn sparse_pass(&self, written: u64, failed: u64, parked: u64) {
+        for (outcome, n) in [("written", written), ("failed", failed), ("parked", parked)] {
+            if n > 0 {
+                self.sparse_encoded
+                    .get_or_create(&SparseLabels {
+                        outcome: outcome.to_owned(),
+                    })
+                    .inc_by(n);
+            }
+        }
+    }
+
+    /// The entries waiting for the encoder (ADR-0052 d15).
+    pub fn sparse_backlog(&self, waiting: u64) {
+        self.sparse_backlog
+            .set(i64::try_from(waiting).unwrap_or(i64::MAX));
     }
 
     /// One `/mcp` call, by the closed values of its `mcp_call` line.

@@ -28,6 +28,9 @@ PGUSER="${PGUSER:-oml}"
 export PGPASSWORD="${PGPASSWORD:-oml_dev_only}"
 PORT="${EVAL_PORT:-8437}"
 URL="http://127.0.0.1:$PORT"
+# The metrics listener: the sparse encoder's backlog is read there
+# (ADR-0052 d15; wait_sparse.sh).
+METRICS_PORT="${EVAL_METRICS_PORT:-9437}"
 TAG="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
 DB="oml_eval_$TAG"
 PAIR_PASSWORD="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
@@ -69,6 +72,7 @@ ENABLED="$(echo "$PIPELINES" | tr ' ' ',')"
 OML_POSTGRES__URL="postgres://${DB}_serving:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
 OML_POSTGRES__OWNER_URL="postgres://${DB}_owner:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
 OML_SERVER__LISTEN="127.0.0.1:$PORT" \
+OML_SERVER__METRICS_LISTEN="127.0.0.1:$METRICS_PORT" \
 OML_KMS__KEYRING_PATH="$STATE/keyring" \
 OML_SEARCH__ENABLED="$ENABLED" \
 OML_SEARCH__DEFAULT="$DEFAULT" \
@@ -101,6 +105,11 @@ OML="$BIN/oml"
      | jq -r .value >"$STATE/reviewer.key") || fail "keys"
 
 for pipeline in $PIPELINES; do
+    # A sparse pipeline reads what the encoder wrote: the first run loaded
+    # the corpus, so wait for the encoder's queue to drain (ADR-0052 d15).
+    case "$pipeline" in sparse|bm25-sparse)
+        [ -f "$OUT/idmap.json" ] && { eval/bench/wait_sparse.sh "http://127.0.0.1:$METRICS_PORT" "$(jq length "$OUT/idmap.json")" >/dev/null || fail "sparse backlog"; } ;;
+    esac
     python3 eval/recall/run.py --url "$URL" --writer-key-file "$STATE/writer.key" \
         --reviewer-key-file "$STATE/reviewer.key" --out "$OUT" --search "$pipeline" \
         || fail "run $pipeline"

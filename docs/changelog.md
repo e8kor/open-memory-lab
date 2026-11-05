@@ -51,9 +51,19 @@ half stays proposed. What changes for someone using OML:
 
 The contract gained members and removed none: the recall answer's `recall_id`, the recall
 body's `feedback`, `/v2/usage/settings`, `/v2/usage/events` and `/v2/usage/eval`, and the event
-types `telemetry.settings_set`, `telemetry.events_read` and `telemetry.replayed`. Migration 0022
+types `telemetry.settings_set`, `telemetry.events_read` and `telemetry.replayed`. Migration 0023
 adds `recall_events` and `recall_outcomes`, partitioned by tenant, the trigger that keeps query
 text only by the opt-in, and `tenants.telemetry_query_text_since`.
+### 2026-11-05 — The learned sparse leg, built for v0.5.7 (draft PR #60)
+
+[ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) gains d13 to d17 and its measured paragraph; ADR-0049 d3 gains convex
+combination as a core fusion. Additive to the contract, so `info.version` waits for the release:
+the pipeline names gain `sparse` and `bm25-sparse`, `matched.via` gains `sparse`, each hit's
+`matched` gains `tokens` and `expanded`, `GET /v2/search`'s `postings` gains `sparse_backlog` and
+`sparse_failing`, and `/readyz`'s `search` gains `sparse`. Migration 0022 adds the encoder's queue.
+Settings `search.sparse.model_dir`, `.fetch` and `.threads`. The default stays `bm25-postings`:
+`bm25-sparse` passes the recall-eval gate and ranks above it on every external set, and misses
+the 50 ms latency bar at 100,000 rows (FR-118).
 
 ## 0.5.6-design
 
