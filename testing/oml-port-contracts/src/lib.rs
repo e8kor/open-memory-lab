@@ -1481,6 +1481,153 @@ pub async fn recall_own_held_never_returns_another_keys_row_whatever_the_query<S
     assert_eq!(first, all[..1], "k keeps the prefix of the order");
 }
 
+/// Inside an in-progress scope the core hands the retrievers every author's
+/// held rows on the served nodes (ADR-0030 d3): each retriever the store
+/// serves reads exactly the held memories and derived facts on the nodes
+/// named, of any author, never a node outside them, never a rejected,
+/// steering or retirement version, and never another tenant's row, row
+/// security beneath it (P-R3-BOUNDARY at the store).
+pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(46);
+    rig.seed_chain(store, 0).await;
+    let mut other_tenant = ChainRig::new(47);
+    other_tenant.seed_chain(store, 0).await;
+    let [inside, outside] = [0xB460_u128, 0xB461].map(Uuid::from_u128);
+    let [ann, bob] = [0xD460_u128, 0xD461].map(Uuid::from_u128);
+    let row = |tenant: u64, wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| {
+        MemoryRecord {
+            kind,
+            ..held_memory(
+                rig_tenant(tenant),
+                wa,
+                Uuid::from_u128(id),
+                "wanda",
+                author,
+                body,
+            )
+        }
+    };
+    let anns = row(
+        46,
+        inside,
+        0xC460,
+        ann,
+        MemoryKind::Memory,
+        "the canary drains",
+    );
+    let bobs = row(
+        46,
+        inside,
+        0xC461,
+        bob,
+        MemoryKind::DerivedFact,
+        "canary weights logged",
+    );
+    let steering = row(
+        46,
+        inside,
+        0xC462,
+        bob,
+        MemoryKind::Steering,
+        "canary steering",
+    );
+    let away = row(
+        46,
+        outside,
+        0xC463,
+        bob,
+        MemoryKind::Memory,
+        "the canary outside",
+    );
+    let rejected = row(
+        46,
+        inside,
+        0xC464,
+        bob,
+        MemoryKind::Memory,
+        "the canary rejected",
+    );
+    let foreign = row(
+        47,
+        inside,
+        0xC465,
+        bob,
+        MemoryKind::Memory,
+        "the canary foreign",
+    );
+    for memory in [&anns, &bobs, &steering, &away] {
+        hold(&mut rig, store, memory.clone()).await.expect("hold");
+    }
+    hold(&mut rig, store, rejected.clone()).await.expect("hold");
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    hold(&mut other_tenant, store, foreign).await.expect("hold");
+
+    let scope = |nodes: Vec<Uuid>| CandidateScope {
+        anchor: oml_app::types::AnchorFilter::default(),
+        promoted_nodes: Vec::new(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            author_key_ids: Vec::new(),
+            nodes,
+            any_author: true,
+        }),
+    };
+    for kind in store.retrievers() {
+        if kind == RetrieverKind::Sparse {
+            continue;
+        }
+        let read = |nodes: Vec<Uuid>| {
+            let scope = scope(nodes);
+            async move {
+                let mut ids: Vec<Uuid> = store
+                    .retrieve(
+                        rig_tenant(46),
+                        kind,
+                        &scope,
+                        RetrievalQuery {
+                            query: "canary",
+                            match_mode: MatchMode::Any,
+                            k: 20,
+                            sparse: &[],
+                        },
+                    )
+                    .await
+                    .expect("retrieve")
+                    .candidates
+                    .iter()
+                    .map(|c| c.memory_id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+        let mut expected = vec![anns.memory_id, bobs.memory_id];
+        expected.sort();
+        assert_eq!(
+            read(vec![inside]).await,
+            expected,
+            "{kind:?}: every author's held memory and derived fact on the node"
+        );
+        assert_eq!(
+            read(vec![outside]).await,
+            vec![away.memory_id],
+            "{kind:?}: exactly the nodes named"
+        );
+        assert!(
+            read(Vec::new()).await.is_empty(),
+            "{kind:?}: no node, no row"
+        );
+    }
+}
+
 /// The set-wise read returns the rows named, in the order named; an id no
 /// row of this tenant has is absent, not an error (ADR-0024 d4, ADR-0025
 /// d7).
@@ -6805,6 +6952,10 @@ where
     .await;
     Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
         .await;
+    Box::pin(held_rows_of_every_author_are_read_on_the_named_nodes_alone(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(memories_reads_the_named_rows_in_the_order_named(
         &new_store().await,
     ))
