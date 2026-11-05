@@ -142,7 +142,7 @@ impl Default for Metrics {
         );
         registry.register(
             "oml_sparse_backlog",
-            "versions waiting for the learned sparse encoder, every tenant's summed",
+            "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
         Self {
