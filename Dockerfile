@@ -46,6 +46,8 @@ COPY --from=builder /build/target/release/oml /usr/local/bin/oml
 # upgrade (docs/operations/upgrades.md); when the oml-bootstrap service lands,
 # migrate-on-boot goes away.
 COPY --from=builder /build/migrations /usr/local/share/oml/migrations
+# Third-party notices for code adapted into the binaries (ADR-0065 d3).
+COPY --from=builder /build/LICENSES /usr/local/share/oml/licenses
 
 USER oml
 ENV OML_SERVER__LISTEN=0.0.0.0:8080 \
