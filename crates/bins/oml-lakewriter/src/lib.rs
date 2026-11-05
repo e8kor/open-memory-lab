@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
-use oml_lake::crypto::{Kek, sha256_hex};
+use oml_lake::crypto::{Keyring, sha256_hex};
 use oml_lake::table::{
     BENCH_RESULTS, BRONZE_EVENTS, GOLD_LINEAGE, LAKE_BATCHES, RECALL_DAILY, SILVER_CLAIMS, Spec, V,
 };
@@ -52,6 +52,111 @@ impl WriterError {
             Self::Bench(..) => "bench_file",
         }
     }
+}
+
+/// Why a KEK rotation did not finish.
+#[derive(Debug, thiserror::Error)]
+pub enum RotateError {
+    #[error(transparent)]
+    Keys(#[from] oml_lake::crypto::KeyringError),
+    #[error(transparent)]
+    Source(#[from] SourceError),
+    #[error("the KEK file {0}: {1}")]
+    File(String, String),
+    /// A writer holds the lease, so it holds the old KEK in memory and would
+    /// keep wrapping new keys under it.
+    #[error("a writer holds the lease: stop oml-lakewriter before rotating its KEK")]
+    WriterRunning,
+    #[error(
+        "a data key was wrapped by KEK {0}, which this file does not hold: the old file is needed to finish the rotation"
+    )]
+    UnknownKek(String),
+    #[error("a data key does not open under its KEK: {0}")]
+    Unwrap(String),
+}
+
+/// What a rotation did.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Rotation {
+    /// The KEK now current.
+    pub current: String,
+    /// Data keys re-wrapped under it.
+    pub rewrapped: u64,
+    /// KEK versions removed from the file after the re-wrap.
+    pub retired: Vec<String>,
+}
+
+/// Rotates the lake KEK (ADR-0060 d19): adds a fresh version to the file (a
+/// file already holding two or more is a rotation that stopped part way, and
+/// is finished instead), re-wraps every live data key under the current
+/// version, checks no live key is left under an older one, and only then
+/// rewrites the file with the current version alone. Holds the lease, so no
+/// writer runs meanwhile; a destroyed key is never touched.
+///
+/// # Errors
+/// A writer runs, the file is unreadable or too open, a key names a KEK the
+/// file lacks, or Postgres fails. The file keeps every version it had until
+/// the check passes, so a failed rotation loses no key.
+pub async fn rotate_kek(
+    path: &std::path::Path,
+    database_url: &str,
+) -> Result<Rotation, RotateError> {
+    let lease = source::Lease::try_acquire(database_url)
+        .await?
+        .ok_or(RotateError::WriterRunning)?;
+    let done = rotate_under_lease(path, database_url).await;
+    let _ = lease.release().await;
+    done
+}
+
+async fn rotate_under_lease(
+    path: &std::path::Path,
+    database_url: &str,
+) -> Result<Rotation, RotateError> {
+    let mut ring = Keyring::load(path)?;
+    if ring.len() == 1 {
+        ring = ring
+            .with_new_current()
+            .map_err(|e| RotateError::File(path.display().to_string(), e.to_string()))?;
+        ring.write_atomic(path)
+            .map_err(|e| RotateError::File(path.display().to_string(), e.to_string()))?;
+    }
+    let current = ring.current().id().to_owned();
+    let src = Source::connect(database_url).await?;
+    let mut rewrapped = 0_u64;
+    let tenants = src.tenants().await?;
+    for tenant in &tenants {
+        for (artifact, wrapped, from) in src.keys_not_under(*tenant, &current).await? {
+            if ring.get(&from).is_none() {
+                return Err(RotateError::UnknownKek(from));
+            }
+            let again = ring
+                .rewrap(*tenant, artifact, &wrapped, &from)
+                .map_err(|e| RotateError::Unwrap(e.to_string()))?;
+            if src
+                .rewrap_key(*tenant, artifact, &wrapped, &again, &current)
+                .await?
+            {
+                rewrapped += 1;
+            }
+        }
+    }
+    for tenant in &tenants {
+        if !src.keys_not_under(*tenant, &current).await?.is_empty() {
+            return Err(RotateError::Unwrap(
+                "a live key is still wrapped by an older KEK".to_owned(),
+            ));
+        }
+    }
+    let retired: Vec<String> = ring.ids().into_iter().filter(|id| *id != current).collect();
+    ring.only_current()
+        .write_atomic(path)
+        .map_err(|e| RotateError::File(path.display().to_string(), e.to_string()))?;
+    Ok(Rotation {
+        current,
+        rewrapped,
+        retired,
+    })
 }
 
 /// The metrics a writer serves on its own listener (ADR-0060 d16), with
@@ -167,7 +272,7 @@ impl Default for Settings {
 pub struct Writer {
     pub src: Source,
     pub lake: Lake,
-    kek: Kek,
+    keys: Keyring,
     pub metrics: Metrics,
     pub settings: Settings,
     frontier: Option<i64>,
@@ -175,11 +280,11 @@ pub struct Writer {
 
 impl Writer {
     #[must_use]
-    pub fn new(src: Source, lake: Lake, kek: Kek, settings: Settings) -> Self {
+    pub fn new(src: Source, lake: Lake, keys: Keyring, settings: Settings) -> Self {
         Self {
             src,
             lake,
-            kek,
+            keys,
             metrics: Metrics::default(),
             settings,
             frontier: None,
@@ -220,6 +325,15 @@ impl Writer {
     /// A Postgres read or a lake commit fails; nothing past the frontier is
     /// assumed applied, and the next call replays exactly.
     pub async fn drain_once(&mut self) -> Result<Option<Drained>, WriterError> {
+        let drained = self.drain_batch().await;
+        if drained.is_err() {
+            // Another writer may have moved the lake; read the frontier again.
+            self.frontier = None;
+        }
+        drained
+    }
+
+    async fn drain_batch(&mut self) -> Result<Option<Drained>, WriterError> {
         let started = Instant::now();
         let frontier = self.frontier().await?;
         let Some(horizon) = self.src.horizon().await? else {
@@ -256,8 +370,15 @@ impl Writer {
             V::Long(Some(i64::try_from(drained.events).unwrap_or(i64::MAX))),
             V::Ts(Some(Utc::now().timestamp_micros())),
         ];
-        self.commit(Prefix::Provider, &LAKE_BATCHES, &[row], end, false)
-            .await?;
+        self.commit(
+            Prefix::Provider,
+            &LAKE_BATCHES,
+            &[row],
+            end,
+            false,
+            frontier,
+        )
+        .await?;
         self.frontier = Some(end);
         self.metrics.frontier.set(end);
         self.metrics.lag_rows.set((horizon - end).max(0));
@@ -293,11 +414,14 @@ impl Writer {
         rows: &[Vec<V>],
         version: i64,
         merge: bool,
+        filtered_at: i64,
     ) -> Result<usize, WriterError> {
         let result = if merge {
             self.lake.merge(prefix, spec, rows, version).await
         } else {
-            self.lake.append(prefix, spec, rows, version).await
+            self.lake
+                .append(prefix, spec, rows, version, filtered_at)
+                .await
         };
         match result {
             Ok(n) => {
@@ -330,7 +454,9 @@ impl Writer {
             .filter(|e| e.outbox_seq > applied)
             .map(|e| bronze_row(tenant, e))
             .collect();
-        let n = self.commit(p, &BRONZE_EVENTS, &rows, end, false).await?;
+        let n = self
+            .commit(p, &BRONZE_EVENTS, &rows, end, false, applied)
+            .await?;
         *drained.rows.entry(BRONZE_EVENTS.name).or_default() += n;
 
         // silver.claims and gold.lineage: the versions and edges the
@@ -362,10 +488,14 @@ impl Writer {
             }
         }
         let claims: Vec<Vec<V>> = claims.into_values().collect();
-        let n = self.commit(p, &SILVER_CLAIMS, &claims, end, true).await?;
+        let n = self
+            .commit(p, &SILVER_CLAIMS, &claims, end, true, silver_at)
+            .await?;
         *drained.rows.entry(SILVER_CLAIMS.name).or_default() += n;
         let edges: Vec<Vec<V>> = edges.into_values().collect();
-        let n = self.commit(p, &GOLD_LINEAGE, &edges, end, true).await?;
+        let n = self
+            .commit(p, &GOLD_LINEAGE, &edges, end, true, lineage_at)
+            .await?;
         *drained.rows.entry(GOLD_LINEAGE.name).or_default() += n;
         Ok(())
     }
@@ -428,7 +558,9 @@ impl Writer {
         }
         if erase && to_silver {
             for id in &ids {
-                self.src.destroy_key(tenant, *id, self.kek.id()).await?;
+                self.src
+                    .destroy_key(tenant, *id, self.keys.current().id())
+                    .await?;
             }
         }
         let same_user = e.payload.get("same_user").and_then(Value::as_bool);
@@ -492,26 +624,31 @@ impl Writer {
         let key = match self.src.key(tenant, m.id).await? {
             Some(k) => k,
             None if erase || m.status == "erased" => {
-                self.src.destroy_key(tenant, m.id, self.kek.id()).await?;
+                self.src
+                    .destroy_key(tenant, m.id, self.keys.current().id())
+                    .await?;
                 self.src
                     .key(tenant, m.id)
                     .await?
                     .ok_or(SourceError::Pg(sqlx::Error::RowNotFound))?
             }
             None => {
-                let (_, wrapped) = match self.kek.new_data_key(tenant, m.id) {
+                let (_, wrapped) = match self.keys.current().new_data_key(tenant, m.id) {
                     Ok(k) => k,
                     Err(_) => return Ok(Err("key_generation_failed")),
                 };
                 self.src
-                    .put_key(tenant, m.id, &wrapped, self.kek.id())
+                    .put_key(tenant, m.id, &wrapped, self.keys.current().id())
                     .await?
             }
         };
         let sealed = match &key.wrapped {
             None => None,
             Some(wrapped) => {
-                let Ok(dek) = self.kek.unwrap(tenant, m.id, wrapped) else {
+                let Some(kek) = self.keys.get(&key.kek_id) else {
+                    return Ok(Err("key_unwrap_failed"));
+                };
+                let Ok(dek) = kek.unwrap(tenant, m.id, wrapped) else {
                     return Ok(Err("key_unwrap_failed"));
                 };
                 match dek.seal_body(tenant, m.id, m.body.as_bytes()) {
@@ -669,9 +806,9 @@ impl Writer {
             return Ok(None);
         };
         Ok(self
-            .kek
-            .unwrap(tenant, artifact, &wrapped)
-            .ok()
+            .keys
+            .get(&key.kek_id)
+            .and_then(|kek| kek.unwrap(tenant, artifact, &wrapped).ok())
             .and_then(|dek| dek.open_body(tenant, artifact, sealed).ok()))
     }
 }

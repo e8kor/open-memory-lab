@@ -29,11 +29,11 @@ use oml_app::domain::{Envelope, EventTime, MemoryKind, Role, event_types, sign};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::ports::{CommitRequest, JournalStore as _, MetadataFold, OutboxRow};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest, SubmitRequest, Verdict};
-use oml_lake::crypto::Kek;
+use oml_lake::crypto::{Kek, Keyring};
 use oml_lake::table::{BRONZE_EVENTS, GOLD_LINEAGE, LAKE_BATCHES, RECALL_DAILY, SILVER_CLAIMS};
 use oml_lake::{Lake, Prefix};
 use oml_lakewriter::source::{Lease, Source};
-use oml_lakewriter::{Settings, Writer, load_bench};
+use oml_lakewriter::{RotateError, Settings, Writer, load_bench, rotate_kek};
 use oml_pg::PgStore;
 use serde_json::json;
 use sqlx::postgres::PgConnection;
@@ -128,10 +128,14 @@ impl World {
     }
 
     async fn writer(&self) -> Writer {
+        self.writer_with(keyring()).await
+    }
+
+    async fn writer_with(&self, keys: Keyring) -> Writer {
         let src = Source::connect(&self.lake_url)
             .await
             .expect("lake role connects");
-        Writer::new(src, self.lake(), kek(), Settings { max_batch: 10 })
+        Writer::new(src, self.lake(), keys, Settings { max_batch: 10 })
     }
 
     async fn owner(&self) -> PgConnection {
@@ -161,6 +165,10 @@ impl World {
 
 fn kek() -> Kek {
     Kek::from_file_bytes(&[0x42_u8; 32]).expect("kek")
+}
+
+fn keyring() -> Keyring {
+    Keyring::single(kek())
 }
 
 /// A tenant with one workarea, a writer and a dreamer key, and `n`
@@ -859,7 +867,7 @@ async fn drain_throughput_is_measured() {
     let wrote = started.elapsed();
     let events = outbox_rows(&w, t).await;
     let src = Source::connect(&w.lake_url).await.expect("connect");
-    let mut writer = Writer::new(src, w.lake(), kek(), Settings::default());
+    let mut writer = Writer::new(src, w.lake(), keyring(), Settings::default());
     let lag = writer.lag_seconds().await.expect("lag");
     let started = std::time::Instant::now();
     writer.catch_up().await.expect("drain");
@@ -872,4 +880,99 @@ async fn drain_throughput_is_measured() {
     );
     assert_eq!(writer.lag_seconds().await.expect("lag"), 0);
     w.drop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rotated_kek_keeps_every_body_readable_and_an_erased_body_unreadable() {
+    let Some(w) = World::new("rotate").await else {
+        return;
+    };
+    let canary = "rotate-canary-5c1d";
+    let (t, ids) = tenant(&w.app, "acme", canary, 4).await;
+    let path = w.lake_dir.with_extension("kek");
+    keyring().write_atomic(&path).expect("kek file");
+    let old_id = kek().id().to_owned();
+    let mut writer = w.writer_with(Keyring::load(&path).expect("load")).await;
+    writer.catch_up().await.expect("drain");
+    let lake = w.lake();
+    let mut before = Vec::new();
+    for id in &ids {
+        before.push(sealed(&lake, *id).await.expect("sealed"));
+    }
+    erase(&w.store, t, ids[0]).await;
+    writer.catch_up().await.expect("drain the erase");
+
+    // A writer holding the lease is a writer holding the old KEK in memory:
+    // rotation refuses until it stops.
+    let held = Lease::try_acquire(&w.lake_url)
+        .await
+        .expect("connect")
+        .expect("lease");
+    assert!(matches!(
+        rotate_kek(&path, &w.lake_url).await,
+        Err(RotateError::WriterRunning)
+    ));
+    held.release().await.expect("release");
+
+    let done = rotate_kek(&path, &w.lake_url).await.expect("rotate");
+    assert_eq!(
+        done.rewrapped, 3,
+        "the three live keys, not the destroyed one"
+    );
+    assert_eq!(done.retired, vec![old_id.clone()]);
+    let ring = Keyring::load(&path).expect("reload");
+    assert_eq!(ring.len(), 1, "the old KEK is retired after the re-wrap");
+    assert_ne!(ring.current().id(), old_id);
+    assert_eq!(ring.current().id(), done.current);
+
+    // Bodies sealed before the rotation open under the new file alone.
+    let after = w.writer_with(ring).await;
+    for (i, id) in ids.iter().enumerate().skip(1) {
+        let opened = after.open_body(t, *id, &before[i]).await.expect("read");
+        assert_eq!(
+            opened.as_deref(),
+            Some(format!("{canary} number {i}").as_bytes()),
+            "version {i}"
+        );
+    }
+    // The erased body opens under no key, old or new.
+    assert_eq!(
+        after.open_body(t, ids[0], &before[0]).await.expect("read"),
+        None
+    );
+    // The retired KEK opens nothing any more.
+    let stale = w.writer_with(keyring()).await;
+    assert_eq!(
+        stale.open_body(t, ids[1], &before[1]).await.expect("read"),
+        None
+    );
+    w.drop().await;
+}
+
+#[cfg(unix)]
+#[test]
+fn a_world_readable_kek_file_stops_the_writer_before_it_connects() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("loose-{}.kek", std::process::id()));
+    std::fs::write(&path, Kek::generate_hex().expect("hex")).expect("write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    let lake = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("loose-{}-lake", std::process::id()));
+    for cmd in ["run", "drain-once"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_oml-lakewriter"))
+            .args([cmd, "--kek-file"])
+            .arg(&path)
+            .args([
+                "--database-url",
+                "postgres://nobody@127.0.0.1:1/none",
+                "--lake",
+            ])
+            .arg(&lake)
+            .output()
+            .expect("runs");
+        assert!(!out.status.success(), "{cmd}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("owner-only"), "{cmd}: {err}");
+    }
 }

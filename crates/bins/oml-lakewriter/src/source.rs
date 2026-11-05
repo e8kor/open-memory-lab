@@ -409,6 +409,70 @@ impl Source {
         })
     }
 
+    /// Live data keys of `tenant` wrapped by a KEK other than `kek_id`:
+    /// (artifact, wrapped key, the id that wrapped it). A destroyed row has
+    /// no key and is never listed.
+    ///
+    /// # Errors
+    /// The query fails.
+    pub async fn keys_not_under(
+        &self,
+        tenant: Uuid,
+        kek_id: &str,
+    ) -> Result<Vec<(Uuid, Vec<u8>, String)>, SourceError> {
+        let mut tx = self.tenant_tx(tenant).await?;
+        let rows = sqlx::query(
+            "SELECT artifact_id, wrapped_dek, kek_id FROM artifact_keys \
+             WHERE tenant_id = $1 AND wrapped_dek IS NOT NULL AND kek_id <> $2 \
+             ORDER BY artifact_id",
+        )
+        .bind(tenant)
+        .bind(kek_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.rollback().await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    r.try_get("artifact_id")?,
+                    r.try_get("wrapped_dek")?,
+                    r.try_get("kek_id")?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Replaces a data key's wrapping if the row still holds `old_wrapped`:
+    /// `false` when the key was destroyed or changed since it was read, so a
+    /// re-wrap never resurrects an erased key.
+    ///
+    /// # Errors
+    /// The statement fails.
+    pub async fn rewrap_key(
+        &self,
+        tenant: Uuid,
+        artifact: Uuid,
+        old_wrapped: &[u8],
+        new_wrapped: &[u8],
+        new_kek_id: &str,
+    ) -> Result<bool, SourceError> {
+        let mut tx = self.tenant_tx(tenant).await?;
+        let n = sqlx::query(
+            "UPDATE artifact_keys SET wrapped_dek = $4, kek_id = $5 \
+             WHERE tenant_id = $1 AND artifact_id = $2 AND wrapped_dek = $3",
+        )
+        .bind(tenant)
+        .bind(artifact)
+        .bind(old_wrapped)
+        .bind(new_wrapped)
+        .bind(new_kek_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        tx.commit().await?;
+        Ok(n == 1)
+    }
+
     /// Stores a new wrapped key unless the version already has a row, and
     /// returns the row that holds: a racing writer's key, or a destroyed
     /// row, wins over this one.

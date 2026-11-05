@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use oml_lake::Lake;
-use oml_lake::crypto::Kek;
+use oml_lake::crypto::{Kek, Keyring};
 use oml_lakewriter::source::{Lease, Source};
-use oml_lakewriter::{Settings, Status, Writer, WriterError, load_bench};
+use oml_lakewriter::{Settings, Status, Writer, WriterError, load_bench, rotate_kek};
 use prometheus_client::registry::Registry;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -80,6 +80,9 @@ enum Cmd {
         lag_rows_warn: i64,
         #[arg(long, default_value_t = 300)]
         lag_seconds_warn: i64,
+        /// The lake KEK file, to check its permissions and age.
+        #[arg(long, env = "OML_LAKE_KEK_FILE")]
+        kek_file: Option<PathBuf>,
     },
     /// Run a named operator query over the lake files (--list to list them).
     Query {
@@ -89,10 +92,22 @@ enum Cmd {
     },
     /// Load oml-bench/1 result files or directories into bench.results.
     LoadBench { paths: Vec<PathBuf> },
-    /// Write a fresh lake KEK file, owner-only; refuses to overwrite.
+    /// Write a fresh lake KEK file, owner-only (refuses to overwrite), or with
+    /// `--rotate` add a KEK version to an existing file, re-wrap every data
+    /// key under it and retire the older versions. Rotation takes the lease:
+    /// stop the writer first.
     Keygen {
-        #[arg(long)]
-        out: PathBuf,
+        /// The new KEK file.
+        #[arg(long, conflicts_with = "rotate")]
+        out: Option<PathBuf>,
+        /// Rotate the KEK in --kek-file.
+        #[arg(long, requires = "kek_file")]
+        rotate: bool,
+        #[arg(long, env = "OML_LAKE_KEK_FILE")]
+        kek_file: Option<PathBuf>,
+        /// The writer's Postgres URL, for the re-wrap.
+        #[arg(long, env = "OML_LAKE_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
     },
 }
 
@@ -114,15 +129,34 @@ fn lake_of(lake: Option<&String>) -> Result<Lake, String> {
     Lake::at(url).map_err(|e| e.to_string())
 }
 
-fn kek_of(path: &PathBuf) -> Result<Kek, String> {
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("lake KEK file {}: {e}", path.display()))?;
-    Kek::from_file_bytes(&bytes).map_err(|e| e.to_string())
+fn kek_of(path: &std::path::Path) -> Result<Keyring, String> {
+    Keyring::load(path).map_err(|e| e.to_string())
 }
 
 async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
-        Cmd::Keygen { out } => {
+        Cmd::Keygen {
+            rotate: true,
+            kek_file: Some(file),
+            database_url,
+            ..
+        } => {
+            let url = database_url.ok_or("--database-url or OML_LAKE_DATABASE_URL is required")?;
+            let done = rotate_kek(&file, &url).await.map_err(|e| e.to_string())?;
+            println!(
+                "rotated the lake KEK to {}: {} data keys re-wrapped, retired {}",
+                done.current,
+                done.rewrapped,
+                if done.retired.is_empty() {
+                    "none".to_owned()
+                } else {
+                    done.retired.join(", ")
+                }
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Keygen { out, .. } => {
+            let out = out.ok_or("keygen needs --out FILE, or --rotate with --kek-file")?;
             keygen(&out)?;
             println!("wrote a lake KEK to {}", out.display());
             Ok(ExitCode::SUCCESS)
@@ -156,12 +190,21 @@ async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
             db,
             lag_rows_warn,
             lag_seconds_warn,
+            kek_file,
         } => {
             let lake = lake_of(cli.lake.as_ref())?;
-            doctor(&lake, &db.database_url, lag_rows_warn, lag_seconds_warn).await
+            doctor(
+                &lake,
+                &db.database_url,
+                lag_rows_warn,
+                lag_seconds_warn,
+                kek_file.as_deref(),
+            )
+            .await
         }
         Cmd::DrainOnce { db, kek_file } => {
             let lake = lake_of(cli.lake.as_ref())?;
+            let keys = kek_of(&kek_file)?;
             let lease = Lease::try_acquire(&db.database_url)
                 .await
                 .map_err(|e| e.to_string())?
@@ -169,7 +212,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
             let src = Source::connect(&db.database_url)
                 .await
                 .map_err(|e| e.to_string())?;
-            let mut w = Writer::new(src, lake, kek_of(&kek_file)?, Settings::default());
+            let mut w = Writer::new(src, lake, keys, Settings::default());
             let started = Instant::now();
             let batches = w.catch_up().await.map_err(|e| e.to_string())?;
             let events: usize = batches.iter().map(|b| b.events).sum();
@@ -195,7 +238,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
             retention_hours,
         } => {
             let lake = lake_of(cli.lake.as_ref())?;
-            let kek = kek_of(&kek_file)?;
+            let keys = kek_of(&kek_file)?;
             if let Some(owner) = owner_url {
                 // Grant before the privilege check reads anything.
                 let role = Source::role_of(&db.database_url)
@@ -218,7 +261,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
                 retention: chrono::Duration::hours(retention_hours),
             };
             run(
-                Writer::new(src, lake, kek, Settings { max_batch }),
+                Writer::new(src, lake, keys, Settings { max_batch }),
                 loop_cfg,
             )
             .await
@@ -347,6 +390,50 @@ async fn serve_metrics(listener: tokio::net::TcpListener, registry: Arc<Registry
     }
 }
 
+/// A KEK older than this many days is a `warn` line (ADR-0060 d19).
+const KEK_WARN_DAYS: u64 = 90;
+
+/// The `lake.kek` doctor line: permissions, versions held and age (the
+/// file's modification time, which a rotation resets).
+fn kek_line(path: Option<&std::path::Path>) -> (&'static str, String) {
+    let Some(path) = path else {
+        return (
+            "warn",
+            "no --kek-file or OML_LAKE_KEK_FILE given: the KEK's permissions and age are unchecked"
+                .to_owned(),
+        );
+    };
+    let ring = match Keyring::load(path) {
+        Ok(r) => r,
+        Err(e) => return ("fail", e.to_string()),
+    };
+    let age_days = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs() / 86_400);
+    let versions = ring.len();
+    match age_days {
+        None => ("warn", "the KEK file's age is unreadable".to_owned()),
+        Some(d) if d > KEK_WARN_DAYS => (
+            "warn",
+            format!(
+                "the current KEK is {d} days old (over {KEK_WARN_DAYS}): rotate it with keygen --rotate"
+            ),
+        ),
+        Some(d) if versions > 1 => (
+            "warn",
+            format!(
+                "{versions} KEK versions in the file, {d} days old: a rotation stopped before it retired the old ones; run keygen --rotate again"
+            ),
+        ),
+        Some(d) => (
+            "ok",
+            format!("owner-only, one KEK version, {d} days old (rotate past {KEK_WARN_DAYS})"),
+        ),
+    }
+}
+
 /// The doctor's lines (ADR-0060 d16): `ok`, `warn` or `fail`, a check name
 /// and a sentence; exit 1 when any line fails.
 async fn doctor(
@@ -354,6 +441,7 @@ async fn doctor(
     url: &str,
     lag_rows_warn: i64,
     lag_seconds_warn: i64,
+    kek_file: Option<&std::path::Path>,
 ) -> Result<ExitCode, String> {
     let mut failed = false;
     let mut line = |level: &str, check: &str, msg: String| {
@@ -362,6 +450,8 @@ async fn doctor(
         }
         println!("{level:<4} {check}: {msg}");
     };
+    let (level, msg) = kek_line(kek_file);
+    line(level, "lake.kek", msg);
     let src = match Source::connect(url).await {
         Ok(s) => s,
         Err(e) => {
@@ -499,4 +589,38 @@ async fn doctor(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::kek_line;
+    use oml_lake::crypto::Kek;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::time::{Duration, SystemTime};
+
+    fn kek_file(name: &str, mode: u32, age_days: u64) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("doctor-{}-{name}.kek", std::process::id()));
+        std::fs::write(&path, Kek::generate_hex().expect("hex")).expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        let when = SystemTime::now() - Duration::from_secs(age_days * 86_400);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open")
+            .set_modified(when)
+            .expect("mtime");
+        path
+    }
+
+    #[test]
+    fn the_kek_doctor_line_fails_on_a_readable_file_and_warns_past_ninety_days() {
+        assert_eq!(kek_line(Some(&kek_file("fresh", 0o600, 1))).0, "ok");
+        let (level, msg) = kek_line(Some(&kek_file("old", 0o600, 91)));
+        assert_eq!(level, "warn", "{msg}");
+        assert!(msg.contains("91 days"), "{msg}");
+        let (level, msg) = kek_line(Some(&kek_file("open", 0o644, 1)));
+        assert_eq!(level, "fail", "{msg}");
+        assert!(msg.contains("owner-only"), "{msg}");
+        assert_eq!(kek_line(None).0, "warn");
+    }
 }

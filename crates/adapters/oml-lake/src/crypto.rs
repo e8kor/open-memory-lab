@@ -96,6 +96,183 @@ impl Kek {
     }
 }
 
+/// Why a KEK file did not load.
+#[derive(Debug, thiserror::Error)]
+pub enum KeyringError {
+    /// The file cannot be read.
+    #[error("lake KEK file {path}: {source}")]
+    Read {
+        path: String,
+        source: std::io::Error,
+    },
+    /// The file is readable by group or others; it holds the key that wraps
+    /// every data key, so the writer does not start on it.
+    #[error(
+        "lake KEK file {path} has mode {mode:o}: the file must be owner-only (chmod 600), \
+         because the writer holds the key that wraps every body key"
+    )]
+    Permissions { path: String, mode: u32 },
+    /// The contents are not KEKs.
+    #[error("lake KEK file {path}: {source}")]
+    Malformed { path: String, source: SealError },
+}
+
+/// The lake's KEK versions, from one owner-only file (ADR-0060 d19). One
+/// version is the normal state. A rotation adds a version, re-wraps every
+/// live data key under it, then retires the older ones. The last version is
+/// current; a data key names the version that wrapped it by id.
+#[derive(Debug)]
+pub struct Keyring {
+    keys: Vec<Kek>,
+}
+
+impl Keyring {
+    /// A keyring of one version.
+    #[must_use]
+    pub fn single(kek: Kek) -> Self {
+        Self { keys: vec![kek] }
+    }
+
+    /// A keyring from file contents: 32 raw bytes, or one 64-hex KEK per
+    /// line, oldest first, `#` lines ignored.
+    ///
+    /// # Errors
+    /// The contents hold no KEK, or a line is not one.
+    pub fn from_file_bytes(bytes: &[u8]) -> Result<Self, SealError> {
+        if bytes.len() == KEY_LEN {
+            return Ok(Self::single(Kek::from_file_bytes(bytes)?));
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| SealError::KekMalformed)?;
+        let keys = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| Kek::from_file_bytes(l.as_bytes()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if keys.is_empty() {
+            return Err(SealError::KekMalformed);
+        }
+        Ok(Self { keys })
+    }
+
+    /// Loads the KEK file, refusing one that group or others can read.
+    ///
+    /// # Errors
+    /// The file is unreadable, too open, or not KEKs.
+    pub fn load(path: &std::path::Path) -> Result<Self, KeyringError> {
+        let shown = path.display().to_string();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let meta = std::fs::metadata(path).map_err(|source| KeyringError::Read {
+                path: shown.clone(),
+                source,
+            })?;
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(KeyringError::Permissions { path: shown, mode });
+            }
+        }
+        let bytes = std::fs::read(path).map_err(|source| KeyringError::Read {
+            path: shown.clone(),
+            source,
+        })?;
+        Self::from_file_bytes(&bytes).map_err(|source| KeyringError::Malformed {
+            path: shown,
+            source,
+        })
+    }
+
+    /// The version that wraps new data keys.
+    #[must_use]
+    pub fn current(&self) -> &Kek {
+        &self.keys[self.keys.len() - 1]
+    }
+
+    /// The version a data key names.
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&Kek> {
+        self.keys.iter().find(|k| k.id() == id)
+    }
+
+    /// Versions held.
+    #[must_use]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Ids of every version, oldest first.
+    #[must_use]
+    pub fn ids(&self) -> Vec<String> {
+        self.keys.iter().map(|k| k.id().to_owned()).collect()
+    }
+
+    /// This keyring plus a fresh random current version.
+    ///
+    /// # Errors
+    /// The random source fails.
+    pub fn with_new_current(mut self) -> Result<Self, SealError> {
+        let hex = Kek::generate_hex()?;
+        self.keys.push(Kek::from_file_bytes(hex.as_bytes())?);
+        Ok(self)
+    }
+
+    /// This keyring with only the current version.
+    #[must_use]
+    pub fn only_current(mut self) -> Self {
+        self.keys.drain(..self.keys.len() - 1);
+        self
+    }
+
+    /// A data key wrapped by the version `from_id`, wrapped again by the
+    /// current version.
+    ///
+    /// # Errors
+    /// `from_id` is not in this keyring, or the wrapped key does not open
+    /// under it for this tenant and artifact.
+    pub fn rewrap(
+        &self,
+        tenant: Uuid,
+        artifact: Uuid,
+        wrapped: &[u8],
+        from_id: &str,
+    ) -> Result<Vec<u8>, SealError> {
+        let from = self.get(from_id).ok_or(SealError::Opens)?;
+        let raw = open(&from.key, &aad(b"dek", tenant, artifact), wrapped)?;
+        seal(&self.current().key, &aad(b"dek", tenant, artifact), &raw)
+    }
+
+    /// Writes the file atomically and owner-only: a temporary file beside
+    /// it, then a rename, so the file holds the old versions or the new
+    /// ones and never a prefix of either.
+    ///
+    /// # Errors
+    /// The write or the rename fails.
+    pub fn write_atomic(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write as _;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".new");
+        let tmp = std::path::PathBuf::from(tmp);
+        let _ = std::fs::remove_file(&tmp);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut f = opts.open(&tmp)?;
+        let mut text = String::new();
+        for k in &self.keys {
+            text.push_str(&hex::encode(k.key));
+            text.push('\n');
+        }
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    }
+}
+
 /// One claim version's data key, held only while its body is sealed.
 pub struct DataKey([u8; KEY_LEN]);
 

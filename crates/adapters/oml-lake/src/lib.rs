@@ -56,6 +56,17 @@ pub enum LakeError {
     Rows(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    /// Another writer committed to the table after the caller read its
+    /// transaction version and filtered its rows against it; appending now
+    /// would write rows the other commit already holds.
+    #[error(
+        "{table} moved from transaction version {filtered_at} to {now} while the rows were cut"
+    )]
+    Stale {
+        table: &'static str,
+        filtered_at: i64,
+        now: i64,
+    },
 }
 
 /// Whose prefix a table lives under.
@@ -198,21 +209,35 @@ impl Lake {
     }
 
     /// Appends `rows` with the transaction version `version`; nothing when
-    /// there are no rows.
+    /// there are no rows. `filtered_at` is the transaction version the caller
+    /// read when it dropped the rows the table already holds: the commit is
+    /// built on the snapshot read here, so a table that moved since then is
+    /// refused (`Stale`) instead of taking the rows twice, and a writer that
+    /// commits after this snapshot is loaded fails on the transaction
+    /// conflict.
     ///
     /// # Errors
-    /// The rows do not fit the table or the commit fails.
+    /// The rows do not fit the table, the table moved, or the commit fails.
     pub async fn append(
         &self,
         prefix: Prefix,
         spec: &Spec,
         rows: &[Vec<V>],
         version: i64,
+        filtered_at: i64,
     ) -> Result<usize, LakeError> {
         if rows.is_empty() {
             return Ok(0);
         }
         let table = self.open_or_create(prefix, spec).await?;
+        let now = txn_version(&table).await?;
+        if now != filtered_at {
+            return Err(LakeError::Stale {
+                table: spec.name,
+                filtered_at,
+                now,
+            });
+        }
         let batch = spec.batch(rows).map_err(LakeError::Rows)?;
         table
             .write(vec![batch])
