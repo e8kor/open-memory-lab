@@ -25,6 +25,10 @@ set -u -o pipefail
 cd "$(dirname "$0")/.."
 
 PGHOST=127.0.0.1
+# No default port: the cluster is named, never guessed, so the demo cannot
+# reach a live server on the conventional one.
+[ -n "${PGPORT:-}" ] || { echo "set PGPORT to a throwaway PostgreSQL cluster's port" >&2; exit 2; }
+export PGPORT
 PGUSER="${PGUSER:-oml}"
 export PGPASSWORD="${PGPASSWORD:-oml_dev_only}"
 TAG="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
@@ -114,8 +118,8 @@ admin -c "CREATE DATABASE $DB OWNER $OWNER" || fail "could not create $DB"
 
 echo
 echo "=== booting oml-server-lead (migrate under $OWNER, serve under $SERVING, keyring minted in $DEMO_DIR)"
-OML_POSTGRES__URL="postgres://$SERVING:$PAIR_PASSWORD@$PGHOST:5432/$DB" \
-OML_POSTGRES__OWNER_URL="postgres://$OWNER:$PAIR_PASSWORD@$PGHOST:5432/$DB" \
+OML_POSTGRES__URL="postgres://$SERVING:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
+OML_POSTGRES__OWNER_URL="postgres://$OWNER:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
 OML_SERVER__LISTEN="127.0.0.1:$PORT" \
 OML_KMS__KEYRING_PATH="$DEMO_DIR/keyring" \
     "$SERVER_BIN" >"$DEMO_DIR/server.stdout" 2>"$DEMO_DIR/server.stderr" &

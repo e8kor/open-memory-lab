@@ -144,6 +144,12 @@ enum Command {
         #[command(subcommand)]
         command: SearchCommand,
     },
+    /// The recall telemetry: the query-text setting, the recorded recalls
+    /// and the real-usage replay (admin key role; ADR-0054 d2, d3, d11).
+    Usage {
+        #[command(subcommand)]
+        command: UsageCommand,
+    },
     /// An administrator's reads of every memory's text and attribution,
     /// each recorded in the history (admin key role; ADR-0045 d21).
     Admin {
@@ -620,6 +626,34 @@ enum SearchCommand {
         /// A pipeline the server serves; `deployment` clears the tenant's
         /// own default, so the deployment's applies.
         pipeline: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum UsageCommand {
+    /// Whether this server records recalls and whether the tenant's keep
+    /// their query text; with --query-text, turn it on or off
+    /// (telemetry.settings_set), journalled.
+    Settings {
+        /// `on` keeps the text of recalls from now, for the replay; `off`
+        /// stops and clears the text already kept.
+        #[arg(long, value_parser = ["on", "off"])]
+        query_text: Option<String>,
+    },
+    /// The tenant's recalls of the last 30 days with what their readers did
+    /// next, newest first.
+    Events {
+        /// At most this many, 1 to 200.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Replay the tenant's labelled recalls through each pipeline, under
+    /// each original key's scope, inside the server; prints the scores
+    /// alone.
+    Eval {
+        /// The pipelines, comma separated, each one the server serves.
+        #[arg(long, value_delimiter = ',', required = true)]
+        pipelines: Vec<String>,
     },
 }
 
@@ -1470,6 +1504,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Crews { command } => run_crews(cli, &stored, command),
         Command::Web { command } => run_web(cli, &stored, command),
         Command::Search { command } => run_search(cli, &stored, command),
+        Command::Usage { command } => run_usage(cli, &stored, command),
         Command::Admin { command } => run_admin(cli, &stored, command),
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
@@ -2592,6 +2627,106 @@ fn run_search(
     Ok(ExitCode::SUCCESS)
 }
 
+fn run_usage(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &UsageCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let body = match command {
+        UsageCommand::Settings { query_text: None } => client.get("/v2/usage/settings")?.1,
+        UsageCommand::Settings {
+            query_text: Some(on),
+        } => {
+            client
+                .post(
+                    "/v2/usage/settings",
+                    &json!({ "query_text": on == "on" }),
+                    &write_opts(),
+                )?
+                .1
+        }
+        UsageCommand::Events { limit } => client.get(&format!("/v2/usage/events?limit={limit}"))?.1,
+        UsageCommand::Eval { pipelines } => {
+            let read = CallOpts {
+                auth: true,
+                idempotency: false, // read-shaped POST (http-api.md idempotency)
+            };
+            client
+                .post("/v2/usage/eval", &json!({ "pipelines": pipelines }), &read)?
+                .1
+        }
+    };
+    if cli.json {
+        print_json(&body);
+        return Ok(ExitCode::SUCCESS);
+    }
+    match command {
+        UsageCommand::Settings { .. } => {
+            println!(
+                "recording: {}",
+                if body["recording"] == true {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
+            match body["query_text_since"].as_str() {
+                Some(since) => println!("query text: on since {since}"),
+                None => println!("query text: off (digests only)"),
+            }
+            println!(
+                "retention: {} days",
+                body["retention_days"].as_u64().unwrap_or(30)
+            );
+        }
+        UsageCommand::Events { .. } => {
+            for e in body["items"].as_array().into_iter().flatten() {
+                let labels: Vec<&str> = e["labels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| l["label"].as_str())
+                    .collect();
+                println!(
+                    "{}  {}  {}  {} hits  {}  {}",
+                    field(e, "created_at"),
+                    field(e, "recall_id"),
+                    field(e, "pipeline"),
+                    e["hits"].as_array().map_or(0, Vec::len),
+                    if labels.is_empty() {
+                        "-".to_owned()
+                    } else {
+                        labels.join(",")
+                    },
+                    e["query_text"].as_str().unwrap_or("(no text)")
+                );
+            }
+        }
+        UsageCommand::Eval { .. } => {
+            println!(
+                "labelled: {} in {} days, {} skipped (key revoked)",
+                body["labelled"].as_u64().unwrap_or(0),
+                body["window_days"].as_u64().unwrap_or(30),
+                body["skipped_revoked"].as_u64().unwrap_or(0)
+            );
+            for p in body["pipelines"].as_array().into_iter().flatten() {
+                let n = |k: &str| p[k].as_f64().unwrap_or(0.0);
+                println!(
+                    "{}: {} queries  success@1 {:.3}  success@5 {:.3}  nDCG@10 {:.3}  R@10 {:.3}",
+                    field(p, "pipeline"),
+                    p["queries"].as_u64().unwrap_or(0),
+                    n("success_at_1"),
+                    n("success_at_5"),
+                    n("ndcg_at_10"),
+                    n("recall_at_10"),
+                );
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     let entry_line = |entry: &Value| {
@@ -3486,16 +3621,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             }
         }
     }
-    let web = web_doctor(ready.as_ref(), admin_emails);
-    let web_warn = web.iter().any(|line| line.starts_with("warn"));
-    // The recall counts are the metrics listener's alone (ADR-0042 d11), read
-    // where OML_METRICS_URL names it (ADR-0052 d12).
-    let recall_counts = std::env::var("OML_METRICS_URL")
+    // Every count of the lead's traffic is the metrics listener's alone
+    // (ADR-0042 d11), read where OML_METRICS_URL names it, never /readyz,
+    // which answers anyone (ADR-0052 d12; ADR-0054 d1).
+    let scrape = std::env::var("OML_METRICS_URL")
         .ok()
         .filter(|u| !u.trim().is_empty())
-        .and_then(|u| postings_recall_counts(u.trim_end_matches('/')));
-    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), recall_counts);
+        .and_then(|u| Scrape::fetch(u.trim_end_matches('/')));
+    let web = web_doctor(ready.as_ref(), admin_emails, scrape.as_ref());
+    let web_warn = web.iter().any(|line| line.starts_with("warn"));
+    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
+    let telemetry = telemetry_doctor(scrape.as_ref());
+    let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -3507,7 +3645,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let whoami_ok = !matches!(me, Some(Err(_)));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() || reads_universe == Some(false) || web_warn || search_warn {
+    } else if me.is_none()
+        || reads_universe == Some(false)
+        || web_warn
+        || search_warn
+        || telemetry_warn
+    {
         "warn"
     } else {
         "ok"
@@ -3547,6 +3690,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "oauth_discovery": oauth,
             "web": web,
             "search": search,
+            "telemetry": telemetry,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -3646,6 +3790,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         for line in &search {
             println!("search      : {line}");
         }
+        for line in &telemetry {
+            println!("telemetry   : {line}");
+        }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
             (_, Some(version)) => println!("server      : oml-server-lead {version}"),
@@ -3712,7 +3859,7 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 fn search_doctor(
     ready: Option<&(u16, Value)>,
     settings: Option<&Value>,
-    recall_counts: Option<(u64, u64)>,
+    scrape: Option<&Scrape>,
 ) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
@@ -3727,8 +3874,9 @@ fn search_doctor(
         .filter_map(Value::as_str)
         .collect();
     let mut lines = vec![format!("default {default}; enabled {}", enabled.join(", "))];
-    // The reranker the reranking pipelines call, and the stages it skipped
-    // since the lead started, by reason (ADR-0053 d9).
+    // The reranker the reranking pipelines call, from /readyz, and the
+    // stages it skipped since the lead started, by reason, from the metrics
+    // listener (ADR-0053 d9; ADR-0054 d1).
     let rerank = &body["search"]["rerank"];
     if let Some(model) = rerank["model"].as_str() {
         let floor = rerank["floor"]
@@ -3738,24 +3886,37 @@ fn search_doctor(
             "rerank {model}, depth {}, floor {floor}",
             rerank["depth"].as_u64().unwrap_or(0)
         ));
-        let count = |reason: &str| rerank["skipped"][reason].as_u64().unwrap_or(0);
-        let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
-        if busy + timeout > 0 {
-            let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
-                .into_iter()
-                .filter(|(_, n)| *n > 0)
-                .map(|(reason, n)| format!("{n} {reason}"))
-                .collect();
-            lines.push(format!(
-                "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
-                busy + timeout,
-                reasons.join(", ")
-            ));
-        }
-        if failed > 0 {
-            lines.push(format!(
-                "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
-            ));
+        match scrape {
+            None => lines.push(
+                "rerank skips not read: set OML_METRICS_URL to the lead's metrics listener"
+                    .to_owned(),
+            ),
+            Some(scrape) => {
+                let count = |reason: &str| {
+                    scrape.sum(
+                        "oml_reranks_total",
+                        &[("outcome", "skipped"), ("reason", reason)],
+                    )
+                };
+                let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
+                if busy + timeout > 0 {
+                    let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
+                        .into_iter()
+                        .filter(|(_, n)| *n > 0)
+                        .map(|(reason, n)| format!("{n} {reason}"))
+                        .collect();
+                    lines.push(format!(
+                        "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
+                        busy + timeout,
+                        reasons.join(", ")
+                    ));
+                }
+                if failed > 0 {
+                    lines.push(format!(
+                        "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
+                    ));
+                }
+            }
         }
     }
     lines.extend(sparse_doctor(body, &enabled, settings));
@@ -3774,7 +3935,83 @@ fn search_doctor(
             settings["effective"].as_str().unwrap_or("the deployment's")
         ));
     }
+    let recall_counts = scrape.map(|scrape| {
+        let pipeline = ("pipeline", "bm25-postings");
+        (
+            scrape.sum("oml_recalls_total", &[pipeline, ("access", "postings")]),
+            scrape.sum("oml_recalls_total", &[pipeline, ("access", "scan")]),
+        )
+    });
     lines.extend(postings_doctor(recall_counts, settings));
+    lines
+}
+
+/// Events dropped above this share of the recalls answered since start
+/// warn (ADR-0054 d13).
+const DROPPED_WARN_PERCENT: u64 = 1;
+
+/// The labeller's lag past which doctor warns, in seconds (ADR-0054 d13).
+const LABELLER_LAG_WARN_SECONDS: u64 = 600;
+
+/// The recall telemetry's doctor lines, from the metrics listener alone
+/// (ADR-0054 d13, as accepted): events dropped above 1% of recalls, by
+/// reason; the writer's queue above half its bound; rows past the 30 days not
+/// yet purged; the labeller's lag above 10 minutes. Each names its repair.
+fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    if !scrape.0.contains("oml_telemetry_queue_depth") {
+        return vec!["off (this server records no recall)".to_owned()];
+    }
+    let mut lines = Vec::new();
+    let written = scrape.sum("oml_recall_events_total", &[("outcome", "written")]);
+    let mut dropped = Vec::new();
+    for reason in [
+        "dropped_queue_full",
+        "dropped_store_error",
+        "dropped_no_partition",
+    ] {
+        let n = scrape.sum("oml_recall_events_total", &[("outcome", reason)]);
+        if n > 0 {
+            dropped.push((reason, n));
+        }
+    }
+    let lost: u64 = dropped.iter().map(|(_, n)| n).sum();
+    if lost * 100 > DROPPED_WARN_PERCENT * (written + lost) && lost > 0 {
+        lines.push(format!(
+            "warn telemetry_dropped: {lost} of {} recall events dropped since start ({}); the queue is full under load, or the store refuses; no_partition is a tenant the lead's next start gives its partitions",
+            written + lost,
+            dropped
+                .iter()
+                .map(|(r, n)| format!("{n} {}", r.trim_start_matches("dropped_")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let depth = scrape.sum("oml_telemetry_queue_depth", &[]);
+    if depth > 5_000 {
+        lines.push(format!(
+            "warn telemetry_backlog: {depth} events wait for the writer (bound 10000); past it they are dropped"
+        ));
+    }
+    let overdue = scrape.sum("oml_telemetry_purge_overdue", &[]);
+    if overdue > 0 {
+        lines.push(format!(
+            "warn telemetry_purge: {overdue} tenant(s) hold recall events past the 30 days and a minute, so the lead's purge is behind or failing; their rows are never read, and the lead's log names the store error"
+        ));
+    }
+    let lag = scrape.sum("oml_labeller_lag_seconds", &[]);
+    if lag > LABELLER_LAG_WARN_SECONDS {
+        lines.push(format!(
+            "warn telemetry_labeller: the labeller's last pass ended {lag} s ago (more than 600); labels and the purge wait for it"
+        ));
+    }
+    if lines.is_empty() {
+        lines.push(format!(
+            "on: {written} recall events written since start, none dropped past 1%"
+        ));
+    }
     lines
 }
 
@@ -3842,37 +4079,58 @@ const SCAN_SHARE_WARN_PERCENT: u64 = 5;
 /// the scan share: below it one recall would swing it.
 const SCAN_SHARE_MIN_RECALLS: u64 = 20;
 
-/// `bm25-postings`'s recalls since the lead started, (read from postings,
-/// answered by the scan), summed from `oml_recalls_total` on the metrics
-/// listener at `base` (ADR-0042 d11), or `None` when it does not answer.
-fn postings_recall_counts(base: &str) -> Option<(u64, u64)> {
-    let text = ureq::get(&format!("{base}/metrics"))
-        .call()
-        .ok()?
-        .into_string()
-        .ok()?;
-    let (mut postings, mut scan) = (0_u64, 0_u64);
-    for line in text.lines() {
-        if !line.starts_with("oml_recalls_total{") || !line.contains("pipeline=\"bm25-postings\"") {
-            continue;
-        }
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a counter's integral value"
-        )]
-        let value = line
-            .rsplit(' ')
-            .next()
-            .and_then(|v| v.parse::<f64>().ok())
-            .map_or(0, |v| v as u64);
-        if line.contains("access=\"scan\"") {
-            scan += value;
-        } else if line.contains("access=\"postings\"") {
-            postings += value;
-        }
+/// One scrape of the lead's metrics listener (ADR-0042 d11), which doctor
+/// reads every traffic count from.
+struct Scrape(String);
+
+impl Scrape {
+    /// `GET {base}/metrics`, or `None` when it does not answer.
+    fn fetch(base: &str) -> Option<Self> {
+        ureq::get(&format!("{base}/metrics"))
+            .call()
+            .ok()?
+            .into_string()
+            .ok()
+            .map(Self)
     }
-    Some((postings, scan))
+
+    /// The sum of every sample of `name` whose labels hold each of `labels`.
+    fn sum(&self, name: &str, labels: &[(&str, &str)]) -> u64 {
+        self.samples(name, labels).map(|(_, v)| v).sum()
+    }
+
+    /// Every sample of `name` whose labels hold each of `labels`, as its
+    /// label text and integral value.
+    fn samples<'a>(
+        &'a self,
+        name: &'a str,
+        labels: &'a [(&'a str, &'a str)],
+    ) -> impl Iterator<Item = (&'a str, u64)> + 'a {
+        self.0.lines().filter_map(move |line| {
+            let rest = line.strip_prefix(name)?;
+            let (set, value) = match rest.strip_prefix('{') {
+                Some(rest) => rest.split_once("} ")?,
+                None => ("", rest.strip_prefix(' ')?),
+            };
+            if !labels
+                .iter()
+                .all(|(k, v)| set.split(',').any(|pair| pair == format!("{k}=\"{v}\"")))
+            {
+                return None;
+            }
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a counter's or gauge's integral value"
+            )]
+            let value = value
+                .split(' ')
+                .next()
+                .and_then(|v| v.parse::<f64>().ok())
+                .map_or(0, |v| v.max(0.0) as u64);
+            Some((set, value))
+        })
+    }
 }
 
 /// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
@@ -3943,23 +4201,37 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
 fn web_doctor(
     ready: Option<&(u16, Value)>,
     admin_emails: Option<(usize, Vec<String>)>,
+    scrape: Option<&Scrape>,
 ) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
     };
-    let Some(providers) = body["web"]["providers"].as_object() else {
+    let Some(providers) = body["web"]["providers"].as_array() else {
         return vec!["off (no sign-in provider, or no oauth.issuer)".to_owned()];
     };
-    let mut lines = vec![format!(
-        "on ({})",
-        providers.keys().cloned().collect::<Vec<_>>().join(", ")
-    )];
-    for (provider, state) in providers {
-        let failed = state["failed_exchanges"].as_u64().unwrap_or(0);
+    let providers: Vec<&str> = providers.iter().filter_map(Value::as_str).collect();
+    let mut lines = vec![format!("on ({})", providers.join(", "))];
+    // The failed exchanges are the metrics listener's (ADR-0054 d1).
+    for provider in &providers {
+        let Some(scrape) = scrape else { break };
+        let label = [("provider", *provider)];
+        let reasons: Vec<String> = scrape
+            .samples("oml_web_exchanges_failed_total", &label)
+            .filter(|(_, n)| *n > 0)
+            .map(|(set, n)| {
+                let reason = set
+                    .split(',')
+                    .find_map(|pair| pair.strip_prefix("reason="))
+                    .unwrap_or("\"unknown\"")
+                    .trim_matches('"');
+                format!("{n} {reason}")
+            })
+            .collect();
+        let failed = scrape.sum("oml_web_exchanges_failed_total", &label);
         if failed > 0 {
             lines.push(format!(
-                "warn web_provider_{provider}: {failed} failed exchanges since start, last {}",
-                state["last_failure"].as_str().unwrap_or("unknown")
+                "warn web_provider_{provider}: {failed} failed exchanges since start ({})",
+                reasons.join(", ")
             ));
         }
     }
@@ -4005,16 +4277,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_search_doctor_names_the_reranker_and_warns_on_skipped_reranks() {
+    fn the_search_doctor_names_the_reranker_and_warns_on_skips_read_from_the_metrics_listener() {
         let ready = (
             200,
             json!({"search": {
                 "enabled": ["bm25", "bm25-rerank"], "default": "bm25",
-                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null,
-                           "skipped": {"busy": 3, "timeout": 0, "failed": 1}},
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null},
             }}),
         );
-        let lines = search_doctor(Some(&ready), None, None);
+        let scrape = Scrape(
+            "oml_reranks_total{outcome=\"applied\",reason=\"none\"} 9\n\
+             oml_reranks_total{outcome=\"skipped\",reason=\"busy\"} 3\n\
+             oml_reranks_total{outcome=\"skipped\",reason=\"failed\"} 1\n"
+                .to_owned(),
+        );
+        let lines = search_doctor(Some(&ready), None, Some(&scrape));
         assert_eq!(
             lines[1],
             "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
@@ -4035,12 +4312,15 @@ mod tests {
             lines[3].contains("rerank_failed") && !lines[3].contains("max_concurrent"),
             "a failure names the log event, not the cap: {lines:?}"
         );
+        // Without the metrics listener doctor says where the skips are,
+        // never that there are none.
+        let unread = search_doctor(Some(&ready), None, None);
+        assert!(unread[2].contains("OML_METRICS_URL"), "{unread:?}");
         let floored = (
             200,
             json!({"search": {
                 "enabled": ["bm25-rerank"], "default": "bm25-rerank",
-                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005,
-                           "skipped": {"busy": 0, "timeout": 0, "failed": 0}},
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005},
             }}),
         );
         assert_eq!(
@@ -4052,9 +4332,61 @@ mod tests {
             json!({"search": {"enabled": ["bm25"], "default": "bm25", "rerank": null}}),
         );
         assert_eq!(
-            search_doctor(Some(&quiet), None, None).len(),
+            search_doctor(Some(&quiet), None, Some(&Scrape(String::new()))).len(),
             1,
             "no reranker, no line"
         );
+    }
+
+    #[test]
+    fn the_telemetry_doctor_names_drops_the_backlog_an_overdue_purge_and_the_lag() {
+        let scrape = Scrape(
+            "oml_recall_events_total{outcome=\"written\"} 90\n\
+             oml_recall_events_total{outcome=\"dropped_no_partition\"} 10\n\
+             oml_telemetry_queue_depth 6000\n\
+             oml_telemetry_purge_overdue 2\n\
+             oml_labeller_lag_seconds 900.0\n"
+                .to_owned(),
+        );
+        let lines = telemetry_doctor(Some(&scrape));
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[0].starts_with("warn telemetry_dropped: 10 of 100 recall events dropped since start (10 no_partition)"), "{lines:?}");
+        assert!(
+            lines[1].starts_with("warn telemetry_backlog: 6000"),
+            "{lines:?}"
+        );
+        assert!(lines[2].starts_with("warn telemetry_purge: 2"), "{lines:?}");
+        assert!(
+            lines[3]
+                .starts_with("warn telemetry_labeller: the labeller's last pass ended 900 s ago"),
+            "{lines:?}"
+        );
+        let healthy = Scrape(
+            "oml_recall_events_total{outcome=\"written\"} 7\n\
+             oml_telemetry_queue_depth 0\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            telemetry_doctor(Some(&healthy)),
+            vec!["on: 7 recall events written since start, none dropped past 1%".to_owned()]
+        );
+        assert!(telemetry_doctor(None)[0].contains("OML_METRICS_URL"));
+    }
+
+    #[test]
+    fn the_web_doctor_reads_failed_exchanges_from_the_metrics_listener() {
+        let ready = (200, json!({"web": {"providers": ["google", "github"]}}));
+        let scrape = Scrape(
+            "oml_web_exchanges_failed_total{provider=\"google\",reason=\"busy\"} 1\n\
+             oml_web_exchanges_failed_total{provider=\"google\",reason=\"error_answer\"} 1\n"
+                .to_owned(),
+        );
+        let lines = web_doctor(Some(&ready), None, Some(&scrape));
+        assert_eq!(lines[0], "on (google, github)");
+        assert_eq!(
+            lines[1],
+            "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
     }
 }

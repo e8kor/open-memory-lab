@@ -24,7 +24,7 @@ use oml_app::types::{
     ProviderFailure, WebEmailRequest,
 };
 use oml_transport_http::ROUTES;
-use oml_transport_http::traffic::ScopeObserver;
+use oml_transport_http::traffic::{ScopeObserver, Traffic};
 use oml_transport_http::web::{
     ADMIN_ACTIONS, SESSION_COOKIE, SIGN_IN_COOKIE, USER_ACTIONS, WEB_ROUTES, WebPages,
 };
@@ -43,6 +43,7 @@ struct Rig {
     router: Router,
     boot: BootstrapResult,
     providers: MemSignIn,
+    traffic: Traffic,
 }
 
 fn test_app(store: &MemStore) -> TestApp {
@@ -64,7 +65,9 @@ async fn rig() -> Rig {
         })
         .await
         .expect("bootstrap");
+    let traffic = Traffic::default();
     let router = state(&store, test_app(&store))
+        .with_traffic(traffic.clone())
         .with_web(WebPages::new(
             vec![
                 (Provider::Google, CLIENT_GOOGLE.to_owned()),
@@ -79,6 +82,7 @@ async fn rig() -> Rig {
         router,
         boot,
         providers,
+        traffic,
     };
     rig.allow(EMAIL, "alice", false).await;
     rig
@@ -945,7 +949,7 @@ async fn a_session_cookie_on_the_api_is_auth_missing() {
 }
 
 #[tokio::test]
-async fn the_provider_cap_answers_limit_rate_and_readyz_counts_failed_exchanges() {
+async fn the_provider_cap_answers_limit_rate_and_the_metrics_listener_counts_failed_exchanges() {
     let rig = rig().await;
     for failure in [
         ProviderFailure::Busy,
@@ -973,14 +977,18 @@ async fn the_provider_cap_answers_limit_rate_and_readyz_counts_failed_exchanges(
             }
         }
     }
+    let text = rig.traffic.metrics().encode();
+    for expected in [
+        r#"oml_web_exchanges_failed_total{provider="google",reason="busy"} 1"#,
+        r#"oml_web_exchanges_failed_total{provider="google",reason="error_answer"} 1"#,
+    ] {
+        assert!(text.contains(expected), "no {expected} in:\n{text}");
+    }
+    assert!(!text.contains(r#"provider="github""#), "{text}");
+    // /readyz names the providers and counts nothing (ADR-0054 d1).
     let (_, _, body) = send(&rig.router, get("/readyz", None)).await;
     let ready: Value = serde_json::from_str(&body).expect("JSON");
-    assert_eq!(ready["web"]["providers"]["google"]["failed_exchanges"], 2);
-    assert_eq!(
-        ready["web"]["providers"]["google"]["last_failure"],
-        "error_answer"
-    );
-    assert_eq!(ready["web"]["providers"]["github"]["failed_exchanges"], 0);
+    assert_eq!(ready["web"]["providers"], json!(["google", "github"]));
 }
 
 #[tokio::test]

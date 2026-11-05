@@ -32,6 +32,7 @@ use oml_app::search::{Pipeline, SearchConfig};
 use oml_app::types::AssignedNames;
 use oml_fetch::PinnedFetcher;
 use oml_fetch::signin::{ClientCredentials, ProviderClients};
+use oml_pg::telemetry::PgTelemetry;
 use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -1532,6 +1533,12 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         Some(reranker) => app.with_reranker(reranker),
         None => app,
     };
+    // Each recall's event, and what its reader did next, go to a bounded
+    // queue a task writes off the recall's path, counted on the metrics
+    // listener (ADR-0054 d1, d2).
+    let meter: Arc<dyn oml_app::ports::TelemetryMeter> = Arc::clone(traffic.metrics()) as _;
+    let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
+    let app = app.with_telemetry(telemetry);
     let app = match sparse {
         Some(sparse) => app.with_sparse_encoder(sparse),
         None => app,

@@ -40,7 +40,7 @@ const ENROLLMENT: &str = "enr_test_fixture_token";
 
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
 }
 
 /// The password of every minted test role; the roles live only as long as
@@ -4858,6 +4858,11 @@ async fn the_same_budgeted_recall_answers_identically_twice() {
     let second = recall_ok(&rig.router, &reader, body).await;
     assert_eq!(hit_ids(&first), vec![hits[0].clone()], "{first}");
     assert_eq!(first["budget"]["truncated"], true);
+    // Each recall has an id of its own (ADR-0054 d2); the rest is the same.
+    let (mut first, mut second) = (first, second);
+    for answer in [&mut first, &mut second] {
+        answer.as_object_mut().map(|o| o.remove("recall_id"));
+    }
     assert_eq!(first, second, "the cut is deterministic");
 
     drop_db(&rig.db_name).await;
@@ -7226,8 +7231,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        50,
-        "the 36 routed operations, whoami, the guardrail read, the six OAuth operations and the six web routes"
+        54,
+        "the 40 routed operations, whoami, the guardrail read, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

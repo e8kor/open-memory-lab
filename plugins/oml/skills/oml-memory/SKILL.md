@@ -84,6 +84,13 @@ The server matches words exactly, without stemming: `quote` does not find `quote
 the words the memory most likely contains, and try a second query before you conclude
 nothing is there.
 
+A recall answers `recall_id`. On your next `oml_read`, in any mode, pass `feedback:
+{recall_id, useful: [...], not_useful: [...]}` naming the hits of that recall that answered
+your question and those that did not, at most 20 ids; recall improves for the next reader
+from it. Feedback for a recall older than 24 hours, or naming an id that recall did not
+serve you, is refused with `request.validation` naming the field, and the read does not run:
+drop `feedback` and call again.
+
 ## See what became of your writes
 
 Call `oml_read` with neither `query` nor `artifact_id` to list what your key wrote, newest

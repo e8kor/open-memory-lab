@@ -419,6 +419,12 @@ pub enum MetadataFold {
     SearchDefaultSet {
         pipeline: Option<String>,
     },
+    /// `telemetry.settings_set`: the instant the tenant's events began to
+    /// keep their query text, or `None` to stop, which nulls the text of the
+    /// tenant's stored events in the same commit (ADR-0054 d3).
+    TelemetrySettingsSet {
+        query_text_since: Option<EventTime>,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -672,6 +678,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+
+    /// Since when the tenant's recall events keep their query text, folded
+    /// from `telemetry.settings_set`; `None` is off (ADR-0054 d3).
+    fn tenant_query_text_since(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send;
 
     /// The one-transaction commit point. The store refuses a commit whose
     /// `seq`/`prev_hash` do not extend the current head — chain assignment
@@ -1594,6 +1607,46 @@ pub trait RequestObserver: Send + Sync {
     fn rerank(&self, outcome: Option<&'static str>, reason: Option<&'static str>) {
         let _ = (outcome, reason);
     }
+
+    /// A recall through `pipeline` answered `result` (`hits`, `empty`, or
+    /// `below_floor` when the floor withheld a row) in `seconds`
+    /// (ADR-0054 d1). Telling no one is the default.
+    fn recall_answered(&self, pipeline: &'static str, result: &'static str, seconds: f64) {
+        let _ = (pipeline, result, seconds);
+    }
+
+    /// A verdict `approve` or `reject` committed `waited_seconds` after its
+    /// memory was submitted (ADR-0054 d1, d12). Telling no one is the
+    /// default.
+    fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
+        let _ = (verdict, waited_seconds);
+    }
+}
+
+/// The telemetry writer's counts and gauges, which the metrics listener
+/// serves (ADR-0054 d1, as accepted). Every label is from a closed set.
+pub trait TelemetryMeter: Send + Sync {
+    /// `n` recall events ended `outcome`: `written`, `dropped_queue_full`,
+    /// `dropped_store_error` or `dropped_no_partition`.
+    fn events(&self, outcome: &'static str, n: u64);
+    /// `n` labels `label` were stored.
+    fn labels(&self, label: &'static str, n: u64);
+    /// `n` labels were dropped for `reason`: `rate_limited`, `queue_full`
+    /// or `store_error`.
+    fn labels_dropped(&self, reason: &'static str, n: u64);
+    /// A remembered memory was (`same_text`) or was not (`none`) an exact
+    /// duplicate of a served memory of its workarea.
+    fn remembered(&self, relation: &'static str);
+    /// The queue's depth now.
+    fn queue_depth(&self, depth: i64);
+    /// The telemetry's health, refreshed by the labeller's pass: tenants
+    /// holding rows past the 30 days and one pass, so the purge is behind.
+    fn health(&self, purge_overdue: i64);
+    /// Seconds since the labeller's last completed pass.
+    fn lag(&self, seconds: f64);
+    /// The served memories no recall of the last 30 days returned, by how
+    /// long ago they were promoted: under 7 days, 30, 90, and older.
+    fn unrecalled(&self, by_age: [i64; 4]);
 }
 
 /// The observer of a composition that logs no request.

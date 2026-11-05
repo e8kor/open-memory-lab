@@ -16,7 +16,7 @@ Environment (all optional):
   OML_SERVER_BIN              the lead binary (default: oml-server-lead on PATH)
   OML_CLI_BIN                 the CLI binary (default: oml on PATH)
   OML_SDK_TEST_DATABASE_URL   a superuser that can mint roles
-                              (default: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev)
+                              (required: a throwaway cluster; no default)
   OML_SDK_TEST_PORT           the port to listen on (default: one the OS hands out)
   OML_TEST_REQUIRE_SPLIT      1: fail, never skip, when the admin role cannot mint
 
@@ -42,9 +42,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-ADMIN_URL = os.environ.get(
-    "OML_SDK_TEST_DATABASE_URL", "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev"
-)
+# No default: a suite that guessed a URL could reach a live server on the
+# conventional port. Unset, every test needing it refuses (see _require_minting).
+ADMIN_URL = os.environ.get("OML_SDK_TEST_DATABASE_URL", "")
 SERVER_BIN = os.environ.get("OML_SERVER_BIN", "oml-server-lead")
 CLI_BIN = os.environ.get("OML_CLI_BIN", "oml")
 TOKEN_RE = re.compile(r"enr_[0-9a-f]{48}")
@@ -95,6 +95,10 @@ def _admin_role(query: str = ADMIN_ROLE_QUERY) -> tuple[str, bool]:
 
 def _require_minting() -> None:
     """Skip, or under OML_TEST_REQUIRE_SPLIT=1 fail, when the admin role cannot mint (ADR-0034 d8)."""
+    if not ADMIN_URL:
+        if os.environ.get("OML_TEST_REQUIRE_SPLIT") == "1":
+            pytest.fail("OML_SDK_TEST_DATABASE_URL is unset: name a throwaway cluster")
+        pytest.skip("did not run: set OML_SDK_TEST_DATABASE_URL to a throwaway cluster")
     role, superuser = _admin_role()
     if superuser:
         return

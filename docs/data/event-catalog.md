@@ -822,6 +822,36 @@ key set the tenant's default search pipeline, or, with `pipeline` null, cleared 
 deployment's default applies. The fold writes `tenants.search_default`; recalls use it from the
 next request. Setting the default the tenant already has journals nothing.
 
+### telemetry.settings_set
+
+```json
+{ "query_text": true, "by_key_id": "…" }
+```
+
+*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d3.* An admin key turned the tenant's recall query text on
+or off. The fold writes `tenants.telemetry_query_text_since`, the commit's instant when on and
+`NULL` when off; off also nulls the text of the tenant's stored recall events in the same commit.
+Setting what is already set journals nothing.
+
+### telemetry.events_read
+
+```json
+{ "events": 50, "with_text": 12, "newest": "…", "oldest": "…" }
+```
+
+*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2.* An admin key read the tenant's recall events: how
+many, how many carried query text, and the page's bounds; never a query. Folds nothing, as
+`memory.admin_read` does not.
+
+### telemetry.replayed
+
+```json
+{ "pipelines": ["bm25-postings"], "labelled": 212, "ran": 209, "capped": false }
+```
+
+*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d11.* An admin key replayed the tenant's labelled recalls
+through the named pipelines; the counts, never a query. Folds nothing.
+
 ## Simulation family
 
 The fenced provenance channel. Semantics and taint rules:

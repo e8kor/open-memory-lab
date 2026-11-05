@@ -14,6 +14,7 @@ pub mod doubles;
 pub mod oauth_fetch;
 pub mod ports;
 pub mod search;
+pub mod telemetry;
 pub mod types;
 
 pub use app::App;

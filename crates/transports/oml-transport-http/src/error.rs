@@ -669,6 +669,23 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::WebField { field, message } => {
             ApiError::validation(message).with_details(json!({ "field": field }))
         }
+        // A read's feedback member is refused by the field it names, and
+        // the read is not run (ADR-0054 d6).
+        AppError::Feedback { field, message } => {
+            ApiError::validation(message).with_details(json!({ "field": field }))
+        }
+        AppError::FeedbackRateLimited => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "A key's explicit feedback labels are capped at 1000 a UTC day (ADR-0054 d6).",
+            "this key's feedback today is at its cap; send the read without feedback",
+        )
+        .retryable(),
+        AppError::TelemetryOff => ApiError::unavailable("telemetry_off"),
+        AppError::ReplayReranks { name } => ApiError::validation(format!(
+            "the replay runs no reranking pipeline, so it never takes a live recall's reranker slot: {name}"
+        ))
+        .with_details(json!({ "field": "/pipelines" })),
         // Denials attenuate grants, and an admin key carries none
         // (http-api.md keys, grants, denials; ADR-0026 d15).
         AppError::DenialOnAdminKey => ApiError::validation(

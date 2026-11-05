@@ -612,6 +612,12 @@ and its reads follow one routing policy
 
 *Not scheduled · [releases](../product/releases.md)*
 
+*Not the recall telemetry.* Since v0.5.7 each recall is also recorded in `recall_events`, with
+the labels of what its reader did next, for 30 days, to a tenant admin alone
+([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2): that table answers whether a recall helped, and is never offered as
+an audit record. The read log below answers who read what, for an auditor, under a retention the
+tenant sets, and is not built.
+
 Every read is logged: key, role, workarea, the memory ids served, timestamp,
 and for a recall the request digest. A recall logs exactly the artifact ids
 served after the `k` and [budget](#token-budgets) cuts — own held ids included,

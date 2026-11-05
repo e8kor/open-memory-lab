@@ -67,7 +67,7 @@ use uuid::Uuid;
 fn base_url() -> String {
     // The gate's documented local profile; CI overrides with DATABASE_URL.
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
 }
 
 /// The password of every minted test role; the roles live only as long as
@@ -2539,10 +2539,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
     let mut rows = Vec::new();
     for table in POC_TABLES.iter().copied().chain(["journal"]) {
         let row = match (renamed, table) {
-            // 0020 adds search_default, null for every tenant it finds
+            // 0020 adds search_default and 0023 telemetry_query_text_since,
+            // null for every tenant they find
             // (ADR-0049 d4).
             (true, "tenants") => {
-                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default') \
+                "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
+                  - 'telemetry_query_text_since') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workarea's status is the one every build served,
@@ -5868,7 +5870,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7306,7 +7308,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7967,7 +7969,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 22);
+    assert_eq!(applied, 23);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8774,6 +8776,61 @@ async fn a_queue_turned_off_stays_empty_and_one_turned_on_backfills_in_resumable
     assert_eq!(queued, 6, "every version without kind 2 is queued once");
     assert_eq!(oml_port_contracts::encode_sparse_backlog(&store).await, 6);
     assert_eq!(sparse_state_of(&store, tenant).await.1.len(), 6);
+    drop_dbs(&created).await;
+}
+
+/// Turning a tenant's sparse state on waits for every write in flight: a
+/// write whose trigger read the state off and commits after the backfill's
+/// first read would be queued by neither, and the sparse lists would never
+/// hold it (ADR-0052 d15). The step holds until that write commits, so its
+/// read sees it.
+#[tokio::test]
+async fn turning_the_sparse_state_on_waits_for_writes_in_flight_so_the_backfill_sees_them() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(587);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    // A write in flight: its transaction holds the lock every insert or
+    // update of a memory takes, and has not committed.
+    let mut writer = owner_conn(&store).await;
+    let mut tx = writer.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE memories IN ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .expect("a write's lock");
+    let step = store.sparse_backfill(tenant, 10);
+    tokio::pin!(step);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut step)
+            .await
+            .is_err(),
+        "the first step waits for the write in flight"
+    );
+    tx.commit().await.expect("the write commits");
+    let (_, done) = tokio::time::timeout(std::time::Duration::from_secs(10), step)
+        .await
+        .expect("the step proceeds once the write committed")
+        .expect("step");
+    assert!(done, "one step reads every version");
+    // On already: a later step takes no lock, so writes never wait for it.
+    let mut writer = owner_conn(&store).await;
+    let mut tx = writer.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE memories IN ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .expect("a write's lock");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        store.sparse_backfill(tenant, 10),
+    )
+    .await
+    .expect("a step on a state already on does not wait")
+    .expect("step");
+    tx.commit().await.expect("commit");
     drop_dbs(&created).await;
 }
 

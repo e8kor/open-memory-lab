@@ -251,6 +251,16 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn tenant_query_text_since(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send {
+        timed(
+            "tenant_query_text_since",
+            self.inner.tenant_query_text_since(tenant_id),
+        )
+    }
+
     fn guardrail_rows(
         &self,
         tenant_id: Uuid,

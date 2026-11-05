@@ -16,7 +16,7 @@
 //   OML_SERVER_BIN              the lead binary (default: oml-server-lead on PATH)
 //   OML_CLI_BIN                 the CLI binary (default: oml on PATH)
 //   OML_SDK_TEST_DATABASE_URL   a superuser that can mint roles
-//                               (default: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev)
+//                               (required: a throwaway cluster; no default)
 //   OML_SDK_TEST_PORT           the port to listen on (default: one the OS hands out)
 //   OML_SDK_TEST_SCRATCH        where the scratch directory goes (default: the OS temp dir)
 //   OML_TEST_REQUIRE_SPLIT      1: throw, never skip, when the admin role cannot mint
@@ -31,8 +31,8 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const ADMIN_URL =
-  process.env.OML_SDK_TEST_DATABASE_URL ?? "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev";
+// No default: a guessed URL could reach a live server on the conventional port.
+const ADMIN_URL = process.env.OML_SDK_TEST_DATABASE_URL ?? "";
 const SERVER_BIN = process.env.OML_SERVER_BIN ?? "oml-server-lead";
 const CLI_BIN = process.env.OML_CLI_BIN ?? "oml";
 const ALLOWED_ENV = ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR"];
@@ -82,6 +82,13 @@ export function adminRole(query: string = ADMIN_ROLE_QUERY): { role: string; sup
  * cannot, and a throw instead under OML_TEST_REQUIRE_SPLIT=1.
  */
 export function mintsRoles(): boolean {
+  if (ADMIN_URL === "") {
+    if (process.env.OML_TEST_REQUIRE_SPLIT === "1") {
+      throw new Error("OML_SDK_TEST_DATABASE_URL is unset: name a throwaway cluster");
+    }
+    console.log("did not run: set OML_SDK_TEST_DATABASE_URL to a throwaway cluster");
+    return false;
+  }
   const { role, superuser } = adminRole();
   if (superuser) return true;
   if (process.env.OML_TEST_REQUIRE_SPLIT === "1") {

@@ -10,6 +10,8 @@
 //! Every query is the sqlx runtime API — no compile-time checked macros, so
 //! no `DATABASE_URL` at build (workspace-plan.md).
 
+pub mod telemetry;
+
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::budget::hit_order;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
@@ -526,6 +528,16 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
             .persistent(false)
             .execute(&mut *tx)
             .await?;
+    }
+    // The tenant's recall telemetry partitions, so its first recall is
+    // recorded (ADR-0054 d2). A schema before 0023 has none to create.
+    let telemetry_tables: bool =
+        sqlx::query_scalar("SELECT to_regclass('recall_events') IS NOT NULL")
+            .persistent(false)
+            .fetch_one(&mut *tx)
+            .await?;
+    if telemetry_tables {
+        telemetry::ensure_tenant(&mut tx, tenant_id).await?;
     }
     tx.commit().await
 }
@@ -1302,6 +1314,11 @@ impl PgStore {
         // A tenant a lead before 0021 created has no postings partition, and
         // its writes fail until it does (ADR-0052 d1).
         ensure_postings_partitions(owner)
+            .await
+            .map_err(sqlx::migrate::MigrateError::Execute)?;
+        // A tenant a lead before 0023 created has no telemetry partitions,
+        // and its recalls are not recorded until it does (ADR-0054 d2).
+        telemetry::ensure_partitions(owner)
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
         // 0020 may have created pg_trgm, which serves bm25-trigram.
@@ -2419,6 +2436,28 @@ async fn apply_fold(
                 .execute(&mut **tx)
                 .await
                 .map_err(backend)?;
+        }
+        // The opt-in's instant, or off; off nulls the text the tenant's
+        // events hold, in this commit (ADR-0054 d3, as accepted).
+        MetadataFold::TelemetrySettingsSet { query_text_since } => {
+            sqlx::query(
+                "UPDATE tenants SET telemetry_query_text_since = $2::timestamptz WHERE id = $1",
+            )
+            .bind(tenant_id)
+            .bind(query_text_since.as_ref().map(EventTime::as_str))
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if query_text_since.is_none() {
+                sqlx::query(
+                    "UPDATE recall_events SET query_text = NULL \
+                     WHERE tenant_id = $1 AND query_text IS NOT NULL",
+                )
+                .bind(tenant_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
         }
         MetadataFold::WorkareaCreated(w) => {
             // The status stored is the record's, the one column every
@@ -3874,6 +3913,24 @@ impl Retriever for PgStore {
     ) -> Result<(u64, bool), StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // Turning the state on races a write in flight: its trigger read the
+        // state off, and the step's read, taken before it commits, misses
+        // it, so neither queues it. SHARE on memories waits for every write
+        // in flight and holds new ones until this commits, when their
+        // triggers read the state on; a state already on takes no lock
+        // (ADR-0052 d15).
+        let on: Option<bool> =
+            sqlx::query_scalar("SELECT enabled FROM search_sparse_state WHERE tenant_id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
+        if on != Some(true) {
+            sqlx::query("LOCK TABLE memories IN SHARE MODE")
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
         // On, from now: a state turned on again starts its backfill over.
         let (after,): (Option<Uuid>,) = sqlx::query_as(
             "INSERT INTO search_sparse_state (tenant_id, enabled) VALUES ($1, true) \
@@ -4443,6 +4500,30 @@ impl JournalStore for PgStore {
                 .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(value.flatten())
+    }
+
+    async fn tenant_query_text_since(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let value: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT to_char(telemetry_query_text_since AT TIME ZONE 'UTC', \
+                            'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             FROM tenants WHERE id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        value
+            .flatten()
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(backend)
     }
 
     async fn steering_in_force(

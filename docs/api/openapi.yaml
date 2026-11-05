@@ -76,6 +76,7 @@ tags:
   - name: web
   - name: admin
   - name: search
+  - name: usage
   - name: health
 
 paths:
@@ -1770,6 +1771,137 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/usage/settings:
+    get:
+      tags: [usage]
+      operationId: usageSettings
+      summary: Whether this server records recalls, and whether the tenant's keep their query text.
+      description: 'Requires: admin key role (ADR-0054 d3). Since v0.5.7.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The settings.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                recording: true
+                query_text: false
+                query_text_since: null
+                retention_days: 30
+              schema: { $ref: '#/components/schemas/UsageSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [usage]
+      operationId: setUsageSettings
+      summary: Keep the query text of the tenant's recalls from now, or stop and clear the text kept.
+      description: 'Requires: admin key role (ADR-0054 d3). Journalled as telemetry.settings_set with the choice and the admin key; on keeps the text of recalls made from this instant, for the real-usage replay; off stops and nulls the text of the tenant''s stored recalls in the same commit. Setting what is already set journals nothing. Since v0.5.7.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              query_text: true
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query_text]
+              properties:
+                query_text: { type: boolean }
+      responses:
+        '200':
+          description: The settings as they now are.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/usage/events:
+    get:
+      tags: [usage]
+      operationId: usageEvents
+      summary: The tenant's recalls of the last 30 days, with what their readers did next, newest first.
+      description: 'Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page''s bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: before, in: query, required: false, schema: { type: string }, description: The next_before of the page before. }
+      responses:
+        '200':
+          description: One page of events.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_before]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/RecallEvent' } }
+                  next_before: { type: [string, 'null'] }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/usage/eval:
+    post:
+      tags: [usage]
+      operationId: usageEval
+      summary: Replay the tenant's labelled recalls through each named pipeline and answer the scores alone.
+      description: 'Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and which carries feedback, a get or a citation is replayed inside the server under its original key''s scope as that key reads now; a revoked key''s are skipped and counted. Graded: feedback useful and a citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming /pipelines, so the replay never takes a live recall''s reranker slot. The answer holds numbers and counts, never a query, a hit or an id; the replay records no recall event and is journalled as telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              pipelines: [bm25-postings, bm25-rerank]
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pipelines]
+              properties:
+                pipelines: { type: array, minItems: 1, maxItems: 8, items: { type: string } }
+      responses:
+        '200':
+          description: The scores.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                labelled: 212
+                capped: false
+                skipped_revoked: 3
+                window_days: 30
+                pipelines:
+                  - { pipeline: bm25-postings, queries: 209, success_at_1: 0.61, success_at_5: 0.83, ndcg_at_10: 0.66, recall_at_10: 0.79 }
+              schema: { $ref: '#/components/schemas/ReplayReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
   /web:
     get:
       tags: [web]
@@ -2537,11 +2669,29 @@ components:
           description: >-
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
+        feedback: { $ref: '#/components/schemas/Feedback' }
+
+    Feedback:
+      type: object
+      additionalProperties: false
+      description: >-
+        Which hits of this key's earlier recall answered its question and which did not
+        (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a
+        recall_id this key received in the last 24 hours, and only ids that recall served it;
+        anything else is request.validation naming the field (/feedback/recall_id,
+        /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a
+        UTC day answer limit.rate. A valid member changes nothing the read answers.
+      required: [recall_id]
+      properties:
+        recall_id: { type: string, format: uuid }
+        useful: { type: array, items: { type: string, format: uuid } }
+        not_useful: { type: array, items: { type: string, format: uuid } }
 
     RecallResponse:
       type: object
-      required: [steering, hits, query_digest, search]
+      required: [recall_id, steering, hits, query_digest, search]
       properties:
+        recall_id: { type: string, format: uuid, description: 'The recall''s id: the feedback member of a later read names it (ADR-0054 d6).' }
         steering:
           type: array
           items: { $ref: '#/components/schemas/Memory' }
@@ -2631,6 +2781,77 @@ components:
         tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
         effective: { type: string, description: The pipeline a recall naming none runs now. }
         postings: { $ref: '#/components/schemas/PostingsHealth' }
+
+    UsageSettings:
+      type: object
+      additionalProperties: false
+      required: [recording, query_text, query_text_since, retention_days]
+      properties:
+        recording: { type: boolean, description: Whether this server records recalls. }
+        query_text: { type: boolean, description: Whether the tenant's recalls keep their query text (telemetry.query_text). }
+        query_text_since: { type: [string, 'null'], description: 'When it was turned on; null when off.' }
+        retention_days: { type: integer, description: 'How long an event and its labels are kept: 30.' }
+
+    RecallEvent:
+      type: object
+      additionalProperties: false
+      description: One recall as recorded (ADR-0054 d2).
+      required: [recall_id, created_at, key_id, principal, workarea_id, pipeline, access, query_digest, query_text, hits, labels]
+      properties:
+        recall_id: { type: string, format: uuid }
+        created_at: { type: string }
+        key_id: { type: string, format: uuid }
+        principal: { type: string }
+        workarea_id: { type: string, format: uuid, description: The workarea the recall read. }
+        pipeline: { type: string }
+        access: { type: string, enum: [postings, scan, none] }
+        query_digest: { $ref: '#/components/schemas/Digest' }
+        query_text: { type: [string, 'null'], description: Present only where the tenant kept text when the recall ran. }
+        hits:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [artifact_id, score]
+            properties:
+              artifact_id: { type: string, format: uuid }
+              score: { type: number }
+        labels:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [artifact_id, label, source, at]
+            properties:
+              artifact_id: { type: [string, 'null'], format: uuid, description: 'Null for requery and no_use, which label the whole recall.' }
+              label: { type: string, enum: [get, derived, superseded, feedback_useful, feedback_not_useful, requery, no_use] }
+              source: { type: string, enum: [inferred, explicit] }
+              at: { type: string }
+
+    ReplayReport:
+      type: object
+      additionalProperties: false
+      description: The real-usage replay's scores, numbers and counts alone (ADR-0054 d11).
+      required: [labelled, capped, skipped_revoked, window_days, pipelines]
+      properties:
+        labelled: { type: integer, minimum: 0 }
+        capped: { type: boolean, description: 'The replay stopped short: past 500 labelled recalls the newest 500 ran, or it reached its 60-second deadline.' }
+        skipped_revoked: { type: integer, minimum: 0 }
+        window_days: { type: integer }
+        pipelines:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [pipeline, queries, success_at_1, success_at_5, ndcg_at_10, recall_at_10]
+            properties:
+              pipeline: { type: string }
+              queries: { type: integer, minimum: 0 }
+              success_at_1: { type: number }
+              success_at_5: { type: number }
+              ndcg_at_10: { type: number }
+              recall_at_10: { type: number }
 
     PostingsHealth:
       type: object

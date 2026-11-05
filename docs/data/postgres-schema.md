@@ -1499,9 +1499,58 @@ drops kind 2 rows of versions that have no postings any more, and queues any ver
 0022 queues nothing: a lead serving no sparse pipeline turns every tenant's state off and
 empties the queue at start, and one serving a sparse pipeline turns each tenant's on in its
 encoder's first pass and backfills the versions written before, 1,000 per pass, resuming after
-the last id read. The drain holds the version `FOR SHARE` before it takes the entry, as the
+the last id read; the step that turns a state on takes `SHARE` on `memories` first, so no write in
+flight is missed by both the trigger and the backfill. The drain holds the version `FOR SHARE` before it takes the entry, as the
 trigger does, takes entries `FOR UPDATE SKIP LOCKED` under a 5-minute lease, and parks an entry
 after 5 failed encodes.
+### recall telemetry (ADR-0054)
+
+*Since v0.5.7, migration 0023 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d4, d5.* Telemetry, not claims:
+no memory's text, no version, no verdict and no journal event, nothing derived from it, and
+every row gone 30 days after its recall.
+
+```sql
+ALTER TABLE tenants ADD COLUMN telemetry_query_text_since timestamptz(6);  -- from telemetry.settings_set
+
+CREATE TABLE recall_events (           -- one row per recall
+    tenant_id, recall_id, created_at,  -- PRIMARY KEY; created_at the week key
+    key_id, principal, scope_workarea_id, source_workarea_id,
+    pipeline text, access text,        -- the closed names
+    query_digest bytea,                -- the request's digest, always
+    query_text text,                   -- only for created_at >= the tenant's opt-in instant
+    hit_ids uuid[], hit_scores real[]  -- served, in rank order, at most 20
+) PARTITION BY LIST (tenant_id);
+CREATE TABLE recall_outcomes (         -- what the reader did next
+    tenant_id, recall_id, created_at,  -- the event's, so a label lives in its week
+    artifact_id uuid,                  -- NULL for requery and no_use
+    label text, source text,           -- inferred | explicit
+    at timestamptz,
+    UNIQUE NULLS NOT DISTINCT (tenant_id, recall_id, created_at, artifact_id, label)
+) PARTITION BY LIST (tenant_id);
+```
+
+Each table is list-partitioned by tenant alone, `recall_events_t_<tenant id hex>` and
+`recall_outcomes_t_<hex>`, each with `ENABLE` and `FORCE ROW LEVEL SECURITY` and
+`tenant_isolation`, and no statistics on the columns holding a reader's words or names. 0023
+creates every existing tenant's; the lead creates a new tenant's with its memories partition,
+and at its start repairs a tenant a lead before 0023 created. No owner DDL runs on a schedule
+(ADR-0034 d4). Both tables carry a `(tenant_id, created_at)` index, which the purge and the
+`no_use` pass read. The serving role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on both and
+owns neither: it inserts, labels, nulls text on opt-out and erase, and every minute deletes rows
+older than 30 days in batches of 5,000, each committed. Every read filters
+`created_at > now() - 30 days`.
+
+The opt-in is the database's rule. `recall_events_query_text_rule`, an owner-owned `BEFORE
+INSERT OR UPDATE OF query_text, created_at` trigger running `oml_telemetry_query_text_rule()`
+(`SECURITY INVOKER`), nulls `query_text` unless the tenant's `telemetry_query_text_since` is set
+and not after the row's `created_at`. It reads the tenant's row `FOR SHARE`, so an opt-out
+committing while a writer's batch is open waits for it and then nulls its text. The serving
+role holds no `TRIGGER` privilege.
+
+`oml_telemetry_erase(tenant, version_ids)`, `SECURITY INVOKER`, granted to the serving role, is
+the rule erase's build calls: it nulls the text and zeroes the query digest of each event that
+served an erased version, removes the version from `hit_ids` and `hit_scores`, and deletes its
+labels.
 
 ## upload_sessions
 
@@ -1654,7 +1703,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `memories` | submission, review, lifecycle, simulation events |
 | `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
-| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set`; `telemetry_query_text_since` from `telemetry.settings_set` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |
