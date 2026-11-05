@@ -400,7 +400,7 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   version's own tokens hold the token and 0 where the encoder added it (d17). A failure keeps the
   entry, counts the attempt, names the reason in `last_error` and retries after `2^attempts`
   seconds, at most an hour. Counters `oml_sparse_encoded_total{outcome}` (`written`, `failed`) and
-  the gauge `oml_sparse_backlog` (due entries) on the metrics listener; the tenant's backlog and
+  the gauge `oml_sparse_backlog` (entries waiting) on the metrics listener; the tenant's backlog and
   failing entries in the admin's postings health, which doctor reads: `search_sparse_backlog`
   warns while entries wait, `search_sparse_failed` when any failed, naming `last_error`'s place.
   A version not yet encoded is absent from the `sparse` list only; `bm25_postings` still finds it.
@@ -438,6 +438,45 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   its tokens, and naming them is what keeps a match by expansion from reading as a word the memory
   says.
 
+- **Measured on 2026-11-05, and the default stays `bm25-postings`.** Served through `oml_read`
+  on this branch's release build, PostgreSQL 18.6, 8 vCPU (`eval/recall/results/served_*.json`,
+  `eval/bench/results/*/sparse.json` and `bm25-sparse.json`, `bench/scale/results/sparse-*.json`):
+
+    | set (queries) | `bm25-postings` nDCG@10 | `sparse` | `bm25-sparse` | offline CC |
+    |---|---:|---:|---:|---:|
+    | recall eval (121), S@1 / S@5 | 0.826 / 0.934 | 0.818 / 0.967 | **0.860 / 0.983** | 0.868 / 0.984 |
+    | synthetic, bench scorer | 0.874 | 0.891 | **0.909** | 0.912 |
+    | SciFact (300) | 0.685 | 0.710 | **0.730** | 0.730 |
+    | NFCorpus (323) | 0.321 | 0.343 | **0.349** | 0.353 |
+    | LoCoMo, categories 1–4 (1,535) | 0.503 | 0.530 | **0.550** | 0.552 |
+
+    The served pipeline lands within 0.004 of the experiment's floor-0.1, 128-token row on every
+    set; LoCoMo by category (nDCG@10, `bm25-postings` → `bm25-sparse`): multi-hop 0.289 → 0.341,
+    temporal 0.594 → 0.648, open-domain 0.233 → 0.312, single-hop 0.571 → 0.609, adversarial
+    0.562 → 0.462, the loss the experiment found. CI's recall-eval job reproduced 0.860 / 0.983.
+    So `bm25-sparse` passes ADR-0049's gate and ranks above the default on every external set.
+    **It misses d9's latency bar.** At 100,000 memories (60,341 readable at universe scope, about
+    104 kind 2 postings per version, 9.7 million in all; load average 1.7 to 2.1), p95 by scope
+    of one retrieve, warm: `bm25_postings` at k 10 29.2 ms universe, 20.4 ms over all scopes;
+    `sparse` at k 10 164 ms universe, 78 ms all; the two lists `bm25-sparse` reads, each 100 deep,
+    272 ms universe, 114 ms all. At 10,000 memories (6,104 readable at universe; load average 11,
+    so an upper bound) the two lists took 28.3 ms universe p95. The sparse leg reads every
+    posting of each query token among the readable rows, no token is pruned (kind 2 keeps no
+    counts to prune by), and the encoder's expansions make a common token's postings many. The
+    100,000 point reuses the 10,000 point's encodings (each version takes one of 9,189 encoded
+    texts by its text's digest: the shape and the per-token shares are the encoded sample's; the
+    encoder at about 13 claims a second could not encode 90,000 more in this lane's time), so it
+    measures the read's cost, not the ranking. `bm25-sparse` therefore stays opt-in, and with the
+    default unchanged a lead with default settings reads no model file (law
+    `a_sparse_pipeline_without_its_model_stops_the_start_and_the_default_needs_none`). What
+    moves it: a bound on the kind 2 postings a query reads (query tokens by the shipped idf, or
+    impact-ordered postings), measured for its nDCG cost, FR-118. **Encode cost** (FR-101): 12.7
+    claims a second at 2 threads and 17.4 at 8 on 200 recall-eval claims (121 characters on
+    average; load average 1.4 to 2.5), one claim at a time; served, the lead's encoder at 4
+    threads drained LoCoMo's 5,882 turns 544 s after their load ended and SciFact's 5,183 abstracts
+    1,973 s after theirs, while other lanes held the load average at 9 to 14. Postings space: the
+    kind 2 heap 1,276 MiB and the served index 985 MiB at 100,000 memories.
+
 ## Consequences
 
 - **Pages changed when this record is accepted**: [retrieval](../architecture/retrieval.md) (the
@@ -450,7 +489,8 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   extrapolated: latency by scope, the prune constants, the `scan` share, space per kind, the fill
   time), FR-101 (the encoder's CPU per write and the kind 2 backfill rate), FR-102 (the count rows
   under concurrent promotions in one workarea), FR-103 (a batched, resumable fill before any tenant
-  reaches 1,000,000 rows; added 2026-11-05). Numbered after FR-99, which `feat/ontology-metadata`
+  reaches 1,000,000 rows; added 2026-11-05), FR-118 (a bound on the kind 2 postings a query reads,
+  so `bm25-sparse` meets d9's latency bar; added 2026-11-05 with d13–d17). Numbered after FR-99, which `feat/ontology-metadata`
   holds.
 - **Costs**: a second copy of every version's words, larger than the table it indexes (d10); a
   trigger and counts on every write and state change (d5, d8); a migration whose fill holds writes

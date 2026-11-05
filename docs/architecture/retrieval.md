@@ -300,7 +300,10 @@ ADR-0052 d9's evidence held on the build that ships it: `bm25`'s gate passed (su
 success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
 a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
 ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
-`bm25` stays served as its fallback and comparison.
+`bm25` stays served as its fallback and comparison. *Since v0.5.7:* `bm25-sparse` passes the same gate (success@1 0.860,
+success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685 nDCG@10), NFCorpus
+(0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
+two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; FR-118).
 
 ## The recall-ordering contract: steering rows first, unranked
 
