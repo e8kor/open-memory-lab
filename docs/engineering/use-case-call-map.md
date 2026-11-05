@@ -171,6 +171,10 @@ new call to one of these rows.
 | UC-SM-03 | [See that a memory's source changed](../product/use-cases.md#see-that-a-memorys-source-changed) | designed (ADR-0057 d5, d11) | none | `anchor`, `stale` and `source_checked` on every claim item; `POST /v1/memories/{artifact_id}/source-check`, recorded by `oml sync` and `oml sync --check --record` |
 | UC-SM-04 | [Load a repository's documents and keep them in step](../product/use-cases.md#load-a-repositorys-documents-and-keep-them-in-step) | designed (ADR-0057 d6–d9) | a script calling `oml write` per memory | `oml sync <source> --workarea <w> [--dry-run]` over `write`, `read` and the review listing |
 | UC-SM-05 | [Link the decisions documents say amend each other](../product/use-cases.md#link-the-decisions-documents-say-amend-each-other) | designed (ADR-0057 d10) | `oml edges propose claim` and `oml edges ratify`, one edge at a time | `oml sync … --edges [--ratify]` over the same two routes |
+| UC-SM-07 | [Load a lake's table descriptions and keep them in step](../product/use-cases.md#load-a-lakes-table-descriptions-and-keep-them-in-step) | designed (ADR-0062 d2–d12) | none | `oml sync <lake uri> --adapter delta [--dry-run]` in the lake build, over the same routes as UC-SM-04 |
+| UC-SM-08 | [Import what a catalog says about the lake](../product/use-cases.md#import-what-a-catalog-says-about-the-lake) | designed (ADR-0062 d13) | none | `oml lake fetch`, then `oml sync <snapshot> --adapter datahub\|openmetadata\|glue [--edges [--ratify]]` |
+| UC-SM-09 | [Find what is known about a table](../product/use-cases.md#find-what-is-known-about-a-table) | designed (ADR-0062 d22) | `read {query}` with the table's name as words | `read {query, anchor_uri_prefix}`; `read {mine: false, anchor_uri_prefix}` |
+| UC-SM-10 | [Find the columns a reviewed term describes](../product/use-cases.md#find-the-columns-a-reviewed-term-describes) | designed (ADR-0062 d14) | none | `about` in a sync's write; `read {query, about}` (ADR-0051 d7); `oml lake classify` |
 
 ### Sessions and agents
 
