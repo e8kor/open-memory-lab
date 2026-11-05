@@ -1316,6 +1316,10 @@ async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
     );
 }
 
+/// One row's place for the curator: its name, authoring key, author
+/// principal, lineage keys and lineage principals.
+type R2Case = (&'static str, Uuid, String, Vec<Uuid>, Vec<String>);
+
 /// d9's R2 per key and per principal, clause by clause: rows built through
 /// the store so that each carries the curator in exactly one place — its
 /// authoring key, its author's principal, its lineage keys or its lineage
@@ -1335,7 +1339,7 @@ async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
         .write(&w.bob, "b1", "the canary never drains", w.proj)
         .await;
     let cora = "cora".to_owned();
-    let cases: [(&str, Uuid, String, Vec<Uuid>, Vec<String>); 4] = [
+    let cases: [R2Case; 4] = [
         (
             "authoring key",
             w.curator.key_id,
