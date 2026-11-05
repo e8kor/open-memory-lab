@@ -6,8 +6,7 @@ as the serving role under row security. It measures speed, space and write cost,
 pruning moves the list from `bm25`'s; relevance on real text is `eval/bench/`'s job.
 
 The data and the queries come from the scale lane's generator (`gen.py`, `seed_corpus.json`,
-`seed_queries.json`, copied unchanged from `bench/scale/` on `feat/scale-bench`, measured there
-on 2026-11-04): synthetic memories templated from the recall eval's 200 seeds, one workarea per
+`seed_queries.json`, from the baseline lane below, measured on 2026-11-04): synthetic memories templated from the recall eval's 200 seeds, one workarea per
 about 2,000 memories under `universe` and its projects, 65% promoted served tips, 15% held, the
 rest replaced, rejected or demoted; 330 queries, 30 in each of the eval's 11 categories, each
 with a leaf (40%), project (40%) or `universe` (20%) scope as the lead computes it. The findings
@@ -18,8 +17,21 @@ are in [REPORT.md](REPORT.md); the numbers in `results/postings-*.json`.
 | file | what it does |
 |---|---|
 | `gen.py`, `seed_*.json` | the scale lane's generator and seeds |
+| `run.py`, `extra.py`, `run_all.sh`, `report.py` | the baseline lane: every candidate approach at 10k, 100k and 1M ([BASELINE.md](BASELINE.md)) |
 | `postings.py` | one run at one scale: database, migrations through 0020, load, 0021's fill timed, space, the query sweep, the access-index variant, own held rows and write cost |
 | `../../crates/adapters/oml-pg/examples/search_scale.rs` | the driver: each query through `PgStore::retrieve`, the adapter's own statements, warm, one JSON line per call |
+
+## The baseline lane
+
+Before ADR-0052, the same generator measured every candidate search approach at 10k, 100k and 1M
+memories per tenant on migrations 0001–0016 under row security: today's `simple` match, any-word
+OR, stored `english` and `simple` vectors, BM25 in SQL, `pg_trgm`, pgvector HNSW, an exact
+halfvec scan, a learned-sparse inverted table and ADR-0050's similar check. That lane found that
+no text index serves a recall under row security, which ADR-0049 and ADR-0052 cite. Its method
+and limits are in [BASELINE.md](BASELINE.md), its findings in
+[REPORT-baseline.md](REPORT-baseline.md), and its numbers in `results/` beside the postings runs
+(`s*.json`, `x_*.json`, `mt10x100k.json`, `tables.md`, `explain.md`, `p95.svg`, and one
+`oml-bench/1` file per approach and scale under `results/<method>/`).
 
 ## Running it
 

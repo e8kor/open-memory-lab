@@ -1,0 +1,876 @@
+{
+ "scale": 100000,
+ "tenants": 1,
+ "k": 10,
+ "queries": 330,
+ "timeout_ms": 10000,
+ "norls_one_pass": false,
+ "started": "2026-11-04T21:46:08",
+ "load": [
+  {
+   "tenant": "d097b6bc-b743-4eec-8f0b-b09e35e19e1a",
+   "copy_s": 4.979272074997425,
+   "heap_bytes": 48300032,
+   "toast_bytes": 40960,
+   "index": {
+    "pkey": {
+     "build_s": 0.11753808299545199,
+     "bytes": 4997120
+    },
+    "workarea": {
+     "build_s": 0.08749850792810321,
+     "bytes": 761856
+    },
+    "claim_fts": {
+     "build_s": 0.9252947670174763,
+     "bytes": 11100160
+    },
+    "claim_version": {
+     "build_s": 0.1387470579938963,
+     "bytes": 6701056
+    },
+    "served_tip": {
+     "build_s": 0.12397195398807526,
+     "bytes": 4423680
+    },
+    "author": {
+     "build_s": 0.07821223698556423,
+     "bytes": 753664
+    }
+   },
+   "attach_s": 0.035654106992296875
+  }
+ ],
+ "stages": {
+  "bm25": {
+   "build_s": 2.0941254229983315,
+   "df_rows": 122132,
+   "df_total_bytes": 19300352,
+   "scope_total_bytes": 24576
+  },
+  "dual": {
+   "rewrite_s": 5.206156709929928,
+   "gin_simple_s": 0.8362310280790552,
+   "gin_english_s": 0.9731411269167438,
+   "gin_simple_bytes": "12189696",
+   "gin_english_bytes": "9895936",
+   "heap_bytes_after": "123961344"
+  }
+ },
+ "latency": {
+  "a_simple_and": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 108.06731309276074,
+    "p95_ms": 497.72750004194677,
+    "p99_ms": 523.7937159836292,
+    "mean_ms": 185.8084352581169,
+    "max_ms": 2407.543656998314,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606,
+    "first_ms": 1058.8666929397732
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 109.26190193276852,
+    "p95_ms": 494.55290904734284,
+    "p99_ms": 516.0492539871484,
+    "mean_ms": 177.72419662214816,
+    "max_ms": 533.1104079959914,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 113.17653197329491,
+     "p95_ms": 495.87827909272164
+    },
+    "paraphrase": {
+     "p50_ms": 111.15536303259432,
+     "p95_ms": 500.28721103444695
+    },
+    "inflection": {
+     "p50_ms": 102.59873094037175,
+     "p95_ms": 472.60433598421514
+    },
+    "partial": {
+     "p50_ms": 115.64987199380994,
+     "p95_ms": 507.0911720395088
+    },
+    "typo": {
+     "p50_ms": 107.85007197409868,
+     "p95_ms": 493.09279897715896
+    },
+    "identifier": {
+     "p50_ms": 131.1939270235598,
+     "p95_ms": 490.9849289106205
+    },
+    "question": {
+     "p50_ms": 104.42437103483826,
+     "p95_ms": 485.6990590924397
+    },
+    "long": {
+     "p50_ms": 113.83629299234599,
+     "p95_ms": 492.41537996567786
+    },
+    "negation": {
+     "p50_ms": 163.2308930857107,
+     "p95_ms": 505.5250209989026
+    },
+    "temporal": {
+     "p50_ms": 101.97687102481723,
+     "p95_ms": 508.4067319985479
+    },
+    "multihop": {
+     "p50_ms": 131.07705698348582,
+     "p95_ms": 491.51038902346045
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 20.957025000825524,
+     "p95_ms": 76.76705601625144
+    },
+    "universe": {
+     "p50_ms": 487.3511790065095,
+     "p95_ms": 516.0492539871484
+    },
+    "project": {
+     "p50_ms": 115.53205398377031,
+     "p95_ms": 277.68437599297613
+    }
+   }
+  },
+  "c_dual_or": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 13.295682962052524,
+    "p95_ms": 153.3908920828253,
+    "p99_ms": 288.3541090413928,
+    "mean_ms": 64.94632175220458,
+    "max_ms": 7806.8370160181075,
+    "timeouts": 0,
+    "empty": 4,
+    "mean_rows": 9.818181818181818,
+    "first_ms": 1183.2297189394012
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 13.107981998473406,
+    "p95_ms": 148.67816003970802,
+    "p99_ms": 260.9135020757094,
+    "mean_ms": 38.55764426142824,
+    "max_ms": 284.0365070151165,
+    "timeouts": 0,
+    "empty": 4,
+    "mean_rows": 9.818181818181818
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 13.107981998473406,
+     "p95_ms": 96.46417992189527
+    },
+    "paraphrase": {
+     "p50_ms": 14.939183020032942,
+     "p95_ms": 119.90430403966457
+    },
+    "inflection": {
+     "p50_ms": 10.887342039495707,
+     "p95_ms": 74.99885594006628
+    },
+    "partial": {
+     "p50_ms": 10.813341941684484,
+     "p95_ms": 84.96461703907698
+    },
+    "typo": {
+     "p50_ms": 10.95168199390173,
+     "p95_ms": 74.57979500759393
+    },
+    "identifier": {
+     "p50_ms": 11.707981931976974,
+     "p95_ms": 90.87276901118457
+    },
+    "question": {
+     "p50_ms": 14.198002987541258,
+     "p95_ms": 132.19699694309384
+    },
+    "long": {
+     "p50_ms": 39.60561798885465,
+     "p95_ms": 281.82179701980203
+    },
+    "negation": {
+     "p50_ms": 22.05102506559342,
+     "p95_ms": 161.17373295128345
+    },
+    "temporal": {
+     "p50_ms": 10.9975520754233,
+     "p95_ms": 131.28382596187294
+    },
+    "multihop": {
+     "p50_ms": 25.61439503915608,
+     "p95_ms": 186.975778080523
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 3.3399900421500206,
+     "p95_ms": 10.69277198985219
+    },
+    "universe": {
+     "p50_ms": 104.50524103362113,
+     "p95_ms": 260.9135020757094
+    },
+    "project": {
+     "p50_ms": 14.845384052023292,
+     "p95_ms": 65.65644289366901
+    }
+   }
+  },
+  "a_stored_and": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 7.951301988214254,
+    "p95_ms": 58.324481011368334,
+    "p99_ms": 69.05886402819306,
+    "mean_ms": 44.69342837639322,
+    "max_ms": 7646.925423992798,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606,
+    "first_ms": 1117.4125249963254
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 7.42950092535466,
+    "p95_ms": 56.62939103785902,
+    "p99_ms": 69.13705391343683,
+    "mean_ms": 17.91723791305258,
+    "max_ms": 78.59090599231422,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 7.8120119869709015,
+     "p95_ms": 59.065483044832945
+    },
+    "paraphrase": {
+     "p50_ms": 7.326641003601253,
+     "p95_ms": 51.758041023276746
+    },
+    "inflection": {
+     "p50_ms": 7.122701965272427,
+     "p95_ms": 55.715722031891346
+    },
+    "partial": {
+     "p50_ms": 7.377360947430134,
+     "p95_ms": 58.525940985418856
+    },
+    "typo": {
+     "p50_ms": 7.317241979762912,
+     "p95_ms": 54.45149098522961
+    },
+    "identifier": {
+     "p50_ms": 8.762742043472826,
+     "p95_ms": 54.732770076952875
+    },
+    "question": {
+     "p50_ms": 8.078621001914144,
+     "p95_ms": 61.132312985137105
+    },
+    "long": {
+     "p50_ms": 10.546910925768316,
+     "p95_ms": 74.21212398912758
+    },
+    "negation": {
+     "p50_ms": 11.882061953656375,
+     "p95_ms": 53.87107003480196
+    },
+    "temporal": {
+     "p50_ms": 6.302320049144328,
+     "p95_ms": 52.66758007928729
+    },
+    "multihop": {
+     "p50_ms": 8.767452090978622,
+     "p95_ms": 55.92550104483962
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 1.9809800432994962,
+     "p95_ms": 5.93568105250597
+    },
+    "universe": {
+     "p50_ms": 53.221651003696024,
+     "p95_ms": 69.13705391343683
+    },
+    "project": {
+     "p50_ms": 8.649921976029873,
+     "p95_ms": 29.028936056420207
+    }
+   }
+  },
+  "b_stored_or": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 10.903642047196627,
+    "p95_ms": 121.66573398280889,
+    "p99_ms": 198.52539990097284,
+    "mean_ms": 55.77821952192056,
+    "max_ms": 7492.571352049708,
+    "timeouts": 0,
+    "empty": 8,
+    "mean_rows": 9.687878787878788,
+    "first_ms": 1115.6515850452706
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 11.31393201649189,
+    "p95_ms": 110.31202296726406,
+    "p99_ms": 196.72376906964928,
+    "mean_ms": 30.86213722867383,
+    "max_ms": 233.16648800391704,
+    "timeouts": 0,
+    "empty": 8,
+    "mean_rows": 9.687878787878788
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 11.408223072066903,
+     "p95_ms": 82.92837697081268
+    },
+    "paraphrase": {
+     "p50_ms": 12.247091974131763,
+     "p95_ms": 98.1166809797287
+    },
+    "inflection": {
+     "p50_ms": 11.25088194385171,
+     "p95_ms": 76.38868503272533
+    },
+    "partial": {
+     "p50_ms": 9.385442011989653,
+     "p95_ms": 72.71535496693105
+    },
+    "typo": {
+     "p50_ms": 8.89753201045096,
+     "p95_ms": 67.89729290176183
+    },
+    "identifier": {
+     "p50_ms": 10.100122075527906,
+     "p95_ms": 74.16174502577633
+    },
+    "question": {
+     "p50_ms": 9.997792891226709,
+     "p95_ms": 111.06640205252916
+    },
+    "long": {
+     "p50_ms": 27.388795046135783,
+     "p95_ms": 201.6016609268263
+    },
+    "negation": {
+     "p50_ms": 17.89612404536456,
+     "p95_ms": 128.87486594263464
+    },
+    "temporal": {
+     "p50_ms": 8.748883032239974,
+     "p95_ms": 106.57461092341691
+    },
+    "multihop": {
+     "p50_ms": 17.56449299864471,
+     "p95_ms": 158.62671297509223
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 2.787661040201783,
+     "p95_ms": 7.564472034573555
+    },
+    "universe": {
+     "p50_ms": 83.04374595172703,
+     "p95_ms": 196.72376906964928
+    },
+    "project": {
+     "p50_ms": 13.151491992175579,
+     "p95_ms": 50.676719984039664
+    }
+   }
+  },
+  "d_bm25_stored": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 33.21727702859789,
+    "p95_ms": 722.4625460803509,
+    "p99_ms": 986.1114179948345,
+    "mean_ms": 142.4246024181643,
+    "max_ms": 7682.451550965197,
+    "timeouts": 0,
+    "empty": 8,
+    "mean_rows": 9.687878787878788,
+    "first_ms": 1160.3723539737985
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 28.16223504487425,
+    "p95_ms": 676.751215942204,
+    "p99_ms": 967.1774749876931,
+    "mean_ms": 114.92670095052965,
+    "max_ms": 1045.9802909754217,
+    "timeouts": 0,
+    "empty": 8,
+    "mean_rows": 9.687878787878788
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 13.193861930631101,
+     "p95_ms": 130.59959595557302
+    },
+    "paraphrase": {
+     "p50_ms": 38.81827695295215,
+     "p95_ms": 387.64607801567763
+    },
+    "inflection": {
+     "p50_ms": 12.592562939971685,
+     "p95_ms": 105.36241193767637
+    },
+    "partial": {
+     "p50_ms": 11.361162993125618,
+     "p95_ms": 91.54484805185348
+    },
+    "typo": {
+     "p50_ms": 12.487603002227843,
+     "p95_ms": 93.84775906801224
+    },
+    "identifier": {
+     "p50_ms": 13.170073041692376,
+     "p95_ms": 182.1103870170191
+    },
+    "question": {
+     "p50_ms": 70.50448399968445,
+     "p95_ms": 676.751215942204
+    },
+    "long": {
+     "p50_ms": 132.19948706682771,
+     "p95_ms": 1033.6673689307645
+    },
+    "negation": {
+     "p50_ms": 95.59731895569712,
+     "p95_ms": 710.1403239648789
+    },
+    "temporal": {
+     "p50_ms": 24.77942605037242,
+     "p95_ms": 615.0360041065142
+    },
+    "multihop": {
+     "p50_ms": 86.58587699756026,
+     "p95_ms": 825.6333459867164
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 7.766061928123236,
+     "p95_ms": 31.09336702618748
+    },
+    "universe": {
+     "p50_ms": 275.0496360240504,
+     "p95_ms": 967.1774749876931
+    },
+    "project": {
+     "p50_ms": 38.81827695295215,
+     "p95_ms": 192.78465898241848
+    }
+   }
+  }
+ },
+ "latency_no_rls": {
+  "a_simple_and": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 1.1161889415234327,
+    "p95_ms": 2.9918199870735407,
+    "p99_ms": 9.004871943034232,
+    "mean_ms": 1.4741604876083632,
+    "max_ms": 19.164663972333074,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 1.9486899254843593,
+     "p95_ms": 7.930662017315626
+    },
+    "paraphrase": {
+     "p50_ms": 1.3064600061625242,
+     "p95_ms": 2.4922200245782733
+    },
+    "inflection": {
+     "p50_ms": 1.2342400150373578,
+     "p95_ms": 1.8111709505319595
+    },
+    "partial": {
+     "p50_ms": 0.6931900279596448,
+     "p95_ms": 1.335781067609787
+    },
+    "typo": {
+     "p50_ms": 0.7342400494962931,
+     "p95_ms": 1.2170400004833937
+    },
+    "identifier": {
+     "p50_ms": 0.9281309321522713,
+     "p95_ms": 5.025380989536643
+    },
+    "question": {
+     "p50_ms": 1.0500599164515734,
+     "p95_ms": 1.8365309806540608
+    },
+    "long": {
+     "p50_ms": 1.5360399847850204,
+     "p95_ms": 2.9918199870735407
+    },
+    "negation": {
+     "p50_ms": 1.4110190095379949,
+     "p95_ms": 9.004871943034232
+    },
+    "temporal": {
+     "p50_ms": 0.9852700168266892,
+     "p95_ms": 1.3895899755880237
+    },
+    "multihop": {
+     "p50_ms": 0.7342500612139702,
+     "p95_ms": 2.010939992032945
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 1.0836110450327396,
+     "p95_ms": 2.1414299262687564
+    },
+    "universe": {
+     "p50_ms": 1.1631199158728123,
+     "p95_ms": 9.004871943034232
+    },
+    "project": {
+     "p50_ms": 1.1322300415486097,
+     "p95_ms": 2.849081065505743
+    }
+   }
+  },
+  "c_dual_or": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 24.90480593405664,
+    "p95_ms": 623.2693759957328,
+    "p99_ms": 1614.1297459835187,
+    "mean_ms": 122.8835997961913,
+    "max_ms": 1945.7940130960196,
+    "timeouts": 0,
+    "empty": 4,
+    "mean_rows": 9.818181818181818
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 6.445332081057131,
+     "p95_ms": 77.38703594077379
+    },
+    "paraphrase": {
+     "p50_ms": 33.92569592688233,
+     "p95_ms": 292.75704897008836
+    },
+    "inflection": {
+     "p50_ms": 13.605281943455338,
+     "p95_ms": 70.98294398747385
+    },
+    "partial": {
+     "p50_ms": 4.512690007686615,
+     "p95_ms": 44.77310995571315
+    },
+    "typo": {
+     "p50_ms": 4.204269964247942,
+     "p95_ms": 31.07259701937437
+    },
+    "identifier": {
+     "p50_ms": 5.170091986656189,
+     "p95_ms": 87.4202880077064
+    },
+    "question": {
+     "p50_ms": 52.63080995064229,
+     "p95_ms": 534.7607380244881
+    },
+    "long": {
+     "p50_ms": 250.79506100155413,
+     "p95_ms": 1890.2844410622492
+    },
+    "negation": {
+     "p50_ms": 96.62811004091054,
+     "p95_ms": 623.2693759957328
+    },
+    "temporal": {
+     "p50_ms": 33.6741260252893,
+     "p95_ms": 435.05790701601654
+    },
+    "multihop": {
+     "p50_ms": 76.2436450459063,
+     "p95_ms": 854.0193219669163
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 8.075032965280116,
+     "p95_ms": 79.29972605779767
+    },
+    "universe": {
+     "p50_ms": 183.35214699618518,
+     "p95_ms": 1614.1297459835187
+    },
+    "project": {
+     "p50_ms": 28.48527696914971,
+     "p95_ms": 288.7207679450512
+    }
+   }
+  },
+  "a_stored_and": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 0.985280959866941,
+    "p95_ms": 2.4798810482025146,
+    "p99_ms": 4.398631979711354,
+    "mean_ms": 1.2130219655139654,
+    "max_ms": 4.781091003678739,
+    "timeouts": 0,
+    "empty": 266,
+    "mean_rows": 1.406060606060606
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 1.3944209786131978,
+     "p95_ms": 1.99732999317348
+    },
+    "paraphrase": {
+     "p50_ms": 0.8513600332662463,
+     "p95_ms": 1.210339949466288
+    },
+    "inflection": {
+     "p50_ms": 0.7502100197598338,
+     "p95_ms": 0.9362699929624796
+    },
+    "partial": {
+     "p50_ms": 0.6371999625116587,
+     "p95_ms": 0.850399024784565
+    },
+    "typo": {
+     "p50_ms": 1.212290022522211,
+     "p95_ms": 1.8517411081120372
+    },
+    "identifier": {
+     "p50_ms": 0.7873899303376675,
+     "p95_ms": 2.224840922281146
+    },
+    "question": {
+     "p50_ms": 1.5279699582606554,
+     "p95_ms": 3.848231048323214
+    },
+    "long": {
+     "p50_ms": 1.1176710249856114,
+     "p95_ms": 1.3559910003095865
+    },
+    "negation": {
+     "p50_ms": 2.3824298987165093,
+     "p95_ms": 4.660470993258059
+    },
+    "temporal": {
+     "p50_ms": 0.7235599914565682,
+     "p95_ms": 1.2277200585231185
+    },
+    "multihop": {
+     "p50_ms": 0.9454209357500076,
+     "p95_ms": 2.03031103592366
+    }
+   },
+   "warm_by_scope": {
+    "leaf": {
+     "p50_ms": 0.8549100020900369,
+     "p95_ms": 2.334411023184657
+    },
+    "universe": {
+     "p50_ms": 1.1703610653057694,
+     "p95_ms": 4.398631979711354
+    },
+    "project": {
+     "p50_ms": 1.0595209896564484,
+     "p95_ms": 2.2955310996621847
+    }
+   }
+  }
+ },
+ "write": {
+  "base": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 2.4685011012479663,
+    "p95_ms": 6.323161069303751,
+    "p99_ms": 22.878853953443468,
+    "mean_ms": 3.1070819318604967,
+    "max_ms": 32.74566703476012,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 0.9587800595909357,
+    "p95_ms": 1.5673909801989794,
+    "p99_ms": 2.530809957534075,
+    "mean_ms": 1.0061922254196058,
+    "max_ms": 10.822611977346241,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  },
+  "+bm25_trigger": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 1.2746400898322463,
+    "p95_ms": 2.95722100418061,
+    "p99_ms": 10.571302962489426,
+    "mean_ms": 1.5965785167645663,
+    "max_ms": 11.114223045296967,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 1.2711199233308434,
+    "p95_ms": 2.1948990179225802,
+    "p99_ms": 3.5061599919572473,
+    "mean_ms": 1.4198118188263227,
+    "max_ms": 14.72662400919944,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  },
+  "+dual": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 2.4493499659001827,
+    "p95_ms": 6.281960988417268,
+    "p99_ms": 17.056473065167665,
+    "mean_ms": 3.005032251821831,
+    "max_ms": 52.32239991892129,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 0.8496310329064727,
+    "p95_ms": 2.0040200324729085,
+    "p99_ms": 3.6871309857815504,
+    "mean_ms": 0.9687741950619966,
+    "max_ms": 11.241622967645526,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  }
+ },
+ "explain": {
+  "a_simple_and": {
+   "exact": "Limit (actual time=485.079..490.578 rows=10.00 loops=1)\n  Buffers: shared hit=43962\n  ->  Sort (actual time=485.077..490.575 rows=10.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=43962\n        ->  Gather (actual time=5.606..490.377 rows=242.00 loops=1)\n              Workers Planned: 1\n              Workers Launched: 1\n              Buffers: shared hit=43956\n              ->  Parallel Append (actual time=5.893..479.842 rows=121.00 loops=2)\n                    Buffers: shared hit=43956\n                    ->  Result (actual time=5.892..479.809 rows=121.00 loops=2)\n                          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                          Buffers: shared hit=43956\n                          ->  Parallel Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m_1 (actual time=5.840..477.794 rows=121.00 loops=2)\n                                Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery))\n                                Rows Removed by Filter: 32325\n                                Index Searches: 1\n                                Buffers: shared hit=43956\nPlanning:\n  Buffers: shared hit=524\nPlanning Time: 2.848 ms\nExecution Time: 490.653 ms",
+   "long": "Limit (actual time=467.793..473.438 rows=0.00 loops=1)\n  Buffers: shared hit=43958\n  ->  Sort (actual time=467.791..473.435 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=43958\n        ->  Gather (actual time=467.760..473.403 rows=0.00 loops=1)\n              Workers Planned: 1\n              Workers Launched: 1\n              Buffers: shared hit=43952\n              ->  Parallel Append (actual time=465.131..465.132 rows=0.00 loops=2)\n                    Buffers: shared hit=43952\n                    ->  Result (actual time=465.129..465.130 rows=0.00 loops=2)\n                          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                          Buffers: shared hit=43952\n                          ->  Parallel Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m_1 (actual time=465.123..465.124 rows=0.00 loops=2)\n                                Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery))\n                                Rows Removed by Filter: 32446\n                                Index Searches: 1\n                                Buffers: shared hit=43952\nPlanning:\n  Buffers: shared hit=524\nPlanning Time: 1.374 ms\nExecution Time: 473.490 ms",
+   "identifier": "Limit (actual time=475.730..479.798 rows=10.00 loops=1)\n  Buffers: shared hit=43962\n  ->  Sort (actual time=475.729..479.795 rows=10.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''app.tenant'' & ''id'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=43962\n        ->  Gather (actual time=4.348..479.592 rows=499.00 loops=1)\n              Workers Planned: 1\n              Workers Launched: 1\n              Buffers: shared hit=43956\n              ->  Parallel Append (actual time=2.451..472.238 rows=249.50 loops=2)\n                    Buffers: shared hit=43956\n                    ->  Result (actual time=2.450..472.197 rows=249.50 loops=2)\n                          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                          Buffers: shared hit=43956\n                          ->  Parallel Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m_1 (actual time=2.418..468.243 rows=249.50 loops=2)\n                                Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''app.tenant'' & ''id'''::tsquery))\n                                Rows Removed by Filter: 32196\n                                Index Searches: 1\n                                Buffers: shared hit=43956\nPlanning:\n  Buffers: shared hit=524\nPlanning Time: 1.295 ms\nExecution Time: 479.843 ms",
+   "typo": "Limit (actual time=481.922..487.414 rows=0.00 loops=1)\n  Buffers: shared hit=43957\n  ->  Sort (actual time=481.921..487.412 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''postgress'' & ''upgrade'' & ''downtime'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=43957\n        ->  Gather (actual time=481.889..487.380 rows=0.00 loops=1)\n              Workers Planned: 1\n              Workers Launched: 1\n              Buffers: shared hit=43951\n              ->  Parallel Append (actual time=477.738..477.739 rows=0.00 loops=2)\n                    Buffers: shared hit=43951\n                    ->  Result (actual time=477.736..477.736 rows=0.00 loops=2)\n                          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                          Buffers: shared hit=43951\n                          ->  Parallel Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m_1 (actual time=477.730..477.730 rows=0.00 loops=2)\n                                Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery))\n                                Rows Removed by Filter: 32446\n                                Index Searches: 1\n                                Buffers: shared hit=43951\nPlanning:\n  Buffers: shared hit=524\nPlanning Time: 1.186 ms\nExecution Time: 487.450 ms"
+  },
+  "a_simple_and@no_rls": {
+   "exact": "Limit (actual time=6.501..6.504 rows=10.00 loops=1)\n  Buffers: shared hit=407\n  ->  Sort (actual time=6.500..6.502 rows=10.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=407\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.328..6.439 rows=242.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Rows Removed by Filter: 159\n              Heap Blocks: exact=389\n              Buffers: shared hit=401\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_claim_fts (actual time=0.234..0.234 rows=401.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=12\nPlanning:\n  Buffers: shared hit=519\nPlanning Time: 1.291 ms\nExecution Time: 6.537 ms",
+   "long": "Limit (actual time=1.647..1.649 rows=0.00 loops=1)\n  Buffers: shared hit=100\n  ->  Sort (actual time=1.646..1.647 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=100\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=1.602..1.603 rows=0.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Buffers: shared hit=94\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_claim_fts (actual time=1.588..1.589 rows=0.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=94\nPlanning:\n  Buffers: shared hit=519\nPlanning Time: 2.877 ms\nExecution Time: 1.711 ms",
+   "identifier": "Limit (actual time=12.055..12.058 rows=10.00 loops=1)\n  Buffers: shared hit=748\n  ->  Sort (actual time=12.054..12.055 rows=10.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''app.tenant'' & ''id'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=748\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.517..11.929 rows=499.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''app.tenant'' & ''id'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Rows Removed by Filter: 290\n              Heap Blocks: exact=731\n              Buffers: shared hit=742\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_claim_fts (actual time=0.366..0.366 rows=789.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''app.tenant'' & ''id'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=11\nPlanning:\n  Buffers: shared hit=519\nPlanning Time: 1.212 ms\nExecution Time: 12.100 ms",
+   "typo": "Limit (actual time=0.238..0.239 rows=0.00 loops=1)\n  Buffers: shared hit=17\n  ->  Sort (actual time=0.237..0.238 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''postgress'' & ''upgrade'' & ''downtime'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=17\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.164..0.164 rows=0.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Buffers: shared hit=11\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_claim_fts (actual time=0.150..0.151 rows=0.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=11\nPlanning:\n  Buffers: shared hit=519\nPlanning Time: 2.752 ms\nExecution Time: 0.302 ms"
+  },
+  "c_dual_or": {
+   "exact": "Limit (actual time=105.040..105.043 rows=10.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=105.038..105.040 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''pgbouncer'' | ''transact'' | ''mode'''::tsquery, 0) + ts_rank(m.fts_simple, '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=0.181..104.521 rows=1681.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.171..103.064 rows=1681.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''pgbouncer'' | ''transact'' | ''mode'''::tsquery) OR (fts_simple @@ '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery)))\n                    Rows Removed by Filter: 63811\n                    Index Searches: 1\n                    Buffers: shared hit=53034\nPlanning:\n  Buffers: shared hit=578\nPlanning Time: 4.330 ms\nExecution Time: 105.114 ms",
+   "long": "Limit (actual time=320.731..320.733 rows=10.00 loops=1)\n  Buffers: shared hit=53124\n  ->  Sort (actual time=320.729..320.730 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery, 0) + ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53124\n        ->  Result (actual time=0.072..314.089 rows=59691.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53118\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.054..127.564 rows=59691.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery) OR (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery)))\n                    Rows Removed by Filter: 5801\n                    Index Searches: 1\n                    Buffers: shared hit=52825\nPlanning:\n  Buffers: shared hit=578\nPlanning Time: 4.386 ms\nExecution Time: 320.801 ms",
+   "identifier": "Limit (actual time=97.503..97.506 rows=10.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=97.501..97.503 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''app.tenant'' | ''id'''::tsquery, 0) + ts_rank(m.fts_simple, '''app.tenant'' | ''id'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=0.050..96.518 rows=6055.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.045..93.175 rows=6055.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''app.tenant'' | ''id'''::tsquery) OR (fts_simple @@ '''app.tenant'' | ''id'''::tsquery)))\n                    Rows Removed by Filter: 59437\n                    Index Searches: 1\n                    Buffers: shared hit=52984\nPlanning:\n  Buffers: shared hit=578\nPlanning Time: 2.592 ms\nExecution Time: 97.544 ms",
+   "typo": "Limit (actual time=95.445..95.448 rows=10.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=95.444..95.445 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''postgress'' | ''upgrad'' | ''downtim'''::tsquery, 0) + ts_rank(m.fts_simple, '''postgress'' | ''upgrade'' | ''downtime'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=0.187..94.975 rows=3363.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.182..92.740 rows=3363.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''postgress'' | ''upgrad'' | ''downtim'''::tsquery) OR (fts_simple @@ '''postgress'' | ''upgrade'' | ''downtime'''::tsquery)))\n                    Rows Removed by Filter: 62129\n                    Index Searches: 1\n                    Buffers: shared hit=52996\nPlanning:\n  Buffers: shared hit=578\nPlanning Time: 2.136 ms\nExecution Time: 95.485 ms"
+  },
+  "c_dual_or@no_rls": {
+   "exact": "Limit (actual time=18.213..18.218 rows=10.00 loops=1)\n  Buffers: shared hit=2354\n  ->  Sort (actual time=18.211..18.215 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''pgbouncer'' | ''transact'' | ''mode'''::tsquery, 0) + ts_rank(m.fts_simple, '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=2354\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=9.098..17.952 rows=1681.00 loops=1)\n              Recheck Cond: (((fts_english @@ '''pgbouncer'' | ''transact'' | ''mode'''::tsquery) OR (fts_simple @@ '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery)) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])) AND is_tip AND (status = 'promoted'::text))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])))\n              Rows Removed by Filter: 142\n              Heap Blocks: exact=1748\n              Buffers: shared hit=2348\n              ->  BitmapAnd (actual time=8.906..8.908 rows=0.00 loops=1)\n                    Buffers: shared hit=563\n                    ->  BitmapOr (actual time=0.922..0.923 rows=0.00 loops=1)\n                          Buffers: shared hit=24\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_english_idx (actual time=0.621..0.621 rows=2792.00 loops=1)\n                                Index Cond: (fts_english @@ '''pgbouncer'' | ''transact'' | ''mode'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=12\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.299..0.300 rows=2792.00 loops=1)\n                                Index Cond: (fts_simple @@ '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=12\n                    ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip (actual time=7.770..7.770 rows=65492.00 loops=1)\n                          Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                          Index Searches: 1\n                          Buffers: shared hit=539\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.176 ms\nExecution Time: 18.321 ms",
+   "long": "Limit (actual time=311.458..311.461 rows=10.00 loops=1)\n  Buffers: shared hit=53124\n  ->  Sort (actual time=311.457..311.458 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery, 0) + ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53124\n        ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.042..305.079 rows=59691.00 loops=1)\n              Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery) OR (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery)))\n              Rows Removed by Filter: 5801\n              Index Searches: 1\n              Buffers: shared hit=53118\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.105 ms\nExecution Time: 311.482 ms",
+   "identifier": "Limit (actual time=45.471..45.475 rows=10.00 loops=1)\n  Buffers: shared hit=6097\n  ->  Sort (actual time=45.470..45.472 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''app.tenant'' | ''id'''::tsquery, 0) + ts_rank(m.fts_simple, '''app.tenant'' | ''id'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=6097\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=23.356..44.512 rows=6055.00 loops=1)\n              Recheck Cond: (((fts_english @@ '''app.tenant'' | ''id'''::tsquery) OR (fts_simple @@ '''app.tenant'' | ''id'''::tsquery)) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])) AND is_tip AND (status = 'promoted'::text))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])))\n              Rows Removed by Filter: 444\n              Heap Blocks: exact=5443\n              Buffers: shared hit=6091\n              ->  BitmapAnd (actual time=21.939..21.941 rows=0.00 loops=1)\n                    Buffers: shared hit=561\n                    ->  BitmapOr (actual time=6.215..6.216 rows=0.00 loops=1)\n                          Buffers: shared hit=22\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_english_idx (actual time=4.567..4.568 rows=9934.00 loops=1)\n                                Index Cond: (fts_english @@ '''app.tenant'' | ''id'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=11\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=1.647..1.647 rows=9315.00 loops=1)\n                                Index Cond: (fts_simple @@ '''app.tenant'' | ''id'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=11\n                    ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip (actual time=14.914..14.915 rows=65492.00 loops=1)\n                          Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                          Index Searches: 1\n                          Buffers: shared hit=539\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 4.402 ms\nExecution Time: 45.664 ms",
+   "typo": "Limit (actual time=25.453..25.458 rows=10.00 loops=1)\n  Buffers: shared hit=3892\n  ->  Sort (actual time=25.452..25.455 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''postgress'' | ''upgrad'' | ''downtim'''::tsquery, 0) + ts_rank(m.fts_simple, '''postgress'' | ''upgrade'' | ''downtime'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=3892\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=10.320..25.011 rows=3363.00 loops=1)\n              Recheck Cond: (((fts_english @@ '''postgress'' | ''upgrad'' | ''downtim'''::tsquery) OR (fts_simple @@ '''postgress'' | ''upgrade'' | ''downtime'''::tsquery)) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])) AND is_tip AND (status = 'promoted'::text))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])))\n              Rows Removed by Filter: 230\n              Heap Blocks: exact=3248\n              Buffers: shared hit=3886\n              ->  BitmapAnd (actual time=9.954..9.956 rows=0.00 loops=1)\n                    Buffers: shared hit=563\n                    ->  BitmapOr (actual time=1.438..1.440 rows=0.00 loops=1)\n                          Buffers: shared hit=24\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_english_idx (actual time=1.097..1.097 rows=5552.00 loops=1)\n                                Index Cond: (fts_english @@ '''postgress'' | ''upgrad'' | ''downtim'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=13\n                          ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.339..0.339 rows=3384.00 loops=1)\n                                Index Cond: (fts_simple @@ '''postgress'' | ''upgrade'' | ''downtime'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=11\n                    ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip (actual time=8.202..8.202 rows=65492.00 loops=1)\n                          Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                          Index Searches: 1\n                          Buffers: shared hit=539\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.320 ms\nExecution Time: 25.605 ms"
+  },
+  "a_stored_and": {
+   "exact": "Limit (actual time=81.746..81.749 rows=10.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=81.744..81.746 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=0.495..81.572 rows=248.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.475..81.312 rows=248.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery))\n                    Rows Removed by Filter: 65244\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=543\nPlanning Time: 2.844 ms\nExecution Time: 81.913 ms",
+   "long": "Limit (actual time=65.953..65.954 rows=0.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=65.951..65.952 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=65.928..65.928 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=65.925..65.925 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery))\n                    Rows Removed by Filter: 65492\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=543\nPlanning Time: 1.289 ms\nExecution Time: 66.001 ms",
+   "identifier": "Limit (actual time=81.295..81.297 rows=10.00 loops=1)\n  Buffers: shared hit=53058\n  ->  Sort (actual time=81.293..81.294 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''app.tenant'' & ''id'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53058\n        ->  Result (actual time=0.949..81.054 rows=505.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53052\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.932..80.691 rows=505.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''app.tenant'' & ''id'''::tsquery))\n                    Rows Removed by Filter: 64987\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=543\nPlanning Time: 3.028 ms\nExecution Time: 81.411 ms",
+   "typo": "Limit (actual time=60.873..60.874 rows=0.00 loops=1)\n  Buffers: shared hit=53054\n  ->  Sort (actual time=60.872..60.872 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''postgress'' & ''upgrade'' & ''downtime'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=53054\n        ->  Result (actual time=60.791..60.792 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53048\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=60.787..60.787 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery))\n                    Rows Removed by Filter: 65492\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=543\nPlanning Time: 1.770 ms\nExecution Time: 60.970 ms"
+  },
+  "a_stored_and@no_rls": {
+   "exact": "Limit (actual time=5.705..5.709 rows=10.00 loops=1)\n  Buffers: shared hit=424\n  ->  Sort (actual time=5.703..5.706 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=424\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.640..5.551 rows=248.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Rows Removed by Filter: 159\n              Heap Blocks: exact=406\n              Buffers: shared hit=418\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.490..0.490 rows=407.00 loops=1)\n                    Index Cond: (fts_simple @@ '''pgbouncer'' & ''transaction'' & ''mode'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=12\nPlanning:\n  Buffers: shared hit=538\nPlanning Time: 2.559 ms\nExecution Time: 5.846 ms",
+   "long": "Limit (actual time=0.748..0.748 rows=0.00 loops=1)\n  Buffers: shared hit=101\n  ->  Sort (actual time=0.746..0.747 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=101\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.713..0.714 rows=0.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Buffers: shared hit=95\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.706..0.706 rows=0.00 loops=1)\n                    Index Cond: (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=95\nPlanning:\n  Buffers: shared hit=538\nPlanning Time: 1.445 ms\nExecution Time: 0.801 ms",
+   "identifier": "Limit (actual time=9.459..9.464 rows=10.00 loops=1)\n  Buffers: shared hit=824\n  ->  Sort (actual time=9.457..9.460 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''app.tenant'' & ''id'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=824\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.985..9.246 rows=505.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''app.tenant'' & ''id'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Rows Removed by Filter: 290\n              Heap Blocks: exact=778\n              Buffers: shared hit=818\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.671..0.672 rows=795.00 loops=1)\n                    Index Cond: (fts_simple @@ '''app.tenant'' & ''id'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=13\nPlanning:\n  Buffers: shared hit=538\nPlanning Time: 2.682 ms\nExecution Time: 9.572 ms",
+   "typo": "Limit (actual time=0.123..0.124 rows=0.00 loops=1)\n  Buffers: shared hit=17\n  ->  Sort (actual time=0.123..0.123 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''postgress'' & ''upgrade'' & ''downtime'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=17\n        ->  Bitmap Heap Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.096..0.096 rows=0.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n              Buffers: shared hit=11\n              ->  Bitmap Index Scan on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_fts_simple_idx (actual time=0.089..0.090 rows=0.00 loops=1)\n                    Index Cond: (fts_simple @@ '''postgress'' & ''upgrade'' & ''downtime'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=11\nPlanning:\n  Buffers: shared hit=538\nPlanning Time: 1.166 ms\nExecution Time: 0.164 ms"
+  },
+  "b_stored_or": {
+   "exact": "Limit (actual time=76.828..76.831 rows=10.00 loops=1)\n  Buffers: shared hit=53068\n  ->  Sort (actual time=76.827..76.828 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53068\n        ->  Result (actual time=0.110..76.537 rows=1681.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53062\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.105..75.865 rows=1681.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery))\n                    Rows Removed by Filter: 63811\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=555\nPlanning Time: 1.387 ms\nExecution Time: 76.879 ms",
+   "long": "Limit (actual time=211.712..211.715 rows=10.00 loops=1)\n  Buffers: shared hit=53324\n  ->  Sort (actual time=211.711..211.712 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53324\n        ->  Result (actual time=0.040..205.476 rows=59198.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53318\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.033..85.220 rows=59198.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery))\n                    Rows Removed by Filter: 6294\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=555\nPlanning Time: 1.316 ms\nExecution Time: 211.754 ms",
+   "identifier": "Limit (actual time=80.721..80.723 rows=10.00 loops=1)\n  Buffers: shared hit=53118\n  ->  Sort (actual time=80.719..80.720 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''app.tenant'' | ''id'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53118\n        ->  Result (actual time=0.046..79.930 rows=5673.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53112\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.041..78.067 rows=5673.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''app.tenant'' | ''id'''::tsquery))\n                    Rows Removed by Filter: 59819\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=555\nPlanning Time: 1.541 ms\nExecution Time: 80.787 ms",
+   "typo": "Limit (actual time=98.658..98.661 rows=10.00 loops=1)\n  Buffers: shared hit=53070\n  ->  Sort (actual time=98.657..98.658 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''postgress'' | ''upgrade'' | ''downtime'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53070\n        ->  Result (actual time=0.239..98.178 rows=2056.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n              Buffers: shared hit=53064\n              ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.234..97.085 rows=2056.00 loops=1)\n                    Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''postgress'' | ''upgrade'' | ''downtime'''::tsquery))\n                    Rows Removed by Filter: 63436\n                    Index Searches: 1\n                    Buffers: shared hit=53048\nPlanning:\n  Buffers: shared hit=555\nPlanning Time: 1.578 ms\nExecution Time: 98.708 ms"
+  },
+  "d_bm25_stored": {
+   "exact": "Limit (actual time=121.942..121.954 rows=10.00 loops=1)\n  Buffers: shared hit=53220\n  CTE qt\n    ->  Aggregate (actual time=0.076..0.078 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.062..0.064 rows=3.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.015..0.016 rows=3.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.079..0.080 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.041..0.062 rows=46.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.036..0.048 rows=46.00 loops=1)\n                      Filter: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=0.725..0.764 rows=3.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=148\n          ->  Sort (actual time=0.701..0.719 rows=137.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 29kB\n                Buffers: shared hit=148\n                ->  Result (actual time=0.063..0.636 rows=137.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                      Buffers: shared hit=148\n                      ->  Nested Loop (actual time=0.061..0.605 rows=137.00 loops=1)\n                            Buffers: shared hit=148\n                            ->  CTE Scan on qt (actual time=0.000..0.002 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.058..0.560 rows=137.00 loops=1)\n                                  Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                  Index Searches: 3\n                                  Buffers: shared hit=148\n  CTE tf\n    ->  Result (actual time=0.352..115.512 rows=2679.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n          Buffers: shared hit=53065\n          ->  Nested Loop (actual time=0.284..114.960 rows=2679.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 49456\n                Buffers: shared hit=53065\n                ->  Nested Loop (actual time=0.247..91.044 rows=1681.00 loops=1)\n                      Buffers: shared hit=53051\n                      ->  CTE Scan on qt qt_1 (actual time=0.077..0.078 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.168..90.669 rows=1681.00 loops=1)\n                            Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''pgbouncer'' | ''transaction'' | ''mode'''::tsquery))\n                            Rows Removed by Filter: 63811\n                            Index Searches: 1\n                            Buffers: shared hit=53048\n                ->  Function Scan on unnest x_1 (actual time=0.008..0.010 rows=31.01 loops=1681)\n                      Buffers: shared hit=14\n  ->  Sort (actual time=121.940..121.943 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53220\n        ->  HashAggregate (actual time=121.416..121.654 rows=1681.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 201kB\n              Buffers: shared hit=53214\n              ->  Hash Join (actual time=1.276..118.392 rows=2679.00 loops=1)\n                    Hash Cond: (tf.lexeme = df.term)\n                    Buffers: shared hit=53214\n                    ->  CTE Scan on tf (actual time=0.354..116.541 rows=2679.00 loops=1)\n                          Storage: Memory  Maximum Storage: 193kB\n                          Buffers: shared hit=53065\n                    ->  Hash (actual time=0.882..0.883 rows=3.00 loops=1)\n                          Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                          Buffers: shared hit=149\n                          ->  Nested Loop (actual time=0.809..0.850 rows=3.00 loops=1)\n                                Buffers: shared hit=149\n                                ->  CTE Scan on st (actual time=0.081..0.081 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=1\n                                ->  CTE Scan on df (actual time=0.727..0.765 rows=3.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=148\nPlanning:\n  Buffers: shared hit=694\nPlanning Time: 4.378 ms\nExecution Time: 122.593 ms",
+   "long": "Limit (actual time=1200.831..1200.847 rows=10.00 loops=1)\n  Buffers: shared hit=54215\n  CTE qt\n    ->  Aggregate (actual time=0.040..0.042 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.032..0.034 rows=22.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.008..0.010 rows=22.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.034..0.036 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.017..0.027 rows=46.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.015..0.021 rows=46.00 loops=1)\n                      Filter: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=2.363..2.454 rows=18.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=887\n          ->  Sort (actual time=2.353..2.385 rows=827.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 47kB\n                Buffers: shared hit=887\n                ->  Result (actual time=0.073..2.229 rows=827.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                      Buffers: shared hit=887\n                      ->  Nested Loop (actual time=0.072..2.162 rows=827.00 loops=1)\n                            Buffers: shared hit=887\n                            ->  CTE Scan on qt (actual time=0.000..0.001 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.070..2.058 rows=827.00 loops=1)\n                                  Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                  Index Searches: 20\n                                  Buffers: shared hit=887\n  CTE tf\n    ->  Result (actual time=0.110..960.403 rows=167663.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n          Buffers: shared hit=53321\n          ->  Nested Loop (actual time=0.107..937.866 rows=167663.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 1448981\n                Buffers: shared hit=53321\n                ->  Nested Loop (actual time=0.087..113.154 rows=59198.00 loops=1)\n                      Buffers: shared hit=53051\n                      ->  CTE Scan on qt qt_1 (actual time=0.040..0.041 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.046..105.589 rows=59198.00 loops=1)\n                            Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery))\n                            Rows Removed by Filter: 6294\n                            Index Searches: 1\n                            Buffers: shared hit=53048\n                ->  Function Scan on unnest x_1 (actual time=0.005..0.007 rows=27.31 loops=59198)\n                      Buffers: shared hit=270\n  ->  Sort (actual time=1200.830..1200.833 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=54215\n        ->  HashAggregate (actual time=1185.126..1194.764 rows=59198.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 6169kB\n              Buffers: shared hit=54209\n              ->  Hash Join (actual time=2.648..1049.329 rows=167663.00 loops=1)\n                    Hash Cond: (tf.lexeme = df.term)\n                    Buffers: shared hit=54209\n                    ->  CTE Scan on tf (actual time=0.111..1009.893 rows=167663.00 loops=1)\n                          Storage: Memory  Maximum Storage: 11246kB\n                          Buffers: shared hit=53321\n                    ->  Hash (actual time=2.514..2.516 rows=18.00 loops=1)\n                          Buckets: 1024  Batches: 1  Memory Usage: 10kB\n                          Buffers: shared hit=888\n                          ->  Nested Loop (actual time=2.401..2.495 rows=18.00 loops=1)\n                                Buffers: shared hit=888\n                                ->  CTE Scan on st (actual time=0.035..0.035 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=1\n                                ->  CTE Scan on df (actual time=2.365..2.456 rows=18.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=887\nPlanning:\n  Buffers: shared hit=694\nPlanning Time: 1.864 ms\nExecution Time: 1202.600 ms",
+   "identifier": "Limit (actual time=168.765..168.778 rows=10.00 loops=1)\n  Buffers: shared hit=53219\n  CTE qt\n    ->  Aggregate (actual time=0.067..0.069 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.058..0.060 rows=2.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.015..0.017 rows=2.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.077..0.078 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.039..0.060 rows=46.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.036..0.047 rows=46.00 loops=1)\n                      Filter: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=1.167..1.183 rows=2.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=97\n          ->  Sort (actual time=1.149..1.158 rows=90.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 27kB\n                Buffers: shared hit=97\n                ->  Result (actual time=0.122..1.107 rows=90.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                      Buffers: shared hit=97\n                      ->  Nested Loop (actual time=0.119..1.084 rows=90.00 loops=1)\n                            Buffers: shared hit=97\n                            ->  CTE Scan on qt (actual time=0.000..0.002 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.116..1.052 rows=90.00 loops=1)\n                                  Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                  Index Searches: 2\n                                  Buffers: shared hit=97\n  CTE tf\n    ->  Result (actual time=0.201..155.553 rows=6178.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n          Buffers: shared hit=53115\n          ->  Nested Loop (actual time=0.193..154.519 rows=6178.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 171058\n                Buffers: shared hit=53115\n                ->  Nested Loop (actual time=0.147..86.172 rows=5673.00 loops=1)\n                      Buffers: shared hit=53051\n                      ->  CTE Scan on qt qt_1 (actual time=0.068..0.068 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.078..85.321 rows=5673.00 loops=1)\n                            Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''app.tenant'' | ''id'''::tsquery))\n                            Rows Removed by Filter: 59819\n                            Index Searches: 1\n                            Buffers: shared hit=53048\n                ->  Function Scan on unnest x_1 (actual time=0.007..0.008 rows=31.24 loops=5673)\n                      Buffers: shared hit=64\n  ->  Sort (actual time=168.764..168.767 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53219\n        ->  HashAggregate (actual time=167.290..168.096 rows=5673.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 665kB\n              Buffers: shared hit=53213\n              ->  Hash Join (actual time=1.545..160.627 rows=6178.00 loops=1)\n                    Hash Cond: (tf.lexeme = df.term)\n                    Buffers: shared hit=53213\n                    ->  CTE Scan on tf (actual time=0.203..157.621 rows=6178.00 loops=1)\n                          Storage: Memory  Maximum Storage: 407kB\n                          Buffers: shared hit=53115\n                    ->  Hash (actual time=1.291..1.292 rows=2.00 loops=1)\n                          Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                          Buffers: shared hit=98\n                          ->  Nested Loop (actual time=1.248..1.266 rows=2.00 loops=1)\n                                Buffers: shared hit=98\n                                ->  CTE Scan on st (actual time=0.078..0.079 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=1\n                                ->  CTE Scan on df (actual time=1.168..1.183 rows=2.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=97\nPlanning:\n  Buffers: shared hit=694\nPlanning Time: 4.030 ms\nExecution Time: 169.490 ms",
+   "typo": "Limit (actual time=113.678..113.690 rows=10.00 loops=1)\n  Buffers: shared hit=53173\n  CTE qt\n    ->  Aggregate (actual time=0.085..0.087 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.070..0.072 rows=3.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.016..0.017 rows=3.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.086..0.088 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.046..0.068 rows=46.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.041..0.052 rows=46.00 loops=1)\n                      Filter: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=1.186..1.203 rows=2.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=99\n          ->  Sort (actual time=1.166..1.177 rows=90.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 27kB\n                Buffers: shared hit=99\n                ->  Result (actual time=0.130..1.120 rows=90.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n                      Buffers: shared hit=99\n                      ->  Nested Loop (actual time=0.127..1.096 rows=90.00 loops=1)\n                            Buffers: shared hit=99\n                            ->  CTE Scan on qt (actual time=0.001..0.002 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.123..1.061 rows=90.00 loops=1)\n                                  Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                                  Index Searches: 3\n                                  Buffers: shared hit=99\n  CTE tf\n    ->  Result (actual time=0.521..107.666 rows=2431.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid)\n          Buffers: shared hit=53067\n          ->  Nested Loop (actual time=0.510..107.253 rows=2431.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 63325\n                Buffers: shared hit=53067\n                ->  Nested Loop (actual time=0.472..82.803 rows=2056.00 loops=1)\n                      Buffers: shared hit=53051\n                      ->  CTE Scan on qt qt_1 (actual time=0.087..0.088 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_d097b6bcb7434eec8f0bb09e35e19e1a_served_tip on memories_t_d097b6bcb7434eec8f0bb09e35e19e1a m (actual time=0.382..82.417 rows=2056.00 loops=1)\n                            Index Cond: ((tenant_id = 'd097b6bc-b743-4eec-8f0b-b09e35e19e1a'::uuid) AND (workarea_id = ANY ('{2953e567-0609-4f83-9627-155be6b534ea,366b5499-6008-4f2d-ac7d-c4e15675250b,eaf9ba88-b7e8-4523-a32a-143eb56866f2,0f7a4d75-2787-4bed-817b-4db70e89ac49,17d4f96f-13b4-4a68-9fc8-3f53b7a31aaa,db6897b4-34ca-4d0f-a5bd-b778d561299d,ed61f880-3e84-400b-8348-25e1080a4357,4c1f1b3c-2f92-4fff-9810-673976c7454e,5d9df394-6226-4c47-82f6-3ba5f3bf1464,7eb3f7ac-8739-4a3d-9418-c628ddc64bbf,3ed3d9f8-3c53-4e46-8b2d-7f0d2e9b93ef,881304fb-dbaa-479c-912d-e52c884c0c2d,fd10526f-30b3-4a20-abaf-022538f8dd2a,b098d697-3c99-46f5-bac0-3bb326dcba9a,291b6bbf-e092-49df-a13e-4b84032161b8,ed25a59e-1eb7-4f6d-96dc-d57ab5ab525b,5a1d9773-c10b-430e-b5f2-13ad464bde83,7fcbfaec-04a7-46b4-bc3e-e001d0f909ec,6ddbb647-514c-4c4e-b186-e0d736242ed1,2c2ecf62-1645-4f8b-89fc-3ca13503521e,fabb34b3-1b31-45b2-aa7d-fb22685eaeb1,75da8e96-0adc-4fbd-9cbf-749c56fe83eb,1497fa6f-1cea-4e7c-ac82-d393c2738383,29e42f5c-b3d1-453f-925c-a07f0a95e12f,2cc22432-5928-4448-a6aa-0b299f839aca,796c9b8e-c757-4329-865e-0edf684de40f,415853e3-ccf2-4bfe-a86b-5945c51561dd,b31544bd-d725-4db8-a377-5275572d1781,2887232f-3083-47b5-bcc7-c6f1060e2922,c56a8e9e-6007-40be-8791-edc1641ee0f6,020bec7d-15a0-4bfd-a43d-9740beecd412,3d00fa57-034a-47a9-b0cd-245470d5c462,334f0d2a-18d7-47aa-bf13-88454f83beb1,105879ad-c270-4b22-9c9a-82285fa0024e,a45e8fc2-312e-4ea6-a91b-7501b216c8bd,ac64d89a-fd55-46d2-b1ef-8536f7199691,8ba65867-f1e3-4994-928d-2b0a9f614cd7,1c3eb3ce-4a15-412b-b1dc-1126d86a30ca,048ed9ee-83f6-4041-abdc-d498a6ca979c,88c2e0af-4302-432f-a315-54e455773f3a,70d9c47d-61cc-4510-8230-6b507268c360,1dc3654d-26cf-4e02-984e-2934090e686e,7c64db76-22a1-41f9-8164-27cf217ed307,a238c704-7cee-4902-9e02-62a729c9559d,de827252-03d8-40bc-a236-1aa028a425e9,ca58c9bb-0c74-42b1-92d6-f6a350b43843}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''postgress'' | ''upgrade'' | ''downtime'''::tsquery))\n                            Rows Removed by Filter: 63436\n                            Index Searches: 1\n                            Buffers: shared hit=53048\n                ->  Function Scan on unnest x_1 (actual time=0.007..0.008 rows=31.98 loops=2056)\n                      Buffers: shared hit=16\n  ->  Sort (actual time=113.676..113.679 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=53173\n        ->  HashAggregate (actual time=113.077..113.379 rows=2056.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 233kB\n              Buffers: shared hit=53167\n              ->  Hash Join (actual time=1.888..110.517 rows=2431.00 loops=1)\n                    Hash Cond: (tf.lexeme = df.term)\n                    Buffers: shared hit=53167\n                    ->  CTE Scan on tf (actual time=0.524..108.497 rows=2431.00 loops=1)\n                          Storage: Memory  Maximum Storage: 169kB\n                          Buffers: shared hit=53067\n                    ->  Hash (actual time=1.322..1.323 rows=2.00 loops=1)\n                          Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                          Buffers: shared hit=100\n                          ->  Nested Loop (actual time=1.277..1.295 rows=2.00 loops=1)\n                                Buffers: shared hit=100\n                                ->  CTE Scan on st (actual time=0.088..0.089 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=1\n                                ->  CTE Scan on df (actual time=1.187..1.203 rows=2.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=99\nPlanning:\n  Buffers: shared hit=694\nPlanning Time: 4.555 ms\nExecution Time: 114.524 ms"
+  }
+ },
+ "disk_free_start": 5887205376,
+ "workareas": 46,
+ "workload": {
+  "categories": [
+   "exact",
+   "identifier",
+   "inflection",
+   "long",
+   "multihop",
+   "negation",
+   "paraphrase",
+   "partial",
+   "question",
+   "temporal",
+   "typo"
+  ],
+  "scopes": {
+   "leaf": 118,
+   "project": 141,
+   "universe": 71
+  }
+ },
+ "served_rows": 60440,
+ "adr0050": {
+  "base": {
+   "n": 300,
+   "p50_ms": 40.48163793049753,
+   "p95_ms": 152.0695500075817,
+   "p99_ms": 409.4509029528126,
+   "mean_ms": 59.85224665802283,
+   "max_ms": 478.91529800835997,
+   "timeouts": 0,
+   "empty": 0,
+   "mean_rows": 5.996666666666667
+  }
+ },
+ "bm25_rls_check": {
+  "terms": 158,
+  "maintained_equals_querytime": 158,
+  "tenant_wide_differs": 115
+ },
+ "db_bytes": 195581631,
+ "disk_free_end": 4730613760,
+ "finished": "2026-11-04T21:53:41"
+}

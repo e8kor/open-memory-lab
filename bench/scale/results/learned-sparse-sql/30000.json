@@ -1,0 +1,47 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "learned-sparse-sql",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 30000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 11.5781,
+  "index_build_s": 0.3774,
+  "write_overhead_ms": 1.804,
+  "postings": 1633056,
+  "heap_mb": 132.0,
+  "postings_touched_p50": 110170,
+  "cold_p95_ms": 100.7018
+ },
+ "latency_ms": {
+  "p50": 59.9207,
+  "p95": 96.6338,
+  "p99": 107.9725
+ },
+ "per_category": {
+  "leaf": {
+   "p50": 54.6092,
+   "p95": 77.2773
+  },
+  "universe": {
+   "p50": 74.2916,
+   "p95": 107.9725
+  },
+  "project": {
+   "p50": 59.582,
+   "p95": 89.7563
+  }
+ },
+ "extrapolated": false,
+ "notes": "Synthetic templated text from the recall eval's 200 seeds (and synthetic clustered vectors), one client on a shared 8-vCPU host, queried as the serving role under row security. Random Zipf token weights: cost, not quality.",
+ "source": "bench/scale/results/x_sparse_30k.json"
+}
