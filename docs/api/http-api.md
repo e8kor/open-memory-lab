@@ -566,6 +566,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
+| `GET /v2/admin/rescan` | admin (key role); the stored versions rescanned by rule, nothing changed or journalled; *since v0.6.0* ([rescan](#rescan)) | served |
 | `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *since v0.5.5* ([search settings](#search-settings)) | served |
 | `GET /v2/usage/settings` · `POST /v2/usage/settings` · `GET /v2/usage/events` · `POST /v2/usage/eval` | admin (key role); the tenant's recalls, its query-text setting journalled as `telemetry.settings_set`, and the real-usage replay; *since v0.5.7* ([recall telemetry](#recall-telemetry)) | served |
 
@@ -1678,6 +1679,20 @@ role: the CLI's `oml web allow`, `oml web list` and `oml web remove`, and how a 
 admin email gets in. An email is unique in the deployment (`name.taken`, kind `email`); a `user`
 a shared workarea holds, or whose composed key names a key holds, is `name.taken`. Removing an
 email ends its sessions and leaves the user's agent keys working.
+
+### Rescan
+
+*Since v0.6.0 · [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-secrets-and-holds-what-a-reviewer-should-judge.md) d13*
+
+`GET /v2/admin/rescan?after_seq=&limit=`, admin key role, scans the versions the tenant already
+stores with the server's rule set, body and anchor, as admission does. Each window reads the
+submissions journalled after `after_seq`, at most `limit` (1 to 1000, default 1000) journal
+events, and answers `{scanner_version, scanned, findings, by_rule, next_after_seq}`. Each finding
+names `artifact_id`, `workarea_id`, `version`, `state`, `class`, `rule`, `action` (`veto` or
+`hold`) and `at` (`/body line 3`), never the text. It changes nothing and journals nothing: a
+version the scan would refuse today stays where it is, for a person to read with
+`oml admin read` and retire. `oml admin rescan` walks every window, sums them by rule, and exits 1
+when any finding vetoes.
 
 ## Bans
 

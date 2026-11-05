@@ -37,10 +37,15 @@ implementation milestone where it changes what the repository holds.
   invisible Unicode and long base64 runs hold; personal-data rules exist and stay off. One
   secret-shaped path list serves the anchor scan and `oml sync`. A finding names its class, rule,
   field and line, never what it matched. `scan.scanner_version` carries the rule set, and the
-  findings metric counts by rule.
+  findings metric counts by rule. `/readyz` and `oml doctor` name the rule set, its rule count
+  and the personal-data setting; `GET /v2/admin/rescan` and `oml admin rescan` report what the
+  rule set finds in versions already stored, by rule and place, changing nothing (d13). The
+  per-tenant personal-data setting is FR-180, and the rescan's window is FR-181.
 - Pages touched: [admission](architecture/admission.md) (the registry's new classes and the
   measured pass), [errors](api/errors.md) (`details.finding`'s shape),
-  [workspace plan](engineering/workspace-plan.md) (the second leaf crate).
+  [workspace plan](engineering/workspace-plan.md) (the second leaf crate),
+  [HTTP API](api/http-api.md) and [OpenAPI](api/openapi.yaml) (the rescan route and `/readyz`'s
+  `scan`), and the [roadmap](product/roadmap.md) (FR-180, FR-181).
 
 ## 0.5.8-design
 

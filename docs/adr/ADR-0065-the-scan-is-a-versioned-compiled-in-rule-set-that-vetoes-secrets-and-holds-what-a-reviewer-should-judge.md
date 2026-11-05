@@ -141,8 +141,11 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   `pii.phone` (international `+` numbers and the `(nnn) nnn-nnnn` shape) are compiled in behind
   `Options { pii }`. A team's memory names its people ("ask jane@ about the canary"), and holding
   every such fact would flood review with findings that judge nothing. A tenant that must keep
-  addresses out of shared memory turns the rules on as a journalled tenant setting, which holds
-  every finding. That setting is not built: v0.6.0 ships them off for every tenant (Q1).
+  addresses out of shared memory needs them on as a journalled tenant setting, which holds every
+  finding. That setting is not small (a journalled event, a fold onto the tenant row, a migration,
+  and the tenant's flag carried into every scan) and is not built: v0.6.0 ships the rules off for
+  every tenant, tracked as FR-180 on the [roadmap](../product/roadmap.md). `/readyz` and doctor
+  say they are off.
 
 - **d7 — The scan reads every free-text field a submission keeps, and only those.**
     - **The body** of every `remember`, `learn` and supersession, after NFC normalization.
@@ -190,12 +193,16 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   fake secret. They are documented as test markers. A deployment that wants them gone gets a new
   rule-set version, not a switch.
 
-- **d11 — Findings are counted by rule; the doctor reads the version.** The lead's rule set
-  counts its findings by class, rule and action. The metrics listener serves those counts as
+- **d11 — Findings are counted by rule; `/readyz` and doctor name the rule set.** The lead's rule
+  set counts its findings by class, rule and action. The metrics listener serves those counts as
   `oml_scan_findings_total{class, rule, action}`, every label from the closed set d2 lists
-  (ADR-0042 d12's rule for labels). The doctor line, `scan: oml-scan/1`, read from the
-  server's build information, is not built in this change (Q3). Until it is,
-  `scan.scanner_version` on any submission event answers which rule set took a verdict.
+  (ADR-0042 d12's rule for labels). `/readyz` carries `scan: {version, rules, pii}`: the rule
+  set, how many rules it loaded and whether the personal-data rules are on, with no count, since
+  the probe answers anyone. `oml doctor` prints `scan: oml-scan/1, 38 rules loaded, personal-data
+  rules off`, warns `scan_ruleset` when the server names no rule set (one before v0.6.0) and
+  `scan_rules` when it loaded none, and, where `OML_METRICS_URL` names the metrics listener,
+  prints `findings since start: n refused, m held; most: <rule> ×k, …`. The counts are since the
+  lead started; a trend over time is the metrics store's to keep.
 
 - **d12 — False positives are measured on OML's own text and on public corpora, and every
   accepted one is listed.** A test scans every page under `docs/` and every recall-eval memory.
@@ -221,6 +228,23 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
     instructions", "new instructions:"), eight with invisible format characters, two with tag
     characters that lost their flag, and three `data:` URIs carrying base64 images.
 
+- **d13 — An admin rescans what is already stored, and the rescan changes nothing.** Rows written
+  before `oml-scan/1` never met it, and a later rule set may find what an earlier one passed.
+  `GET /v2/admin/rescan?after_seq=&limit=`, admin key role, reads the submissions journalled in
+  one window of at most 1,000 journal events, loads their versions in one statement, and runs the
+  composed scanner over every stored version but an erased one: the body, each anchor field, and
+  the path rule (d4), with any anchor finding reported as a veto, as admission treats it. It
+  answers each finding as `artifact_id`, `workarea_id`, `version`, `state`, class, rule, action
+  and place, plus the counts by rule and the next window's `after_seq`. It journals nothing,
+  because it reveals no text and decides nothing. A version it would veto stays where it is,
+  promoted or held. Deleting it would be the silent drop R4 forbids
+  ([ADR-0001](ADR-0001-the-constitution.md)), so a person reads it with `oml admin read` and
+  retires or demotes it. `oml admin rescan` walks every window, prints the counts by rule and
+  each finding, and exits 1 when any finding vetoes, so a script can gate on it. The scanner
+  port gains `findings()`, which reports without counting, so a rescan does not inflate the
+  admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
+  tracked as FR-181.
+
 ## Consequences
 
 - `crates/oml-scan` holds the rules, the path list and their tests. The lead composes
@@ -233,8 +257,8 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   promoting through the ordinary policy.
 - An anchor under a `secrets/` or `.kube/` directory, or naming a `.npmrc` or a kubeconfig, is
   now refused where it used to pass (d4).
-- Rows written before this change are not re-scanned (d1). A secret already in a promoted claim
-  stays until someone demotes or erases it. The scanner does not find it after the fact.
+- Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
+  finds them (d13), and a person retires them. Nothing retires them on its own.
 - A rule that needs changing waits for `oml-scan/2`. That is slower than a toggle, and it is what
   keeps a journalled verdict reproducible.
 
@@ -251,11 +275,9 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 
 ## Open questions
 
-- **Q1.** The tenant setting that turns `pii.*` on: its key, its journalled act
-  (`system.settings_applied`), and whether it may also pick veto.
+- **Q1.** The tenant setting that turns `pii.*` on (FR-180): its key, its journalled event,
+  and whether it may also pick veto.
 - **Q2.** Scanning a guardrail's `rule` strings and an attachment's extracted text, once a
   deterministic extractor exists ([storage](../architecture/storage.md)).
-- **Q3.** The doctor line: the build endpoint carries the scanner version, and `oml doctor`
-  prints it.
-- **Q4.** A durable trace of a veto outside the chain stays RS-16 on the
+- **Q3.** A durable trace of a veto outside the chain stays RS-16 on the
   [roadmap](../product/roadmap.md).
