@@ -162,6 +162,14 @@ pub trait SyncApi {
         body: &Value,
         idempotency_key: &str,
     ) -> Result<Value, CliError>;
+    /// Each source check of a batch, answered in order. The default sends
+    /// them one by one; [`HttpApi`] sends up to [`CHECK_WORKERS`] at once.
+    fn source_checks(&self, batch: &[(String, Value, String)]) -> Vec<Result<Value, CliError>> {
+        batch
+            .iter()
+            .map(|(a, body, key)| self.source_check(a, body, key))
+            .collect()
+    }
     /// Every claim edge in a workarea's subtree.
     /// # Errors
     /// As [`SyncApi::me`].
@@ -189,6 +197,10 @@ pub struct HttpApi {
 
 /// How many times a write is sent while the server answers 429 or 503.
 const ATTEMPTS: u32 = 6;
+
+/// The most source checks in flight at once (ADR-0057 d5): a re-sync of
+/// 600 records checks 600 tips, one request each.
+pub const CHECK_WORKERS: usize = 4;
 
 impl HttpApi {
     fn post(&self, path: &str, body: &Value, key: &str) -> Result<Value, CliError> {
@@ -270,6 +282,40 @@ impl SyncApi for HttpApi {
             body,
             key,
         )
+    }
+
+    fn source_checks(&self, batch: &[(String, Value, String)]) -> Vec<Result<Value, CliError>> {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let slots: Vec<Mutex<Option<Result<Value, CliError>>>> =
+            batch.iter().map(|_| Mutex::new(None)).collect();
+        let next = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..CHECK_WORKERS.min(batch.len()) {
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((a, body, key)) = batch.get(i) else {
+                            break;
+                        };
+                        let answer = self.source_check(a, body, key);
+                        if let Ok(mut slot) = slots[i].lock() {
+                            *slot = Some(answer);
+                        }
+                    }
+                });
+            }
+        });
+        slots
+            .into_iter()
+            .map(|m| {
+                m.into_inner().ok().flatten().unwrap_or_else(|| {
+                    Err(CliError::Unanswered(
+                        "a source check was not sent".to_owned(),
+                    ))
+                })
+            })
+            .collect()
     }
 
     fn claim_edges(&self, workarea_id: &str) -> Result<Vec<EdgeRow>, CliError> {

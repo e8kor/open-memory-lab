@@ -82,6 +82,14 @@ impl Git {
         })
     }
 
+    /// Whether this clone holds the commit `rev`.
+    #[must_use]
+    pub fn knows(&self, rev: &str) -> bool {
+        self.command(&["cat-file", "-e", &format!("{rev}^{{commit}}")])
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
     /// Whether `ancestor` is a strict ancestor of `descendant`; false when
     /// either is unknown to this clone.
     #[must_use]
@@ -265,11 +273,15 @@ pub fn repo_of_remote(url: &str) -> Result<Remote, String> {
         let host = userhost.rsplit('@').next().unwrap_or(userhost);
         format!("{host}/{}", path.trim_start_matches('/'))
     } else {
-        return Err(format!("the remote {url:?} names no host; pass --repo"));
+        return Err("the origin remote names no host; pass --repo".to_owned());
     };
     let rest = rest.trim_end_matches('/');
     let rest = rest.strip_suffix(".git").unwrap_or(rest).to_lowercase();
-    check_repo(&rest)?;
+    // The remainder may carry a token (`?access_token=`), so it is never
+    // echoed.
+    check_repo(&rest).map_err(|_| {
+        "the origin remote names no repository under ADR-0057 d3's grammar; pass --repo".to_owned()
+    })?;
     Ok(Remote {
         repo: rest,
         had_credentials,
@@ -305,29 +317,74 @@ pub fn check_repo(repo: &str) -> Result<(), String> {
     }
 }
 
-/// Whether a path's file name matches the client's secret patterns, which
-/// a run refuses to read (ADR-0057 d6, ADR-0047 d3): `.env*`, `*.pem`,
-/// `*.key`, `id_*`, `*credentials*`, `*secret*`.
+/// Whether any component of a path matches the client's secret patterns,
+/// which a run refuses to read (ADR-0057 d6, ADR-0047 d3): `.env*`,
+/// `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_*`,
+/// `*credentials*`, `*secret*`, `.npmrc`, `.netrc`, `.pgpass`,
+/// `.htpasswd`. A directory so named hides every file under it.
 #[must_use]
 pub fn is_secret_shaped(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
-    name.starts_with(".env")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.starts_with("id_")
-        || name.contains("credentials")
-        || name.contains("secret")
+    path.split('/').any(|part| {
+        let name = part.to_lowercase();
+        name.starts_with(".env")
+            || [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"]
+                .iter()
+                .any(|ext| name.ends_with(ext))
+            || name.starts_with("id_")
+            || name.contains("credentials")
+            || name.contains("secret")
+            || matches!(name.as_str(), ".npmrc" | ".netrc" | ".pgpass" | ".htpasswd")
+    })
+}
+
+/// Whether a repository-relative path matches an `--exclude` glob: `**`
+/// matches any number of segments, `*` any run within one, `?` one
+/// character.
+#[must_use]
+pub fn glob_match(pattern: &str, path: &str) -> bool {
+    fn segments(p: &[&str], s: &[&str]) -> bool {
+        match (p.first(), s.first()) {
+            (None, None) => true,
+            (Some(&"**"), _) => segments(&p[1..], s) || (!s.is_empty() && segments(p, &s[1..])),
+            (Some(pat), Some(seg)) => {
+                one(pat.as_bytes(), seg.as_bytes()) && segments(&p[1..], &s[1..])
+            }
+            _ => false,
+        }
+    }
+    fn one(p: &[u8], s: &[u8]) -> bool {
+        match (p.first(), s.first()) {
+            (None, None) => true,
+            (Some(b'*'), _) => one(&p[1..], s) || (!s.is_empty() && one(p, &s[1..])),
+            (Some(b'?'), Some(_)) => one(&p[1..], &s[1..]),
+            (Some(a), Some(b)) => a == b && one(&p[1..], &s[1..]),
+            _ => false,
+        }
+    }
+    let p: Vec<&str> = pattern.trim_matches('/').split('/').collect();
+    let s: Vec<&str> = path.split('/').collect();
+    segments(&p, &s)
 }
 
 /// The maintainer's public server, which a run refuses unless
 /// `--allow-public-server` (ADR-0057 d6, ADR-0043).
 pub const PUBLIC_SERVER: &str = "https://memory.doublegate.io";
 
-/// Whether `url` is the public server.
+/// Whether `url` names the public server's host, whatever its scheme,
+/// port, path, trailing slash or case.
 #[must_use]
 pub fn is_public_server(url: &str) -> bool {
-    url.trim_end_matches('/')
-        .eq_ignore_ascii_case(PUBLIC_SERVER)
+    let host_of = |u: &str| -> String {
+        let rest = u.trim().split_once("://").map_or(u.trim(), |(_, r)| r);
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        let host = authority.rsplit('@').next().unwrap_or(authority);
+        host.split(':')
+            .next()
+            .unwrap_or(host)
+            .trim_end_matches('.')
+            .to_lowercase()
+    };
+    host_of(url) == host_of(PUBLIC_SERVER)
 }
 
 /// The git config entry recording that this clone's operator allowed the

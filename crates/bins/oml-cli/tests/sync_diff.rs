@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use oml_cli::client::CliError;
 use oml_cli::sync::adapter::Kind;
 use oml_cli::sync::api::{EdgeRow, ListQuery, Listed, Me, SyncApi};
-use oml_cli::sync::plan::{Scope, SourceItem};
+use oml_cli::sync::plan::Scope;
 use oml_cli::sync::run::{Loaded, Options, Report, execute};
 
 const REPO: &str = "github.com/e8kor/docs";
@@ -47,6 +47,8 @@ struct Fake {
     /// Hide held rows from the listing, as a run that died before reading
     /// its own writes would see the workarea.
     hide_held: RefCell<bool>,
+    /// The size of each batch of source checks.
+    batches: RefCell<Vec<usize>>,
 }
 
 fn refused(code: &str) -> CliError {
@@ -79,6 +81,7 @@ impl Fake {
             writes: RefCell::new(Vec::new()),
             checks: RefCell::new(Vec::new()),
             hide_held: RefCell::new(false),
+            batches: RefCell::new(Vec::new()),
         }
     }
 
@@ -97,6 +100,16 @@ impl Fake {
         }
         self.writes.borrow_mut().clear();
         self.checks.borrow_mut().clear();
+    }
+
+    /// The reviewer rejects every held version.
+    fn reject_all(&self) {
+        for v in self.versions.borrow_mut().iter_mut() {
+            if v.state == "held" {
+                v.state = "rejected".into();
+            }
+        }
+        self.reset_calls();
     }
 
     fn reset_calls(&self) {
@@ -322,6 +335,14 @@ impl SyncApi for Fake {
         Ok(answer)
     }
 
+    fn source_checks(&self, batch: &[(String, Value, String)]) -> Vec<Result<Value, CliError>> {
+        self.batches.borrow_mut().push(batch.len());
+        batch
+            .iter()
+            .map(|(a, b, k)| self.source_check(a, b, k))
+            .collect()
+    }
+
     fn claim_edges(&self, workarea_id: &str) -> Result<Vec<EdgeRow>, CliError> {
         let _ = workarea_id;
         Ok(self.edges.borrow().clone())
@@ -367,29 +388,30 @@ impl SyncApi for Fake {
 
 /// The source: files and their contents at one commit, through an adapter.
 fn loaded(files: &[(&str, &str)], kind: Kind, commit: &str) -> Loaded {
-    let adapter = kind.adapter();
-    let mut items = Vec::new();
-    let mut edges = Vec::new();
+    Loaded {
+        requested: Some(kind),
+        ..source(files, commit)
+    }
+}
+
+/// A source built in memory, its adapter not named.
+fn source(files: &[(&str, &str)], commit: &str) -> Loaded {
     let mut sorted: Vec<_> = files.to_vec();
     sorted.sort_by_key(|f| f.0);
-    for (path, text) in sorted {
-        let x = adapter.extract(path, text.as_bytes()).unwrap();
-        items.extend(x.items.into_iter().map(|item| SourceItem {
-            path: path.to_owned(),
-            item,
-        }));
-        edges.extend(x.edges);
-    }
     Loaded {
         repo: REPO.into(),
         commit: commit.into(),
         path: "docs".into(),
         scope: Scope::Prefix("docs".into()),
-        adapter: adapter.name(),
-        items,
-        edges,
-        unreadable: Vec::new(),
+        files: sorted
+            .iter()
+            .map(|(p, t)| ((*p).to_owned(), t.as_bytes().to_vec()))
+            .collect(),
+        skipped: Vec::new(),
+        exclude: Vec::new(),
+        requested: None,
         warnings: Vec::new(),
+        root: None,
     }
 }
 
@@ -844,8 +866,7 @@ fn retire_all_proposes_retiring_every_claim_the_key_wrote() {
         "Zeta.",
         json!({"repo": REPO, "rev": rev(1), "path": "docs/guide.md", "fragment": "zeta"}),
     );
-    let mut src = loaded(&[], Kind::Headings, &rev(1));
-    src.items.clear();
+    let src = loaded(&[], Kind::Headings, &rev(1));
     let retired = run(
         &fake,
         &src,
@@ -1080,4 +1101,564 @@ fn a_tip_written_by_another_key_is_foreign() {
     );
     assert_eq!(report.exit, 1);
     assert_eq!(fake.writes().len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// The review of #68: H1-H4, M1-M5 and the surviving mutations.
+// ---------------------------------------------------------------------------
+
+fn scratch_git(test: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("oml-cli-syncdiff-{test}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(
+        &dir,
+        &["remote", "add", "origin", "git@github.com:e8kor/docs.git"],
+    );
+    dir
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn commit_guide(dir: &std::path::Path, text: &str) -> String {
+    std::fs::write(dir.join("docs/guide.md"), text).unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "guide"]);
+    git(dir, &["rev-parse", "HEAD"])
+}
+
+fn try_run(fake: &Fake, src: &Loaded, o: &Options) -> Result<Report, String> {
+    let mut sink = Vec::new();
+    execute(fake, src, o, &mut sink).map_err(|e| match e {
+        CliError::Local(m) | CliError::Unanswered(m) => m,
+        CliError::Refused { code, .. } => code,
+    })
+}
+
+#[test]
+fn a_run_from_an_older_checkout_is_refused_before_any_write() {
+    let dir = scratch_git("stale");
+    let first = commit_guide(&dir, GUIDE_V1);
+    let second = commit_guide(&dir, GUIDE_V2);
+    let fake = Fake::new();
+    let at = |rev: &str| {
+        oml_cli::sync::run::load(
+            &dir,
+            &Options {
+                rev: rev.into(),
+                adapter: Some(Kind::Headings),
+                ..opts()
+            },
+        )
+        .unwrap()
+    };
+    run(&fake, &at(&first), &opts());
+    fake.promote_all();
+    run(&fake, &at(&second), &opts());
+    fake.promote_all();
+    let versions = fake.versions.borrow().len();
+    let err = try_run(&fake, &at(&first), &opts()).unwrap_err();
+    assert!(
+        err.contains("older than") && err.contains("--allow-rollback"),
+        "{err}"
+    );
+    assert!(
+        fake.writes().is_empty() && fake.checks().is_empty(),
+        "nothing is sent"
+    );
+    assert_eq!(fake.versions.borrow().len(), versions);
+    // A deliberate revert is allowed by name.
+    let revert = try_run(
+        &fake,
+        &at(&first),
+        &Options {
+            allow_rollback: true,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert!(outcomes(&revert).iter().any(|(o, _)| o == "changed"));
+    // A rev the clone does not know is refused too: fetch first.
+    let other = scratch_git("stale-other");
+    commit_guide(&other, GUIDE_V1);
+    let err = try_run(
+        &fake,
+        &oml_cli::sync::run::load(
+            &other,
+            &Options {
+                adapter: Some(Kind::Headings),
+                ..opts()
+            },
+        )
+        .unwrap(),
+        &opts(),
+    )
+    .unwrap_err();
+    assert!(err.contains("unknown to this clone"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[test]
+fn check_reports_another_keys_anchored_memory_as_foreign_and_never_marks_it() {
+    let fake = Fake::new();
+    let v1 = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1));
+    run(&fake, &v1, &opts());
+    fake.promote_all();
+    // An agent's memory cites a section: its key is no adapter's.
+    fake.seed(
+        "k-agent",
+        "wa-design",
+        "auto-1234",
+        "Alpha matters.",
+        json!({"repo": REPO, "rev": rev(1), "path": "docs/guide.md", "fragment": "alpha"}),
+    );
+    fake.seed("k-agent", "wa-design", "auto-5678", "A gone section.", json!({"repo": REPO, "rev": rev(1), "path": "docs/guide.md", "fragment": "zeta", "hash": format!("sha256:{}", "0".repeat(64)), "hasher": "oml-md/1"}));
+    let check = Options {
+        check: true,
+        record: true,
+        ..opts()
+    };
+    let report = run(&fake, &v1, &check);
+    assert_eq!(
+        report.exit, 0,
+        "another key's memory never fails --check: {}",
+        report.json
+    );
+    let claims = report.json["claims"].as_array().unwrap();
+    for key in ["auto-1234", "auto-5678"] {
+        let c = claims
+            .iter()
+            .find(|c| c["claim_key"] == key)
+            .unwrap_or_else(|| panic!("{key} reported"));
+        assert_eq!(c["state"], "foreign", "{c}");
+    }
+    let marked: Vec<String> = fake.checks().into_iter().map(|c| c.0).collect();
+    assert!(
+        marked.iter().all(|a| !a.contains("auto-")),
+        "--record marks only this sync's claims: {marked:?}"
+    );
+}
+
+#[test]
+fn a_new_file_never_changes_the_recorded_adapter() {
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    let record = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\nWhy.\n\n## Decision\n\n- **d1 — One.** Body.\n";
+    let files = [
+        ("docs/guide.md", GUIDE_V1),
+        ("docs/ADR-0001-one.md", record),
+    ];
+    // Without --adapter the workarea's recorded adapter holds.
+    let report = run(&fake, &source(&files, &rev(2)), &opts());
+    assert_eq!(report.json["source"]["adapter"], "headings");
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    fake.promote_all();
+    // Naming another adapter is refused unless the change is explicit.
+    let adr = Loaded {
+        requested: Some(Kind::Adr),
+        ..source(&files, &rev(2))
+    };
+    let err = try_run(&fake, &adr, &opts()).unwrap_err();
+    assert!(err.contains("--change-adapter"), "{err}");
+    assert!(fake.writes().is_empty());
+    let changed = try_run(
+        &fake,
+        &adr,
+        &Options {
+            change_adapter: true,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert_eq!(changed.json["source"]["adapter"], "adr");
+}
+
+#[test]
+fn retire_all_without_pr_is_refused() {
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    let err = try_run(
+        &fake,
+        &loaded(&[], Kind::Headings, &rev(1)),
+        &Options {
+            retire_all: true,
+            ..opts()
+        },
+    )
+    .unwrap_err();
+    assert!(err.contains("--pr"), "{err}");
+    assert!(fake.writes().is_empty());
+}
+
+#[test]
+fn an_unreadable_files_claims_are_skipped_never_retired() {
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    let mut broken = loaded(&[], Kind::Headings, &rev(2));
+    broken.files = vec![("docs/guide.md".into(), vec![0xff, 0xfe, b'#'])];
+    let report = run(&fake, &broken, &opts());
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    assert!(fake.writes().is_empty());
+    assert!(report.json["unreadable"][0]["path"] == "docs/guide.md");
+}
+
+#[test]
+fn a_claim_whose_versions_were_all_rejected_is_new_again() {
+    let fake = Fake::new();
+    let src = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1));
+    let first = run(&fake, &src, &opts());
+    fake.reject_all();
+    let again = run(&fake, &src, &opts());
+    assert!(
+        outcomes(&again).iter().all(|(o, _)| o == "new"),
+        "{:?}",
+        outcomes(&again)
+    );
+    assert_eq!(again.exit, 0);
+    assert_eq!(fake.writes().len(), 3, "re-proposed, not replayed");
+    assert_ne!(
+        first.json["items"][0]["idempotency_key"],
+        again.json["items"][0]["idempotency_key"]
+    );
+}
+
+#[test]
+fn moved_pairs_only_claims_under_the_source_and_needs_equal_text() {
+    // The same section under another source is not this run's to move.
+    let fake = Fake::new();
+    let other = Loaded {
+        path: "other".into(),
+        scope: Scope::Prefix("other".into()),
+        ..loaded(&[("other/guide.md", GUIDE_V1)], Kind::Headings, &rev(1))
+    };
+    run(
+        &fake,
+        &other,
+        &Options {
+            source: "other".into(),
+            ..opts()
+        },
+    );
+    fake.promote_all();
+    let docs = run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    assert!(
+        outcomes(&docs).iter().all(|(o, _)| o == "new"),
+        "{:?}",
+        outcomes(&docs)
+    );
+    // A renamed file whose title changed: the spans hash alike, the texts
+    // differ (the title is in each), so nothing is moved.
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    let retitled = GUIDE_V1.replace("# Guide", "# Manual");
+    let report = run(
+        &fake,
+        &loaded(&[("docs/manual.md", &retitled)], Kind::Headings, &rev(2)),
+        &opts(),
+    );
+    assert_eq!(
+        report.json["summary"]["moved"],
+        0,
+        "{:?}",
+        outcomes(&report)
+    );
+    assert_eq!(report.json["summary"]["new"], 3);
+    assert_eq!(report.json["summary"]["removed"], 3);
+}
+
+#[test]
+fn a_changed_idempotency_key_names_the_expected_version_and_is_stable() {
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    let v2 = loaded(&[("docs/guide.md", GUIDE_V2)], Kind::Headings, &rev(2));
+    let a = run(
+        &fake,
+        &v2,
+        &Options {
+            dry_run: true,
+            ..opts()
+        },
+    );
+    let b = run(
+        &fake,
+        &v2,
+        &Options {
+            dry_run: true,
+            ..opts()
+        },
+    );
+    assert_eq!(a.json["items"], b.json["items"], "the plan is stable");
+    let beta = a.json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["outcome"] == "changed")
+        .unwrap()
+        .clone();
+    let hash = beta["anchor"]["hash"].as_str().unwrap();
+    assert_eq!(
+        beta["idempotency_key"],
+        format!(
+            "sync:design:doc/docs/guide/beta:changed:v1:{}",
+            &hash["sha256:".len().."sha256:".len() + 16]
+        )
+    );
+}
+
+#[test]
+fn removal_reaches_only_claims_under_the_source_in_this_repository() {
+    let fake = Fake::new();
+    let anchor = |repo: &str, path: &str| json!({"repo": repo, "rev": rev(1), "path": path, "fragment": "x", "hash": format!("sha256:{}", "1".repeat(64)), "hasher": "oml-md/1"});
+    fake.seed(
+        SYNC_KEY,
+        "wa-design",
+        "doc/other/guide/x",
+        "Other.",
+        anchor(REPO, "other/guide.md"),
+    );
+    fake.seed(
+        SYNC_KEY,
+        "wa-design",
+        "doc/docs/guide/x",
+        "Elsewhere.",
+        anchor("github.com/e8kor/elsewhere", "docs/guide.md"),
+    );
+    let report = run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    assert_eq!(
+        report.json["summary"]["removed"],
+        0,
+        "{:?}",
+        outcomes(&report)
+    );
+    assert!(fake.writes().iter().all(|(_, b)| b["retirement"] != true));
+}
+
+#[test]
+fn unchanged_needs_an_equal_text_as_well_as_an_equal_hash() {
+    let fake = Fake::new();
+    let src = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1));
+    let alpha = src.files.clone();
+    let x = Kind::Headings
+        .adapter()
+        .extract("docs/guide.md", &alpha[0].1)
+        .unwrap();
+    let a = &x.items[0];
+    // Same span hash, another text (a tip written by an older extractor).
+    fake.seed(SYNC_KEY, "wa-design", &a.claim_key, "An older extraction.", json!({"repo": REPO, "rev": rev(1), "path": "docs/guide.md", "fragment": "alpha", "hash": a.hash, "hasher": "oml-md/1"}));
+    let report = run(&fake, &src, &opts());
+    assert_eq!(
+        outcomes(&report)[0],
+        ("changed".to_owned(), a.claim_key.clone())
+    );
+}
+
+#[test]
+fn check_exits_1_on_untracked_alone() {
+    let fake = Fake::new();
+    let report = run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &Options {
+            check: true,
+            ..opts()
+        },
+    );
+    assert_eq!(report.exit, 1);
+    assert!(
+        report.json["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["state"] == "untracked")
+    );
+}
+
+#[test]
+fn an_unresolved_target_is_reported_and_not_proposed() {
+    let fake = Fake::new();
+    let src = loaded(&[("docs/ADR-0002-two.md", ADR_2)], Kind::Adr, &rev(1));
+    run(&fake, &src, &opts());
+    fake.promote_all();
+    fake.as_key("k-reviewer");
+    let report = run(
+        &fake,
+        &src,
+        &Options {
+            edges: true,
+            ..opts()
+        },
+    );
+    let states: Vec<&str> = report.json["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        states,
+        ["unresolved", "unresolved"],
+        "ADR-0001 and ADR-0099 are in neither the source nor the workarea"
+    );
+    assert!(fake.edges.borrow().is_empty());
+}
+
+#[test]
+fn source_checks_go_out_together_before_the_writes() {
+    let fake = Fake::new();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1)),
+        &opts(),
+    );
+    fake.promote_all();
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", GUIDE_V2)], Kind::Headings, &rev(2)),
+        &opts(),
+    );
+    assert_eq!(
+        fake.batches.borrow().as_slice(),
+        [3],
+        "one batch of three checks"
+    );
+}
+
+#[test]
+fn an_excluded_path_is_out_of_the_source_never_read_or_retired() {
+    let record = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\nWhy.\n\n## Decision\n\n- **d1 — One.** Body.\n";
+    let files = [
+        ("docs/guide.md", GUIDE_V1),
+        ("docs/adr/ADR-0001-one.md", record),
+    ];
+    let fake = Fake::new();
+    // docs/ with headings, docs/adr/** left to the adr workarea.
+    let headings = Loaded {
+        exclude: vec!["docs/adr/**".into()],
+        ..loaded(&files, Kind::Headings, &rev(1))
+    };
+    let first = run(&fake, &headings, &opts());
+    assert!(
+        outcomes(&first)
+            .iter()
+            .all(|(_, k)| k.starts_with("doc/docs/guide/")),
+        "the excluded record is not read: {:?}",
+        outcomes(&first)
+    );
+    fake.promote_all();
+    // A claim this sync wrote under docs/adr earlier (before the exclude)
+    // is out of the source: neither compared nor retired.
+    fake.seed(
+        SYNC_KEY,
+        "wa-design",
+        "doc/docs/adr/adr-0001-one-0a1b2c3d/one",
+        "One.",
+        json!({"repo": REPO, "rev": rev(1), "path": "docs/adr/ADR-0001-one.md", "fragment": "d1-one", "hash": format!("sha256:{}", "2".repeat(64)), "hasher": "oml-md/1"}),
+    );
+    let report = run(
+        &fake,
+        &headings,
+        &Options {
+            change_exclude: true,
+            ..opts()
+        },
+    );
+    assert_eq!(
+        report.json["summary"]["removed"],
+        0,
+        "{:?}",
+        outcomes(&report)
+    );
+    assert!(fake.writes().is_empty());
+}
+
+#[test]
+fn excluding_a_path_that_holds_this_syncs_claims_is_refused_unless_explicit() {
+    let record = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\nWhy.\n\n## Decision\n\n- **d1 — One.** Body.\n";
+    let files = [
+        ("docs/guide.md", GUIDE_V1),
+        ("docs/adr/ADR-0001-one.md", record),
+    ];
+    let fake = Fake::new();
+    run(&fake, &loaded(&files, Kind::Headings, &rev(1)), &opts());
+    fake.promote_all();
+    let narrowed = Loaded {
+        exclude: vec!["docs/adr/**".into()],
+        ..loaded(&files, Kind::Headings, &rev(1))
+    };
+    let err = try_run(&fake, &narrowed, &opts()).unwrap_err();
+    assert!(
+        err.contains("--change-exclude") && err.contains("docs/adr/ADR-0001-one.md"),
+        "{err}"
+    );
+    assert!(fake.writes().is_empty() && fake.checks().is_empty());
+    let report = try_run(
+        &fake,
+        &narrowed,
+        &Options {
+            change_exclude: true,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        report.json["summary"]["removed"], 0,
+        "an excluded claim is left, not retired"
+    );
+    assert_eq!(report.json["summary"]["unchanged"], 3);
 }

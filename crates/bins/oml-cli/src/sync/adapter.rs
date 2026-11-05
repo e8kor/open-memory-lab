@@ -35,6 +35,8 @@ pub struct EdgeStatement {
 pub struct Extraction {
     pub items: Vec<Item>,
     pub edges: Vec<EdgeStatement>,
+    /// What the file holds that no item carries, said once.
+    pub warnings: Vec<String>,
 }
 
 /// An adapter: `extract` is pure; `accepts` chooses its files by path.
@@ -47,7 +49,7 @@ pub trait Adapter {
 }
 
 /// The adapters v0.5.8 builds (ADR-0057 d7, d21).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Adr,
     Headings,
@@ -66,6 +68,39 @@ impl Kind {
                 "--adapter {other:?} is not one of adr, headings, lines (ADR-0057 d7, d21)"
             )),
         }
+    }
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Adr => "adr",
+            Self::Headings => "headings",
+            Self::Lines => "lines",
+        }
+    }
+
+    /// The adapter whose namespace a claim key is in: `adr-NNNN-…` for
+    /// `adr`, `doc/…/l<n>-l<m>` for `lines`, any other `doc/…` for
+    /// `headings`. A key in none (an agent's memory) is no sync's.
+    #[must_use]
+    pub fn of_key(key: &str) -> Option<Self> {
+        if let Some(rest) = key.strip_prefix("adr-") {
+            let num = rest.get(..5)?;
+            return (num[..4].chars().all(|c| c.is_ascii_digit()) && num.ends_with('-'))
+                .then_some(Self::Adr);
+        }
+        let rest = key.strip_prefix("doc/")?;
+        let last = rest.rsplit('/').next().unwrap_or(rest);
+        let is_span = last
+            .strip_prefix('l')
+            .and_then(|r| r.split_once("-l"))
+            .is_some_and(|(n, m)| {
+                !n.is_empty()
+                    && !m.is_empty()
+                    && n.chars().all(|c| c.is_ascii_digit())
+                    && m.chars().all(|c| c.is_ascii_digit())
+            });
+        Some(if is_span { Self::Lines } else { Self::Headings })
     }
 
     #[must_use]
@@ -135,10 +170,15 @@ pub fn fit_key(key: &str) -> String {
 }
 
 /// `doc/` and a path without `.md`, in lower case, every character outside
-/// `[a-z0-9._/-]` mapped to `-` (ADR-0057 d7).
+/// `[a-z0-9._/-]` mapped to `-` (ADR-0057 d7). A mapping that lost
+/// anything (a capital, a space) ends in `-` and 8 hex digits of the
+/// path's SHA-256, so two paths never share a key prefix.
 #[must_use]
 pub fn doc_key_prefix(path: &str) -> String {
     let stem = path.strip_suffix(".md").unwrap_or(path);
+    let lossless = stem.chars().all(|c| {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '/' | '-')
+    });
     let mapped: String = stem
         .to_lowercase()
         .chars()
@@ -150,7 +190,15 @@ pub fn doc_key_prefix(path: &str) -> String {
             }
         })
         .collect();
-    format!("doc/{mapped}")
+    if lossless {
+        format!("doc/{mapped}")
+    } else {
+        let digest = sha256(path.as_bytes());
+        format!(
+            "doc/{mapped}-{}",
+            &digest["sha256:".len().."sha256:".len() + 8]
+        )
+    }
 }
 
 /// A key segment mapped to the grammar, as [`doc_key_prefix`] maps a path.

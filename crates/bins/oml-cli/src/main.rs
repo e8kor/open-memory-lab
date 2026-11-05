@@ -169,6 +169,9 @@ enum Command {
     /// extract claims at one commit, diff them against the workarea and
     /// write, check or link them (ADR-0057 d6-d11, d14).
     Sync(SyncArgs),
+    /// Print the anchor of a committed file or of one part of it, at
+    /// --rev, as one JSON object for oml write --anchor (ADR-0057 d13).
+    Anchor(AnchorArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
@@ -764,7 +767,7 @@ struct SyncArgs {
     adopt: bool,
     /// Propose retiring every claim this key wrote in the workarea under the
     /// source, as when a draft's pull request closes (ADR-0057 d14).
-    #[arg(long, conflicts_with_all = ["check", "edges"])]
+    #[arg(long, requires = "pr", conflicts_with_all = ["check", "edges"])]
     retire_all: bool,
     /// Propose the stated edges between promoted tips (a dreamer key).
     #[arg(long, conflicts_with = "check")]
@@ -781,13 +784,42 @@ struct SyncArgs {
     /// deliberate revert (ADR-0057 d20).
     #[arg(long)]
     allow_rollback: bool,
+    /// Allow --adapter to name another adapter than the one the workarea's
+    /// claims of this source were written by; the old adapter's claims are
+    /// then retired (ADR-0057 d7).
+    #[arg(long, requires = "adapter")]
+    change_adapter: bool,
     /// Drafts: load the records pull request <n> adds or changes between
     /// --base and --rev into `<workarea>-pr-<n>` (ADR-0057 d14).
     #[arg(long)]
     pr: Option<u64>,
+    /// A glob of paths left out of the source, repeatable (`docs/adr/**`):
+    /// never read, compared or retired. The set is recorded for the source
+    /// on this clone.
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Allow an exclude set other than the recorded one.
+    #[arg(long)]
+    change_exclude: bool,
     /// With --pr, the branch the pull request targets.
     #[arg(long, default_value = "origin/main", requires = "pr")]
     base: String,
+}
+
+#[derive(Args)]
+struct AnchorArgs {
+    /// A path inside a git clone, with an optional #fragment: a decision
+    /// handle, a heading's slug, or a line span L<n> or L<n>-L<m>.
+    target: String,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// How the file is split into fragments: adr, headings or lines.
+    #[arg(long)]
+    adapter: Option<String>,
 }
 
 #[derive(Args)]
@@ -1645,6 +1677,26 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
         Command::Sync(args) => run_sync(cli, &stored, args),
+        Command::Anchor(args) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+            let adapter = args
+                .adapter
+                .as_deref()
+                .map(oml_cli::sync::adapter::Kind::parse)
+                .transpose()
+                .map_err(CliError::Local)?;
+            let anchor = oml_cli::sync::anchor::anchor(
+                &cwd,
+                &args.target,
+                &args.rev,
+                args.repo.as_deref(),
+                adapter,
+            )
+            .map_err(CliError::Local)?;
+            print_json(&anchor);
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Quickstart(args) => run_quickstart(args),
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
@@ -1838,6 +1890,9 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         edges: args.edges,
         ratify: args.ratify,
         allow_rollback: args.allow_rollback,
+        change_adapter: args.change_adapter,
+        exclude: args.exclude.clone(),
+        change_exclude: args.change_exclude,
         pr: args.pr,
         base: args.base.clone(),
     };
@@ -1847,6 +1902,9 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
     }
     let api = HttpApi { client };
     let report = run::execute(&api, &loaded, &opts, &mut std::io::stdout())?;
+    if !opts.dry_run && !opts.check && !opts.edges && report.exit == 0 {
+        run::record_exclude(&loaded, &opts).map_err(CliError::Local)?;
+    }
     if cli.json {
         print_json(&report.json);
     }

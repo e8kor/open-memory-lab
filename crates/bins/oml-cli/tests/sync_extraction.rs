@@ -301,7 +301,7 @@ fn the_md_hash_ignores_reflow_and_changes_with_a_word() {
 fn the_headings_adapter_slugs_repeated_headings_as_github_does() {
     let doc = "---\ntitle: x\n---\n# Guide\n\nintro\n\n## Set up\n\nOne.\n\n### `oml sync` — the CLI!\n\nTwo [link](https://x.example).\n\n## Set up\n\nThree.\n\n## Empty\n\n## Set up\n\n<!-- hidden\n## Not a heading\n-->\nFour.\n\n```\n## inside a fence\n```\n";
     let x = HeadingsAdapter
-        .extract("docs/Guide Book.md", doc.as_bytes())
+        .extract("docs/guide-book.md", doc.as_bytes())
         .unwrap();
     let got: Vec<(&str, Option<&str>)> = x
         .items
@@ -405,5 +405,76 @@ fn every_record_in_docs_adr_extracts_every_decision() {
     assert!(
         records >= 45 && decisions >= 400,
         "{records} records, {decisions} decisions"
+    );
+}
+
+/// ADR-0057 d14.4 and d16.5: the load of OML's records at `ca61c9e`, a
+/// fixture of that commit's `docs/adr`. The record says 117 edges; its
+/// count missed the handles after the first in a parenthesis of `;` parts
+/// (ADR-0049's `(d4: …; d6: …; d8: …; d10: …)`), which this parser reads.
+#[test]
+fn the_adr_load_at_ca61c9e_plans_523_items_and_133_amends_edges() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sync/adr-ca61c9e");
+    let mut items = Vec::new();
+    let mut edges = Vec::new();
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    for name in &names {
+        let x = AdrAdapter
+            .extract(
+                &format!("docs/adr/{name}"),
+                &std::fs::read(dir.join(name)).unwrap(),
+            )
+            .unwrap();
+        items.extend(x.items);
+        edges.extend(x.edges);
+    }
+    let count = |f: &dyn Fn(&Item) -> bool| items.iter().filter(|i| f(i)).count();
+    assert_eq!(names.len(), 45);
+    assert_eq!(items.len(), 523);
+    assert_eq!(count(&|i| i.fragment.is_none()), 45);
+    assert_eq!(
+        count(&|i| i.fragment.as_deref() == Some("rejected-alternatives")),
+        43
+    );
+    assert_eq!(edges.len(), 133);
+    assert!(edges.iter().all(|e| e.label == "amends"));
+    let keys: std::collections::HashSet<&str> =
+        items.iter().map(|i| i.claim_key.as_str()).collect();
+    assert!(
+        edges.iter().all(|e| keys.contains(e.to.as_str())),
+        "none unresolved"
+    );
+}
+
+#[test]
+fn a_path_mapped_lossily_into_a_key_carries_a_digest_of_the_path() {
+    let doc = b"# T\n\n## S\n\nBody.\n";
+    let a = HeadingsAdapter.extract("docs/A B.md", doc).unwrap();
+    let b = HeadingsAdapter.extract("docs/a-b.md", doc).unwrap();
+    assert_eq!(b.items[0].claim_key, "doc/docs/a-b/s");
+    assert_ne!(a.items[0].claim_key, b.items[0].claim_key);
+    assert!(
+        a.items[0].claim_key.starts_with("doc/docs/a-b-"),
+        "{}",
+        a.items[0].claim_key
+    );
+}
+
+#[test]
+fn decision_prose_outside_a_dn_bullet_is_warned_not_loaded() {
+    let doc = "# ADR-0009 — N\n\n**Status:** accepted\n\n## Context\n\nC.\n\n## Decision\n\n- **d1 — One.** Body.\n\n### Measured\n\nThe default stays.\n\n- **Measured on 2026-11-05.** It binds.\n";
+    let x = AdrAdapter
+        .extract("docs/adr/ADR-0009-n.md", doc.as_bytes())
+        .unwrap();
+    assert_eq!(x.items.len(), 2, "the summary and d1");
+    assert_eq!(x.warnings.len(), 1, "{:?}", x.warnings);
+    assert!(
+        x.warnings[0].contains("3 line(s) under ## Decision outside a dN bullet"),
+        "{:?}",
+        x.warnings
     );
 }

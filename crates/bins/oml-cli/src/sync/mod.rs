@@ -3,6 +3,7 @@
 
 pub mod adapter;
 pub mod adr;
+pub mod anchor;
 pub mod api;
 pub mod doctor;
 pub mod hash;

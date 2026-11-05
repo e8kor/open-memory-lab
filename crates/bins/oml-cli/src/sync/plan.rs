@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::adapter::{EdgeStatement, Item};
+use super::adapter::{EdgeStatement, Item, Kind};
 use super::api::{EdgeRow, Listed};
 use super::hash::{HASHER, short, text_digest};
 
@@ -26,6 +26,8 @@ pub enum Outcome {
     Foreign,
     Conflict,
     Refused,
+    /// A claim located in a file this run could not read: never retired.
+    Skipped,
 }
 
 impl Outcome {
@@ -43,6 +45,7 @@ impl Outcome {
             Self::Foreign => "foreign",
             Self::Conflict => "conflict",
             Self::Refused => "refused",
+            Self::Skipped => "skipped",
         }
     }
 
@@ -192,9 +195,31 @@ pub struct Context {
     pub max_writes: usize,
     pub adopt: bool,
     pub allow_rollback: bool,
-    /// `--check`: every promoted tip in the workarea is compared, whoever
-    /// wrote it, and nothing is `foreign`.
+    /// `--check`: every promoted tip of this sync's namespace is compared,
+    /// whoever wrote it; any other tip anchored into the source is reported
+    /// `foreign` and never marked.
     pub check: bool,
+    /// The adapters whose claim keys this run answers for: the workarea's
+    /// recorded adapter, and the old one under `--change-adapter`.
+    pub namespaces: Vec<Kind>,
+    /// Paths read and found unreadable or never read: their claims are
+    /// skipped, never retired.
+    pub skip_paths: HashSet<String>,
+    /// `--exclude` globs: a matching path is out of the source.
+    pub exclude: Vec<String>,
+}
+
+impl Context {
+    /// Whether a path is in this run's source: under its scope and matched
+    /// by no `--exclude` glob.
+    #[must_use]
+    pub fn in_source(&self, path: &str) -> bool {
+        self.scope.contains(path)
+            && !self
+                .exclude
+                .iter()
+                .any(|g| super::source::glob_match(g, path))
+    }
 }
 
 /// One extracted item and the path it came from.
@@ -214,6 +239,10 @@ struct Claim {
     older: Vec<(u64, String)>,
     /// The greatest version among held and promoted (d19).
     latest_live: u64,
+    /// The latest version in any state, for a claim with no tip.
+    latest: Option<Listed>,
+    /// Whether a version is demoted.
+    demoted: bool,
 }
 
 impl Claim {
@@ -241,13 +270,18 @@ impl Claim {
             held,
             older,
             latest_live,
+            latest: versions.iter().max_by_key(|v| v.version).cloned(),
+            demoted: versions.iter().any(|v| v.state == "demoted"),
         }
     }
 
     /// Where the claim's span is: the `moved_to` of its latest check when
     /// that check is `moved`, else its anchor's (ADR-0057 d18).
     fn location(&self) -> Option<(String, Option<String>)> {
-        let tip = self.tip.as_ref()?;
+        let Some(tip) = self.tip.as_ref() else {
+            let a = self.latest.as_ref()?.anchor.as_ref()?;
+            return Some((a.path.clone()?, a.fragment.clone()));
+        };
         if let Some(c) = &tip.source_checked
             && c.result == "moved"
             && let Some(to) = &c.moved_to
@@ -261,8 +295,14 @@ impl Claim {
     fn anchored_in(&self, repo: &str) -> bool {
         self.tip
             .as_ref()
+            .or(self.latest.as_ref())
             .and_then(|t| t.anchor.as_ref())
             .is_some_and(|a| a.repo.as_deref() == Some(repo))
+    }
+
+    /// Located in this repository under the run's scope.
+    fn in_scope(&self, ctx: &Context) -> bool {
+        self.anchored_in(&ctx.repo) && self.location().is_some_and(|(p, _)| ctx.in_source(&p))
     }
 
     fn live_tip(&self) -> Option<&Listed> {
@@ -293,6 +333,7 @@ impl Plan {
             "foreign",
             "conflict",
             "refused",
+            "skipped",
         ]
         .into_iter()
         .map(|k| (k, 0))
@@ -313,6 +354,7 @@ impl Plan {
             "foreign",
             "conflict",
             "refused",
+            "skipped",
         ] {
             out.insert(k.to_owned(), json!(counts[k]));
         }
@@ -330,17 +372,46 @@ impl Plan {
 #[must_use]
 pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Listed]) -> Plan {
     let in_workarea = |v: &&Listed| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str());
+    let ours = |key: &str| Kind::of_key(key).is_some_and(|k| ctx.namespaces.contains(&k));
     let mut by_key: BTreeMap<String, Vec<Listed>> = BTreeMap::new();
     let own_ids: HashSet<&str> = own.iter().map(|v| v.artifact_id.as_str()).collect();
-    for v in own.iter().filter(in_workarea) {
+    for v in own
+        .iter()
+        .filter(in_workarea)
+        .filter(|v| ours(&v.claim_key))
+    {
         by_key
             .entry(v.claim_key.clone())
             .or_default()
             .push(v.clone());
     }
+    // A claim every version of which was rejected holds no place: its key
+    // is proposed again as `new`, under the next version's key (d19).
+    let mut next_version: HashMap<String, u64> = HashMap::new();
+    by_key.retain(|k, vs| {
+        let live = vs
+            .iter()
+            .any(|v| matches!(v.state.as_str(), "held" | "promoted" | "demoted"));
+        if !live {
+            next_version.insert(
+                k.clone(),
+                vs.iter().map(|v| v.version).max().unwrap_or(0) + 1,
+            );
+        }
+        live
+    });
     let mut foreign: HashMap<String, Listed> = HashMap::new();
+    let mut cited: Vec<Listed> = Vec::new();
     for v in served.iter().filter(in_workarea) {
         if own_ids.contains(v.artifact_id.as_str()) || by_key.contains_key(&v.claim_key) {
+            continue;
+        }
+        if !ours(&v.claim_key) {
+            // Another memory anchored into the source: never this sync's
+            // to compare, retire or mark (ADR-0057 d4, UC-SM-01).
+            if ctx.check {
+                cited.push(v.clone());
+            }
             continue;
         }
         if ctx.check {
@@ -368,9 +439,7 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
     let located: HashMap<(String, Option<String>), usize> = claims
         .iter()
         .enumerate()
-        .filter(|(c, claim)| {
-            !taken[*c] && claim.live_tip().is_some() && claim.anchored_in(&ctx.repo)
-        })
+        .filter(|(c, claim)| !taken[*c] && claim.live_tip().is_some() && claim.in_scope(ctx))
         .filter_map(|(c, claim)| Some((claim.location()?, c)))
         .collect();
     for (i, si) in items.iter().enumerate() {
@@ -392,7 +461,7 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
         }
         let pair = claims.iter().enumerate().find(|(c, claim)| {
             !taken[*c]
-                && claim.anchored_in(&ctx.repo)
+                && claim.in_scope(ctx)
                 && claim.live_tip().is_some_and(|t| {
                     t.plaintext_digest == digests[i]
                         && t.anchor.as_ref().and_then(|a| a.hash.as_deref())
@@ -415,26 +484,37 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
                     replaces: Some(tip.artifact_id.clone()),
                     ..bare(Outcome::Foreign, &si.item.claim_key, &si.path)
                 },
-                None => new_entry(ctx, si, &digests[i]),
+                None => new_entry(
+                    ctx,
+                    si,
+                    &digests[i],
+                    next_version.get(&si.item.claim_key).copied().unwrap_or(1),
+                ),
             },
         };
         sorted.push((si.path.clone(), 0, i, entry));
     }
     for (c, claim) in claims.iter().enumerate() {
-        if taken[c] {
+        if taken[c] || !claim.in_scope(ctx) {
             continue;
         }
         let Some((path, fragment)) = claim.location() else {
-            if claim.held && !ctx.check {
-                sorted.push((String::new(), 1, c, pending(claim, "")));
-            }
             continue;
         };
-        if !claim.anchored_in(&ctx.repo) || !ctx.scope.contains(&path) {
-            continue;
-        }
         if claim.held {
             sorted.push((path.clone(), 1, c, pending(claim, &path)));
+            continue;
+        }
+        if ctx.skip_paths.contains(&path) {
+            sorted.push((
+                path.clone(),
+                1,
+                c,
+                Entry {
+                    note: Some("its file was not read at this rev, so it is not retired".into()),
+                    ..bare(Outcome::Skipped, &claim.key, &path)
+                },
+            ));
             continue;
         }
         let Some(tip) = claim.live_tip() else {
@@ -471,6 +551,24 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
             ..bare(Outcome::Removed, &claim.key, &path)
         };
         sorted.push((path, 1, c, entry));
+    }
+    for (n, v) in cited.iter().enumerate() {
+        let Some(path) = v.anchor.as_ref().and_then(|a| a.path.clone()) else {
+            continue;
+        };
+        if !ctx.in_source(&path) {
+            continue;
+        }
+        sorted.push((
+            path.clone(),
+            2,
+            n,
+            Entry {
+                replaces: Some(v.artifact_id.clone()),
+                note: Some("another memory anchored into the source; not this sync's".into()),
+                ..bare(Outcome::Foreign, &v.claim_key, &path)
+            },
+        ));
     }
     sorted.sort_by(|a, b| (a.0.as_str(), a.1, a.2).cmp(&(b.0.as_str(), b.1, b.2)));
     let mut entries: Vec<Entry> = sorted.into_iter().map(|(_, _, _, e)| e).collect();
@@ -519,12 +617,19 @@ fn anchor_of(ctx: &Context, si: &SourceItem) -> Anchor {
     }
 }
 
-fn new_entry(ctx: &Context, si: &SourceItem, digest: &str) -> Entry {
+fn new_entry(ctx: &Context, si: &SourceItem, digest: &str, version: u64) -> Entry {
+    // A first proposal keeps d9's key; a proposal after a rejection names
+    // its version, so it never replays the rejected one.
+    let at = if version > 1 {
+        format!("v{version}:")
+    } else {
+        String::new()
+    };
     Entry {
         anchor: Some(anchor_of(ctx, si)),
         text_digest: Some(digest.to_owned()),
         idempotency_key: Some(format!(
-            "sync:{}:{}:new:{}",
+            "sync:{}:{}:new:{at}{}",
             ctx.workarea,
             si.item.claim_key,
             short(&si.item.hash)
@@ -572,8 +677,13 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
         return pending(claim, &si.path);
     }
     let Some(tip) = &claim.tip else {
+        let why = if claim.demoted {
+            "demoted"
+        } else {
+            "not promoted"
+        };
         return Entry {
-            note: Some("no promoted version: the claim's versions were rejected or demoted".into()),
+            note: Some(format!("no promoted version: the claim's latest is {why}")),
             ..bare(Outcome::Diverged, key, &si.path)
         };
     };
@@ -583,8 +693,9 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
         expected_version: Some(claim.latest_live),
         text_digest: Some(digest.to_owned()),
         idempotency_key: Some(format!(
-            "sync:{}:{key}:changed:{}",
+            "sync:{}:{key}:changed:v{}:{}",
             ctx.workarea,
+            claim.latest_live,
             short(&si.item.hash)
         )),
         // A check names a hash only where the anchor carries one, in this

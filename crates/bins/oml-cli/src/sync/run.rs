@@ -3,9 +3,9 @@
 //! d6–d11, d14). Every call goes through [`SyncApi`], so a run is tested
 //! against a fake.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -13,7 +13,7 @@ use super::adapter::{EdgeStatement, Kind};
 use super::api::{ListQuery, Listed, Me, SyncApi};
 use super::hash::HASHER;
 use super::plan::{Context, EdgeLine, Entry, Outcome, Plan, Scope, SourceItem, diff, edge_lines};
-use super::source::{Git, check_repo, is_secret_shaped, repo_of_remote};
+use super::source::{Git, check_repo, glob_match, is_secret_shaped, repo_of_remote};
 use crate::client::CliError;
 
 /// The request cap of a bulk verdict, and so a run's default write cap
@@ -38,6 +38,13 @@ pub struct Options {
     pub edges: bool,
     pub ratify: bool,
     pub allow_rollback: bool,
+    /// `--exclude` globs: matching paths are out of the source.
+    pub exclude: Vec<String>,
+    /// Allow an exclude set other than the one recorded for this source.
+    pub change_exclude: bool,
+    /// Allow `--adapter` to name another adapter than the one the
+    /// workarea's claims of this source were written by.
+    pub change_adapter: bool,
     /// Drafts mode: the pull request whose records load into
     /// `<workarea>-pr-<n>` (ADR-0057 d14).
     pub pr: Option<u64>,
@@ -55,20 +62,104 @@ impl Options {
     }
 }
 
-/// A source read at one commit.
+/// A source read at one commit: its files' bytes, not yet extracted, since
+/// the adapter is the workarea's (ADR-0057 d7).
 #[derive(Clone, Debug)]
 pub struct Loaded {
     pub repo: String,
     pub commit: String,
     pub path: String,
     pub scope: Scope,
-    pub adapter: &'static str,
-    pub items: Vec<SourceItem>,
-    pub edges: Vec<EdgeStatement>,
-    /// Files refused or unreadable, with why.
-    pub unreadable: Vec<(String, String)>,
+    /// Each file under the source an adapter may read, with its bytes.
+    pub files: Vec<(String, Vec<u8>)>,
+    /// Files never read, secret-shaped names, with why.
+    pub skipped: Vec<(String, String)>,
+    /// The `--exclude` globs the source was read under.
+    pub exclude: Vec<String>,
+    /// The adapter `--adapter` named.
+    pub requested: Option<Kind>,
     /// Lines for standard error: a stripped credential, for one.
     pub warnings: Vec<String>,
+    /// The clone, for the commit graph; `None` for a source built in memory.
+    pub root: Option<PathBuf>,
+}
+
+impl Loaded {
+    /// The paths of the files read.
+    #[must_use]
+    pub fn paths(&self) -> Vec<String> {
+        self.files.iter().map(|(p, _)| p.clone()).collect()
+    }
+}
+
+/// What one adapter yields over a source.
+#[derive(Clone, Debug)]
+pub struct Extracted {
+    pub adapter: Kind,
+    pub items: Vec<SourceItem>,
+    pub edges: Vec<EdgeStatement>,
+    /// Files skipped, with why: invalid UTF-8, a claim key another file
+    /// also yields.
+    pub unreadable: Vec<(String, String)>,
+    pub warnings: Vec<String>,
+}
+
+/// The items and edges `kind` extracts from `loaded`.
+#[must_use]
+pub fn extract(loaded: &Loaded, kind: Kind) -> Extracted {
+    let adapter = kind.adapter();
+    let mut out = Extracted {
+        adapter: kind,
+        items: Vec::new(),
+        edges: Vec::new(),
+        unreadable: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let mut first: HashMap<String, String> = HashMap::new();
+    let mut per_file = Vec::new();
+    let excluded = |f: &str| loaded.exclude.iter().any(|g| glob_match(g, f));
+    for (file, bytes) in loaded
+        .files
+        .iter()
+        .filter(|(f, _)| adapter.accepts(f) && !excluded(f))
+    {
+        match adapter.extract(file, bytes) {
+            Ok(x) => per_file.push((file.clone(), x)),
+            Err(why) => out.unreadable.push((file.clone(), why)),
+        }
+    }
+    // A claim key two items yield is refused with the file that yields it
+    // again, so neither write lands on the other's claim.
+    let mut bad: HashMap<String, String> = HashMap::new();
+    for (file, x) in &per_file {
+        let mut seen_here = HashSet::new();
+        for item in &x.items {
+            let key = &item.claim_key;
+            if !seen_here.insert(key.clone()) {
+                bad.entry(file.clone())
+                    .or_insert(format!("it yields the claim key {key} twice"));
+            } else if let Some(other) = first.get(key) {
+                bad.entry(file.clone()).or_insert(format!(
+                    "it yields the claim key {key}, which {other} yields too"
+                ));
+            } else {
+                first.insert(key.clone(), file.clone());
+            }
+        }
+    }
+    for (file, x) in per_file {
+        if let Some(why) = bad.get(&file) {
+            out.unreadable.push((file, why.clone()));
+            continue;
+        }
+        out.items.extend(x.items.into_iter().map(|item| SourceItem {
+            path: file.clone(),
+            item,
+        }));
+        out.edges.extend(x.edges);
+        out.warnings.extend(x.warnings);
+    }
+    out
 }
 
 /// Reads the source of `opts` from the clone around `cwd` (ADR-0057 d6,
@@ -105,46 +196,49 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
             let remote = repo_of_remote(&url)?;
             if remote.had_credentials {
                 warnings.push(
-                    "warn: the origin remote's URL carries credentials; sync strips them from the \
-                     anchor, and they should be removed from .git/config (ADR-0057 d17)"
+                    "warn: the origin remote's URL carries credentials (in .git/config, or a \
+                     url.insteadOf rewrite in a git config); sync strips them from the anchor, \
+                     and they belong in a credential helper (ADR-0057 d17)"
                         .to_owned(),
                 );
             }
             remote.repo
         }
     };
-    let (files, scope) = match opts.pr {
+    let (names, scope) = match opts.pr {
         Some(_) if !opts.retire_all => {
             let files = git.changed_files(&opts.base, &commit, &path)?;
             (files.clone(), Scope::Files(files))
         }
         _ => (git.files(&commit, &path)?, Scope::Prefix(path.clone())),
     };
-    let kind = opts.adapter.unwrap_or_else(|| Kind::default_for(&files));
-    let adapter = kind.adapter();
-    let mut items = Vec::new();
-    let mut edges = Vec::new();
-    let mut unreadable = Vec::new();
+    // The exclude set this clone last synced the source under: another is
+    // refused unless named (ADR-0057 d7, as the adapter is).
+    if let Some(recorded) = git.config(&exclude_config(opts, &path))
+        && recorded != exclude_value(&opts.exclude)
+        && !opts.change_exclude
+    {
+        return Err(format!(
+            "this clone last synced {path} into {} excluding [{}]; this run excludes [{}]. Pass \
+             --change-exclude to change the set",
+            opts.target_workarea(),
+            recorded.replace(',', ", "),
+            opts.exclude.join(", ")
+        ));
+    }
+    let mut files = Vec::new();
+    let mut skipped = Vec::new();
+    let excluded = |f: &str| opts.exclude.iter().any(|g| glob_match(g, f));
     if !opts.retire_all {
-        for file in files.iter().filter(|f| adapter.accepts(f)) {
+        for file in names.iter().filter(|f| readable_kind(f) && !excluded(f)) {
             if is_secret_shaped(file) {
-                unreadable.push((
+                skipped.push((
                     file.clone(),
-                    "its name matches a secret pattern, so it is never read (ADR-0057 d6)".into(),
+                    "its path matches a secret pattern, so it is never read (ADR-0057 d6)".into(),
                 ));
                 continue;
             }
-            let bytes = git.read(&commit, file)?;
-            match adapter.extract(file, &bytes) {
-                Ok(x) => {
-                    items.extend(x.items.into_iter().map(|item| SourceItem {
-                        path: file.clone(),
-                        item,
-                    }));
-                    edges.extend(x.edges);
-                }
-                Err(why) => unreadable.push((file.clone(), why)),
-            }
+            files.push((file.clone(), git.read(&commit, file)?));
         }
     }
     Ok(Loaded {
@@ -152,12 +246,48 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
         commit,
         path,
         scope,
-        adapter: adapter.name(),
-        items,
-        edges,
-        unreadable,
+        files,
+        skipped,
+        exclude: opts.exclude.clone(),
+        requested: opts.adapter,
         warnings,
+        root: Some(git.root().to_path_buf()),
     })
+}
+
+/// The git config entry recording a source's exclude set on this clone.
+fn exclude_config(opts: &Options, path: &str) -> String {
+    let id = super::hash::sha256(format!("{}\0{path}", opts.target_workarea()).as_bytes());
+    format!(
+        "oml.sync-{}.exclude",
+        &id["sha256:".len().."sha256:".len() + 16]
+    )
+}
+
+fn exclude_value(globs: &[String]) -> String {
+    let mut sorted = globs.to_vec();
+    sorted.sort();
+    sorted.join(",")
+}
+
+/// Records the run's exclude set for its source on this clone, so a later
+/// run with another set is refused unless `--change-exclude`.
+///
+/// # Errors
+/// git fails.
+pub fn record_exclude(loaded: &Loaded, opts: &Options) -> Result<(), String> {
+    let Some(root) = &loaded.root else {
+        return Ok(());
+    };
+    Git::at(root)?.set_config(
+        &exclude_config(opts, &loaded.path),
+        &exclude_value(&opts.exclude),
+    )
+}
+
+/// Whether any adapter reads a file of this name: markdown or plain text.
+fn readable_kind(path: &str) -> bool {
+    path.ends_with(".md") || path.ends_with(".txt")
 }
 
 /// A run's result: its exit code and its JSON document.
@@ -179,10 +309,16 @@ pub fn execute(
     opts: &Options,
     out: &mut dyn Write,
 ) -> Result<Report, CliError> {
+    if opts.retire_all && opts.pr.is_none() {
+        return Err(CliError::local(
+            "--retire-all retires a draft's claims and requires --pr <n>: it never touches the \
+             main workarea (ADR-0057 d14)",
+        ));
+    }
     let workarea = opts.target_workarea();
     let workarea_id = api.workarea_id(&workarea)?;
     let me = api.me()?;
-    let ctx = Context {
+    let mut ctx = Context {
         workarea: workarea.clone(),
         workarea_id: workarea_id.clone(),
         repo: loaded.repo.clone(),
@@ -192,8 +328,37 @@ pub fn execute(
         adopt: opts.adopt,
         allow_rollback: opts.allow_rollback,
         check: opts.check,
+        namespaces: Vec::new(),
+        skip_paths: HashSet::new(),
+        exclude: loaded.exclude.clone(),
     };
     let served = list_served(api, &ctx)?;
+    let own = api.list(&ListQuery {
+        workarea: workarea.clone(),
+        own: true,
+        ..ListQuery::default()
+    })?;
+    let (kind, namespaces) = resolve_adapter(loaded, opts, &ctx, &own, &served)?;
+    ctx.namespaces = namespaces;
+    guard_rev(loaded, opts, &ctx, &own, &served)?;
+    guard_exclude(opts, &ctx, &own, &served)?;
+    let x = if opts.retire_all {
+        Extracted {
+            adapter: kind,
+            items: Vec::new(),
+            edges: Vec::new(),
+            unreadable: Vec::new(),
+            warnings: Vec::new(),
+        }
+    } else {
+        extract(loaded, kind)
+    };
+    ctx.skip_paths = x
+        .unreadable
+        .iter()
+        .chain(&loaded.skipped)
+        .map(|(p, _)| p.clone())
+        .collect();
     let mut p = Printer {
         out,
         quiet: opts.json,
@@ -207,27 +372,28 @@ pub fn execute(
         } else {
             &loaded.path
         },
-        loaded.adapter
+        kind.name()
     ));
     p.line(&format!("workarea  {workarea}  key {}", me.name));
-    for (file, why) in &loaded.unreadable {
+    for (file, why) in &x.unreadable {
         p.line(&format!("unreadable {file}: {why}"));
     }
-    if opts.edges {
-        return run_edges(api, loaded, opts, &ctx, &me, &served, &mut p);
+    for (file, why) in &loaded.skipped {
+        p.line(&format!("skipped   {file}: {why}"));
     }
-    let own = api.list(&ListQuery {
-        workarea: workarea.clone(),
-        own: true,
-        ..ListQuery::default()
-    })?;
+    for warning in &x.warnings {
+        p.line(&format!("warn      {warning}"));
+    }
+    if opts.edges {
+        return run_edges(api, loaded, &x, opts, &ctx, &me, &served, &mut p);
+    }
     let mut plan = if opts.retire_all {
         retire_all(&ctx, &own)
     } else {
-        diff(&ctx, &loaded.items, &own, &served)
+        diff(&ctx, &x.items, &own, &served)
     };
     let tips = tips_of(&ctx, &served);
-    let known: HashSet<String> = loaded
+    let known: HashSet<String> = x
         .items
         .iter()
         .map(|si| si.item.claim_key.clone())
@@ -239,9 +405,9 @@ pub fn execute(
     } else {
         Vec::new()
     };
-    let edges = edge_lines(&loaded.edges, &known, &tips, &existing);
+    let edges = edge_lines(&x.edges, &known, &tips, &existing);
     if opts.check {
-        return run_check(api, loaded, opts, &plan, &edges, &mut p);
+        return run_check(api, loaded, &x, opts, &plan, &edges, &mut p);
     }
     if !opts.dry_run {
         write_plan(api, &mut plan, &workarea)?;
@@ -263,11 +429,172 @@ pub fn execute(
             me.name
         ));
     }
-    let failed = !loaded.unreadable.is_empty() || plan.entries.iter().any(|e| e.outcome.fails());
+    let failed = !x.unreadable.is_empty() || plan.entries.iter().any(|e| e.outcome.fails());
     Ok(Report {
         exit: u8::from(failed),
-        json: plan_json(loaded, &workarea, &plan, &edges, &summary),
+        json: plan_json(loaded, &x, &workarea, &plan, &edges, &summary),
     })
+}
+
+/// The adapters whose claims this workarea holds under the source, by
+/// their keys' namespaces (ADR-0057 d7).
+fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
+    own.iter()
+        .chain(served)
+        .filter(|v| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()))
+        .filter(|v| {
+            v.anchor.as_ref().is_some_and(|a| {
+                a.repo.as_deref() == Some(ctx.repo.as_str())
+                    && a.path.as_deref().is_some_and(|p| ctx.scope.contains(p))
+            })
+        })
+        .filter_map(|v| Kind::of_key(&v.claim_key))
+        .collect()
+}
+
+/// The adapter of this run and the namespaces it answers for. The adapter
+/// is the one the workarea's claims of this source were written by; a
+/// first run takes `--adapter` or infers it from the file names; another
+/// adapter is refused unless `--change-adapter`, which then retires the
+/// old adapter's claims.
+fn resolve_adapter(
+    loaded: &Loaded,
+    opts: &Options,
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> Result<(Kind, Vec<Kind>), CliError> {
+    let recorded = recorded_adapters(ctx, own, served);
+    let names = || {
+        recorded
+            .iter()
+            .map(|k| k.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match loaded.requested {
+        Some(k) if recorded.is_empty() || recorded.contains(&k) => Ok((k, vec![k])),
+        Some(k) if opts.change_adapter && !opts.check => {
+            let mut all: Vec<Kind> = recorded.iter().copied().collect();
+            all.push(k);
+            Ok((k, all))
+        }
+        Some(k) => Err(CliError::local(format!(
+            "the workarea's claims of this source were written by the {} adapter; --adapter {} \
+             is refused unless --change-adapter, which retires them (ADR-0057 d7)",
+            names(),
+            k.name()
+        ))),
+        None => match recorded.len() {
+            0 => {
+                let k = Kind::default_for(&loaded.paths());
+                Ok((k, vec![k]))
+            }
+            1 => {
+                let k = *recorded.iter().next().unwrap_or(&Kind::Headings);
+                Ok((k, vec![k]))
+            }
+            _ => Err(CliError::local(format!(
+                "the workarea's claims of this source were written by several adapters ({}); \
+                 name one with --adapter",
+                names()
+            ))),
+        },
+    }
+}
+
+/// Refuses an exclude set that takes in paths this sync's claims live at,
+/// unless `--change-exclude`: excluded, they are out of the source, left as
+/// they are and never retired.
+fn guard_exclude(
+    opts: &Options,
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> Result<(), CliError> {
+    if opts.change_exclude || ctx.exclude.is_empty() {
+        return Ok(());
+    }
+    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let hidden: BTreeSet<String> = own
+        .iter()
+        .chain(served)
+        .filter(|v| {
+            v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()) && ours(&v.claim_key)
+        })
+        .filter_map(|v| v.anchor.as_ref())
+        .filter(|a| a.repo.as_deref() == Some(ctx.repo.as_str()))
+        .filter_map(|a| a.path.clone())
+        .filter(|p| ctx.scope.contains(p) && !ctx.in_source(p))
+        .collect();
+    if hidden.is_empty() {
+        return Ok(());
+    }
+    Err(CliError::local(format!(
+        "--exclude takes in paths this sync's claims live at ({}); pass --change-exclude to leave \
+         them out of the source, where they are never retired; nothing was written",
+        hidden.into_iter().collect::<Vec<_>>().join(", ")
+    )))
+}
+
+/// Refuses a run from a checkout older than the one the workarea's claims
+/// of this source were read at, or from a clone that does not hold that
+/// commit: such a run would retire what was added since and revert what
+/// changed (ADR-0057 d20). `--allow-rollback` is the deliberate revert.
+fn guard_rev(
+    loaded: &Loaded,
+    opts: &Options,
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> Result<(), CliError> {
+    let Some(root) = &loaded.root else {
+        return Ok(());
+    };
+    if opts.allow_rollback {
+        return Ok(());
+    }
+    let git = Git::at(root).map_err(CliError::Local)?;
+    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let revs: BTreeSet<String> = own
+        .iter()
+        .chain(served)
+        .filter(|v| v.workarea_id.as_deref() == Some(ctx.workarea_id.as_str()))
+        .filter(|v| ours(&v.claim_key))
+        .filter(|v| {
+            v.anchor
+                .as_ref()
+                .is_some_and(|a| a.repo.as_deref() == Some(ctx.repo.as_str()))
+        })
+        .flat_map(|v| {
+            let anchored = v.anchor.as_ref().and_then(|a| a.rev.clone());
+            let checked = v.source_checked.as_ref().map(|c| c.rev.clone());
+            anchored.into_iter().chain(checked)
+        })
+        .filter(|r| !r.is_empty() && *r != loaded.commit)
+        .collect();
+    let short = |r: &str| r[..r.len().min(12)].to_owned();
+    for rev in &revs {
+        if !git.knows(rev) {
+            return Err(CliError::local(format!(
+                "the workarea's claims of this source were read at {}, a commit unknown to this \
+                 clone: fetch it first, or pass --allow-rollback for a deliberate revert \
+                 (ADR-0057 d20); nothing was written",
+                short(rev)
+            )));
+        }
+        if git.is_strict_ancestor(&loaded.commit, rev) {
+            return Err(CliError::local(format!(
+                "--rev {} is older than {}, which the workarea's claims of this source were read \
+                 at: a sync from an older checkout would retire what was added since and revert \
+                 what changed. Pull, or pass --allow-rollback for a deliberate revert (ADR-0057 \
+                 d20); nothing was written",
+                short(&loaded.commit),
+                short(rev)
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The promoted tips anchored in the repository under the source's path,
@@ -306,19 +633,25 @@ fn tips_of(ctx: &Context, served: &[Listed]) -> HashMap<String, String> {
 /// Sends each source check and each write this run carries, in order,
 /// recording refusals on the entry (ADR-0057 d8, d9).
 fn write_plan(api: &dyn SyncApi, plan: &mut Plan, workarea: &str) -> Result<(), CliError> {
-    for e in &mut plan.entries {
-        if let Some(c) = &e.check {
-            match api.source_check(&c.artifact_id, &c.body, &c.idempotency_key) {
-                Ok(_) => {}
-                Err(CliError::Refused { code, message, .. }) => {
-                    e.note = Some(format!("source check refused: {code} — {message}"));
-                    e.outcome = Outcome::Refused;
-                    e.writes_this_run = false;
-                    continue;
-                }
-                Err(other) => return Err(other),
+    // Every source check first, in one batch the API may send concurrently;
+    // an entry whose check was refused writes nothing.
+    let checked: Vec<usize> = (0..plan.entries.len())
+        .filter(|&i| plan.entries[i].check.is_some())
+        .collect();
+    let results = send_checks(api, &plan.entries, &checked);
+    for (i, result) in checked.into_iter().zip(results) {
+        match result {
+            Ok(_) => {}
+            Err(CliError::Refused { code, message, .. }) => {
+                let e = &mut plan.entries[i];
+                e.note = Some(format!("source check refused: {code} — {message}"));
+                e.outcome = Outcome::Refused;
+                e.writes_this_run = false;
             }
+            Err(other) => return Err(other),
         }
+    }
+    for e in &mut plan.entries {
         if !e.writes_this_run {
             continue;
         }
@@ -349,6 +682,29 @@ fn write_plan(api: &dyn SyncApi, plan: &mut Plan, workarea: &str) -> Result<(), 
     Ok(())
 }
 
+/// The source checks of `entries[i]` for each `i`, in one batch.
+fn send_checks(
+    api: &dyn SyncApi,
+    entries: &[Entry],
+    which: &[usize],
+) -> Vec<Result<Value, CliError>> {
+    if which.is_empty() {
+        return Vec::new();
+    }
+    let batch: Vec<(String, Value, String)> = which
+        .iter()
+        .filter_map(|&i| entries[i].check.as_ref())
+        .map(|c| {
+            (
+                c.artifact_id.clone(),
+                c.body.clone(),
+                c.idempotency_key.clone(),
+            )
+        })
+        .collect();
+    api.source_checks(&batch)
+}
+
 /// `--retire-all`: a retirement for every live claim the key wrote in the
 /// workarea under the source, and `pending` for one with a held version
 /// (ADR-0057 d14).
@@ -373,14 +729,27 @@ fn retire_all(ctx: &Context, own: &[Listed]) -> Plan {
 fn run_check(
     api: &dyn SyncApi,
     loaded: &Loaded,
+    x: &Extracted,
     opts: &Options,
     plan: &Plan,
     edges: &[EdgeLine],
     p: &mut Printer<'_>,
 ) -> Result<Report, CliError> {
     let mut rows = Vec::new();
-    let mut failing = !loaded.unreadable.is_empty();
-    for e in &plan.entries {
+    let mut failing = !x.unreadable.is_empty();
+    let recorded_checks: Vec<usize> = if opts.record {
+        (0..plan.entries.len())
+            .filter(|&i| plan.entries[i].check.is_some())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut answers: HashMap<usize, Result<Value, CliError>> = recorded_checks
+        .iter()
+        .copied()
+        .zip(send_checks(api, &plan.entries, &recorded_checks))
+        .collect();
+    for (i, e) in plan.entries.iter().enumerate() {
         let state = match e.outcome {
             Outcome::Unchanged => "fresh",
             Outcome::Moved => "moved",
@@ -394,19 +763,15 @@ fn run_check(
             other => other.as_str(),
         };
         failing |= matches!(state, "stale" | "removed" | "untracked");
-        let mut recorded = Value::Null;
-        if opts.record
-            && let Some(c) = &e.check
-        {
-            recorded = match api.source_check(&c.artifact_id, &c.body, &c.idempotency_key) {
-                Ok(v) => v,
-                Err(CliError::Refused { code, .. }) => {
-                    failing = true;
-                    json!({ "refused": code })
-                }
-                Err(other) => return Err(other),
-            };
-        }
+        let recorded = match answers.remove(&i) {
+            None => Value::Null,
+            Some(Ok(v)) => v,
+            Some(Err(CliError::Refused { code, .. })) => {
+                failing = true;
+                json!({ "refused": code })
+            }
+            Some(Err(other)) => return Err(other),
+        };
         p.line(&format!("{state:<9} {:<20} {}", e.claim_key, where_of(e)));
         rows.push(json!({ "state": state, "claim_key": e.claim_key, "anchor": e.anchor, "recorded": recorded }));
     }
@@ -421,7 +786,7 @@ fn run_check(
     Ok(Report {
         exit: u8::from(failing),
         json: json!({
-            "source": source_json(loaded),
+            "source": source_json(loaded, x),
             "workarea": opts.target_workarea(),
             "claims": rows,
             "edges": edges,
@@ -432,9 +797,14 @@ fn run_check(
 /// `--edges [--ratify]` (ADR-0057 d10): propose each stated edge between
 /// two promoted tips that has none, or ratify each pending one the source
 /// states that another key proposed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the run's inputs, each read once"
+)]
 fn run_edges(
     api: &dyn SyncApi,
     loaded: &Loaded,
+    x: &Extracted,
     opts: &Options,
     ctx: &Context,
     me: &Me,
@@ -442,14 +812,14 @@ fn run_edges(
     p: &mut Printer<'_>,
 ) -> Result<Report, CliError> {
     let tips = tips_of(ctx, served);
-    let known: HashSet<String> = loaded
+    let known: HashSet<String> = x
         .items
         .iter()
         .map(|si| si.item.claim_key.clone())
         .chain(served.iter().map(|v| v.claim_key.clone()))
         .collect();
     let existing = api.claim_edges(&ctx.workarea_id)?;
-    let mut lines = edge_lines(&loaded.edges, &known, &tips, &existing);
+    let mut lines = edge_lines(&x.edges, &known, &tips, &existing);
     let mut refused = false;
     for e in &mut lines {
         if opts.dry_run {
@@ -496,7 +866,7 @@ fn run_edges(
     Ok(Report {
         exit: u8::from(refused),
         json: json!({
-            "source": source_json(loaded),
+            "source": source_json(loaded, x),
             "workarea": opts.target_workarea(),
             "edges": lines,
         }),
@@ -584,18 +954,19 @@ fn edge_summary(edges: &[EdgeLine]) -> String {
     )
 }
 
-fn source_json(loaded: &Loaded) -> Value {
+fn source_json(loaded: &Loaded, x: &Extracted) -> Value {
     json!({
         "repo": loaded.repo,
         "rev": loaded.commit,
         "path": loaded.path,
-        "adapter": loaded.adapter,
+        "adapter": x.adapter.name(),
         "hasher": HASHER,
     })
 }
 
 fn plan_json(
     loaded: &Loaded,
+    x: &Extracted,
     workarea: &str,
     plan: &Plan,
     edges: &[EdgeLine],
@@ -613,10 +984,12 @@ fn plan_json(
         })
         .collect();
     json!({
-        "source": source_json(loaded),
+        "source": source_json(loaded, x),
         "workarea": workarea,
         "items": plan.entries,
-        "unreadable": loaded.unreadable.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
+        "unreadable": x.unreadable.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
+        "skipped": loaded.skipped.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
+        "warnings": x.warnings,
         "edges": edges,
         "summary": summary,
     })

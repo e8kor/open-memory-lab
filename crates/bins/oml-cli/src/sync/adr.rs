@@ -144,6 +144,18 @@ impl<'a> Record<'a> {
         (from, to)
     }
 
+    /// The non-blank lines under `## Decision` that no decision bullet
+    /// covers.
+    fn uncovered(&self, decisions: &[(String, usize, usize)]) -> usize {
+        let Some(section) = self.section("decision") else {
+            return 0;
+        };
+        (section.heading + 1..section.end)
+            .filter(|&i| !self.lines[i].text.trim().is_empty())
+            .filter(|&i| !decisions.iter().any(|(_, s, e)| (*s..*e).contains(&i)))
+            .count()
+    }
+
     /// The decision bullets: `(handle, start, end)`, each a line range.
     fn decisions(&self) -> Vec<(String, usize, usize)> {
         let Some(section) = self.section("decision") else {
@@ -206,6 +218,13 @@ impl<'a> Record<'a> {
     fn extraction(&self, num: &str) -> Extraction {
         let mut out = Extraction::default();
         let decisions = self.decisions();
+        let uncovered = self.uncovered(&decisions);
+        if uncovered > 0 {
+            out.warnings.push(format!(
+                "ADR-{num}: {uncovered} line(s) under ## Decision outside a dN bullet are not \
+                 loaded (ADR-0057 d7)"
+            ));
+        }
         let mut headlines = Vec::new();
         let mut headline_raw = Vec::new();
         for (handle, start, end) in &decisions {
