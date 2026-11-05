@@ -1,4 +1,4 @@
-//! The local cross-encoder behind `oml-app`'s [`Reranker`] port (ADR-0053).
+//! The local cross-encoder behind `oml-app`'s [`Reranker`](oml_app::ports::Reranker) port (ADR-0053).
 //!
 //! A BERT-class sequence classifier (the `ms-marco-MiniLM` cross-encoders)
 //! runs on the CPU through candle, pure Rust (ADR-0006): the query and a
@@ -17,8 +17,8 @@
 //!
 //! Inference is CPU work, so it runs on tokio's blocking pool, under a
 //! semaphore of `max_concurrent` slots and a deadline: a call that waits past
-//! the deadline for a slot answers [`RerankError::Busy`], one whose model
-//! runs past it [`RerankError::Timeout`], and the core then serves the first
+//! the deadline for a slot answers [`RerankError::Busy`](oml_app::ports::RerankError::Busy), one whose model
+//! runs past it [`RerankError::Timeout`](oml_app::ports::RerankError::Timeout), and the core then serves the first
 //! stage's order (ADR-0053 d5). A late inference keeps its slot until it
 //! ends, so the cap bounds the CPU actually in use.
 
