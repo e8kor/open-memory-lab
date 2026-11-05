@@ -29,11 +29,13 @@ oml-guardrail = { path = "crates/oml-guardrail" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.
-oml-server-lead = { path = "crates/bins/oml-server-lead" }
+oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = false }
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
-oml-rerank = { path = "crates/adapters/oml-rerank" }
+# Without its `model` feature unless a member asks for it (the lead does,
+# by its `rerank` feature), so no graph builds candle by inheritance.
+oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
 axum = "0.8"
 # The local cross-encoder of the reranking stage (ADR-0053 d2): candle runs
 # the model on the CPU in pure Rust (ADR-0006), and tokenizers reads the

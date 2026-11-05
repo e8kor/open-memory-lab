@@ -223,9 +223,17 @@ pub fn load_reranker(
             );
         }
     }
-    let model = oml_rerank::CrossEncoder::load(model_dir, &settings.model, settings.limits)
-        .map_err(|e| e.to_string())?;
-    Ok(Some(Arc::new(model)))
+    #[cfg(feature = "rerank")]
+    {
+        let model = oml_rerank::CrossEncoder::load(model_dir, &settings.model, settings.limits)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(Arc::new(model)))
+    }
+    #[cfg(not(feature = "rerank"))]
+    {
+        let _ = model_dir;
+        Err("search.enabled names a reranking pipeline and this lead was built without its rerank feature".to_owned())
+    }
 }
 
 /// `search.enabled`'s default: the pipelines that need no extension.
