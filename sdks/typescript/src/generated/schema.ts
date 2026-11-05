@@ -1041,7 +1041,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1081,6 +1081,12 @@ export interface components {
             workarea?: components["schemas"]["WorkareaRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
+            /**
+             * @description What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9.
+             * @default hold
+             * @enum {string}
+             */
+            on_similar?: "hold" | "refuse";
         };
         SubmitAccepted: {
             artifact_id: string;
@@ -1107,6 +1113,36 @@ export interface components {
                 scanner_version?: string;
             };
             journal_seq?: number;
+            /** @description The rows the similar check named, as first answered: a replay serves the list of the write it replays (ADR-0050 d1). Since v0.5.9. */
+            similar?: components["schemas"]["SimilarItem"][];
+        };
+        /** @description A row the key may read that holds the same words in the same order (same_text) or a word set at Jaccard 0.9 or more (near_copy), found by integer keys and verified exactly, with no model (ADR-0050 d1, d17). Ordered same_text first, then by jaccard, then by artifact_id. To replace it, write with replaces set to artifact_id. */
+        SimilarItem: {
+            artifact_id: string;
+            claim_key: string;
+            version: number;
+            /** @enum {string} */
+            kind: "memory" | "derived_fact" | "steering";
+            workarea_id: string;
+            /**
+             * @description held only for the calling key's own rows.
+             * @enum {string}
+             */
+            state: "held" | "promoted";
+            /** @enum {string} */
+            relation: "same_text" | "near_copy";
+            /** @description The two word sets' Jaccard similarity, rounded down to hundredths; 1 for same_text. */
+            jaccard: number;
+            /** @description The calling key wrote it. */
+            own: boolean;
+        };
+        /** @description Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d13). Present only when the request sent timings true, which a deployment serves only with search.timings on. */
+        RecallTimings: {
+            /** @description Keys from the closed set scope, retrieve_keyword_all, retrieve_keyword_any, retrieve_bm25, retrieve_trigram, retrieve_bm25_postings, retrieve_sparse, fuse, rerank, suggest, hydrate, cut; a stage that did not run is absent. */
+            stages_ms: {
+                [key: string]: number;
+            };
+            total_ms: number;
         };
         AttachmentDescriptor: {
             digest?: components["schemas"]["Digest"];
@@ -1202,10 +1238,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1213,6 +1249,11 @@ export interface components {
              */
             match?: "any" | "all";
             feedback?: components["schemas"]["Feedback"];
+            /**
+             * @description true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9.
+             * @default false
+             */
+            timings?: boolean;
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
         Feedback: {
@@ -1222,6 +1263,7 @@ export interface components {
             not_useful?: string[];
         };
         RecallResponse: {
+            timings?: components["schemas"]["RecallTimings"];
             /**
              * Format: uuid
              * @description The recall's id: the feedback member of a later read names it (ADR-0054 d6).
@@ -1267,7 +1309,7 @@ export interface components {
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1443,6 +1485,12 @@ export interface components {
             reason?: string;
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
+            /**
+             * @description What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
+             * @default hold
+             * @enum {string}
+             */
+            on_similar?: "hold" | "refuse";
         };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
         Crew: {

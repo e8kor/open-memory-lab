@@ -46,8 +46,9 @@ class RecallRequest:
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does
-                not serve is request.validation with details.field /search and details.served.
+                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same
+                two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13). A name the deployment does not serve
+                is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not
@@ -55,6 +56,8 @@ class RecallRequest:
                 the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
+            timings (bool | Unset): true serves the answer's per-stage timings; refused with request.validation,
+                details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9. Default: False.
     """
 
     query: str
@@ -67,6 +70,7 @@ class RecallRequest:
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
     feedback: Feedback | Unset = UNSET
+    timings: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -104,6 +108,8 @@ class RecallRequest:
         if not isinstance(self.feedback, Unset):
             feedback = self.feedback.to_dict()
 
+        timings = self.timings
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -129,6 +135,8 @@ class RecallRequest:
             field_dict["match"] = match
         if feedback is not UNSET:
             field_dict["feedback"] = feedback
+        if timings is not UNSET:
+            field_dict["timings"] = timings
 
         return field_dict
 
@@ -184,6 +192,8 @@ class RecallRequest:
         else:
             feedback = Feedback.from_dict(_feedback)
 
+        timings = d.pop("timings", UNSET)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -195,6 +205,7 @@ class RecallRequest:
             search=search,
             match=match,
             feedback=feedback,
+            timings=timings,
         )
 
         return recall_request
