@@ -1534,7 +1534,7 @@ pub struct RecallRequest {
     /// by default (proposed ADR-0058 d3).
     pub include_expired: bool,
     /// `now`, as sent: the instant the expiry, the query's relative dates
-    /// and the recency age are read at; `None` is the lead's clock
+    /// are read at; `None` is the lead's clock
     /// (proposed ADR-0058 d5).
     pub now: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
@@ -1566,9 +1566,6 @@ pub struct RecallHit {
     /// `matched.rank_before`: the hit's rank in the first stage's list, from
     /// 1, for a hit the reranker scored (ADR-0053 d7).
     pub rank_before: Option<u32>,
-    /// `matched.recency`: the recency factor the pipeline applied to the
-    /// hit's score, under a recency pipeline (proposed ADR-0058 d8).
-    pub recency: Option<f32>,
 }
 
 /// What the reranking stage did to one recall (ADR-0053 d5, d7):

@@ -831,9 +831,8 @@ or before the request's `now` (the lead's clock when omitted) unless `include_ex
 get and the listings serve it. A ratified supersession whose successor declares `valid_from`
 ends the replaced version there, in the ratifying event. `search.window` names the date window
 read from the query by rule (`in 2015`, `last week`, `since March 2025`), or `null`; the opt-in
-pipelines `bm25-postings-time` and `bm25-postings-time-recent` fuse the memories whose valid time
-overlaps it, `matched.via` naming `time`, and the second moves each of the first 50 scores by at
-most 10% by recency, `matched.recency` the factor.
+pipeline `bm25-postings-time` lifts the memories the words found whose valid time overlaps it,
+`matched.via` naming `time`.
 
 ### Recall telemetry
 

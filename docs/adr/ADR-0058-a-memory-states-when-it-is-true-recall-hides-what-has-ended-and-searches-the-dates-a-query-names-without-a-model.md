@@ -2,7 +2,7 @@
 id: adr/ADR-0058-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model
 tier: engineering
 status: proposed
-answers: which part of ADR-0036's valid time this slice builds and in what shape; how an author declares when a memory holds, including a vague period such as a year, and why it is signed and immutable; why a memory whose valid time has ended is hidden from recall by default and how a reader asks for it; how a fact is invalidated without the server deciding it; which date phrases recall reads from a query and how, with no model; how a date window becomes a retriever leg that row security can serve and how it is fused and capped; the optional bounded recency boost; the API on oml_write, oml_read and HTTP; the migration, doctor line, laws and measurements
+answers: which part of ADR-0036's valid time this slice builds and in what shape; how an author declares when a memory holds, including a vague period such as a year, and why it is signed and immutable; why a memory whose valid time has ended is hidden from recall by default and how a reader asks for it; how a fact is invalidated without the server deciding it; which date phrases recall reads from a query and how, with no model; how a date window becomes a retriever leg that row security can serve and how it is fused and capped; why a recency boost was tried and rejected; the API on oml_write, oml_read and HTTP; the migration, doctor line, laws and measurements
 -->
 
 # ADR-0058 — A memory states when it is true, recall hides what has ended, and recall searches the dates a query names without a model
@@ -109,8 +109,8 @@ use. Decided here and built on the same branch; the measurements below are this 
   version a supersession names is the one the ratification ends.
 
 - **d5 — A recall has one now, the server's clock unless the request names it.** `now`, a date
-  or an instant as d2 parses it (a period reads as its first instant), anchors three things: the
-  expiry cut (d3), the relative dates the parser reads (d6), and the recency age (d8). Absent,
+  or an instant as d2 parses it (a period reads as its first instant), anchors two things: the
+  expiry cut (d3) and the relative dates the parser reads (d6). Absent,
   it is the lead's clock at the request. It widens nothing a key could not already read: an
   earlier now shows rows that ended since, which `include_expired` already serves, and a later
   one hides more. A replay or a simulation names its now, as ADR-0011 d7 sends its fictional
@@ -169,24 +169,27 @@ use. Decided here and built on the same branch; the measurements below are this 
     - **Opt-in.** The deployment enables it and a tenant or a request picks it (ADR-0049 d4).
       It becomes the default only by ADR-0049 d9's gate, on the measurements below.
 
-- **d8 — A bounded recency boost, opt-in: pipeline `bm25-postings-time-recent`.** After fusion
-  and any rerank, before `k`, the core multiplies each of the first 50 candidates' scores by
-  0.9 + 0.2 · 2^(−age / 365 days), where age is now less the row's `valid_from`, or its recorded
-  time when it declares none, and a start after now has age 0; then it reorders them by the new
-  score, ties by id. The factor lies in (0.9, 1.1], so no candidate moves by more than ±10% of
-  its own score, Hindsight's cap. It reads the row's valid and recorded times and nothing else:
-  never `promoted_at`, a verdict or a reviewer (R3; ADR-0049 d2). Each hit says its factor in
-  `matched.recency`. The half-life is unmeasured beyond this record's run. It ships opt-in and
-  is never the default without passing ADR-0049 d9's gate; recency is never on by default,
-  since a newer memory is not a truer one.
+- **d8 — A recency boost was tried and is rejected; revisit only with QA-level evidence.** The
+  branch built `bm25-postings-time-recent`: after fusion, each of the first 50 scores multiplied
+  by 0.9 + 0.2 · 2^(−age / 365 days), the age from the row's `valid_from` or its recorded time,
+  never `promoted_at` or a verdict. It lowered every set measured (Measurements): LoCoMo headline
+  nDCG@10 0.504 to 0.461 and S@1 0.384 to 0.304, LoCoMo temporal 0.594 to 0.537, LongMemEval
+  temporal-reasoning 0.642 to 0.626, synthetic unchanged. In a conversation the latest turn is no
+  likelier to be the evidence, and a newer memory is not a truer one. The pipeline, the factor
+  and `matched.recency` are removed; recency returns only with evidence at the QA level, an
+  answer judged right more often with it, not a ranking metric alone.
 
 - **d9 — The API: arguments on the two tools and the three routes, no new tool.**
   `oml_write` gains `valid_from` and `valid_until`, with and without `replaces`. `oml_read`'s
   recall mode gains `include_expired` and `now`. `POST /v1/memories`, the supersede route and
   `POST /v1/memories/recall` take the same members. Every served item (get, listing, recall,
   review) gains `valid_from` and `valid_until`, each the signed string or `null`. The recall
-  answer's `search` gains `window` (d6) and each hit's `matched` gains `recency` under d8's
-  pipeline. The CLI, the SDKs' typed helpers and the review page show the ends where they show
+  answer's `search` gains `window` (d6). Every recall hit, through HTTP and `oml_read`, carries
+  its `valid_from` and `valid_until`, since the gain this record expects is at the QA level: a
+  "when" question answered from the memory's own dates, not from its rank. That gain is
+  measured by the chat lane's end-to-end QA benchmark (proposed ADR-0063 d12, draft branch
+  `feat/chat-memory`: LongMemEval and LoCoMo answered by one fixed model from the top-k hits),
+  not by the retrieval metrics below. The CLI, the SDKs' typed helpers and the review page show the ends where they show
   an item; declaring them from the CLI is a follow-up (open question 3).
 
 - **d10 — The server reads no date out of text.** The author declares valid time; the server
@@ -218,8 +221,7 @@ use. Decided here and built on the same branch; the measurements below are this 
   (d6's table as cases); `valid_time_is_refused_on_steering_guardrail_and_a_retirement`;
   `a_successor_inherits_no_valid_time`;
   `a_ratified_supersession_ends_the_replaced_version_where_the_successor_begins` (and a held one
-  ends nothing); `the_recency_factor_stays_within_ten_percent`;
-  `no_ranking_input_reads_promoted_at_or_a_verdict` (two rows differing only in `promoted_at` and
+  ends nothing); `no_ranking_input_reads_promoted_at_or_a_verdict` (two rows differing only in `promoted_at` and
   their verdicts rank equal under every time pipeline); and the signed payload carries the ends
   only when sent.
 
@@ -240,10 +242,10 @@ qrels; no answer is generated.
 |---|---|---:|---:|---:|---:|---:|
 | synthetic (121) | `bm25-postings` | 0.874 | 0.835 | 0.926 | 9.3 | 15.4 |
 | synthetic, temporal (11) | `bm25-postings` | 0.769 | 0.455 | 0.818 | 8.8 | 9.8 |
-| synthetic, every category | `bm25-postings-time`, `-recent` | equal to `bm25-postings` | | | 9.6–9.9 | 15.8–16.1 |
+| synthetic, every category | `bm25-postings-time`, `-time-recent` (rejected, d8) | equal to `bm25-postings` | | | 9.6–9.9 | 15.8–16.1 |
 | LoCoMo headline (1,535) | `bm25-postings` | 0.504 | 0.384 | 0.628 | 19.5 | 33.0 |
 | LoCoMo headline | `bm25-postings-time` | 0.496 | 0.377 | 0.620 | 25.9 | 38.6 |
-| LoCoMo headline | `bm25-postings-time-recent` | 0.461 | 0.304 | 0.613 | 20.4 | 29.9 |
+| LoCoMo headline | `bm25-postings-time-recent` (rejected, d8) | 0.461 | 0.304 | 0.613 | 20.4 | 29.9 |
 | LoCoMo temporal (320) | `bm25-postings` / `-time` / `-time-recent` | 0.594 / 0.596 / 0.537 | 0.478 / – / 0.347 | 0.691 / 0.694 / 0.684 | | |
 | LoCoMo single-hop (841) | the same three | 0.571 / 0.557 / 0.525 | | 0.673 / 0.656 / 0.655 | | |
 | LoCoMo multi-hop (282) | the same three | 0.289 / 0.289 / 0.262 | | 0.507 / 0.511 / 0.482 | | |
@@ -251,7 +253,7 @@ qrels; no answer is generated.
 | LoCoMo adversarial (446) | the same three | 0.562 / 0.550 / 0.524 | | 0.668 / 0.655 / 0.650 | | |
 | LongMemEval temporal-reasoning (30) | `bm25-postings` | 0.642 | 0.600 | 0.733 | 35.7 | 50.5 |
 | LongMemEval temporal-reasoning | `bm25-postings-time` | 0.628 | 0.600 | 0.733 | 44.3 | 72.9 |
-| LongMemEval temporal-reasoning | `bm25-postings-time-recent` | 0.626 | 0.600 | 0.733 | 40.3 | 50.5 |
+| LongMemEval temporal-reasoning | `bm25-postings-time-recent` (rejected, d8) | 0.626 | 0.600 | 0.733 | 40.3 | 50.5 |
 
 The parser read a window in 3 of 121 synthetic queries (no synthetic memory declares a date, so
 each time list was empty), 285 of 1,981 LoCoMo questions (151 single-hop, 68 adversarial, 45
@@ -261,7 +263,7 @@ with the first ordering of d7; the `-time` rows with the ordering d7 decides. Th
 orderings of the leg measured 0.494 (rows no word matched admitted, ordered by text rank) and
 0.494 (words' rows only, ordered by text rank) on the LoCoMo headline, and 0.614 on LongMemEval.
 
-What it decides: neither time pipeline passes ADR-0049 d9's gate against `bm25-postings`, which
+What it decides: the recency pipeline is removed (d8), and neither time pipeline passed ADR-0049 d9's gate against `bm25-postings`, which
 stays the default. On LoCoMo the leg moves the temporal category by +0.002 nDCG@10 and costs
 single-hop 0.014; on LongMemEval it costs 0.014. LoCoMo's temporal questions mostly ask when
 something happened and name no date, so the leg cannot reach them; the questions that do name a
@@ -295,7 +297,7 @@ loaded host.
 | **A model parses the query's dates** | A model call on every recall costs latency and a dependency, and its answer is not reproducible; the rule table covers the forms the eval sets use, and a missing form is a row added to d6. |
 | **The server extracts valid time from the text** | The author knows when a fact holds; a date in the text is often a mention, not the fact's span ("because the March 2026 outage..."). A wrong extracted date would hide a true memory. |
 | **Automatic invalidation, a newer memory ending an older one** | It decides that two memories conflict, which is a judgment, and would change visibility with no review (R2, R3). Graphiti does it with a model; here a reviewed supersession does it. |
-| **Recency always on** | A newer memory is not a truer one, and a boost on by default would reorder every recall by an input the eval has not justified. Opt-in, bounded, gated. |
+| **A recency boost, even opt-in and bounded** | Built and measured on this branch (d8): it lowered LoCoMo nDCG@10 from 0.504 to 0.461 and LongMemEval temporal-reasoning from 0.642 to 0.626. A newer memory is not a truer one. Revisit only with QA-level evidence. |
 | **Expiry as a ranking weight** | An ended fact ranked lower still answers as if true; hiding it is a visibility rule, and `include_expired` asks for it plainly. |
 | **Importance or trust weights** | They would read who wrote or approved a row, which ranking never reads (R3, ADR-0049 d2). |
 | **Deleting or demoting expired memories** | An ended fact is history, not a mistake; R4. |

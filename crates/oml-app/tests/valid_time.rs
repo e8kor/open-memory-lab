@@ -1,6 +1,6 @@
 //! Valid time through the core (proposed ADR-0058): declared and signed
-//! ends, expired memories hidden from recall unless asked, the `time` leg
-//! and the bounded recency stage. The text list here is the in-memory
+//! ends, expired memories hidden from recall unless asked, and the `time`
+//! leg. The text list here is the in-memory
 //! store's any-word list answering the `bm25_postings` kind, so these tests
 //! prove the core's stages, never BM25 (ADR-0049 d7).
 
@@ -24,11 +24,10 @@ const TEST_SEED: [u8; 32] = [9; 32];
 
 type TestApp = App<MemStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
 
-const PIPELINES: [Pipeline; 4] = [
+const PIPELINES: [Pipeline; 3] = [
     Pipeline::KeywordAny,
     Pipeline::Bm25Postings,
     Pipeline::Bm25PostingsTime,
-    Pipeline::Bm25PostingsTimeRecent,
 ];
 
 fn name(value: &str) -> Name {
@@ -361,6 +360,16 @@ async fn the_time_leg_lifts_the_memory_whose_valid_time_overlaps_the_querys_wind
     assert_eq!(window.phrase, "2015");
     let hit = &r.hits[0];
     assert!(hit.via.contains(&RetrieverKind::Time));
+    // The hit carries the dates it was found by, so a "when" question can
+    // be answered from them (proposed ADR-0058 d9).
+    assert_eq!(
+        hit.memory.valid.from.as_ref().map(|f| f.as_str()),
+        Some("2015-03")
+    );
+    assert_eq!(
+        hit.memory.valid.until.as_ref().map(|u| u.as_str()),
+        Some("2015-06")
+    );
     for other in [late, open] {
         let h = r
             .hits
@@ -372,34 +381,6 @@ async fn the_time_leg_lifts_the_memory_whose_valid_time_overlaps_the_querys_wind
             "outside the window, or open"
         );
     }
-}
-
-#[tokio::test]
-async fn the_recency_stage_moves_each_score_by_at_most_ten_percent() {
-    let w = world().await;
-    w.promoted("a", "the api deploy runs nightly", Some("2010"), None)
-        .await;
-    w.promoted("b", "the api deploy runs hourly", Some("2026-10"), None)
-        .await;
-    w.promoted("c", "the api deploy", None, None).await;
-    let base = w
-        .recall(&recall("api deploy", Pipeline::Bm25PostingsTime))
-        .await;
-    let r = w
-        .recall(&recall("api deploy", Pipeline::Bm25PostingsTimeRecent))
-        .await;
-    for hit in &r.hits {
-        let f = hit.recency.expect("every head hit says its factor");
-        assert!((0.9..=1.1).contains(&f), "{f}");
-        let before = base
-            .hits
-            .iter()
-            .find(|h| h.memory.memory_id == hit.memory.memory_id)
-            .expect("the same candidates")
-            .score;
-        assert!((hit.score - before * f).abs() < 1e-6);
-    }
-    assert!(base.hits.iter().all(|h| h.recency.is_none()));
 }
 
 #[tokio::test]

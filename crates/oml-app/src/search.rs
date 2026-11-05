@@ -179,15 +179,11 @@ pub enum Pipeline {
     /// `bm25-postings-time`: `bm25-postings` and the `time` leg fused by
     /// reciprocal rank (proposed ADR-0058 d7).
     Bm25PostingsTime,
-    /// `bm25-postings-time-recent`: `bm25-postings-time` with each head
-    /// candidate's score moved by at most ±10% by the age of its start
-    /// (proposed ADR-0058 d8).
-    Bm25PostingsTimeRecent,
 }
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
@@ -197,7 +193,6 @@ impl Pipeline {
         Self::Sparse,
         Self::Bm25Sparse,
         Self::Bm25PostingsTime,
-        Self::Bm25PostingsTimeRecent,
     ];
 
     /// The pipeline's name, as configuration, requests and logs spell it.
@@ -213,7 +208,6 @@ impl Pipeline {
             Self::Sparse => "sparse",
             Self::Bm25Sparse => "bm25-sparse",
             Self::Bm25PostingsTime => "bm25-postings-time",
-            Self::Bm25PostingsTimeRecent => "bm25-postings-time-recent",
         }
     }
 
@@ -235,9 +229,7 @@ impl Pipeline {
             Self::Bm25Postings => &[RetrieverKind::Bm25Postings],
             Self::Sparse => &[RetrieverKind::Sparse],
             Self::Bm25Sparse => &[RetrieverKind::Bm25Postings, RetrieverKind::Sparse],
-            Self::Bm25PostingsTime | Self::Bm25PostingsTimeRecent => {
-                &[RetrieverKind::Bm25Postings, RetrieverKind::Time]
-            }
+            Self::Bm25PostingsTime => &[RetrieverKind::Bm25Postings, RetrieverKind::Time],
         }
     }
 
@@ -251,9 +243,7 @@ impl Pipeline {
             | Self::Bm25Postings
             | Self::Bm25Rerank
             | Self::Sparse => Fusion::Single,
-            Self::Bm25Trigram | Self::Bm25PostingsTime | Self::Bm25PostingsTimeRecent => {
-                Fusion::Rrf { k: RRF_K }
-            }
+            Self::Bm25Trigram | Self::Bm25PostingsTime => Fusion::Rrf { k: RRF_K },
             Self::Bm25Sparse => Fusion::Cc {
                 weights: &CC_BM25_SPARSE,
             },
@@ -265,13 +255,6 @@ impl Pipeline {
     #[must_use]
     pub const fn reranks(self) -> bool {
         matches!(self, Self::Bm25Rerank)
-    }
-
-    /// Whether the pipeline moves its head's scores by recency after
-    /// fusion and any rerank (proposed ADR-0058 d8).
-    #[must_use]
-    pub const fn recency(self) -> bool {
-        matches!(self, Self::Bm25PostingsTimeRecent)
     }
 
     /// Whether the pipeline offers spellings for a thin result
@@ -375,7 +358,7 @@ impl RerankPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchConfigError {
     #[error(
-        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time, bm25-postings-time-recent)"
+        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time)"
     )]
     Unknown(String),
     #[error("search.enabled is empty: a deployment serves at least one pipeline")]
@@ -716,9 +699,6 @@ pub struct Fused {
     /// Its rank in the first stage's list, from 1, for a candidate the
     /// reranker scored (`matched.rank_before`; ADR-0053 d7).
     pub rank_before: Option<u32>,
-    /// The recency factor applied to its score (`matched.recency`;
-    /// proposed ADR-0058 d8).
-    pub recency: Option<f32>,
 }
 
 /// Caps each retriever's list at `depth`, keeping its first candidates in
@@ -780,7 +760,6 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
                 tokens: Vec::new(),
                 rerank: None,
                 rank_before: None,
-                recency: None,
             });
             entry.score += contribution;
             for term in &c.matched {
@@ -883,29 +862,6 @@ pub fn order_time_list(time: Retrieved, text: &Retrieved) -> Retrieved {
         candidates: ranked.into_iter().map(|(_, _, c)| c).collect(),
         ..time
     }
-}
-
-/// Multiplies each candidate's score by its recency factor and reorders
-/// them, score descending then id (proposed ADR-0058 d8). `factors` holds
-/// one factor per candidate, each in (0.9, 1.1]; the candidates beyond
-/// `factors` keep their scores and follow. Pure.
-#[must_use]
-pub fn apply_recency(candidates: Vec<Fused>, factors: &[f32]) -> Vec<Fused> {
-    let mut head = Vec::with_capacity(candidates.len());
-    let mut tail = Vec::new();
-    for (i, mut c) in candidates.into_iter().enumerate() {
-        match factors.get(i) {
-            Some(&f) => {
-                c.score *= f;
-                c.recency = Some(f);
-                head.push(c);
-            }
-            None => tail.push(c),
-        }
-    }
-    hit_order(&mut head, |f| (f.score, f.memory_id));
-    head.extend(tail);
-    head
 }
 
 /// How a pipeline read its lists: `Postings` only when every text list was
@@ -1205,7 +1161,6 @@ mod tests {
             tokens: Vec::new(),
             rerank: None,
             rank_before: None,
-            recency: None,
         }
     }
 

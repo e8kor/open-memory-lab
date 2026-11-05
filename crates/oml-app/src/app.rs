@@ -103,12 +103,9 @@ use crate::types::{
 use crate::search::{
     Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
     OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_READ, apply_floor,
-    apply_recency, fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms,
-    rerank_order,
+    fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
-use oml_domain::valid_time::{
-    ValidEnd, ValidTime, Window, fixed_width, parse_now, parse_window, recency_factor,
-};
+use oml_domain::valid_time::{ValidEnd, ValidTime, Window, fixed_width, parse_now, parse_window};
 
 /// One pipeline's answer before the cuts: the fused candidates, the query's
 /// terms, whether `match: all` fell back to any word, how the lists were
@@ -4936,8 +4933,8 @@ where
         // The query is its NFC text, searched and digested alike (ADR-0025
         // d9).
         let query = nfc(&req.query);
-        // One now for the recall: the expiry cut, the query's relative dates
-        // and the recency age (proposed ADR-0058 d5); then the window the
+        // One now for the recall: the expiry cut and the query's relative
+        // dates (proposed ADR-0058 d5); then the window the
         // query names, by rule (d6).
         let now_us = match req.now.as_deref() {
             Some(sent) => parse_now(sent).ok_or(AppError::NowUnparsable)?,
@@ -5109,42 +5106,6 @@ where
             candidates.extend(tail);
         }
         self.observer.rerank(rerank.as_str(), rerank.reason());
-        // The recency stage, after fusion and any rerank and before the
-        // cuts: the head's scores each moved by at most ±10% by the age of
-        // the row's declared start, or its recorded time when it declares
-        // none; never `promoted_at`, a verdict or a reviewer (proposed
-        // ADR-0058 d8; ADR-0049 d2).
-        if pipeline.recency() && !candidates.is_empty() {
-            let depth = FUSION_DEPTH.min(candidates.len());
-            let unread: Vec<Uuid> = candidates[..depth]
-                .iter()
-                .map(|c| c.memory_id)
-                .filter(|id| !rows.contains_key(id))
-                .collect();
-            if !unread.is_empty() {
-                rows.extend(
-                    self.journal
-                        .memories(key.tenant_id, &unread)
-                        .await?
-                        .into_iter()
-                        .map(|m| (m.memory_id, m)),
-                );
-            }
-            let factors: Vec<f32> = candidates[..depth]
-                .iter()
-                .map(|c| {
-                    rows.get(&c.memory_id).map_or(1.0, |m| {
-                        let start = m
-                            .valid
-                            .from
-                            .as_ref()
-                            .map_or_else(|| m.created_at.unix_micros(), |f| f.unix_micros());
-                        recency_factor(start, now_us)
-                    })
-                })
-                .collect();
-            candidates = apply_recency(candidates, &factors);
-        }
         // The k cut, then the relevance floor over what the reranker
         // scored, then the budget cut over the counts `body_bytes` gives
         // without any body read; steering is never cut and spent first
@@ -5251,7 +5212,6 @@ where
                     tokens: candidate.tokens.clone(),
                     rerank: candidate.rerank,
                     rank_before: candidate.rank_before,
-                    recency: candidate.recency,
                 });
             }
         }

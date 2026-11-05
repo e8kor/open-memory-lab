@@ -8382,7 +8382,7 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     assert_eq!(named["search"]["access"], "scan", "{named}");
     assert_eq!(
         named["hits"][0]["matched"],
-        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"], "rerank": null, "rank_before": null, "recency": null, "tokens": [], "expanded": []}),
+        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"], "rerank": null, "rank_before": null, "tokens": [], "expanded": []}),
         "{named}"
     );
     // A pipeline that does not rerank says so, and applies no floor

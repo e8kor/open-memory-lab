@@ -1,13 +1,9 @@
-//! Valid time, the date window and the recency factor (proposed ADR-0058
-//! d2, d3, d6, d7, d8).
+//! Valid time and the date window (proposed ADR-0058 d2, d3, d6, d7).
 
 use oml_domain::model::MemoryKind;
 use oml_domain::valid_time::{
-    RECENCY_BOUND, ValidTime, ValidTimeError, Window, fixed_width, parse_now, parse_window,
-    recency_factor,
+    ValidTime, ValidTimeError, Window, fixed_width, parse_now, parse_window,
 };
-
-const DAY: i64 = 86_400_000_000;
 
 /// Microseconds at 00:00Z of an ISO day.
 fn at(day: &str) -> i64 {
@@ -355,26 +351,4 @@ fn the_first_expression_from_the_left_wins() {
     let w = parse_window("in 2019 and then in 2021", now).unwrap();
     assert_eq!(w.from_us, Some(at("2019-01-01")));
     assert_eq!(w.phrase, "2019");
-}
-
-#[test]
-fn the_recency_factor_stays_within_ten_percent() {
-    let now = at("2026-11-05");
-    assert!((recency_factor(now, now) - (1.0 + RECENCY_BOUND)).abs() < 1e-6);
-    assert!(
-        (recency_factor(now + 400 * DAY, now) - 1.1).abs() < 1e-6,
-        "a future start is age 0"
-    );
-    let year = recency_factor(now - 365 * DAY, now);
-    assert!(
-        (year - 1.0).abs() < 1e-6,
-        "one half-life is the midpoint: {year}"
-    );
-    let mut last = f32::INFINITY;
-    for days in [0, 1, 30, 365, 3_650, 36_500, 365_000] {
-        let f = recency_factor(now - days * DAY, now);
-        assert!(f > 0.9 - 1e-6 && f <= 1.1 + 1e-6, "{days}: {f}");
-        assert!(f <= last, "older is never boosted more");
-        last = f;
-    }
 }

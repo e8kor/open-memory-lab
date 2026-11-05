@@ -1,4 +1,4 @@
-//! Valid time, the query's date window and the recency factor — pure
+//! Valid time, the query's date window and expiry — pure
 //! functions over values the app has already read (proposed ADR-0058; it
 //! narrows proposed ADR-0036 d2).
 //!
@@ -11,7 +11,6 @@
 //! - **Expiry** (d3): a version whose end is at or before the request's now.
 //! - **The window** (d6, rule [`WHEN_RULE`]): at most one date expression
 //!   read from a query by rule, anchored to the request's now.
-//! - **Recency** (d8): a factor in (0.9, 1.1] by the age of a row's start.
 
 use crate::model::MemoryKind;
 
@@ -19,14 +18,6 @@ use crate::model::MemoryKind;
 pub const WHEN_RULE: &str = "oml-when/1";
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
-
-/// The recency half-life in days (ADR-0058 d8); unmeasured beyond the
-/// record's run.
-pub const RECENCY_HALF_LIFE_DAYS: f64 = 365.0;
-
-/// The recency factor's bound: a score moves by at most this share of
-/// itself (ADR-0058 d8).
-pub const RECENCY_BOUND: f32 = 0.1;
 
 /// Why a valid end is refused; each is `request.validation` naming the
 /// field (ADR-0058 d2).
@@ -890,20 +881,4 @@ fn iso_day_or_month(word: &str) -> Option<Span> {
         start: p.start.div_euclid(MICROS_PER_DAY),
         end: p.end.div_euclid(MICROS_PER_DAY),
     })
-}
-
-/// The recency factor (ADR-0058 d8): 0.9 + 0.2 · 2^(−age / 365 days), age
-/// being `now_us` less `start_us`, a start after now being age 0. Always in
-/// (0.9, 1.1].
-#[must_use]
-pub fn recency_factor(start_us: i64, now_us: i64) -> f32 {
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "an age in days is far below 2^52"
-    )]
-    let age_days = (now_us.saturating_sub(start_us)).max(0) as f64 / MICROS_PER_DAY as f64;
-    let decay = (-age_days / RECENCY_HALF_LIFE_DAYS).exp2();
-    #[allow(clippy::cast_possible_truncation, reason = "a factor in (0.9, 1.1]")]
-    let factor = (1.0 - f64::from(RECENCY_BOUND) + 2.0 * f64::from(RECENCY_BOUND) * decay) as f32;
-    factor.clamp(1.0 - RECENCY_BOUND, 1.0 + RECENCY_BOUND)
 }

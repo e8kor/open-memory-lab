@@ -813,9 +813,6 @@ where
                         "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
                         "rerank": hit.rerank.map(relevance),
                         "rank_before": hit.rank_before,
-                        // The recency factor a recency pipeline applied
-                        // (proposed ADR-0058 d8).
-                        "recency": hit.recency.map(relevance),
                         // The learned sparse tokens that scored the hit,
                         // each with its contribution and whether the
                         // encoder added it (ADR-0052 d17).

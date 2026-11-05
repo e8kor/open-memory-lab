@@ -1243,10 +1243,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, and bm25-postings-time-recent, which also moves each of the first 50 scores by at most 10% by recency, proposed ADR-0058 d7, d8). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0058 d7). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time" | "bm25-postings-time-recent";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1259,7 +1259,7 @@ export interface components {
              * @default false
              */
             include_expired?: boolean;
-            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired, anchors the query's relative dates (last week, three days ago) and the recency age (proposed ADR-0058 d5). */
+            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0058 d5). */
             now?: components["schemas"]["ValidEnd"];
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
@@ -1296,8 +1296,6 @@ export interface components {
             of: number;
             /** @description The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0058 d7). */
             via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse" | "time")[];
-            /** @description The recency factor a recency pipeline multiplied the score by; null under every other pipeline (proposed ADR-0058 d8). */
-            recency?: number | null;
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
@@ -1317,7 +1315,7 @@ export interface components {
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time" | "bm25-postings-time-recent";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-postings-time";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];

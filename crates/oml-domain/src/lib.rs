@@ -30,8 +30,8 @@
 //! (ADR-0021 d5; ADR-0027 d6–d11); `claim_edges` holds the label check at a
 //! claim-edge proposal and the ratifier check at its ratification (ADR-0008
 //! d5; ADR-0021 d5; ADR-0012); `valid_time` holds a version's declared valid
-//! time, expiry, the query's date window under rule `oml-when/1` and the
-//! recency factor (proposed ADR-0058).
+//! time, expiry and the query's date window under rule `oml-when/1`
+//! (proposed ADR-0058).
 
 #![forbid(unsafe_code)]
 

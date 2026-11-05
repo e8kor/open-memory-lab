@@ -52,8 +52,7 @@ class RecallRequest:
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
                 bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time,
-                bm25-postings fused with the memories whose valid time overlaps a date the query names, and bm25-postings-time-
-                recent, which also moves each of the first 50 scores by at most 10% by recency, proposed ADR-0058 d7, d8). A
+                bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0058 d7). A
                 name the deployment does not serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
