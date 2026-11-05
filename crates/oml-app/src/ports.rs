@@ -834,9 +834,10 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// The greatest `version` of `claim_key` in the workarea that a key of
-    /// `own_key_ids` may read as the claim's: a promoted version, or a held
-    /// one those keys authored; never another author's held version, so a
-    /// supersession's check tells its caller nothing it cannot read
+    /// `own_key_ids` may read as the claim's: its own held and promoted
+    /// versions, and with `reads_promoted` (reader effective access on the
+    /// workarea) every promoted one; never another author's held version,
+    /// so a supersession's check tells its caller nothing it cannot read
     /// (ADR-0057 d19; R3).
     fn claim_latest_readable(
         &self,
@@ -844,6 +845,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
+        reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 
     /// The promoted served tip of `claim_key` in the workarea, if any

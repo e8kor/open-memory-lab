@@ -5097,18 +5097,21 @@ impl JournalStore for PgStore {
         workarea_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
+        reads_promoted: bool,
     ) -> Result<Option<u32>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let latest: Option<i32> = sqlx::query_scalar(
             "SELECT max(version) FROM memories \
              WHERE tenant_id = $1 AND workarea_id = $2 AND claim_key = $3 \
-               AND (status = 'promoted' OR (status = 'held' AND author_key_id = ANY($4::uuid[])))",
+               AND ((status = 'promoted' AND ($5 OR author_key_id = ANY($4::uuid[]))) \
+                 OR (status = 'held' AND author_key_id = ANY($4::uuid[])))",
         )
         .bind(tenant_id)
         .bind(workarea_id)
         .bind(claim_key)
         .bind(own_key_ids)
+        .bind(reads_promoted)
         .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;

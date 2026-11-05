@@ -5776,6 +5776,10 @@ where
             .journal
             .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
             .await?;
+        let reads_promoted = self
+            .require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+            .await
+            .is_ok();
         let latest = self
             .journal
             .claim_latest_readable(
@@ -5783,6 +5787,7 @@ where
                 target.workarea_id,
                 &target.claim_key,
                 &caller.own_key_ids(),
+                reads_promoted,
             )
             .await?
             .unwrap_or(target.version);

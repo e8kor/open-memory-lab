@@ -2805,6 +2805,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "edges": [],
                 "my_effective_verbs": [],
                 "permission_epoch": view["permission_epoch"],
+                "stale_versions": 0,
                 "policy": { "k": 1, "required_roles": ["dreamer"] },
                 "pending_transitions": [],
                 "brief": empty_brief(),
@@ -5287,6 +5288,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
                 "remember", "learn", "attach", "supersede",
             ],
             "permission_epoch": view["permission_epoch"],
+            "stale_versions": 0,
             "policy": { "k": 1, "required_roles": ["dreamer"] },
             "pending_transitions": [],
             "brief": empty_brief(),
@@ -6773,7 +6775,7 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
         .to_owned();
 
     let first = promoted_over_http(router, &writer, &dreamer, "quote", "412 USD/t").await;
-    // The second proposal names the first's version (ADR-0057 d19).
+    // Each proposer names the version it can read (ADR-0057 d19).
     let propose = |key: &str, idem: &str, body: &str, expected: u64| {
         let call = Call::auth(key)
             .idem(idem)
@@ -6783,7 +6785,7 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
     };
     let (status, _, revision) = propose(&writer, "sup-w", "408 USD/t", 1).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{revision}");
-    let (status, _, edit) = propose(&editor, "sup-e", "409 USD/t", 2).await;
+    let (status, _, edit) = propose(&editor, "sup-e", "409 USD/t", 1).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
     assert_eq!(
         edit["version"], 3,

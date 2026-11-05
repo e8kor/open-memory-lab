@@ -2231,6 +2231,7 @@ impl JournalStore for MemStore {
         workarea_id: Uuid,
         claim_key: &str,
         own_key_ids: &[Uuid],
+        reads_promoted: bool,
     ) -> Result<Option<u32>, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
@@ -2241,8 +2242,12 @@ impl JournalStore for MemStore {
             .values()
             .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
             .filter(|m| {
-                m.status == MemoryStatus::Promoted
-                    || (m.status == MemoryStatus::Held && own_key_ids.contains(&m.author_key_id))
+                let own = own_key_ids.contains(&m.author_key_id);
+                match m.status {
+                    MemoryStatus::Promoted => reads_promoted || own,
+                    MemoryStatus::Held => own,
+                    _ => false,
+                }
             })
             .map(|m| m.version)
             .max())

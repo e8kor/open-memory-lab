@@ -1587,7 +1587,7 @@ async fn one_open_item_then_two(router: &Router) {
         &format!("/v1/memories/{tip}/supersede"),
         Some(&rev),
         Some("two-2"),
-        Some(&json!({ "expected_version": 2, "body": "Accra Metals quote AM-7741 is 410 USD/t.", "reason": "the quote moved" })),
+        Some(&json!({ "expected_version": 1, "body": "Accra Metals quote AM-7741 is 410 USD/t.", "reason": "the quote moved" })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
