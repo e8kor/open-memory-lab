@@ -6067,3 +6067,141 @@ async fn doctor_names_an_empty_brief_and_the_transitions_waiting_on_the_default_
     );
     crew.lab.stop().await;
 }
+
+/// A stub lead for the search doctor lines: `/readyz` reports `search`, an
+/// admin key's `whoami`, `GET /v2/search` answers `settings`, and the
+/// metrics listener's `/metrics` the recall counter `bm25-postings` reads
+/// as `postings` and `scan` (ADR-0042 d11).
+async fn doctor_search_stub(
+    search: Value,
+    settings: Value,
+    postings: u64,
+    scan: u64,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let router = axum::Router::new().fallback(move |request: Request| {
+        let (search, settings) = (search.clone(), settings.clone());
+        async move {
+            let path = request.uri().path().to_owned();
+            if path.starts_with("/.well-known/") {
+                return axum::http::StatusCode::NOT_FOUND.into_response();
+            }
+            if path == "/metrics" {
+                return format!(
+                    "# TYPE oml_recalls counter\n\
+                     oml_recalls_total{{pipeline=\"bm25-postings\",fallback=\"false\",access=\"postings\"}} {postings}\n\
+                     oml_recalls_total{{pipeline=\"bm25-postings\",fallback=\"false\",access=\"scan\"}} {scan}\n\
+                     oml_recalls_total{{pipeline=\"bm25\",fallback=\"false\",access=\"scan\"}} 50\n"
+                )
+                .into_response();
+            }
+            axum::Json(match path.as_str() {
+                "/healthz" => json!({ "status": "ok" }),
+                "/readyz" => json!({ "status": "ok", "checks": {}, "search": search }),
+                "/v2/whoami" => json!({
+                    "key_id": "k1", "name": "admin", "role": "admin",
+                    "principal": "acme/admin", "held_by": "human",
+                    "tenant": { "id": "t1", "name": "acme" },
+                    "default_workarea": null, "crew": null, "grants": [],
+                }),
+                "/v2/search" => settings,
+                "/v2/events" => json!({ "events": [], "head_seq": 7 }),
+                _ => json!({}),
+            })
+            .into_response()
+        }
+    });
+    serve_stub(router).await
+}
+
+/// The search lines doctor prints about `bm25-postings` (ADR-0052 d12):
+/// a warning when the scan answered more than 5% of its recalls since the
+/// lead started, read from the metrics listener `OML_METRICS_URL` names and
+/// never from the public `/readyz`; and, read by an admin key, one per fault
+/// in the tenant's postings, each naming its repair; and none when all is
+/// well.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_when_all_is_well() {
+    let readyz = json!({
+        "enabled": ["keyword-any", "bm25", "bm25-postings"], "default": "bm25-postings",
+    });
+    let healthy = json!({
+        "enabled": ["keyword-any", "bm25", "bm25-postings"], "deployment_default": "bm25-postings",
+        "tenant_default": null, "effective": "bm25-postings",
+        "postings": { "partition": true, "unfilled": 0, "served_behind": 0,
+                      "workarea_drift": 0, "term_drift": 0, "terms_checked": 200 },
+    });
+    let run = |url: String| {
+        let (code, doctor, log) = doctor_run(
+            &["--url", &url, "--api-key", "oml_admin_key"],
+            &[("OML_METRICS_URL", url.as_str())],
+        );
+        assert_eq!(code, 0, "{log}");
+        let lines: Vec<String> = doctor["search"]
+            .as_array()
+            .expect("search lines")
+            .iter()
+            .filter_map(|l| l.as_str().map(ToOwned::to_owned))
+            .collect();
+        (doctor["verdict"].clone(), lines, log)
+    };
+
+    // All is well: 4 of 100 by the scan, every count clean.
+    let (url, task) = doctor_search_stub(readyz.clone(), healthy.clone(), 96, 4).await;
+    let (_, lines, log) = run(url);
+    assert!(!lines.iter().any(|l| l.starts_with("warn")), "{log}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("postings complete") && l.contains("200")),
+        "{log}"
+    );
+    task.abort();
+
+    // The scan answered 6 of 100: above 5%.
+    let (url, task) = doctor_search_stub(readyz.clone(), healthy.clone(), 94, 6).await;
+    let (verdict, lines, log) = run(url);
+    assert_eq!(verdict, "warn", "{log}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("warn search: bm25-postings answered 6 of 100")),
+        "{log}"
+    );
+    task.abort();
+
+    // Each fault in the tenant's postings, one line each.
+    let mut faulty = healthy.clone();
+    faulty["postings"] = json!({ "partition": true, "unfilled": 3, "served_behind": 2,
+                                 "workarea_drift": 1, "term_drift": 5, "terms_checked": 200 });
+    let (url, task) = doctor_search_stub(readyz.clone(), faulty, 10, 0).await;
+    let (verdict, lines, log) = run(url);
+    assert_eq!(verdict, "warn", "{log}");
+    for says in [
+        "warn search: the postings fill is incomplete: 3 memory versions have no postings",
+        "warn search: 2 served memories have no served postings",
+        "warn search: the postings counts disagree: 1 workarea count, 5 of 200 sampled word counts",
+    ] {
+        assert!(lines.iter().any(|l| l.starts_with(says)), "{says}: {log}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("oml_search_postings_refill")),
+        "the repair is named: {log}"
+    );
+    task.abort();
+
+    // No postings partition: the tenant's writes fail until the lead's next
+    // start creates it.
+    let mut missing = healthy;
+    missing["postings"]["partition"] = json!(false);
+    let (url, task) = doctor_search_stub(readyz, missing, 0, 0).await;
+    let (_, lines, log) = run(url);
+    assert!(
+        lines.iter().any(|l| l.starts_with(
+            "warn search: this tenant has no postings partition, so every memory write for it fails"
+        ) && l.contains("restart")),
+        "{log}"
+    );
+    task.abort();
+}

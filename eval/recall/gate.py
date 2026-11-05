@@ -15,6 +15,7 @@ it against its gate, taken from ADR-0048 d1:
 - keyword-any: success@5 >= 0.70 and a zero-result rate <= 0.05.
 - bm25: success@5 >= 0.86 and success@1 >= 0.67.
 - bm25-trigram: success@5 >= 0.92, and partial and typo success@5 >= 0.91.
+- bm25-postings: bm25's gate (ADR-0052 d9).
 
 Every pipeline must also keep each category's success@5 within one query
 (1/11) of its committed result, when one is committed.
@@ -32,6 +33,7 @@ from pathlib import Path
 GATES = {
     "keyword-any": [("overall", "s5", ">=", 0.70), ("overall", "zero", "<=", 0.05)],
     "bm25": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
+    "bm25-postings": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
     "bm25-trigram": [
         ("overall", "s5", ">=", 0.92),
         ("partial", "s5", ">=", 0.91),
@@ -93,7 +95,7 @@ def main():
     results, committed_dir = Path(a.results), Path(a.committed)
     failed = False
     seen = []
-    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram"]:
+    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings"]:
         path = results / file_of(pipeline)
         if not path.exists():
             continue

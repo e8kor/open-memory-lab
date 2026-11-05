@@ -90,9 +90,22 @@ use crate::types::{
 };
 
 use crate::search::{
-    CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fusion, MatchMode, OwnHeldScope, Pipeline,
-    RetrievalQuery, SearchConfig, fuse, query_terms,
+    Access, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
+    OwnHeldScope, Pipeline, RetrievalQuery, SearchConfig, fuse, pipeline_access, pruned_words,
+    query_terms,
 };
+
+/// One pipeline's answer before the cuts: the fused candidates, the query's
+/// terms, whether `match: all` fell back to any word, how the lists were
+/// read and the words pruned (ADR-0049 d5, d6; ADR-0052 d11).
+#[derive(Debug, Default)]
+struct PipelineRun {
+    fused: Vec<Fused>,
+    terms: Vec<String>,
+    fallback: bool,
+    access: Access,
+    pruned: Vec<String>,
+}
 
 const EVENTS_PAGE: usize = 512;
 
@@ -4382,10 +4395,12 @@ where
         let pipeline = self
             .pipeline_for(key.tenant_id, req.search.as_deref())
             .await?;
-        let (mut candidates, terms, fallback) = self
+        let ran = self
             .run_pipeline(key.tenant_id, pipeline, &candidate_scope, &query, req)
             .await?;
-        self.observer.search(pipeline.as_str(), fallback);
+        let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
+        self.observer
+            .search(pipeline.as_str(), fallback, ran.access.as_str());
         // The k cut, then the budget cut over the counts `body_bytes` gives
         // without any body read; steering is never cut and spent first
         // (ADR-0025 d7).
@@ -4480,6 +4495,8 @@ where
             terms,
             fallback,
             did_you_mean,
+            access: ran.access,
+            pruned: ran.pruned,
         })
     }
 
@@ -4729,7 +4746,7 @@ where
         scope: &CandidateScope,
         query: &str,
         req: &RecallRequest,
-    ) -> Result<(Vec<crate::search::Fused>, Vec<String>, bool), AppError> {
+    ) -> Result<PipelineRun, AppError> {
         let depth = match pipeline.fusion() {
             Fusion::Single => req.k,
             Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
@@ -4738,7 +4755,7 @@ where
         if req.match_mode == MatchMode::All && pipeline != Pipeline::KeywordAll {
             modes.push(MatchMode::Any);
         }
-        let mut last = (Vec::new(), Vec::new());
+        let mut last = PipelineRun::default();
         for (attempt, mode) in modes.into_iter().enumerate() {
             let mut lists = Vec::with_capacity(pipeline.retrievers().len());
             for &kind in pipeline.retrievers() {
@@ -4757,14 +4774,22 @@ where
                     .await?;
                 lists.push((kind, list));
             }
-            let fused = fuse(&lists, pipeline.fusion());
-            let terms = query_terms(&lists);
-            if !fused.is_empty() {
-                return Ok((fused, terms, attempt > 0));
+            let run = PipelineRun {
+                fused: fuse(&lists, pipeline.fusion()),
+                terms: query_terms(&lists),
+                fallback: attempt > 0,
+                access: pipeline_access(&lists),
+                pruned: pruned_words(&lists),
+            };
+            if !run.fused.is_empty() {
+                return Ok(run);
             }
-            last = (fused, terms);
+            last = PipelineRun {
+                fallback: false,
+                ..run
+            };
         }
-        Ok((last.0, last.1, false))
+        Ok(last)
     }
 
     /// Get one memory: the authoring key sees its own rows in every state,

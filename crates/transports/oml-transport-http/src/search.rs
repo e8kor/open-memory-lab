@@ -26,12 +26,27 @@ struct DefaultBody {
 
 /// openapi.yaml `SearchSettings`.
 fn settings_json(settings: &SearchSettings) -> Value {
-    json!({
+    let mut body = json!({
         "enabled": settings.enabled.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
         "deployment_default": settings.deployment_default.as_str(),
         "tenant_default": settings.tenant_default,
         "effective": settings.effective.as_str(),
-    })
+    });
+    // The postings health doctor reads, on the read alone (ADR-0052 d12).
+    if let (Some(h), Some(obj)) = (&settings.postings, body.as_object_mut()) {
+        obj.insert(
+            "postings".to_owned(),
+            json!({
+                "partition": h.partition,
+                "unfilled": h.unfilled,
+                "served_behind": h.served_behind,
+                "workarea_drift": h.workarea_drift,
+                "term_drift": h.term_drift,
+                "terms_checked": h.terms_checked,
+            }),
+        );
+    }
+    body
 }
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>

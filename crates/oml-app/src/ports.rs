@@ -30,7 +30,7 @@ use crate::types::{
 };
 use oml_domain::web::Provider;
 
-use crate::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
+use crate::search::{CandidateScope, PostingsHealth, RetrievalQuery, Retrieved, RetrieverKind};
 
 /// A storage refusal. `SeqConflict` is how the serialized per-tenant chain
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
@@ -570,6 +570,16 @@ pub trait Retriever: Send + Sync {
         words: &[String],
         limit: usize,
     ) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
+
+    /// The tenant's postings health for doctor (ADR-0052 d12), or `None`
+    /// from an adapter that keeps no postings.
+    fn postings_health(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Option<PostingsHealth>, StoreError>> + Send {
+        let _ = tenant_id;
+        async { Ok(None) }
+    }
 }
 
 /// The journal-and-metadata store port (workspace-plan.md row 1). It is a
@@ -1492,11 +1502,12 @@ pub trait RequestObserver: Send + Sync {
     /// The request's verb targets `workarea_id`.
     fn workarea(&self, workarea_id: Uuid);
 
-    /// A recall ran `pipeline`, and `fallback` says whether `match: all`
-    /// fell back to any term (ADR-0049 d4, d5). Telling no one is the
+    /// A recall ran `pipeline`, `fallback` says whether `match: all` fell
+    /// back to any term, and `access` how its lists were read, `postings` or
+    /// `scan` (ADR-0049 d4, d5; ADR-0052 d11). Telling no one is the
     /// default.
-    fn search(&self, pipeline: &'static str, fallback: bool) {
-        let _ = (pipeline, fallback);
+    fn search(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
+        let _ = (pipeline, fallback, access);
     }
 }
 

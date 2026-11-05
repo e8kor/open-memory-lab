@@ -1,0 +1,285 @@
+{
+ "what": "bm25 and bm25-postings served (k 100) and through the adapter, before (1c57c49: frequent forms pruned regardless) and after (ac57cd8: pruned only past POSTING_BUDGET), 2026-11-05, PostgreSQL 17.9",
+ "served": {
+  "before": {
+   "scifact": {
+    "bm25": {
+     "nDCG@10": 0.6851,
+     "R@20": 0.8656,
+     "R@100": 0.9276,
+     "p50_ms": 86.4,
+     "p95_ms": 130.7
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.6851,
+     "R@20": 0.8656,
+     "R@100": 0.9276,
+     "p50_ms": 53.0,
+     "p95_ms": 72.0
+    }
+   },
+   "nfcorpus": {
+    "bm25": {
+     "nDCG@10": 0.3208,
+     "R@20": 0.184,
+     "R@100": 0.2476,
+     "p50_ms": 51.5,
+     "p95_ms": 83.5
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.3203,
+     "R@20": 0.1836,
+     "R@100": 0.2448,
+     "p50_ms": 32.6,
+     "p95_ms": 62.7
+    }
+   },
+   "locomo": {
+    "bm25": {
+     "nDCG@10": 0.5033,
+     "R@20": 0.6962,
+     "R@100": 0.8126,
+     "p50_ms": 28.9,
+     "p95_ms": 38.9
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.5029,
+     "R@20": 0.6935,
+     "R@100": 0.7671,
+     "p50_ms": 18.2,
+     "p95_ms": 29.9
+    }
+   }
+  },
+  "after": {
+   "scifact": {
+    "bm25": {
+     "nDCG@10": 0.6851,
+     "R@20": 0.8656,
+     "R@100": 0.9276,
+     "p50_ms": 87.2,
+     "p95_ms": 118.3
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.6851,
+     "R@20": 0.8656,
+     "R@100": 0.9276,
+     "p50_ms": 46.2,
+     "p95_ms": 66.1
+    }
+   },
+   "nfcorpus": {
+    "bm25": {
+     "nDCG@10": 0.3208,
+     "R@20": 0.184,
+     "R@100": 0.2476,
+     "p50_ms": 54.3,
+     "p95_ms": 83.5
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.3208,
+     "R@20": 0.184,
+     "R@100": 0.2476,
+     "p50_ms": 30.9,
+     "p95_ms": 53.0
+    }
+   },
+   "locomo": {
+    "bm25": {
+     "nDCG@10": 0.5034,
+     "R@20": 0.6971,
+     "R@100": 0.8131,
+     "p50_ms": 28.7,
+     "p95_ms": 38.8
+    },
+    "bm25-postings": {
+     "nDCG@10": 0.5034,
+     "R@20": 0.6971,
+     "R@100": 0.8131,
+     "p50_ms": 24.1,
+     "p95_ms": 37.9
+    }
+   }
+  }
+ },
+ "adapter": {
+  "before": {
+   "scifact": {
+    "bm25": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 62.21,
+     "store_p95_ms": 95.83
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 0.0,
+     "pruned_share": 0.7867,
+     "store_p50_ms": 22.71,
+     "store_p95_ms": 43.64
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 15.58,
+     "store_p95_ms": 34.18
+    }
+   },
+   "nfcorpus": {
+    "bm25": {
+     "ndcg@10": 0.3208,
+     "recall@20": 0.184,
+     "recall@100": 0.2476,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 27.9,
+     "store_p95_ms": 50.46
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.3203,
+     "recall@20": 0.1836,
+     "recall@100": 0.2448,
+     "scan_share": 0.0,
+     "pruned_share": 0.2879,
+     "store_p50_ms": 6.35,
+     "store_p95_ms": 29.26
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.3208,
+     "recall@20": 0.184,
+     "recall@100": 0.2476,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 6.53,
+     "store_p95_ms": 14.83
+    }
+   },
+   "locomo": {
+    "bm25": {
+     "ndcg@10": 0.5167,
+     "recall@20": 0.7202,
+     "recall@100": 0.8268,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 7.35,
+     "store_p95_ms": 14.29
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.5164,
+     "recall@20": 0.7176,
+     "recall@100": 0.7847,
+     "scan_share": 0.004,
+     "pruned_share": 0.9899,
+     "store_p50_ms": 4.35,
+     "store_p95_ms": 7.79
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.5167,
+     "recall@20": 0.7202,
+     "recall@100": 0.8268,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 6.18,
+     "store_p95_ms": 10.05
+    }
+   }
+  },
+  "after": {
+   "scifact": {
+    "bm25": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 57.69,
+     "store_p95_ms": 105.49
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 0.0,
+     "pruned_share": 0.07,
+     "store_p50_ms": 11.66,
+     "store_p95_ms": 29.35
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.6851,
+     "recall@20": 0.8656,
+     "recall@100": 0.9276,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 11.49,
+     "store_p95_ms": 21.65
+    }
+   },
+   "nfcorpus": {
+    "bm25": {
+     "ndcg@10": 0.3208,
+     "recall@20": 0.184,
+     "recall@100": 0.2476,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 23.7,
+     "store_p95_ms": 49.57
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.3208,
+     "recall@20": 0.184,
+     "recall@100": 0.2476,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 6.48,
+     "store_p95_ms": 19.68
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.3208,
+     "recall@20": 0.184,
+     "recall@100": 0.2476,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 5.91,
+     "store_p95_ms": 19.88
+    }
+   },
+   "locomo": {
+    "bm25": {
+     "ndcg@10": 0.5166,
+     "recall@20": 0.7209,
+     "recall@100": 0.8274,
+     "scan_share": 1.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 7.06,
+     "store_p95_ms": 18.29
+    },
+    "postings 0.1 10000": {
+     "ndcg@10": 0.5166,
+     "recall@20": 0.7209,
+     "recall@100": 0.8274,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 4.6,
+     "store_p95_ms": 16.93
+    },
+    "postings inf 9223372036854775807": {
+     "ndcg@10": 0.5166,
+     "recall@20": 0.7209,
+     "recall@100": 0.8274,
+     "scan_share": 0.0,
+     "pruned_share": 0.0,
+     "store_p50_ms": 4.98,
+     "store_p95_ms": 16.91
+    }
+   }
+  }
+ }
+}

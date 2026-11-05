@@ -36,7 +36,8 @@ use oml_app::ports::{
     Retriever, Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::search::{
-    Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved, RetrieverKind,
+    Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved,
+    RetrieverKind,
 };
 use oml_app::types::{
     AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
@@ -517,7 +518,7 @@ async fn supersede_tip<S: JournalStore>(
 }
 
 /// Commits the rejection of `memory_id` through the rig.
-async fn reject<S: JournalStore>(
+pub async fn reject<S: JournalStore>(
     rig: &mut ChainRig,
     store: &S,
     memory_id: Uuid,
@@ -861,6 +862,25 @@ pub async fn hold_and_promote<S: JournalStore>(
     let id = memory.memory_id;
     hold(rig, store, memory).await.expect("hold");
     promote(rig, store, id).await.expect("promote");
+}
+
+/// Holds the next version of `target`'s claim, `memory_id` saying `body`,
+/// and ratifies it, so it takes the tip; `retirement` marks a retirement
+/// version (ADR-0025 d10, d11).
+pub async fn supersede<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    target: &MemoryRecord,
+    memory_id: Uuid,
+    body: &str,
+    retirement: bool,
+) {
+    hold_and_ratify(
+        rig,
+        store,
+        successor_of(target, memory_id, body, retirement),
+    )
+    .await;
 }
 
 /// Holds `successor` and ratifies it through the rig, so it takes the tip
@@ -9495,9 +9515,10 @@ pub async fn a_retriever_orders_deterministically_by_score_then_id<S: JournalSto
 /// No row outside the scope changes a candidate's score or the list: the
 /// crowded store adds, beside the same scope rows, every class of row a
 /// statistic could leak from: another key's held row, the calling key's own
-/// held row when the scope names no own keys, a replaced version, a retired
-/// claim's versions, a steering row, rows on another node, and another
-/// tenant's rows on the same node id in the same database. Each class
+/// held row when the scope names no own keys, a rejected version, a
+/// replaced version, a retired claim's versions, a steering row, rows on
+/// another node, and another tenant's rows on the same node id in the same
+/// database. Each class
 /// carries the queries' words, so a document frequency, a row count or an
 /// average length taken over it moves a score (ADR-0048 d3; ADR-0049 d2,
 /// d12).
@@ -9570,6 +9591,13 @@ async fn crowd<S: JournalStore>(store: &S, wa: Uuid, own: Uuid, own_extra: bool)
             .await
             .expect("the key's own held row");
     }
+    let rejected = row(t, 0xF88, other, LEAKY);
+    hold(&mut rig, store, rejected)
+        .await
+        .expect("hold to reject");
+    reject(&mut rig, store, Uuid::from_u128(0xF88))
+        .await
+        .expect("a rejected row");
     let replaced = row(t, 0xF82, other, LEAKY);
     hold_and_promote(&mut rig, store, replaced.clone()).await;
     hold_and_ratify(
@@ -10136,6 +10164,581 @@ pub async fn did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the
         vec!["memcached".to_owned()],
         "a word returns with a served tip that says it"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The postings laws (ADR-0052 d12): `bm25_postings` ranks as `bm25` does, and
+// what it prunes depends on the readable rows alone. Each runs where the
+// store serves `bm25_postings`; the caller hands a store pruning by the
+// limits the law's doc names.
+// ---------------------------------------------------------------------------
+
+/// The postings fixture on node 0xE2: ten promoted memories in which
+/// `billing` (5 rows) and `deploy` with its inflections (4 rows) are
+/// frequent at a share of 0.3, `friday` (2 rows) is not, a promoted derived
+/// fact, and an own held row of key 0xE4; returns (node, own key).
+async fn postings_fixture<S: JournalStore>(rig: &mut ChainRig, store: &S) -> (Uuid, Uuid) {
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let own = Uuid::from_u128(0xE4);
+    let other = Uuid::from_u128(0xE5);
+    let row = |id: u128, key: Uuid, body: &str| {
+        held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, body)
+    };
+    for (id, body) in [
+        (0xF01, "deploy the billing service on friday"),
+        (0xF02, "the billing service owns invoices"),
+        (0xF03, "never deploy on friday evenings"),
+        (0xF04, "invoices are numbered per tenant"),
+        (0xF05, "rollback the release with one command"),
+        (0xF06, "billing runs nightly and billing retries twice"),
+        (0xF07, "the billing ledger closes at midnight"),
+        (0xF08, "deploys are frozen during the billing audit"),
+        (0xF09, "useInvoiceFilters reads the invoice filters"),
+        (0xF0A, "a canary deploy precedes the rollout"),
+    ] {
+        hold_and_promote(rig, store, row(id, other, body)).await;
+    }
+    hold_and_promote(
+        rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::DerivedFact,
+            ..row(
+                0xF0B,
+                other,
+                "a derived fact: the billing audit runs on friday",
+            )
+        },
+    )
+    .await;
+    hold(
+        rig,
+        store,
+        row(0xF11, own, "billing deploy notes held friday"),
+    )
+    .await
+    .expect("hold own");
+    (wa, own)
+}
+
+/// The queries the postings laws ask: frequent words alone, frequent words
+/// beside rare ones, inflections, identifiers, stop words and absent words.
+const POSTINGS_QUERIES: [&str; 13] = [
+    "billing",
+    "invoices tenant",
+    "billing friday",
+    "deploy billing",
+    "deploying on friday",
+    "friday",
+    "invoice filters",
+    "useInvoiceFilters",
+    "the",
+    "zebra",
+    "billing zebra",
+    "rollback the release on friday",
+    "canary deploys during the audit",
+];
+
+fn same_list(a: &Retrieved, b: &Retrieved, what: &str) {
+    assert_eq!(
+        a.candidates
+            .iter()
+            .map(|c| (c.memory_id, c.matched.clone()))
+            .collect::<Vec<_>>(),
+        b.candidates
+            .iter()
+            .map(|c| (c.memory_id, c.matched.clone()))
+            .collect::<Vec<_>>(),
+        "{what}: the same rows in the same order, matching the same words"
+    );
+    for (x, y) in a.candidates.iter().zip(&b.candidates) {
+        assert!(
+            (x.score - y.score).abs() <= 1e-5 * y.score.abs().max(1e-6),
+            "{what}: {} scores {} against {}",
+            x.memory_id,
+            x.score,
+            y.score
+        );
+    }
+}
+
+/// With nothing pruned, `bm25_postings` returns `bm25`'s list: the same ids
+/// in the same order, scores equal to 1e-5 relative, the same matched
+/// words, for every query, every `k`, either `match`, every set of hit
+/// kinds and with and without own held rows, read from postings (ADR-0052
+/// d12). The store prunes
+/// nothing (`PruneLimits::NONE` on PostgreSQL).
+pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(421);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let kind_sets = [
+        HIT_KINDS.to_vec(),
+        vec![MemoryKind::Memory],
+        vec![MemoryKind::DerivedFact],
+    ];
+    for query in POSTINGS_QUERIES {
+        for own_held in [None, Some(own)] {
+            for (mode, kinds) in [MatchMode::Any, MatchMode::All]
+                .into_iter()
+                .flat_map(|m| kind_sets.iter().map(move |k| (m, k)))
+            {
+                for k in 1..=12 {
+                    let scope = CandidateScope {
+                        kinds: kinds.clone(),
+                        ..scope_of(wa, own_held)
+                    };
+                    let ask = |kind| {
+                        store.retrieve(
+                            rig.tenant_id,
+                            kind,
+                            &scope,
+                            RetrievalQuery {
+                                query,
+                                match_mode: mode,
+                                k,
+                            },
+                        )
+                    };
+                    let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
+                    let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
+                    let what = format!("{query:?} own {own_held:?} {mode:?} {kinds:?} k {k}");
+                    same_list(&postings, &scan, &what);
+                    assert_eq!(postings.terms, scan.terms, "{what}: the same terms");
+                    assert_eq!(
+                        postings.access,
+                        Access::Postings,
+                        "{what}: read from postings"
+                    );
+                    assert!(postings.pruned.is_empty(), "{what}: nothing pruned");
+                }
+            }
+        }
+    }
+}
+
+/// A pruned list scores each of its rows as `bm25` does: a frequent word is
+/// left out of the postings read, yet every row the others reach is scored
+/// with it, so each returned row's score is its full `bm25` score; the
+/// answer names the pruned word, and a row holding only it is not a
+/// candidate (ADR-0052 d4, d6, d12). The store prunes forms above a share of
+/// 0.3 of the readable rows once the query's readable postings pass a budget
+/// of 5.
+pub async fn a_pruned_list_scores_each_of_its_rows_as_bm25_does<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(422);
+    rig.seed_chain(store, 0).await;
+    let (wa, _) = postings_fixture(&mut rig, store).await;
+    let scope = scope_of(wa, None);
+    let mut pruned_any = false;
+    for query in POSTINGS_QUERIES {
+        let full = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Bm25,
+            &scope,
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        let got = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Bm25Postings,
+            &scope,
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        pruned_any |= !got.pruned.is_empty();
+        for c in &got.candidates {
+            let whole = full
+                .candidates
+                .iter()
+                .find(|f| f.memory_id == c.memory_id)
+                .unwrap_or_else(|| panic!("{query:?}: {} is no bm25 candidate", c.memory_id));
+            assert!(
+                (c.score - whole.score).abs() <= 1e-5 * whole.score.abs().max(1e-6),
+                "{query:?}: {} scores {} where bm25 scores it {}",
+                c.memory_id,
+                c.score,
+                whole.score
+            );
+            assert_eq!(c.matched, whole.matched, "{query:?}: the words it holds");
+        }
+    }
+    assert!(pruned_any, "the fixture prunes some word");
+    let got = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25Postings,
+        &scope,
+        "billing friday",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(got.access, Access::Postings);
+    assert_eq!(got.pruned, vec!["billing".to_owned()], "billing is pruned");
+    let ids: Vec<u128> = got
+        .candidates
+        .iter()
+        .map(|c| c.memory_id.as_u128())
+        .collect();
+    let mut reached = ids.clone();
+    reached.sort_unstable();
+    assert_eq!(
+        reached,
+        vec![0xF01, 0xF03, 0xF0B],
+        "the rows friday reaches; a row saying only billing is no candidate"
+    );
+    assert_eq!(
+        ids.last(),
+        Some(&0xF03),
+        "the row without billing ranks last: billing is scored though pruned"
+    );
+}
+
+/// Which words are pruned depends on the readable rows alone: rows the key
+/// cannot read (another node's, another key's held row, a rejected one,
+/// another tenant's) that make a word frequent tenant-wide change neither
+/// the pruned words nor the list (ADR-0052 d6, d12). The store prunes forms
+/// above a share of 0.3 of the readable rows once the query's readable
+/// postings pass a budget of 5.
+pub async fn which_words_are_pruned_depends_on_the_readable_rows_alone<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(423);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let ask = |query: &'static str, own_held: Option<Uuid>| {
+        let scope = scope_of(wa, own_held);
+        async move {
+            run(
+                store,
+                tenant,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await
+        }
+    };
+    let queries = [
+        "friday",
+        "invoices tenant",
+        "friday rollback",
+        "billing friday",
+    ];
+    let mut before = Vec::new();
+    for query in queries {
+        for own_held in [None, Some(own)] {
+            before.push(ask(query, own_held).await);
+        }
+    }
+    let elsewhere = Uuid::from_u128(0xE3);
+    let other = Uuid::from_u128(0xE5);
+    let loud = "friday invoices tenant rollback friday";
+    for i in 0..12_u128 {
+        hold_and_promote(
+            &mut rig,
+            store,
+            held_memory(
+                tenant,
+                elsewhere,
+                Uuid::from_u128(0xFA0 + i),
+                "rita",
+                other,
+                loud,
+            ),
+        )
+        .await;
+    }
+    for i in 0..6_u128 {
+        hold(
+            &mut rig,
+            store,
+            held_memory(tenant, wa, Uuid::from_u128(0xFC0 + i), "rita", other, loud),
+        )
+        .await
+        .expect("another key's held row");
+    }
+    hold(
+        &mut rig,
+        store,
+        held_memory(tenant, wa, Uuid::from_u128(0xFD0), "rita", other, loud),
+    )
+    .await
+    .expect("hold to reject");
+    reject(&mut rig, store, Uuid::from_u128(0xFD0))
+        .await
+        .expect("reject");
+    let mut neighbour = ChainRig::new(424);
+    neighbour.seed_chain(store, 0).await;
+    let theirs = neighbour.tenant_id;
+    for i in 0..12_u128 {
+        hold_and_promote(
+            &mut neighbour,
+            store,
+            held_memory(theirs, wa, Uuid::from_u128(0xFE0 + i), "rita", other, loud),
+        )
+        .await;
+    }
+    let mut after = Vec::new();
+    for query in queries {
+        for own_held in [None, Some(own)] {
+            after.push(ask(query, own_held).await);
+        }
+    }
+    assert_eq!(
+        before, after,
+        "rows the key cannot read decide neither what is pruned nor how rows rank"
+    );
+}
+
+/// A query whose every word is frequent among the readable rows is answered
+/// by `bm25`'s scan, ranked as `bm25` ranks it, and says so with access
+/// `scan` (ADR-0052 d6, d12). The store prunes forms above a share of 0.3 of
+/// the readable rows once the query's readable postings pass a budget of 5.
+pub async fn a_query_of_only_frequent_words_is_answered_by_the_scan_and_says_so<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(425);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    for query in ["billing", "deploy billing", "billing and the deploy"] {
+        for own_held in [None, Some(own)] {
+            let scope = scope_of(wa, own_held);
+            let scan = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            let got = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert_eq!(got.access, Access::Scan, "{query:?}: the scan answered");
+            assert!(got.pruned.is_empty(), "{query:?}: the scan loses no word");
+            assert!(!got.candidates.is_empty(), "{query:?}: rows hold it");
+            same_list(&got, &scan, query);
+        }
+    }
+}
+
+/// A scope whose readable postings of every query form fit the budget is
+/// read whole: nothing is pruned, however frequent a word, so a row holding
+/// only frequent words is found and the list is `bm25`'s; frequent words
+/// are left out only when reading them all would pass the budget (ADR-0052
+/// d6, amended 2026-11-05). The store prunes forms above a share of 0.3 of
+/// the readable rows, with a budget the fixture's postings fit.
+pub async fn a_scope_whose_postings_fit_the_budget_is_read_whole<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(427);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    for own_held in [None, Some(own)] {
+        let scope = scope_of(wa, own_held);
+        for query in POSTINGS_QUERIES {
+            let scan = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            let got = run(
+                store,
+                rig.tenant_id,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert_eq!(
+                got.access,
+                Access::Postings,
+                "{query:?}: read from postings"
+            );
+            assert!(
+                got.pruned.is_empty(),
+                "{query:?}: nothing pruned: {:?}",
+                got.pruned
+            );
+            same_list(&got, &scan, query);
+        }
+        let got = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Bm25Postings,
+            &scope,
+            "billing friday",
+            MatchMode::Any,
+        )
+        .await;
+        assert!(
+            got.candidates
+                .iter()
+                .any(|c| c.memory_id.as_u128() == 0xF06),
+            "a row saying only the frequent billing is found: {got:?}"
+        );
+    }
+}
+
+/// With pruning on, the list is `bm25`'s over the rows a word it read
+/// reaches: every row `bm25` ranks that holds a word the answer does not
+/// name in `pruned`, in `bm25`'s order with `bm25`'s scores, and only a row
+/// holding nothing but named words is missing. So `pruned: []` means the
+/// list is `bm25`'s (ADR-0052 d6, d11). The store prunes forms above a share
+/// of 0.3 of the readable rows once the query's readable postings pass a
+/// budget of 5.
+pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(428);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    for own_held in [None, Some(own)] {
+        let scope = scope_of(wa, own_held);
+        for query in POSTINGS_QUERIES {
+            for k in [1, 3, 10] {
+                let ask = |kind, k| {
+                    store.retrieve(
+                        rig.tenant_id,
+                        kind,
+                        &scope,
+                        RetrievalQuery {
+                            query,
+                            match_mode: MatchMode::Any,
+                            k,
+                        },
+                    )
+                };
+                let got = ask(RetrieverKind::Bm25Postings, k).await.expect("postings");
+                let full = ask(RetrieverKind::Bm25, 1_000).await.expect("bm25");
+                let reached: Vec<Candidate> = full
+                    .candidates
+                    .into_iter()
+                    .filter(|c| c.matched.iter().any(|w| !got.pruned.contains(w)))
+                    .take(k)
+                    .collect();
+                let want = Retrieved {
+                    candidates: reached,
+                    ..Retrieved::default()
+                };
+                same_list(
+                    &got,
+                    &want,
+                    &format!("{query:?} own {own_held:?} k {k} pruned {:?}", got.pruned),
+                );
+            }
+        }
+    }
+}
+
+/// A word only unreadable rows hold is answered as a word no row holds: the
+/// same list, the same access and nothing pruned, with no posting of it
+/// read (ADR-0052 d2, d12). Any pruning limits.
+pub async fn a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(426);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let other = Uuid::from_u128(0xE5);
+    hold_and_promote(
+        &mut rig,
+        store,
+        held_memory(
+            tenant,
+            Uuid::from_u128(0xE3),
+            Uuid::from_u128(0xFB0),
+            "rita",
+            other,
+            "quartz quartz deploy",
+        ),
+    )
+    .await;
+    hold(
+        &mut rig,
+        store,
+        held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0xFB1),
+            "rita",
+            other,
+            "quartz notes",
+        ),
+    )
+    .await
+    .expect("another key's held row");
+    for own_held in [None, Some(own)] {
+        let scope = scope_of(wa, own_held);
+        for (unreadable, absent) in [
+            ("quartz", "xylophone"),
+            ("friday quartz", "friday xylophone"),
+        ] {
+            let a = run(
+                store,
+                tenant,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                unreadable,
+                MatchMode::Any,
+            )
+            .await;
+            let b = run(
+                store,
+                tenant,
+                RetrieverKind::Bm25Postings,
+                &scope,
+                absent,
+                MatchMode::Any,
+            )
+            .await;
+            same_list(&a, &b, unreadable);
+            assert_eq!(
+                (a.access, &a.pruned),
+                (b.access, &b.pruned),
+                "{unreadable:?}"
+            );
+        }
+    }
 }
 
 pub async fn run_retriever_suite<S, F, Fut>(new_store: F)

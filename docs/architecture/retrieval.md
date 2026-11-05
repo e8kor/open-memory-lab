@@ -218,6 +218,7 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
 | `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
 | `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
 | `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
+| `bm25-postings` | *Unreleased ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md), proposed).* `bm25`'s score, read from integer postings an index serves under row security: the readable rows' counts, kept per workarea, decide which words are frequent; those are left out of the postings read and still scored for every row the other words reach; a query of only frequent words is answered by `bm25`'s scan | one list |
 
 **Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
 `search.default` the default ([configuration](../operations/configuration.md)); a tenant's admin
@@ -227,13 +228,37 @@ refused naming `/search`, never replaced. `match: "all"` keeps only rows holding
 when none does, serves the any-word hits with `search.fallback: "any_term"`.
 
 **What the answer says.** `search.pipeline`, `search.terms` (the query's words as read),
-`search.fallback`, and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
+`search.fallback`, `search.access` and `search.pruned` (*unreleased*, ADR-0052 d11: `postings` or
+`scan`, and the words pruned), and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
 than its `k`), spellings for the words no hit holds, under every pipeline but `keyword-all`. They
 come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
 same transaction that promotes, replaces or retires a version; a recall reads the readable
 nodes' vocabulary and never a row, so no spelling names a word only an unreadable row says. Each hit carries `matched`: the
 words it holds, `of` how many the query had, and `via` the retrievers that found it. Scores
 compare within one answer only.
+
+**Postings, pruning and the scan** *(unreleased, ADR-0052)*. Under row security no text operator
+reaches an index, but integer equality does, so `bm25-postings` reads each version's lexemes as
+integer postings (`search_postings`, one partition per tenant under the same policy; [schema](../data/postgres-schema.md#search-postings-adr-0052)).
+Before it reads a posting it sums the served versions' counts over the readable workareas, adding
+the caller's own held rows when it asked for them: the row count, the mean length and each query
+form's document frequency are the readable rows', never the tenant's. While the query forms'
+readable postings together fit `POSTING_BUDGET`, every form is read and the list is `bm25`'s.
+Past it, a word with a form held by more than `FREQUENT_SHARE` of the readable rows is
+**frequent** and left out of the postings read, every form of it; then, while the kept words'
+postings sum above the budget, the kept word with the most is left out too. A word is pruned
+whole, so `search.pruned` names every word whose rows may be missing, and `pruned: []` means the
+list is `bm25`'s. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
+returned row's score is its full BM25 score. Candidates come only from the forms read, so what
+pruning loses is a row that holds only frequent words, a loss in the long tail of the list: it is
+why the budget, not the share, decides when to prune (ADR-0052 d6, amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
+`bm25` statement answers over the stored lexemes, ranked as `bm25` ranks, and the answer says
+`search.access: "scan"`; otherwise `"postings"`. Under `match: "all"` it reads only the rarest
+word's postings, which every answer must hold, and prunes nothing. Which words are pruned depends
+on the rows the key may read alone; a word only unreadable rows hold reads as a word no row holds.
+`FREQUENT_SHARE` is 0.1 and `POSTING_BUDGET` 10,000, set by the runs ADR-0052 open question 2
+records. A key holding many own held rows pays for them: at 10,000 such rows a universe recall
+with `include_unreviewed` measured 266 ms p95 (open question 7).
 
 **What a retriever may not do.** It ranks the scope it is handed and nothing else: it never
 widens it, never reads a verdict, a reviewer or `promoted_at`, and computes any statistic over
@@ -245,11 +270,16 @@ alike, are in `oml-port-contracts` (ADR-0049 d7).
 default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
 NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
 with the date, commit and host of each run: [benchmarks](../api/benchmarks/index.md). `bm25` is
-the default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
+v0.5.5's default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
 misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
 enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
-role's reads (ADR-0034 d13), so 0020 builds none and a recall's cost grows with the rows in its
-scope; the scale page shows by how much.
+role's reads (ADR-0034 d13), so 0020 builds none and `bm25`'s cost grows with the rows in its
+scope; the scale page shows by how much. *Unreleased:* `bm25-postings` is the default once
+ADR-0052 d9's evidence held on the build that ships it: `bm25`'s gate passed (success@1 0.826,
+success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
+a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
+([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
+`bm25` stays served as its fallback and comparison.
 
 ## The recall-ordering contract: steering rows first, unranked
 

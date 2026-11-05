@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25",
  "date": "2026-11-05",
- "commit": "d3fdb72",
+ "commit": "66979b4",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "17.9",
@@ -17,6 +17,7 @@
  "metrics": {
   "ndcg@10": 0.6851,
   "recall@10": 0.8217,
+  "recall@20": 0.8656,
   "recall@100": 0.9276,
   "mrr@10": 0.6496,
   "success@1": 0.54,
@@ -25,9 +26,9 @@
  },
  "per_category": {},
  "latency_ms": {
-  "p50": 83.16,
-  "p95": 112.72,
-  "p99": 128.67
+  "p50": 86.125,
+  "p95": 115.61,
+  "p99": 129.62
  },
  "reference": {
   "source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",

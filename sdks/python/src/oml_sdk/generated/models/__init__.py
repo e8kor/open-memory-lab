@@ -115,6 +115,7 @@ from .memory_summary_severity import MemorySummarySeverity
 from .memory_summary_state import MemorySummaryState
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
+from .postings_health import PostingsHealth
 from .protected_resource_metadata import ProtectedResourceMetadata
 from .protected_resource_metadata_bearer_methods_supported_item import (
     ProtectedResourceMetadataBearerMethodsSupportedItem,
@@ -136,6 +137,7 @@ from .recall_request_search import RecallRequestSearch
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
 from .recall_search import RecallSearch
+from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .remove_web_email_body import RemoveWebEmailBody
@@ -302,6 +304,7 @@ __all__ = (
     "MemorySummaryState",
     "OAuthError",
     "OAuthErrorError",
+    "PostingsHealth",
     "ProtectedResourceMetadata",
     "ProtectedResourceMetadataBearerMethodsSupportedItem",
     "ProtectedResourceMetadataScopesSupportedItem",
@@ -319,6 +322,7 @@ __all__ = (
     "RecallResponse",
     "RecallResponseHitsItem",
     "RecallSearch",
+    "RecallSearchAccess",
     "RecallSearchMatch",
     "RecallSearchPipeline",
     "RemoveWebEmailBody",
