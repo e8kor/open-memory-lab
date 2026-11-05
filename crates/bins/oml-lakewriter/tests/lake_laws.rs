@@ -239,6 +239,8 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             severity: None,
             rule: None,
             anchor: None,
+            valid_from: None,
+            valid_until: None,
         };
         let id = app
             .submit_memory(&writer.value, &req)
