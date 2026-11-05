@@ -1,0 +1,973 @@
+{
+ "version": 1,
+ "written": "2026-11-04, by the curator pass described in README.md, before queries.json was opened",
+ "facets": [
+  {
+   "facet": "component",
+   "prefix": "cmp",
+   "label": "Component",
+   "scope": "a part of the Tallyline system a memory is about"
+  },
+  {
+   "facet": "technology",
+   "prefix": "tech",
+   "label": "Technology",
+   "scope": "a product, library or tool the crew runs or builds with"
+  },
+  {
+   "facet": "topic",
+   "prefix": "topic",
+   "label": "Topic",
+   "scope": "the engineering or business concern a memory addresses"
+  },
+  {
+   "facet": "process",
+   "prefix": "proc",
+   "label": "Process",
+   "scope": "a way the team works"
+  }
+ ],
+ "terms": [
+  {
+   "id": "cmp:api",
+   "pref": "api service",
+   "alt": [
+    "api",
+    "backend",
+    "api server",
+    "rest api",
+    "public api",
+    "http api",
+    "endpoint",
+    "endpoints"
+   ]
+  },
+  {
+   "id": "cmp:worker",
+   "pref": "worker",
+   "alt": [
+    "workers",
+    "background jobs",
+    "background job",
+    "job runner",
+    "async jobs",
+    "batch job",
+    "batch jobs"
+   ]
+  },
+  {
+   "id": "cmp:console",
+   "pref": "customer console",
+   "alt": [
+    "console",
+    "frontend",
+    "front end",
+    "web app",
+    "web ui",
+    "single-page app",
+    "spa",
+    "browser app"
+   ]
+  },
+  {
+   "id": "cmp:database",
+   "pref": "primary database",
+   "alt": [
+    "database",
+    "db",
+    "datastore",
+    "sql database",
+    "production database"
+   ]
+  },
+  {
+   "id": "cmp:cluster",
+   "pref": "kubernetes cluster",
+   "alt": [
+    "cluster",
+    "k8s cluster",
+    "gke",
+    "production cluster",
+    "staging cluster",
+    "nodes",
+    "node pool"
+   ]
+  },
+  {
+   "id": "cmp:ingress",
+   "pref": "ingress",
+   "alt": [
+    "load balancer",
+    "reverse proxy",
+    "edge proxy",
+    "ingress controller"
+   ]
+  },
+  {
+   "id": "cmp:pdf-rendering",
+   "pref": "invoice pdf rendering",
+   "alt": [
+    "pdf",
+    "pdfs",
+    "pdf generation",
+    "pdf render",
+    "renderer",
+    "invoice template",
+    "invoice pdf"
+   ]
+  },
+  {
+   "id": "cmp:analytics",
+   "pref": "analytics pipeline",
+   "alt": [
+    "analytics",
+    "data warehouse",
+    "warehouse",
+    "etl",
+    "elt",
+    "reporting pipeline",
+    "data pipeline",
+    "bi",
+    "segment",
+    "product events"
+   ]
+  },
+  {
+   "id": "cmp:ci",
+   "pref": "ci pipeline",
+   "alt": [
+    "ci",
+    "continuous integration",
+    "build pipeline",
+    "ci/cd",
+    "build",
+    "builds"
+   ]
+  },
+  {
+   "id": "cmp:marketing-site",
+   "pref": "marketing site",
+   "alt": [
+    "website",
+    "landing page",
+    "homepage",
+    "public website"
+   ]
+  },
+  {
+   "id": "cmp:service-mesh",
+   "pref": "service mesh",
+   "alt": [
+    "mesh",
+    "sidecar",
+    "sidecar proxy",
+    "service-to-service",
+    "linkerd"
+   ]
+  },
+  {
+   "id": "tech:kubernetes",
+   "pref": "kubernetes",
+   "alt": [
+    "k8s",
+    "kubectl",
+    "kube",
+    "pods",
+    "pod",
+    "deployment manifest"
+   ]
+  },
+  {
+   "id": "tech:helm",
+   "pref": "helm",
+   "alt": [
+    "helm chart",
+    "helm release",
+    "chart",
+    "charts"
+   ]
+  },
+  {
+   "id": "tech:argo-cd",
+   "pref": "argo cd",
+   "alt": [
+    "argocd",
+    "argo",
+    "gitops"
+   ]
+  },
+  {
+   "id": "tech:postgresql",
+   "pref": "postgresql",
+   "alt": [
+    "postgres",
+    "pg",
+    "psql",
+    "cloud sql"
+   ]
+  },
+  {
+   "id": "tech:pgbouncer",
+   "pref": "pgbouncer",
+   "alt": [
+    "connection pooler",
+    "pooler",
+    "connection pool",
+    "connection pooling"
+   ]
+  },
+  {
+   "id": "tech:bigquery",
+   "pref": "bigquery",
+   "alt": [
+    "bq",
+    "big query"
+   ]
+  },
+  {
+   "id": "tech:dbt",
+   "pref": "dbt",
+   "alt": [
+    "data build tool",
+    "dbt model",
+    "dbt models"
+   ]
+  },
+  {
+   "id": "tech:airflow",
+   "pref": "airflow",
+   "alt": [
+    "cloud composer",
+    "composer",
+    "dag",
+    "dags",
+    "orchestrator"
+   ]
+  },
+  {
+   "id": "tech:datastream",
+   "pref": "datastream",
+   "alt": [
+    "cdc",
+    "change data capture",
+    "replication stream"
+   ]
+  },
+  {
+   "id": "tech:stripe",
+   "pref": "stripe",
+   "alt": [
+    "payment provider",
+    "payment processor",
+    "psp"
+   ]
+  },
+  {
+   "id": "tech:auth0",
+   "pref": "auth0",
+   "alt": [
+    "identity provider",
+    "idp",
+    "oidc provider"
+   ]
+  },
+  {
+   "id": "tech:prometheus",
+   "pref": "prometheus",
+   "alt": [
+    "promql",
+    "managed prometheus",
+    "metrics backend"
+   ]
+  },
+  {
+   "id": "tech:grafana",
+   "pref": "grafana",
+   "alt": [
+    "dashboards",
+    "dashboard"
+   ]
+  },
+  {
+   "id": "tech:opentelemetry",
+   "pref": "opentelemetry",
+   "alt": [
+    "otel",
+    "otlp",
+    "open telemetry"
+   ]
+  },
+  {
+   "id": "tech:sentry",
+   "pref": "sentry",
+   "alt": [
+    "error tracking",
+    "crash reporting"
+   ]
+  },
+  {
+   "id": "tech:pagerduty",
+   "pref": "pagerduty",
+   "alt": [
+    "pager",
+    "paging tool"
+   ]
+  },
+  {
+   "id": "tech:react",
+   "pref": "react",
+   "alt": [
+    "react components",
+    "jsx",
+    "tsx"
+   ]
+  },
+  {
+   "id": "tech:tanstack-query",
+   "pref": "tanstack query",
+   "alt": [
+    "react query",
+    "query cache",
+    "server state"
+   ]
+  },
+  {
+   "id": "tech:playwright",
+   "pref": "playwright",
+   "alt": [
+    "browser tests",
+    "e2e tests",
+    "end-to-end tests"
+   ]
+  },
+  {
+   "id": "tech:kotlin",
+   "pref": "kotlin",
+   "alt": [
+    "kt",
+    "kapt",
+    "ksp",
+    "jvm"
+   ]
+  },
+  {
+   "id": "tech:ktor",
+   "pref": "ktor",
+   "alt": [
+    "web framework",
+    "http server"
+   ]
+  },
+  {
+   "id": "tech:gradle",
+   "pref": "gradle",
+   "alt": [
+    "gradle build",
+    "build cache"
+   ]
+  },
+  {
+   "id": "tech:github-actions",
+   "pref": "github actions",
+   "alt": [
+    "gha",
+    "actions",
+    "workflow",
+    "workflows",
+    "runners"
+   ]
+  },
+  {
+   "id": "tech:docker",
+   "pref": "docker",
+   "alt": [
+    "container",
+    "containers",
+    "container image",
+    "image",
+    "images",
+    "buildx"
+   ]
+  },
+  {
+   "id": "tech:cert-manager",
+   "pref": "cert-manager",
+   "alt": [
+    "certmanager",
+    "let's encrypt",
+    "letsencrypt",
+    "acme",
+    "clusterissuer"
+   ]
+  },
+  {
+   "id": "tech:external-secrets",
+   "pref": "external secrets operator",
+   "alt": [
+    "external secrets",
+    "externalsecret",
+    "eso",
+    "secret manager",
+    "secrets backend"
+   ]
+  },
+  {
+   "id": "topic:deployment",
+   "pref": "deployment",
+   "alt": [
+    "deploy",
+    "deploys",
+    "deploying",
+    "rollout",
+    "rollouts",
+    "release",
+    "ship",
+    "shipping",
+    "canary",
+    "deploy window"
+   ]
+  },
+  {
+   "id": "topic:rollback",
+   "pref": "rollback",
+   "alt": [
+    "roll back",
+    "revert",
+    "undo a deploy",
+    "previous revision"
+   ]
+  },
+  {
+   "id": "topic:secrets",
+   "pref": "secrets",
+   "alt": [
+    "secret",
+    "credentials",
+    "credential",
+    "api key",
+    "api keys",
+    "password",
+    "passwords",
+    "secret rotation",
+    "key rotation"
+   ]
+  },
+  {
+   "id": "topic:authentication",
+   "pref": "authentication",
+   "alt": [
+    "login",
+    "log in",
+    "sign in",
+    "sso",
+    "single sign-on",
+    "oidc",
+    "openid connect",
+    "saml",
+    "2fa",
+    "mfa",
+    "two-factor",
+    "session",
+    "sessions",
+    "tokens",
+    "jwt"
+   ]
+  },
+  {
+   "id": "topic:authorization",
+   "pref": "authorization",
+   "alt": [
+    "permissions",
+    "permission",
+    "access control",
+    "roles",
+    "rbac",
+    "row level security",
+    "rls"
+   ]
+  },
+  {
+   "id": "topic:encryption",
+   "pref": "encryption",
+   "alt": [
+    "encrypt",
+    "encrypted",
+    "kms",
+    "envelope encryption",
+    "tls",
+    "mtls",
+    "certificates",
+    "certificate"
+   ]
+  },
+  {
+   "id": "topic:personal-data",
+   "pref": "personal data",
+   "alt": [
+    "pii",
+    "gdpr",
+    "privacy",
+    "erasure",
+    "pseudonymization",
+    "pseudonymized",
+    "customer data"
+   ]
+  },
+  {
+   "id": "topic:security",
+   "pref": "security",
+   "alt": [
+    "vulnerability",
+    "vulnerabilities",
+    "pentest",
+    "penetration test",
+    "csrf",
+    "security finding",
+    "attack"
+   ]
+  },
+  {
+   "id": "topic:money",
+   "pref": "money amounts",
+   "alt": [
+    "money",
+    "currency",
+    "currencies",
+    "minor units",
+    "cents",
+    "amounts",
+    "rounding",
+    "floating point"
+   ]
+  },
+  {
+   "id": "topic:tax",
+   "pref": "tax",
+   "alt": [
+    "vat",
+    "sales tax",
+    "reverse charge",
+    "tax rates",
+    "vat id"
+   ]
+  },
+  {
+   "id": "topic:invoicing",
+   "pref": "invoicing",
+   "alt": [
+    "invoice",
+    "invoices",
+    "invoice numbers",
+    "invoice numbering",
+    "credit note",
+    "credit notes",
+    "void"
+   ]
+  },
+  {
+   "id": "topic:e-invoicing",
+   "pref": "e-invoicing",
+   "alt": [
+    "electronic invoice",
+    "e-invoice",
+    "xrechnung",
+    "zugferd",
+    "fatturapa",
+    "sdi"
+   ]
+  },
+  {
+   "id": "topic:payments",
+   "pref": "payments",
+   "alt": [
+    "payment",
+    "charge",
+    "charges",
+    "collection",
+    "sepa",
+    "direct debit",
+    "card payments",
+    "refund",
+    "refunds",
+    "chargeback"
+   ]
+  },
+  {
+   "id": "topic:dunning",
+   "pref": "dunning",
+   "alt": [
+    "payment reminders",
+    "reminders",
+    "overdue",
+    "late payment",
+    "days-to-pay",
+    "suspension"
+   ]
+  },
+  {
+   "id": "topic:subscriptions",
+   "pref": "subscriptions",
+   "alt": [
+    "subscription",
+    "plans",
+    "plan",
+    "pricing",
+    "proration",
+    "downgrade",
+    "plan upgrade",
+    "plan change"
+   ]
+  },
+  {
+   "id": "topic:idempotency",
+   "pref": "idempotency",
+   "alt": [
+    "idempotency key",
+    "idempotent",
+    "duplicate",
+    "duplicates",
+    "double charge",
+    "dedup",
+    "deduplication",
+    "retries",
+    "retry"
+   ]
+  },
+  {
+   "id": "topic:rate-limiting",
+   "pref": "rate limiting",
+   "alt": [
+    "rate limit",
+    "rate limits",
+    "throttling",
+    "throttle",
+    "429",
+    "quota"
+   ]
+  },
+  {
+   "id": "topic:webhooks",
+   "pref": "webhooks",
+   "alt": [
+    "webhook",
+    "callbacks",
+    "event delivery",
+    "signature",
+    "signatures",
+    "hmac"
+   ]
+  },
+  {
+   "id": "topic:api-conventions",
+   "pref": "api conventions",
+   "alt": [
+    "pagination",
+    "cursor",
+    "versioning",
+    "api version",
+    "error format",
+    "error response",
+    "page size"
+   ]
+  },
+  {
+   "id": "topic:schema-migration",
+   "pref": "schema migration",
+   "alt": [
+    "migration",
+    "migrations",
+    "schema change",
+    "ddl",
+    "alter table",
+    "add column",
+    "create index"
+   ]
+  },
+  {
+   "id": "topic:backup-recovery",
+   "pref": "backup and recovery",
+   "alt": [
+    "backup",
+    "backups",
+    "restore",
+    "point-in-time recovery",
+    "pitr",
+    "disaster recovery",
+    "wal"
+   ]
+  },
+  {
+   "id": "topic:data-retention",
+   "pref": "data retention",
+   "alt": [
+    "retention",
+    "archiving",
+    "archive",
+    "cold storage",
+    "kept for"
+   ]
+  },
+  {
+   "id": "topic:performance",
+   "pref": "performance",
+   "alt": [
+    "latency",
+    "slow",
+    "slowness",
+    "faster",
+    "speed",
+    "p95",
+    "p50",
+    "throughput",
+    "bloat",
+    "sequential scan"
+   ]
+  },
+  {
+   "id": "topic:scaling",
+   "pref": "scaling",
+   "alt": [
+    "autoscaling",
+    "autoscaler",
+    "hpa",
+    "replicas",
+    "capacity",
+    "scale out"
+   ]
+  },
+  {
+   "id": "topic:cost",
+   "pref": "cost",
+   "alt": [
+    "costs",
+    "bill",
+    "billing cost",
+    "spend",
+    "expensive",
+    "bytes scanned"
+   ]
+  },
+  {
+   "id": "topic:monitoring",
+   "pref": "monitoring",
+   "alt": [
+    "metrics",
+    "metric",
+    "observability",
+    "uptime",
+    "health check",
+    "slo",
+    "sli"
+   ]
+  },
+  {
+   "id": "topic:alerting",
+   "pref": "alerting",
+   "alt": [
+    "alert",
+    "alerts",
+    "paging",
+    "pages",
+    "alert fatigue",
+    "noise"
+   ]
+  },
+  {
+   "id": "topic:logging",
+   "pref": "logging",
+   "alt": [
+    "logs",
+    "log",
+    "log lines",
+    "structured logging",
+    "redact",
+    "request_id"
+   ]
+  },
+  {
+   "id": "topic:tracing",
+   "pref": "tracing",
+   "alt": [
+    "traces",
+    "trace",
+    "distributed tracing",
+    "spans",
+    "sampling"
+   ]
+  },
+  {
+   "id": "topic:testing",
+   "pref": "testing",
+   "alt": [
+    "tests",
+    "test",
+    "integration tests",
+    "unit tests",
+    "test suite"
+   ]
+  },
+  {
+   "id": "topic:flaky-tests",
+   "pref": "flaky tests",
+   "alt": [
+    "flaky",
+    "flake",
+    "flakes",
+    "flaky test",
+    "intermittent failure",
+    "quarantine"
+   ]
+  },
+  {
+   "id": "topic:dependencies",
+   "pref": "dependency upgrades",
+   "alt": [
+    "dependencies",
+    "dependency",
+    "upgrade",
+    "upgrades",
+    "version bump",
+    "dependabot",
+    "renovate",
+    "pin",
+    "pinned"
+   ]
+  },
+  {
+   "id": "topic:code-generation",
+   "pref": "generated code",
+   "alt": [
+    "code generation",
+    "codegen",
+    "generated client",
+    "generated files",
+    "openapi client"
+   ]
+  },
+  {
+   "id": "topic:naming",
+   "pref": "naming conventions",
+   "alt": [
+    "naming",
+    "naming convention",
+    "named",
+    "prefix",
+    "file names"
+   ]
+  },
+  {
+   "id": "topic:feature-flags",
+   "pref": "feature flags",
+   "alt": [
+    "feature flag",
+    "flags",
+    "toggles",
+    "launchdarkly"
+   ]
+  },
+  {
+   "id": "topic:localization",
+   "pref": "localization",
+   "alt": [
+    "i18n",
+    "translation",
+    "translations",
+    "locale",
+    "locales",
+    "time zone",
+    "time zones"
+   ]
+  },
+  {
+   "id": "proc:incident-response",
+   "pref": "incident response",
+   "alt": [
+    "incident",
+    "incidents",
+    "outage",
+    "outages",
+    "postmortem",
+    "post-mortem",
+    "sev1",
+    "sev2",
+    "severity",
+    "status page"
+   ]
+  },
+  {
+   "id": "proc:on-call",
+   "pref": "on-call",
+   "alt": [
+    "on call",
+    "rotation",
+    "primary",
+    "secondary",
+    "runbook",
+    "runbooks"
+   ]
+  },
+  {
+   "id": "proc:code-review",
+   "pref": "code review",
+   "alt": [
+    "review",
+    "reviews",
+    "approvals",
+    "approving reviews",
+    "pull request",
+    "pull requests",
+    "code owners"
+   ]
+  },
+  {
+   "id": "proc:change-management",
+   "pref": "change management",
+   "alt": [
+    "change request",
+    "production access",
+    "deploy freeze",
+    "forbidden",
+    "never deploy"
+   ]
+  },
+  {
+   "id": "proc:git-workflow",
+   "pref": "git workflow",
+   "alt": [
+    "branch",
+    "branches",
+    "commit",
+    "commits",
+    "merge",
+    "merges",
+    "squash",
+    "conventional commits",
+    "release tags",
+    "semver"
+   ]
+  },
+  {
+   "id": "proc:decision-records",
+   "pref": "decision records",
+   "alt": [
+    "adr",
+    "adrs",
+    "architecture decision",
+    "decided",
+    "we chose",
+    "rejected"
+   ]
+  },
+  {
+   "id": "proc:planning",
+   "pref": "planning",
+   "alt": [
+    "sprint",
+    "sprints",
+    "roadmap",
+    "scheduled",
+    "quarter"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,202 @@
+# memory: up to three term ids, the writing agent's choice from the vocabulary, made from the
+# memory text alone, before queries.json was opened. Blank after the colon means no term fits.
+m001: topic:deployment cmp:api proc:incident-response
+m002: cmp:cluster tech:kubernetes
+m003: cmp:cluster
+m004: tech:helm tech:kubernetes topic:deployment
+m005: tech:helm topic:naming
+m006: topic:rollback tech:helm
+m007: topic:deployment proc:change-management
+m008: topic:deployment proc:change-management
+m009: cmp:worker cmp:pdf-rendering topic:deployment
+m010: cmp:ingress tech:cert-manager topic:encryption
+m011: tech:cert-manager topic:encryption proc:incident-response
+m012: tech:docker topic:naming
+m013: cmp:api topic:scaling
+m014: cmp:database proc:change-management
+m015: tech:argo-cd proc:decision-records
+m016: tech:argo-cd cmp:cluster topic:deployment
+m017: tech:argo-cd topic:scaling
+m018: cmp:cluster cmp:pdf-rendering
+m019: cmp:pdf-rendering topic:performance
+m020: topic:secrets tech:external-secrets
+m021: topic:secrets tech:external-secrets tech:kubernetes
+m022: cmp:marketing-site topic:deployment
+m023: topic:schema-migration topic:deployment
+m024: cmp:api topic:performance
+m025: cmp:database tech:postgresql
+m026: tech:postgresql topic:dependencies
+m027: tech:postgresql topic:performance
+m028: tech:postgresql topic:dependencies topic:performance
+m029: cmp:database topic:naming
+m030: cmp:database proc:decision-records
+m031: topic:schema-migration topic:performance
+m032: topic:schema-migration
+m033: cmp:database topic:invoicing
+m034: topic:data-retention cmp:database
+m035: tech:pgbouncer
+m036: tech:pgbouncer
+m037: tech:postgresql topic:performance
+m038: cmp:database
+m039: topic:backup-recovery tech:postgresql
+m040: cmp:database topic:performance
+m041: topic:schema-migration topic:naming
+m042: topic:tax cmp:database
+m043: topic:performance cmp:database
+m044: tech:postgresql
+m045: topic:authorization cmp:database
+m046: topic:authorization cmp:database
+m047: cmp:database proc:decision-records
+m048: topic:backup-recovery
+m049: topic:backup-recovery
+m050: topic:api-conventions
+m051: topic:api-conventions
+m052: topic:api-conventions topic:performance
+m053: topic:api-conventions
+m054: topic:idempotency cmp:api
+m055: topic:idempotency
+m056: topic:naming cmp:api
+m057: topic:rate-limiting
+m058: topic:rate-limiting
+m059: topic:webhooks topic:security
+m060: topic:webhooks
+m061: topic:webhooks
+m062: topic:code-generation cmp:api
+m063: topic:money topic:api-conventions
+m064: topic:money
+m065: topic:api-conventions topic:localization
+m066: cmp:api tech:kotlin tech:ktor
+m067: cmp:api topic:performance
+m068: cmp:api tech:kotlin
+m069: cmp:api cmp:ingress
+m070: topic:authentication tech:auth0
+m071: topic:secrets topic:authentication
+m072: topic:authentication tech:auth0 cmp:console
+m073: topic:authorization
+m074: topic:authorization
+m075: topic:authentication topic:security proc:decision-records
+m076: topic:security topic:authentication
+m077: tech:auth0 topic:rate-limiting
+m078: topic:authentication
+m079: topic:secrets topic:logging
+m080: cmp:service-mesh topic:encryption
+m081: cmp:service-mesh topic:encryption cmp:database
+m082: topic:secrets topic:authentication
+m083: topic:authentication cmp:worker proc:incident-response
+m084: topic:encryption topic:personal-data
+m085: topic:personal-data topic:encryption
+m086: topic:security
+m087: topic:authentication tech:auth0
+m088: cmp:console tech:react
+m089: tech:react topic:naming
+m090: tech:tanstack-query cmp:console
+m091: tech:tanstack-query topic:performance
+m092: cmp:console
+m093: cmp:console topic:performance
+m094: topic:money cmp:console topic:localization
+m095: topic:localization cmp:console
+m096: topic:localization cmp:console
+m097: tech:playwright topic:testing
+m098: tech:playwright topic:flaky-tests
+m099: tech:sentry cmp:console
+m100: topic:feature-flags cmp:console
+m101: cmp:console topic:code-generation
+m102: topic:code-generation cmp:console
+m103: tech:github-actions cmp:ci
+m104: tech:gradle tech:kotlin
+m105: tech:gradle cmp:ci topic:performance
+m106: proc:code-review
+m107: proc:git-workflow
+m108: tech:docker cmp:ci
+m109: topic:testing cmp:ci tech:docker
+m110: topic:flaky-tests
+m111: topic:flaky-tests
+m112: topic:dependencies
+m113: topic:dependencies tech:ktor tech:kotlin
+m114: tech:kotlin topic:dependencies
+m115: cmp:ci
+m116: proc:git-workflow cmp:ci
+m117: cmp:ci tech:docker
+m118: tech:github-actions cmp:ci
+m119: cmp:ci topic:performance
+m120: cmp:console topic:dependencies
+m121: proc:git-workflow
+m122: tech:github-actions topic:security
+m123: cmp:analytics tech:bigquery tech:datastream
+m124: tech:dbt cmp:analytics
+m125: tech:dbt cmp:analytics
+m126: tech:datastream tech:dbt topic:money
+m127: tech:dbt topic:naming
+m128: tech:dbt cmp:analytics
+m129: tech:dbt topic:idempotency
+m130: tech:bigquery topic:cost
+m131: cmp:analytics
+m132: cmp:analytics tech:bigquery proc:decision-records
+m133: cmp:analytics topic:personal-data
+m134: tech:airflow cmp:analytics
+m135: tech:airflow tech:datastream
+m136: tech:datastream topic:schema-migration
+m137: topic:data-retention tech:bigquery
+m138: tech:dbt topic:performance
+m139: topic:personal-data cmp:analytics
+m140: cmp:analytics
+m141: topic:invoicing topic:naming
+m142: topic:invoicing
+m143: topic:invoicing
+m144: topic:tax topic:money
+m145: topic:tax topic:money
+m146: topic:tax topic:invoicing
+m147: topic:tax
+m148: topic:payments tech:stripe
+m149: topic:payments
+m150: topic:dunning
+m151: topic:dunning
+m152: topic:subscriptions
+m153: topic:subscriptions tech:stripe
+m154: tech:stripe topic:naming
+m155: tech:stripe topic:webhooks
+m156: tech:stripe topic:webhooks
+m157: topic:e-invoicing
+m158: topic:e-invoicing proc:planning
+m159: tech:prometheus tech:grafana topic:monitoring
+m160: topic:logging
+m161: topic:logging
+m162: tech:opentelemetry topic:tracing
+m163: topic:alerting
+m164: topic:monitoring topic:performance
+m165: topic:alerting topic:rate-limiting
+m166: proc:on-call tech:pagerduty
+m167: topic:alerting proc:on-call
+m168: topic:alerting cmp:pdf-rendering
+m169: tech:prometheus topic:monitoring
+m170: topic:monitoring
+m171: tech:prometheus topic:monitoring
+m172: tech:prometheus topic:cost
+m173: proc:incident-response topic:deployment topic:schema-migration
+m174: proc:incident-response topic:secrets topic:authentication
+m175: topic:authentication topic:secrets
+m176: proc:incident-response topic:secrets tech:external-secrets
+m177: proc:incident-response
+m178: proc:incident-response topic:schema-migration topic:performance
+m179: proc:incident-response
+m180: proc:incident-response
+m181: proc:incident-response topic:payments topic:idempotency
+m182: topic:idempotency topic:payments tech:stripe
+m183: topic:payments tech:stripe
+m184: proc:incident-response cmp:marketing-site
+m185: proc:change-management cmp:database
+m186: proc:change-management topic:deployment
+m187: topic:dependencies proc:code-review
+m188: topic:code-generation
+m189: cmp:pdf-rendering topic:personal-data topic:security
+m190: proc:decision-records
+m191: proc:code-review
+m192: proc:planning
+m193: proc:git-workflow topic:naming
+m194: proc:code-review
+m195: topic:money
+m196: proc:decision-records
+m197: topic:tax
+m198: cmp:pdf-rendering
+m199: cmp:pdf-rendering topic:dependencies
+m200: cmp:pdf-rendering cmp:worker

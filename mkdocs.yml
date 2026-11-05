@@ -182,5 +182,6 @@ nav:
       - ADR-0045: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md
       - ADR-0046: adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md
       - ADR-0049: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md
+      - ADR-0051: adr/ADR-0051-a-memory-says-what-it-is-about-in-reviewed-terms-and-recall-finds-it-by-them.md
       - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
       - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
