@@ -1942,19 +1942,27 @@ async fn origin_and_the_chat_anchor_are_refused_out_of_step_naming_the_field() {
     w.done().await;
 }
 
+/// What the lead's deterministic scanner vetoes, one case per rule. The
+/// PoC rule set is the one marker; lane `feat/scan` adds its `oml-scan/1`
+/// secret shapes here when it lands, and every case then runs through a
+/// chat excerpt (ADR-0063 d5).
+const SCANNER_VETOES: &[(&str, &str)] = &[("poc-rules/marker-veto", "[oml:veto]")];
+
 #[tokio::test]
 async fn a_chat_excerpt_passes_through_the_scanner_like_any_body() {
     let Some(w) = world().await else { return };
-    let (status, body) = w
-        .write_origin(
-            "chat/deploy",
-            "The person deploys on Fridays.\n> my token is [oml:veto] here",
-            Some(chat_anchor(2)),
-            Some(json!({"kind": "chat"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(error_code(&body), "submission.scan_veto");
+    for (i, (rule, shape)) in SCANNER_VETOES.iter().enumerate() {
+        let (status, body) = w
+            .write_origin(
+                &format!("chat/deploy-{i}"),
+                &format!("The person deploys on Fridays.\n> my token is {shape} here"),
+                Some(chat_anchor(2)),
+                Some(json!({"kind": "chat"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rule}: {body}");
+        assert_eq!(error_code(&body), "submission.scan_veto", "{rule}");
+    }
     w.done().await;
 }
 
@@ -2087,6 +2095,71 @@ async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_ca
     // The agent's other workareas are unaffected.
     let (status, body) = open(agent, "notes").await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+    drop(rig.store);
+    drop_db(&rig.db_name).await;
+}
+
+/// The law of d8: `chat` is reserved in each user root's namespace for a
+/// key a person holds, at any depth, so an agent cannot take the name first
+/// and leave the person's `chat init` a workarea the agent made (H1).
+#[tokio::test]
+async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
+    let Some(rig) = fresh_rig_with(None).await else {
+        return;
+    };
+    let r = &rig.router;
+    let (admin, _) = bootstrap(r).await;
+    let user_key = |name: &'static str, held_by: &'static str| {
+        let admin = admin.clone();
+        async move {
+            let (status, body) = send(
+                r,
+                "POST",
+                "/v2/keys",
+                Some(&admin),
+                Some(&format!("issue-{name}")),
+                Some(json!({
+                    "role": "writer", "name": name, "principal": format!("eugene/{name}"),
+                    "user": "eugene", "held_by": held_by,
+                    "grants": [{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }],
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            value_of(&body)
+        }
+    };
+    let agent = user_key("eugene-agent", "agent").await;
+    let person = user_key("eugene-cli", "human").await;
+    let create = |token: String, parent: Option<&'static str>, name: &'static str| async move {
+        let mut body = json!({ "name": name });
+        if let Some(parent) = parent {
+            body["parent"] = json!(parent);
+        }
+        send(
+            r,
+            "POST",
+            "/v2/workareas",
+            Some(&token),
+            Some(&format!(
+                "mk-{name}-{}",
+                IDEM.fetch_add(1, Ordering::SeqCst)
+            )),
+            Some(body),
+        )
+        .await
+    };
+    let (status, body) = create(agent.clone(), None, "notes").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = create(agent.clone(), Some("notes"), "chat").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a nested squat: {body}");
+    assert_eq!(
+        body["error"]["details"]["reason"],
+        "chat_scope_is_human_only"
+    );
+    let (status, body) = create(person, None, "chat").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["path"], "universe.eugene.chat");
     drop(rig.store);
     drop_db(&rig.db_name).await;
 }

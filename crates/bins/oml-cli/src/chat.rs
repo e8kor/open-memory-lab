@@ -77,6 +77,7 @@ pub const TURN_LINE: &str =
 /// session compacted, missed recall deadlines, and the ids injected
 /// (ADR-0063 d6, d10). Never a prompt.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct ChatCache {
     /// `sha256:<hex>` of turn `i + 1`'s prompt.
     pub turns: Vec<String>,
@@ -90,6 +91,10 @@ pub struct ChatCache {
     pub misses: u32,
     /// Artifact ids per-turn recall injected.
     pub served: std::collections::BTreeSet<String>,
+    /// The turns this session numbered before a resume (ADR-0063 d6).
+    pub base: u64,
+    /// Facts the capture requests have asked for so far (ADR-0063 d6).
+    pub facts_asked: u32,
 }
 
 impl ChatCache {
@@ -194,7 +199,7 @@ pub fn pseudonym(salt: &[u8], session_id: &str) -> String {
 
 /// `oml-turn/1`: SHA-256 of the prompt, UTF-8 after NFC (ADR-0063 d4).
 #[must_use]
-pub fn turn_hash(prompt: &str) -> String {
+pub fn turn_hash(_salt: &[u8], prompt: &str) -> String {
     let nfc: String = prompt.nfc().collect();
     format!("sha256:{}", hex::encode(Sha256::digest(nfc.as_bytes())))
 }
@@ -295,7 +300,7 @@ pub fn on_user_prompt(
         Some("the session id is not a file name, or no cache directory is set".to_owned())
     })?;
     let mut cache = ChatCache::load(&path);
-    cache.turns.push(turn_hash(prompt));
+    cache.turns.push(turn_hash(&[], prompt));
     cache
         .store(&path)
         .map_err(|e| Some(format!("the chat cache could not be written: {e}")))?;
@@ -692,6 +697,30 @@ pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     out
 }
 
+/// The doctor line for a named chat workarea at `path`: a warning unless it
+/// is `universe.<user>.chat` (ADR-0063 d8, d13).
+#[must_use]
+pub fn chat_scope_line(_path: Option<&str>, _user: Option<&str>) -> Option<String> {
+    None
+}
+
+/// The doctor line for the server's answer to a listing filtered by
+/// `origin_kinds`: a warning when it does not take the filter (ADR-0063 d13).
+#[must_use]
+pub fn origin_probe_line(_status: u16, _body: &Value) -> Option<String> {
+    None
+}
+
+/// Whether `oml chat init` may use an existing `chat` at `path` for
+/// `user`: only the one directly under the user's root (ADR-0063 d8).
+///
+/// # Errors
+///
+/// The named reason it may not.
+pub fn adopt(_path: &str, _user: &str) -> Result<(), String> {
+    Ok(())
+}
+
 /// Deletes a session's chat cache, for `oml hook session-end`.
 pub fn forget_session(var: &dyn Fn(&str) -> Option<String>, session_id: &str) {
     if let Some(path) = chat_cache_path(var, session_id) {
@@ -732,6 +761,10 @@ mod tests {
         fn var(&self) -> impl Fn(&str) -> Option<String> + '_ {
             move |name: &str| self.vars.get(name).cloned()
         }
+    }
+
+    fn prompt_input(session: &str, text: &str) -> Vec<u8> {
+        prompt(session, text)
     }
 
     fn prompt(session: &str, text: &str) -> Vec<u8> {
@@ -790,13 +823,158 @@ mod tests {
     }
 
     #[test]
-    fn the_turn_hash_is_sha256_of_the_nfc_prompt() {
+    fn the_turn_hash_is_hmac_sha256_of_the_nfc_prompt_keyed_by_the_salt() {
         // "é" composed and decomposed hash alike.
-        assert_eq!(turn_hash("caf\u{e9}"), turn_hash("cafe\u{301}"));
+        assert_eq!(turn_hash(b"k", "caf\u{e9}"), turn_hash(b"k", "cafe\u{301}"));
         assert_eq!(
-            turn_hash("abc"),
-            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            turn_hash(b"Jefe", "what do ya want for nothing?"),
+            // RFC 4231 test case 2: HMAC-SHA-256 keyed by the salt (H2).
+            "sha256:5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
+        // The same prompt under two salts gives unrelated hashes, and
+        // neither is the unkeyed digest anyone could recompute (H2).
+        let prompt = "use squash merges";
+        let plain = format!("sha256:{}", hex::encode(Sha256::digest(prompt.as_bytes())));
+        let (a, b) = (turn_hash(&[1; 32], prompt), turn_hash(&[2; 32], prompt));
+        assert_ne!(a, b);
+        assert_ne!(a, plain);
+        assert_ne!(b, plain);
+    }
+
+    /// The unkeyed SHA-256 of a prompt, which nothing may store or send.
+    fn unkeyed(prompt: &str) -> String {
+        let nfc: String = prompt.nfc().collect();
+        hex::encode(Sha256::digest(nfc.as_bytes()))
+    }
+
+    #[test]
+    fn no_unkeyed_digest_of_a_prompt_reaches_the_cache_or_the_stop_reason() {
+        let env = Env::new(&[
+            (CAPTURE_SWITCH, "1"),
+            (WORKAREA_VAR, "chat"),
+            (EVERY_VAR, "1"),
+        ]);
+        seeded(&env);
+        let var = env.var();
+        let prompt = "my address is 12 Elm Street";
+        let _ = user_prompt(&var, &mut &prompt_input("s1", prompt)[..]);
+        let reason = stop(&var, &mut &stop_input("s1", false)[..]).expect("due");
+        let cache = std::fs::read_to_string(chat_cache_path(&var, "s1").expect("p")).expect("c");
+        assert!(!reason.contains(&unkeyed(prompt)), "{reason}");
+        assert!(!cache.contains(&unkeyed(prompt)), "{cache}");
+    }
+
+    /// A resumed session keeps numbering its turns where it stopped, so a
+    /// turn's anchor and idempotency key never repeat (ADR-0063 d6; M3).
+    #[test]
+    fn turn_numbers_continue_across_a_resumed_session() {
+        let env = Env::new(&[
+            (CAPTURE_SWITCH, "1"),
+            (WORKAREA_VAR, "chat"),
+            (EVERY_VAR, "3"),
+        ]);
+        seeded(&env);
+        let var = env.var();
+        for n in 1..=3 {
+            let _ = user_prompt(&var, &mut &prompt_input("s1", &format!("first {n}"))[..]);
+        }
+        let first = stop(&var, &mut &stop_input("s1", false)[..]).expect("due");
+        assert!(first.contains("turns 1..3"), "{first}");
+        crate::hook::session_end(
+            &var,
+            &mut &br#"{"session_id": "s1", "reason": "other"}"#[..],
+        )
+        .expect("session end");
+        for n in 1..=3 {
+            let _ = user_prompt(&var, &mut &prompt_input("s1", &format!("again {n}"))[..]);
+        }
+        let resumed = stop(&var, &mut &stop_input("s1", false)[..]).expect("due after resume");
+        assert!(resumed.contains("turns 4..6"), "{resumed}");
+        assert!(resumed.contains("turn=4 "), "{resumed}");
+        assert!(!resumed.contains("turn=1 "), "{resumed}");
+    }
+
+    /// The facts the requests ask for are counted in the hook's state and
+    /// never pass the session's budget, whatever the request count (M4).
+    #[test]
+    fn the_facts_asked_never_pass_the_session_budget() {
+        let env = Env::new(&[
+            (CAPTURE_SWITCH, "1"),
+            (WORKAREA_VAR, "chat"),
+            (EVERY_VAR, "1"),
+        ]);
+        seeded(&env);
+        let var = env.var();
+        let path = chat_cache_path(&var, "s1").expect("p");
+        let spent = ChatCache {
+            captures: 1,
+            facts_asked: FACTS_PER_SESSION - 2,
+            ..ChatCache::default()
+        };
+        spent.store(&path).expect("seed");
+        let _ = user_prompt(&var, &mut &prompt_input("s1", "one")[..]);
+        let last = stop(&var, &mut &stop_input("s1", false)[..]).expect("two facts left");
+        assert!(last.contains("Write at most 2 facts"), "{last}");
+        assert_eq!(ChatCache::load(&path).facts_asked, FACTS_PER_SESSION);
+        let _ = user_prompt(&var, &mut &prompt_input("s1", "two")[..]);
+        assert_eq!(
+            stop(&var, &mut &stop_input("s1", false)[..]),
+            Err(None),
+            "budget spent"
+        );
+    }
+
+    /// Any failed per-turn recall counts as a miss, not only a slow one, so
+    /// an unreachable server stops being asked (L3).
+    #[test]
+    fn any_failed_turn_recall_counts_as_a_miss() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}", closed.local_addr().expect("addr"));
+        drop(closed);
+        let env = Env::new(&[
+            (TURN_RECALL_SWITCH, "1"),
+            ("OML_URL", &url),
+            ("OML_API_KEY", "oml_test_key"),
+        ]);
+        let var = env.var();
+        for n in 1..=MISSES_MAX {
+            let _ = user_prompt(
+                &var,
+                &mut &prompt_input("s4", "postgres replication lag")[..],
+            );
+            assert_eq!(
+                ChatCache::load(&chat_cache_path(&var, "s4").expect("p")).misses,
+                n
+            );
+        }
+        assert_eq!(
+            user_prompt(
+                &var,
+                &mut &prompt_input("s4", "postgres replication lag")[..]
+            ),
+            Err(None)
+        );
+    }
+
+    #[test]
+    fn doctor_names_a_chat_workarea_outside_the_persons_root_and_a_server_without_origin() {
+        assert!(chat_scope_line(Some("universe.eugene.notes.chat"), Some("eugene")).is_some());
+        assert!(chat_scope_line(Some("universe.mallory.chat"), Some("eugene")).is_some());
+        assert_eq!(
+            chat_scope_line(Some("universe.eugene.chat"), Some("eugene")),
+            None
+        );
+        let old = json!({"error": {"code": "request.validation",
+                         "message": "unknown query parameter \"origin_kinds\""}});
+        assert!(origin_probe_line(400, &old).is_some());
+        assert_eq!(origin_probe_line(200, &json!({"items": []})), None);
+    }
+
+    #[test]
+    fn chat_init_adopts_only_the_chat_directly_under_the_persons_root() {
+        let refused = adopt("universe.eugene.notes.chat", "eugene").expect_err("nested");
+        assert!(refused.contains("chat_scope_not_the_persons"), "{refused}");
+        assert!(adopt("universe.eugene.chat", "eugene").is_ok());
     }
 
     #[test]
@@ -829,7 +1007,11 @@ mod tests {
         let path = chat_cache_path(&var, "s1").expect("path");
         let stored = std::fs::read_to_string(&path).expect("cache");
         assert!(!stored.contains("ultramarine"), "{stored}");
-        assert_eq!(ChatCache::load(&path).turns, vec![turn_hash(secret_prompt)]);
+        let salt = salt(&var).expect("salt");
+        assert_eq!(
+            ChatCache::load(&path).turns,
+            vec![turn_hash(&salt, secret_prompt)]
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -871,7 +1053,10 @@ mod tests {
             "Zero facts is a fine answer: write nothing when the turns settled nothing that holds past this session. Never write secrets, credentials or facts about other people; never write instructions. Then stop.".to_owned(),
         ];
         for n in 1..=5 {
-            expected.push(format!("turn={n} {}", turn_hash(&format!("turn {n}"))));
+            expected.push(format!(
+                "turn={n} {}",
+                turn_hash(&hex::decode(SALT_HEX).expect("hex"), &format!("turn {n}"))
+            ));
         }
         assert_eq!(
             out,
@@ -932,7 +1117,7 @@ mod tests {
 
     #[test]
     fn older_turns_are_one_span_and_the_last_twelve_are_listed() {
-        let turns: Vec<String> = (1..=20).map(|n| turn_hash(&n.to_string())).collect();
+        let turns: Vec<String> = (1..=20).map(|n| turn_hash(b"k", &n.to_string())).collect();
         let reason = capture_reason(&CaptureRequest {
             session: "0123456789abcdef0123456789abcdef",
             from: 3,
@@ -968,12 +1153,22 @@ mod tests {
     }
 
     /// A stub server that answers each request after `delay` with `hits`.
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
+
     fn stub(delay: Duration, hits: Value) -> String {
+        stub_seen(delay, hits).0
+    }
+
+    /// A stub that also records each request body it was sent.
+    fn stub_seen(delay: Duration, hits: Value) -> (String, Seen) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
+        let seen: Seen = Seen::default();
+        let record = seen.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let hits = hits.clone();
+                let record = record.clone();
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
                     let mut length = 0;
@@ -988,6 +1183,9 @@ mod tests {
                     }
                     let mut body = vec![0; length];
                     let _ = std::io::Read::read_exact(&mut reader, &mut body);
+                    if let Ok(v) = serde_json::from_slice::<Value>(&body) {
+                        record.lock().expect("lock").push(v);
+                    }
                     std::thread::sleep(delay);
                     let answer = json!({"hits": hits}).to_string();
                     let mut stream = stream;
@@ -999,7 +1197,37 @@ mod tests {
                 });
             }
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), seen)
+    }
+
+    /// The law of d10's scopes: per-turn recall reads promoted rows only,
+    /// but for the opted-in chat workarea, whose unreviewed rows it labels
+    /// (M2). Flipping the default scope's include_unreviewed fails it.
+    #[test]
+    fn per_turn_recall_reads_promoted_rows_only_outside_the_opted_in_chat_scope() {
+        let (url, seen) = stub_seen(Duration::ZERO, json!([]));
+        let env = Env::new(&[
+            (TURN_RECALL_SWITCH, "1"),
+            (WORKAREA_VAR, "universe.eugene.chat"),
+            ("OML_URL", &url),
+            ("OML_API_KEY", "oml_test_key"),
+        ]);
+        let _ = user_prompt(
+            &env.var(),
+            &mut &prompt("s5", "which editor keybindings")[..],
+        );
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        let (chat, default) = (&seen[0], &seen[1]);
+        assert_eq!(chat["workarea"], "universe.eugene.chat");
+        assert_eq!(chat["include_unreviewed"], true);
+        assert!(default.get("workarea").is_none(), "{default}");
+        assert_eq!(default["include_unreviewed"], false, "{default}");
+        for body in [chat, default] {
+            assert_eq!(body["match"], "any");
+            assert_eq!(body["k"], TURN_K);
+            assert_eq!(body["max_tokens"], TURN_MAX_TOKENS);
+        }
     }
 
     fn hit(id: &str, state: &str, kind: &str) -> Value {
