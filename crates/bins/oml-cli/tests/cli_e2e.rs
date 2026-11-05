@@ -6205,3 +6205,110 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     );
     task.abort();
 }
+
+/// `oml review list --ids-only` writes the ids a person's reviewer key may
+/// judge, `oml review approve --ids <file>` judges each with its own
+/// verdict and prints each outcome, a rerun replays, and an id in the
+/// reviewer's own lineage is skipped with exit 1 (ADR-0055 d11, d12).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("adr-import");
+    let issue = |name: &str, role: &str, held_by: &str, principal: &str, grant: &str| {
+        lab.issue(
+            name,
+            &[
+                "--role",
+                role,
+                "--held-by",
+                held_by,
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{wa}:{grant}"),
+            ],
+        )["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let loader = issue("loader", "writer", "agent", "crew/loader", "writer");
+    let twin = issue("twin", "writer", "agent", "eugene", "writer");
+    let reviewer = issue("eugene-review", "dreamer", "human", "eugene", "dreamer");
+    for key in ["adr-0001-d1", "adr-0001-d2"] {
+        let (code, _, log) = lab.json(
+            Some(&loader),
+            &[
+                "write",
+                &format!("Decision {key}."),
+                "--claim-key",
+                key,
+                "--workarea",
+                &wa,
+            ],
+        );
+        assert_eq!(code, 0, "write: {log}");
+    }
+    let (code, own, log) = lab.json(
+        Some(&twin),
+        &[
+            "write",
+            "Decision adr-0002-d1.",
+            "--claim-key",
+            "adr-0002-d1",
+            "--workarea",
+            &wa,
+        ],
+    );
+    assert_eq!(code, 0, "write: {log}");
+    let own = own["artifact_id"].as_str().expect("id").to_owned();
+
+    let (code, listed, log) = oml_text(
+        &lab.server,
+        &lab.creds,
+        Some(&reviewer),
+        &["review", "list", "--ids-only", "--claim-key-prefix", "adr-"],
+    );
+    assert_eq!(code, 0, "review list: {listed}{log}");
+    let ids: Vec<&str> = listed.lines().collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "the reviewer's own principal's row is not listed: {listed}"
+    );
+    let file = lab.dir.join("ids.txt");
+    std::fs::write(&file, &listed).expect("ids file");
+    let file = file.to_str().expect("utf-8 path");
+
+    let (code, first, log) = lab.json(Some(&reviewer), &["review", "approve", "--ids", file]);
+    assert_eq!(code, 0, "approve --ids: {log}");
+    assert_eq!(first["summary"]["approved"], 2, "{first}");
+    let (code, again, log) = lab.json(Some(&reviewer), &["review", "approve", "--ids", file]);
+    assert_eq!(code, 0, "rerun: {log}");
+    assert!(
+        again["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .all(|i| i["replayed"] == true),
+        "{again}"
+    );
+    let (code, skipped, _) = oml_text(
+        &lab.server,
+        &lab.creds,
+        Some(&reviewer),
+        &["review", "approve", "--ids", &own],
+    );
+    assert_eq!(code, 1, "a skipped item exits 1: {skipped}");
+    assert!(
+        skipped.contains("skipped  review.author_in_lineage"),
+        "{skipped}"
+    );
+    assert!(
+        skipped.contains("0 approved, 0 rejected, 1 skipped"),
+        "{skipped}"
+    );
+    lab.stop().await;
+}

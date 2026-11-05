@@ -43,9 +43,9 @@ use oml_app::types::{
     AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
     ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
     ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
-    GuardrailFields, KeyAccess, KeyRecord, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts, RefreshOutcome, SweepReport,
-    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts, RefreshOutcome,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
     WorkareaRecord,
 };
 use serde_json::{Value, json};
@@ -1617,6 +1617,152 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             "the rows key {key} claimed"
         );
     }
+}
+
+/// The held listing serves what the queue would serve the reviewer and
+/// claims nothing: only rows on the nodes it is handed, never a row whose
+/// lineage holds the reviewer's key or principal, never another key's
+/// claim, narrowed by author and `claim_key` prefix, oldest first and
+/// resumed strictly after a position (ADR-0055 d2).
+pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(6);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0xB3);
+    let elsewhere = Uuid::from_u128(0xB4);
+    let loader = Uuid::from_u128(0xD2);
+    let other = Uuid::from_u128(0xD3);
+    let reviewer = Uuid::from_u128(0xE1);
+    let rows = [
+        (Uuid::from_u128(0xC1), wa, "loader", loader, "adr-0001-d1"),
+        (Uuid::from_u128(0xC2), wa, "loader", loader, "adr-0001-d2"),
+        (Uuid::from_u128(0xC3), wa, "other", other, "note-1"),
+        (Uuid::from_u128(0xC4), wa, "eugene", reviewer, "adr-0002-d1"),
+        (
+            Uuid::from_u128(0xC5),
+            elsewhere,
+            "loader",
+            loader,
+            "adr-0003-d1",
+        ),
+        (Uuid::from_u128(0xC6), wa, "loader", loader, "adr-0004-d1"),
+    ];
+    for (id, workarea, author, key, claim_key) in rows {
+        let mut memory = held_memory(rig.tenant_id, workarea, id, author, key, "body");
+        memory.claim_key = claim_key.to_owned();
+        rig.commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory,
+                enqueue: true,
+            },
+            None,
+        )
+        .await
+        .expect("commit");
+    }
+    // Another key claims C6 through review next; the listing then skips it.
+    let claimed = store
+        .review_claim_next(rig.tenant_id, "carol", Uuid::from_u128(0xE2), &[wa])
+        .await
+        .expect("claim")
+        .expect("a row waits");
+    let ids = |rows: Vec<HeldRow>| rows.iter().map(|r| r.memory.memory_id).collect::<Vec<_>>();
+    let all = HeldFilter {
+        nodes: vec![wa],
+        author_key_id: None,
+        claim_key_prefix: None,
+    };
+    let listed = ids(store
+        .review_held(rig.tenant_id, "eugene", reviewer, &all, None, 10)
+        .await
+        .expect("listing"));
+    let mut expected: Vec<Uuid> = [0xC1, 0xC2, 0xC3, 0xC6]
+        .into_iter()
+        .map(Uuid::from_u128)
+        .filter(|id| *id != claimed.memory_id)
+        .collect();
+    expected.sort_by_key(|id| rows.iter().position(|r| r.0 == *id));
+    assert_eq!(
+        listed, expected,
+        "the reviewer's own row, another node's row and another key's claim are never listed"
+    );
+    // Listing claims nothing: the queue still serves a fresh key every
+    // listed row.
+    let again = ids(store
+        .review_held(rig.tenant_id, "eugene", reviewer, &all, None, 10)
+        .await
+        .expect("listing"));
+    assert_eq!(again, expected, "a listing claims nothing");
+    assert!(
+        store
+            .review_claimed(rig.tenant_id, reviewer)
+            .await
+            .expect("claimed")
+            .is_empty(),
+        "the listing key holds no claim"
+    );
+    // An empty node set lists nothing.
+    let none = HeldFilter {
+        nodes: Vec::new(),
+        ..all.clone()
+    };
+    assert!(
+        store
+            .review_held(rig.tenant_id, "eugene", reviewer, &none, None, 10)
+            .await
+            .expect("listing")
+            .is_empty()
+    );
+    // Author and prefix narrow together.
+    let narrowed = HeldFilter {
+        nodes: vec![wa],
+        author_key_id: Some(loader),
+        claim_key_prefix: Some("adr-0001-".to_owned()),
+    };
+    assert_eq!(
+        ids(store
+            .review_held(rig.tenant_id, "eugene", reviewer, &narrowed, None, 10)
+            .await
+            .expect("listing")),
+        [0xC1, 0xC2]
+            .into_iter()
+            .map(Uuid::from_u128)
+            .filter(|id| *id != claimed.memory_id)
+            .collect::<Vec<_>>()
+    );
+    // A prefix is literal: `_` and `%` match only themselves.
+    let literal = HeldFilter {
+        claim_key_prefix: Some("adr_".to_owned()),
+        ..all.clone()
+    };
+    assert!(
+        store
+            .review_held(rig.tenant_id, "eugene", reviewer, &literal, None, 10)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "a prefix is not a pattern"
+    );
+    // Paging resumes strictly after the last row served.
+    let first = store
+        .review_held(rig.tenant_id, "eugene", reviewer, &all, None, 1)
+        .await
+        .expect("listing");
+    let after = ListingPosition {
+        created_at: first[0].held_since.clone(),
+        artifact_id: first[0].memory.memory_id,
+    };
+    let rest = ids(store
+        .review_held(rig.tenant_id, "eugene", reviewer, &all, Some(&after), 10)
+        .await
+        .expect("listing"));
+    assert_eq!(
+        rest,
+        expected[1..].to_vec(),
+        "the next page starts after the last"
+    );
 }
 
 /// Key rows fold in with their event and resolve by value hash — one
@@ -6646,6 +6792,7 @@ where
     ))
     .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
+    Box::pin(journal_review_held_laws(&new_store().await)).await;
     Box::pin(journal_key_lookup_by_hash(&new_store().await)).await;
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(
         &new_store().await,

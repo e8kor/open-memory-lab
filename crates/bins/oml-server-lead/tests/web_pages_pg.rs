@@ -493,3 +493,186 @@ async fn a_user_named_like_a_shared_workarea_is_name_taken() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     drop_db(&db).await;
 }
+
+/// The value of the first `<input … name="{name}" value="…">` on `page`.
+fn input_value(page: &str, name: &str) -> String {
+    let at = page
+        .find(&format!(r#"name="{name}" value=""#))
+        .unwrap_or_else(|| panic!("no input {name}: {page}"));
+    let rest = &page[at + name.len() + 15..];
+    rest[..rest.find('"').expect("a closing quote")].to_owned()
+}
+
+fn form_post(path: &str, cookie: &str, fields: &[(&str, &str)]) -> Request<Body> {
+    let body: Vec<String> = fields
+        .iter()
+        .map(|(k, v)| format!("{k}={}", v.replace(' ', "+")))
+        .collect();
+    Request::post(path)
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("sec-fetch-site", "same-origin")
+        .body(Body::from(body.join("&")))
+        .expect("a request")
+}
+
+/// The admin page's bulk review (ADR-0055 d10): the listing shows each
+/// held item's text under the person's reviewer key, "select all" checks
+/// every box, `bulk_confirm` shows what was picked and records nothing,
+/// `bulk_verdict` records one verdict per item and shows each outcome, a
+/// resubmitted confirmation replays, and a form without the CSRF token is
+/// refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
+    let db = fresh_name();
+    if !mint_database(&db).await {
+        return;
+    }
+    let store = serving_store(&db).await;
+    let key = SigningKey::from_bytes(&OsIds.new_secret());
+    let boot = tenant(&store, &key, "oml").await;
+    let providers = MemSignIn::new();
+    let router = lead(&store, &key, &providers).await;
+    let admin = boot.admin_key.value.clone();
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/web/emails",
+            &admin,
+            json!({"email": "alice@example.com", "user": "alice", "admin": true}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, token) = sign_in(&router, &providers, 7, "alice@example.com").await;
+    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    // Alice's agent writes three held decisions into her root.
+    let (status, _, issued) = send(
+        &router,
+        json_post(
+            "/v2/keys",
+            &admin,
+            json!({"role": "writer", "name": "alice-loader", "principal": "alice/loader",
+                   "user": "alice", "grants": [
+                       {"workarea": "alice", "role": "writer"},
+                       {"workarea": "alice", "role": "reader"}]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    let loader: Value = serde_json::from_str(&issued).expect("JSON");
+    let loader = loader["value"].as_str().expect("a value").to_owned();
+    let mut ids = Vec::new();
+    for claim_key in ["adr-0001-d1", "adr-0001-d2", "adr-0001-rejected"] {
+        let (status, _, body) = send(
+            &router,
+            Request::post("/v1/memories")
+                .header(header::AUTHORIZATION, format!("Bearer {loader}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("idempotency-key", claim_key)
+                .body(Body::from(
+                    json!({"claim_key": claim_key, "body": format!("Decision {claim_key}.")})
+                        .to_string(),
+                ))
+                .expect("a request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        let v: Value = serde_json::from_str(&body).expect("JSON");
+        ids.push(v["artifact_id"].as_str().expect("an id").to_owned());
+    }
+    let get = |path: &str| {
+        Request::get(path)
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .expect("a request")
+    };
+    let (status, _, page) = send(&router, get("/web/admin?view=held")).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for (i, id) in ids.iter().enumerate() {
+        assert!(
+            page.contains(&format!(r#"name="pick_{i:03}" value="{id}">"#)),
+            "{page}"
+        );
+    }
+    assert!(
+        page.contains("Decision adr-0001-d2."),
+        "the text is shown: {page}"
+    );
+    assert!(page.contains("(you)"), "same user is shown: {page}");
+    let (_, _, all) = send(
+        &router,
+        get("/web/admin?view=held&claim_key_prefix=adr-0001-d&select=all"),
+    )
+    .await;
+    assert_eq!(all.matches(" checked>").count(), 2, "{all}");
+    let csrf = input_value(&page, "csrf_token");
+
+    // Without the token nothing happens.
+    let (status, _, _) = send(
+        &router,
+        form_post(
+            "/web/admin",
+            &cookie,
+            &[
+                ("action", "bulk_confirm"),
+                ("verdict", "approve"),
+                ("pick_000", &ids[0]),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The confirmation records nothing.
+    let (status, _, confirm) = send(
+        &router,
+        form_post(
+            "/web/admin",
+            &cookie,
+            &[
+                ("action", "bulk_confirm"),
+                ("csrf_token", &csrf),
+                ("verdict", "approve"),
+                ("reason", ""),
+                ("pick_000", &ids[0]),
+                ("pick_001", &ids[1]),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirm}");
+    assert!(confirm.contains("Approve 2 memories?"), "{confirm}");
+    let (_, _, still) = send(&router, get("/web/admin?view=held")).await;
+    assert!(
+        ids.iter().all(|id| still.contains(id.as_str())),
+        "nothing judged yet: {still}"
+    );
+
+    let joined = input_value(&confirm, "artifact_ids");
+    assert_eq!(joined, format!("{} {}", ids[0], ids[1]));
+    let idem = input_value(&confirm, "idempotency_key");
+    let verdict_form = [
+        ("action", "bulk_verdict"),
+        ("csrf_token", csrf.as_str()),
+        ("verdict", "approve"),
+        ("reason", ""),
+        ("artifact_ids", joined.as_str()),
+        ("idempotency_key", idem.as_str()),
+    ];
+    let (status, _, outcome) = send(&router, form_post("/web/admin", &cookie, &verdict_form)).await;
+    assert_eq!(status, StatusCode::OK, "{outcome}");
+    assert!(
+        outcome.contains("2 approved, 0 rejected, 0 skipped."),
+        "{outcome}"
+    );
+    assert!(outcome.contains("same user"), "{outcome}");
+    let (_, _, again) = send(&router, form_post("/web/admin", &cookie, &verdict_form)).await;
+    assert!(
+        again.contains("replayed"),
+        "a resubmitted form replays: {again}"
+    );
+    let (_, _, left) = send(&router, get("/web/admin?view=held")).await;
+    assert!(left.contains(&ids[2]) && !left.contains(&ids[0]), "{left}");
+    drop_db(&db).await;
+}
