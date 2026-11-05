@@ -214,8 +214,8 @@ The act that finds the review policy satisfied — for a claim or a proposed cla
 full lineage closure at this moment, with the policy snapshot journalled. A claim edge's and a
 brief edge's ratification (`subject_kind: "brief_edge"`, with `edge_id`, the member's
 `artifact_id` and the `workarea_id`) also carry `same_user`, `true` when the ratifying key and
-the proposing key name one user ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), read from the proposing key's row; a tenant key names no user, so a ratification
-involving one is `false`. A brief edge's ratification carries no lineage digest:
+the proposing key act for one person ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), by the one rule
+`lifecycle.promote` states. A brief edge's ratification carries no lineage digest:
 membership in a brief widens no closure.
 
 ### review.reopen
@@ -288,8 +288,11 @@ Ratified content becomes readable by others and silver materialization is enqueu
 a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
 journals `lifecycle.supersede` instead
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). `same_user` is `true` when the
-reviewing key and the authoring key name one user, read from each key's row, and `false` when
-either is a tenant key; a verdict from a bulk review journals this event per item, the same as a
+reviewing key and the authoring key act for one person. That is one rule for a claim's approval,
+a transition's ratification and an edge's: each key's person is read from its row as a name, a
+user key's root's name or a session key's `session_user`, so a person's `<user>-review` key is
+that person; a tenant key with no session user acts for no one and makes the mark `false`, and
+so do two keys of two people. A verdict from a bulk review journals this event per item, the same as a
 single verdict
 ([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 d4, d7). A record a server before v0.5.7 journalled carries no `same_user`.

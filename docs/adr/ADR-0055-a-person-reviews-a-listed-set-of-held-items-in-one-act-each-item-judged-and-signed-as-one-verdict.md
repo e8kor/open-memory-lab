@@ -111,7 +111,10 @@ Decided, and built on `feat/bulk-review` for v0.5.7 with this record proposed.
   `true` when the authoring key and the reviewing key act for one person. A key's person is read
   as a name: a user key's root's name (ADR-0044 d2), or a session key's `session_user`, since
   `<user>-review` is a tenant key that names its person that way (ADR-0045 d6); a tenant key
-  with neither is no one's, so the mark is `false`. The mark says what the step is worth to an auditor; it relaxes
+  with neither is no one's, so the mark is `false`. This is the one definition: transitions and
+  edges use the same function, so a session key would read the same there. A tenant crew key an
+  admin issues for a person's import is no one's, and every approval of its writes reads `false`;
+  the operator who wants the mark loads through a key issued with `user`. The mark says what the step is worth to an auditor; it relaxes
   nothing, and it is not `self_signed` (ADR-0001 d5).
 
 - **d8 — Bulk reject is built, with one reason applied to each item.** Rejecting a batch the
@@ -167,7 +170,8 @@ Decided, and built on `feat/bulk-review` for v0.5.7 with this record proposed.
   still safe to repeat: a decided row is not held, so it is reported as stale (d6).
 
 - **d13 — One metric family and one doctor line.** `oml_review_bulk_items_total{outcome}` counts
-  items by `approved`, `rejected` and `skipped` on the metrics listener (ADR-0042 d11), and the
+  items by `approved`, `rejected` and `skipped`, from the route and the admin page alike, a
+  replayed item not counted again, on the metrics listener (ADR-0042 d11), and the
   request line carries the route as every request does. `oml doctor` run with a dreamer key held
   by an agent warns that bulk review is refused for it and names the fix — a key issued
   `--held-by human` — since the refusal otherwise first appears mid-import.

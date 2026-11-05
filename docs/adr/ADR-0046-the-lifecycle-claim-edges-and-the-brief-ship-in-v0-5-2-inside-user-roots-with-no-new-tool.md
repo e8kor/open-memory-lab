@@ -7,7 +7,7 @@ answers: how the status ladder and claim edges, built on two branches before the
 
 # ADR-0046 — The lifecycle, claim edges and the brief ship in v0.5.2 inside user roots, with no new tool
 
-**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day
+**Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too)
 
 **Release:** introduced in v0.5.2 ([releases](../product/releases.md#decisions))
 
@@ -149,7 +149,8 @@ say otherwise.
   `vocab_edges` and the narrowed dreamer grant (`LabelledGrant`), built for the parked ADR-0027;
   nothing else of the vocabulary work is replayed. No route serves them.
 - **Over ADR-0044.** d1's `user_root` refusal reads the workarea row's `user_root`, d2's
-  `same_user` compares the proposing key's `user`, read from its key row, with the ratifier's,
+  `same_user` compares the proposing key's `user`, read from its key row, with the ratifier's
+  (since ADR-0055 d7, the person behind each key, a session key's `session_user` included),
   and d5's universe refusal reads the key's `user`; all three are built over v0.5.0's user roots.
 - **The web pages show none of this in v0.5.2.** Neither ADR-0045 nor this record puts the
   lifecycle, edges or the brief on the user page or the admin page; a read-only view of a

@@ -719,6 +719,45 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
             .map(|e| &e.envelope.payload)
             .collect::<Vec<_>>()
     );
+    // A single approve through the same session reviewer key is marked
+    // the same person as the bulk ones are (ADR-0055 d7).
+    let (status, _, served) = send(
+        &router,
+        form_post(
+            "/web/admin",
+            &cookie,
+            &[("action", "review_next"), ("csrf_token", &csrf)],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let serve_id = input_value(&served, "serve_id");
+    let (status, _, _) = send(
+        &router,
+        form_post(
+            "/web/admin",
+            &cookie,
+            &[
+                ("action", "verdict"),
+                ("csrf_token", &csrf),
+                ("serve_id", &serve_id),
+                ("verdict", "approve"),
+                ("reason", ""),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let events = store
+        .events_range(boot.tenant_id, 1, 1_000)
+        .await
+        .expect("journal");
+    let promotes: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "lifecycle.promote")
+        .map(|e| e.envelope.payload["same_user"].clone())
+        .collect();
+    assert_eq!(promotes, [true, true, true], "bulk, bulk, single");
     // The page's verdicts are counted, once each: the replayed resubmission
     // adds nothing (ADR-0055 d13).
     let metrics = traffic.metrics().encode();

@@ -3184,9 +3184,6 @@ where
         })
     }
 
-    /// The user a key of the tenant names, read from its key row; `None`
-    /// for a tenant key or a key the tenant does not hold (ADR-0044 d2;
-    /// ADR-0046 d2).
     /// The person a key acts for, by name: a session key's
     /// `session_user`, else the name of a user key's root; `None` for a
     /// tenant key (ADR-0044 d2, ADR-0045 d6).
@@ -3204,11 +3201,12 @@ where
         }
     }
 
-    /// Whether the authoring key and the reviewing key act for one person,
-    /// the `same_user` mark of a claim's ratification (ADR-0046 d2,
-    /// ADR-0055 d7). A person reviews through `<user>-review`, a session
-    /// key that names its person by `session_user` rather than by a user
-    /// root, so both are read as the person's name.
+    /// Whether the proposing or authoring key and the ratifying key act for
+    /// one person: the one `same_user` rule of a claim's approval, a
+    /// transition's ratification and an edge's (ADR-0046 d2, ADR-0055 d7).
+    /// A person reviews through `<user>-review`, a session key that names
+    /// its person by `session_user` rather than by a user root, so both are
+    /// read as the person's name; a key the tenant does not hold is no one's.
     async fn same_person(
         &self,
         tenant_id: Uuid,
@@ -3222,15 +3220,7 @@ where
             self.person_of(&author).await?,
             self.person_of(reviewer).await?,
         );
-        Ok(matches!((a, r), (Some(a), Some(r)) if a == r))
-    }
-
-    async fn key_user(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<Uuid>, AppError> {
-        Ok(self
-            .journal
-            .key(tenant_id, key_id)
-            .await?
-            .and_then(|k| k.user))
+        Ok(same_user(a.as_ref(), r.as_ref()))
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -3578,10 +3568,7 @@ where
                 "proposed_by_key_id": proposal.proposer_key_id.to_string(),
                 "ratified_by_key_id": key.key_id.to_string(),
                 "policy_snapshot": policy_snapshot,
-                "same_user": same_user(
-                    self.key_user(key.tenant_id, proposal.proposer_key_id).await?,
-                    key.user,
-                ),
+                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
             }),
         )?;
         self.commit(
@@ -4272,6 +4259,44 @@ where
             });
         }
         Ok(HeldPage { items, next_cursor })
+    }
+
+    /// The named held rows as the listing would show them to this key, for
+    /// the admin page's confirmation (ADR-0055 d10): each id with its row
+    /// when it is still held, in the key's dreamer access and outside its
+    /// exclusion, else `None`. It claims and journals nothing.
+    pub async fn review_named(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, Option<ServedMemory>)>, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        require_person_reviewer(key)?;
+        let nodes: BTreeSet<Uuid> = self.dreamer_nodes(&caller).await?.into_iter().collect();
+        let mut rows: BTreeMap<Uuid, MemoryRecord> = self
+            .journal
+            .memories(key.tenant_id, ids)
+            .await?
+            .into_iter()
+            .filter(|m| {
+                m.status == MemoryStatus::Held
+                    && nodes.contains(&m.workarea_id)
+                    && !m.lineage_key_ids.contains(&key.key_id)
+                    && !m.lineage_principals.contains(&key.principal)
+            })
+            .map(|m| (m.memory_id, m))
+            .collect();
+        let mut ancestries = BTreeMap::new();
+        let mut named = Vec::with_capacity(ids.len());
+        for id in ids {
+            let served = match rows.remove(id) {
+                Some(m) => Some(self.served_in(&caller, m, &mut ancestries).await?),
+                None => None,
+            };
+            named.push((*id, served));
+        }
+        Ok(named)
     }
 
     /// A bulk verdict (ADR-0055 d3, d4): each named id judged in turn by
@@ -5909,10 +5934,7 @@ where
                 "workarea_id": edge.workarea_id.to_string(),
                 "verdict_event_ids": [],
                 "ratifier_key_id": key.key_id.to_string(),
-                "same_user": same_user(
-                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
-                    key.user,
-                ),
+                "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
                 "policy_snapshot": review_policy(),
             }),
         )?;
@@ -6207,10 +6229,7 @@ where
             // verdict precedes it.
             "verdict_event_ids": [],
             "ratifier_key_id": key.key_id.to_string(),
-            "same_user": same_user(
-                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
-                    key.user,
-                ),
+            "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
             "policy_snapshot": {
                 "k": 1,
                 "required_roles": ["dreamer"],

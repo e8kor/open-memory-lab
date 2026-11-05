@@ -1209,9 +1209,7 @@ where
             .review_bulk(&token, &request)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
-        for item in &items {
-            st.traffic.metrics().bulk_item(bulk_outcome(item));
-        }
+        count_bulk(st.traffic.metrics(), &items);
         Ok(json_response(StatusCode::OK, &bulk_json(items)))
     }
 
@@ -2421,6 +2419,17 @@ pub fn bulk_outcome(item: &BulkItem) -> &'static str {
         Ok(outcome) if outcome.state == oml_app::domain::MemoryStatus::Promoted => "approved",
         Ok(_) => "rejected",
         Err(_) => "skipped",
+    }
+}
+
+/// Counts a bulk verdict's items in `oml_review_bulk_items_total`, once
+/// each: an item that replays its idempotency record was counted when it
+/// was decided (ADR-0055 d13). The route and the admin page both call it.
+pub(crate) fn count_bulk(metrics: &traffic::metrics::Metrics, items: &[BulkItem]) {
+    for item in items {
+        if !item.result.as_ref().is_ok_and(|o| o.replayed) {
+            metrics.bulk_item(bulk_outcome(item));
+        }
     }
 }
 

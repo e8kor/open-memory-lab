@@ -271,11 +271,12 @@ fn a_user_root_climbs_to_committed_and_validated_is_refused_as_user_root() {
 }
 
 #[test]
-fn a_ratification_is_same_user_only_when_both_keys_name_one_user() {
-    let (alice, bob) = (Uuid::from_u128(1), Uuid::from_u128(2));
-    assert!(same_user(Some(alice), Some(alice)));
-    assert!(!same_user(Some(alice), Some(bob)));
-    assert!(!same_user(Some(alice), None));
+fn a_ratification_is_same_user_only_when_both_keys_act_for_one_person() {
+    let alice = oml_domain::name::Name::parse("alice").expect("a name");
+    let bob = oml_domain::name::Name::parse("bob").expect("a name");
+    assert!(same_user(Some(&alice), Some(&alice)));
+    assert!(!same_user(Some(&alice), Some(&bob)));
+    assert!(!same_user(Some(&alice), None));
     assert!(!same_user(None, None));
 }
 

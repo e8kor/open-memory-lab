@@ -975,8 +975,13 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 )
                 .as_bytes(),
             );
+            let named = self
+                .app
+                .review_named(Bearer::Session(&review), &ids)
+                .await
+                .map_err(app_error)?;
             let mut body = format!(
-                r#"<p class="label">Bulk review</p><h1>{} {} memories?</h1><p class="lede">Each gets its own verdict as your reviewer key, as if you had reviewed it alone. A memory that is no longer held, or that your reviewer key may not judge, is skipped and shown as skipped.</p><table><tr><th>Artifact</th></tr>"#,
+                r#"<p class="label">Bulk review</p><h1>{} {} memories?</h1><p class="lede">Each gets its own verdict as your reviewer key, as if you had reviewed it alone. A memory that is no longer held, or that your reviewer key may not judge, is skipped and shown as skipped.</p><table><tr><th>Claim key</th><th>First line</th><th>Artifact</th></tr>"#,
                 if verdict == Verdict::Approve {
                     "Approve"
                 } else {
@@ -984,8 +989,23 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 },
                 ids.len()
             );
-            for id in &ids {
-                let _ = write!(body, r#"<tr><td class="mono">{id}</td></tr>"#);
+            for (id, served) in &named {
+                match served {
+                    Some(m) => {
+                        let _ = write!(
+                            body,
+                            r#"<tr><td class="mono">{}</td><td class="text">{}</td><td class="mono">{id}</td></tr>"#,
+                            short(&m.memory.claim_key),
+                            text(m.memory.body.lines().next().unwrap_or_default())
+                        );
+                    }
+                    None => {
+                        let _ = write!(
+                            body,
+                            r#"<tr><td class="dim" colspan="2">no longer held, or not yours to judge: it will be skipped</td><td class="mono">{id}</td></tr>"#
+                        );
+                    }
+                }
             }
             body.push_str("</table>");
             if let Some(reason) = &reason {
@@ -1029,6 +1049,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             .review_bulk(Bearer::Session(&review), &req)
             .await
             .map_err(app_error)?;
+        crate::count_bulk(self.traffic.metrics(), &items);
         let answer = crate::bulk_json(items);
         let mut body = format!(
             r#"<p class="label">Bulk review</p><h1>Recorded</h1><p class="lede">{} approved, {} rejected, {} skipped.</p><table><tr><th>Artifact</th><th>Outcome</th><th>Detail</th></tr>"#,

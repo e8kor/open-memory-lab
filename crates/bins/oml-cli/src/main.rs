@@ -3622,17 +3622,10 @@ fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
 // oml doctor
 // ---------------------------------------------------------------------------
 
-/// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
-/// URL and which set the key, never the key; `/healthz` and `/readyz` at
-/// the first source's URL, keyless, so a URL alone is enough to probe; and
-/// `GET /v2/whoami` and the events tail only when that same source also
-/// holds the key. No URL in the first source sends nothing and fails; a URL
-/// without its key warns, naming the missing setting.
 /// Whether this key may review in bulk, for a dreamer key only (ADR-0055
 /// d1, d13): a key a person holds may; one held by an agent or a service is
-/// refused, which a person holding such a key otherwise learns mid-import.
-/// A crew's key is meant to be refused, so the line is a note, not a
-/// warning.
+/// refused, which a person holding such a key otherwise learns mid-import,
+/// so the line warns and names the fix.
 fn review_doctor(me: Option<&Value>) -> Option<String> {
     let me = me?;
     if me["role"] != "dreamer" {
@@ -3641,12 +3634,18 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     Some(match me["held_by"].as_str() {
         Some("human") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
         held_by => format!(
-            "note bulk review: refused for this key, held by {}: bulk review is a person's act (access.verb_ceiling, bulk_review_is_human_only); a person reviews in bulk with a dreamer key issued --held-by human, or on the admin page (ADR-0055 d1)",
+            "warn bulk review: refused for this key, held by {}: bulk review is a person's act (access.verb_ceiling, bulk_review_is_human_only); a person reviews in bulk with a dreamer key issued --held-by human, or on the admin page (ADR-0055 d1)",
             held_by.unwrap_or("unknown")
         ),
     })
 }
 
+/// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
+/// URL and which set the key, never the key; `/healthz` and `/readyz` at
+/// the first source's URL, keyless, so a URL alone is enough to probe; and
+/// `GET /v2/whoami` and the events tail only when that same source also
+/// holds the key. No URL in the first source sends nothing and fails; a URL
+/// without its key warns, naming the missing setting.
 fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let source = first_source(cli, stored);
     let url_source = source
@@ -3740,9 +3739,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let oauth_ok = !oauth.as_ref().is_some_and(|o| o["state"] == "failing");
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
+    let review_warn = review.as_ref().is_some_and(|line| line.starts_with("warn"));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() || reads_universe == Some(false) || web_warn || search_warn {
+    } else if me.is_none()
+        || reads_universe == Some(false)
+        || web_warn
+        || search_warn
+        || review_warn
+    {
         "warn"
     } else {
         "ok"
