@@ -193,6 +193,8 @@ impl World {
             .submit_memory(
                 key.value.as_str(),
                 &SubmitRequest {
+                    valid_from: None,
+                    valid_until: None,
                     anchor: None,
                     idempotency_key: idem.to_owned(),
                     claim_key: Some(format!("claim-{idem}")),
@@ -231,6 +233,8 @@ impl World {
             .recall(
                 key.value.as_str(),
                 &RecallRequest {
+                    include_expired: false,
+                    now: None,
                     anchor: oml_app::types::AnchorFilter::default(),
                     query: query.to_owned(),
                     k: 10,
@@ -348,6 +352,8 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
             .recall(
                 stranger.value.as_str(),
                 &RecallRequest {
+                    include_expired: false,
+                    now: None,
                     anchor: oml_app::types::AnchorFilter::default(),
                     query: "canary".to_owned(),
                     k: 10,
@@ -630,6 +636,8 @@ async fn a_curator_cannot_act_outside_an_in_progress_scope() {
         .submit_memory(
             w.curator.value.as_str(),
             &SubmitRequest {
+                valid_from: None,
+                valid_until: None,
                 anchor: None,
                 idempotency_key: "c1".to_owned(),
                 claim_key: Some("claim-c1".to_owned()),
@@ -746,6 +754,8 @@ async fn every_curator_act_is_journalled_under_its_key_and_reversible() {
         .supersede(
             w.curator.value.as_str(),
             &SupersedeRequest {
+                valid_from: None,
+                valid_until: None,
                 anchor: None,
                 expected_version: 1,
                 idempotency_key: "r1".to_owned(),
@@ -1249,6 +1259,8 @@ async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
         .submit_memory(
             w.ann.value.as_str(),
             &SubmitRequest {
+                valid_from: None,
+                valid_until: None,
                 anchor: None,
                 idempotency_key: "a1".to_owned(),
                 claim_key: Some("claim-a1".to_owned()),

@@ -69,6 +69,7 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     app.issue_key(
         admin,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: name(&format!("time-key-{n}")),
             principal: format!("principal-{n}"),
@@ -169,7 +170,7 @@ fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: Some(pipeline.as_str().to_owned()),
         match_mode: MatchMode::Any,

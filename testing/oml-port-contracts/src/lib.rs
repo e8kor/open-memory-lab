@@ -1575,6 +1575,7 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
     hold(&mut other_tenant, store, foreign).await.expect("hold");
 
     let scope = |nodes: Vec<Uuid>| CandidateScope {
+        expired_at: None,
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: Vec::new(),
         kinds: vec![
@@ -1589,7 +1590,8 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
         }),
     };
     for kind in store.retrievers() {
-        if kind == RetrieverKind::Sparse {
+        // The time leg reads only a query's date window; its own laws hold it.
+        if kind == RetrieverKind::Sparse || kind == RetrieverKind::Time {
             continue;
         }
         let read = |nodes: Vec<Uuid>| {
@@ -1601,6 +1603,8 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
                         kind,
                         &scope,
                         RetrievalQuery {
+                            window: None,
+                            within: &[],
                             query: "canary",
                             match_mode: MatchMode::Any,
                             k: 20,
