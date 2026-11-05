@@ -154,6 +154,25 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
             }))
         }
     };
+    // The reranker loads before the lead serves: a reranking pipeline
+    // without its pinned model stops the start, naming the file and the
+    // remedy (ADR-0053 d3, d8).
+    let reranker = {
+        let (search, settings) = (config.search.clone(), config.rerank.clone());
+        tokio::task::spawn_blocking(move || {
+            oml_server_lead::load_reranker(&search, &settings, oml_server_lead::fetch_model_file)
+        })
+        .await
+        .map_err(|e| format!("search.rerank: {e}"))?
+        .map_err(|e| format!("search.rerank: {e}"))?
+    };
+    if let Some(model) = &reranker {
+        tracing::info!(
+            event = "rerank_model_loaded",
+            model = model.model(),
+            "reranker loaded"
+        );
+    }
     let start = start_lead_with(
         &store,
         signing_key,
@@ -163,6 +182,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         config.web_pages(),
         config.brief_max_tokens,
         Some(config.search.clone()),
+        reranker,
     )
     .await?;
     match &start.fork_check {

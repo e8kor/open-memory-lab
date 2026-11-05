@@ -83,8 +83,104 @@ pub struct Config {
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
     pub brief_max_tokens: u64,
     /// `search.enabled` and `search.default`: the pipelines served and the
-    /// default (ADR-0049 d4).
+    /// default (ADR-0049 d4), with `search.rerank.depth` and
+    /// `search.rerank.floor` (ADR-0053 d4, d6).
     pub search: SearchConfig,
+    /// `search.rerank.*`: the model a reranking pipeline loads and how it
+    /// is served (ADR-0053 d3, d5).
+    pub rerank: RerankSettings,
+}
+
+/// `search.rerank.*` beyond the policy the core reads (configuration.md;
+/// ADR-0053 d3, d5): which pinned model, where its files are, whether the
+/// lead may fetch the missing ones at start, and the cap and deadline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RerankSettings {
+    pub model: oml_rerank::ModelSpec,
+    pub model_dir: PathBuf,
+    pub fetch: bool,
+    pub limits: oml_rerank::Limits,
+}
+
+/// `search.rerank.max_concurrent`'s default (ADR-0053 d5).
+pub const DEFAULT_RERANK_MAX_CONCURRENT: usize = 2;
+
+/// `search.rerank.timeout_ms`'s default (ADR-0053 d5).
+pub const DEFAULT_RERANK_TIMEOUT_MS: u64 = 1_000;
+
+impl Default for RerankSettings {
+    fn default() -> Self {
+        let model = oml_rerank::MINILM_L6;
+        Self {
+            model,
+            model_dir: PathBuf::from("oml-models").join(model.name),
+            fetch: false,
+            limits: oml_rerank::Limits {
+                max_concurrent: DEFAULT_RERANK_MAX_CONCURRENT,
+                timeout: std::time::Duration::from_millis(DEFAULT_RERANK_TIMEOUT_MS),
+            },
+        }
+    }
+}
+
+/// The largest model file the lead fetches: the pinned weights are about
+/// 91 MB, so anything far larger is not the pinned file.
+const MODEL_FILE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Fetches one pinned model file over HTTPS, following the repository's
+/// redirect to its storage; the caller checks the digest (ADR-0053 d3).
+///
+/// # Errors
+///
+/// The transport's failure or a status other than 200, named.
+pub fn fetch_model_file(url: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let response = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(300))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(MODEL_FILE_MAX_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// Loads the reranker a configuration's reranking pipelines call, or
+/// `None` when it serves none: the missing files fetched first when
+/// `search.rerank.fetch` allows it, through `get`, then every file checked
+/// against its pinned digest (ADR-0053 d3, d8). Blocking: it reads the
+/// model's files.
+///
+/// # Errors
+///
+/// The model's file or fetch refusal, naming the file and the remedy.
+pub fn load_reranker(
+    search: &SearchConfig,
+    settings: &RerankSettings,
+    get: impl Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<Option<Arc<dyn oml_app::ports::Reranker>>, String> {
+    if !search.needs_reranker() {
+        return Ok(None);
+    }
+    if settings.fetch {
+        let fetched = oml_rerank::fetch_missing(&settings.model_dir, &settings.model, get)
+            .map_err(|e| e.to_string())?;
+        if !fetched.is_empty() {
+            tracing::info!(
+                event = "rerank_model_fetched",
+                model = settings.model.name,
+                files = fetched.join(","),
+                "fetched the reranker's files at its pinned revision"
+            );
+        }
+    }
+    let model =
+        oml_rerank::CrossEncoder::load(&settings.model_dir, &settings.model, settings.limits)
+            .map_err(|e| e.to_string())?;
+    Ok(Some(Arc::new(model)))
 }
 
 /// `search.enabled`'s default: the pipelines that need no extension.
@@ -134,6 +230,13 @@ const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
 const KEY_SEARCH_ENABLED: &str = "search.enabled";
 const KEY_SEARCH_DEFAULT: &str = "search.default";
+const KEY_RERANK_MODEL: &str = "search.rerank.model";
+const KEY_RERANK_MODEL_DIR: &str = "search.rerank.model_dir";
+const KEY_RERANK_FETCH: &str = "search.rerank.fetch";
+const KEY_RERANK_DEPTH: &str = "search.rerank.depth";
+const KEY_RERANK_FLOOR: &str = "search.rerank.floor";
+const KEY_RERANK_MAX_CONCURRENT: &str = "search.rerank.max_concurrent";
+const KEY_RERANK_TIMEOUT_MS: &str = "search.rerank.timeout_ms";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -178,6 +281,8 @@ impl Config {
                     v.as_str()
                         .map(ToOwned::to_owned)
                         .or_else(|| v.as_integer().map(|n| n.to_string()))
+                        .or_else(|| v.as_float().map(|n| n.to_string()))
+                        .or_else(|| v.as_bool().map(|b| b.to_string()))
                 })
         };
         // The PoC composes the kms-file adapter only (ADR-0023 d4); naming
@@ -347,8 +452,74 @@ impl Config {
                 ))
             })?,
         };
-        let search = SearchConfig::new(&enabled, default)
+        // The reranking stage: a model this build pins, its directory, and
+        // the depth, floor, cap and deadline, each refused naming the key
+        // when it does not parse (configuration.md search.rerank.*;
+        // ADR-0053 d3-d6).
+        let whole = |key: &str, min: u64| -> Result<Option<u64>, ConfigError> {
+            lookup(key)
+                .map(|v| {
+                    v.trim().parse::<u64>().ok().filter(|n| *n >= min).ok_or_else(|| {
+                        ConfigError::Invalid(format!(
+                            "{key} {v:?} is not a whole number of at least {min} (configuration.md)"
+                        ))
+                    })
+                })
+                .transpose()
+        };
+        let model = match lookup(KEY_RERANK_MODEL) {
+            None => oml_rerank::MINILM_L6,
+            Some(name) => oml_rerank::model(name.trim()).ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_RERANK_MODEL} {name:?} is not a model this build pins (known: {})",
+                    oml_rerank::MODELS.map(|m| m.name).join(", ")
+                ))
+            })?,
+        };
+        let model_dir = lookup(KEY_RERANK_MODEL_DIR).map_or_else(
+            || PathBuf::from("oml-models").join(model.name),
+            PathBuf::from,
+        );
+        let fetch = match lookup(KEY_RERANK_FETCH).as_deref().map(str::trim) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_RERANK_FETCH} {other:?} is not true or false (configuration.md)"
+                )));
+            }
+        };
+        let depth = whole(KEY_RERANK_DEPTH, 1)?.map_or(oml_app::search::RERANK_DEPTH, |n| {
+            usize::try_from(n).unwrap_or(usize::MAX)
+        });
+        let floor = match lookup(KEY_RERANK_FLOOR).as_deref().map(str::trim) {
+            None => oml_app::search::RERANK_FLOOR,
+            Some("off") => None,
+            Some(v) => Some(v.parse::<f32>().map_err(|_| {
+                ConfigError::Invalid(format!(
+                    "{KEY_RERANK_FLOOR} {v:?} is not a relevance between 0 and 1, or off (configuration.md)"
+                ))
+            })?),
+        };
+        let policy = oml_app::search::RerankPolicy::new(depth, floor)
             .map_err(|e| ConfigError::Invalid(e.to_string()))?;
+        let max_concurrent = whole(KEY_RERANK_MAX_CONCURRENT, 1)?
+            .map_or(DEFAULT_RERANK_MAX_CONCURRENT, |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            });
+        let timeout_ms = whole(KEY_RERANK_TIMEOUT_MS, 1)?.unwrap_or(DEFAULT_RERANK_TIMEOUT_MS);
+        let rerank = RerankSettings {
+            model,
+            model_dir,
+            fetch,
+            limits: oml_rerank::Limits {
+                max_concurrent,
+                timeout: std::time::Duration::from_millis(timeout_ms),
+            },
+        };
+        let search = SearchConfig::new(&enabled, default)
+            .map_err(|e| ConfigError::Invalid(e.to_string()))?
+            .with_rerank(policy);
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -362,6 +533,7 @@ impl Config {
             web_github,
             brief_max_tokens,
             search,
+            rerank,
         })
     }
 
@@ -988,6 +1160,7 @@ pub async fn start_lead(
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         None,
+        None,
     )
     .await
 }
@@ -1009,6 +1182,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     web: Option<WebPages>,
     brief_max_tokens: u64,
     search: Option<SearchConfig>,
+    reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
 ) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
@@ -1022,6 +1196,11 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     search
         .require_supported(&store.retrievers())
         .map_err(|e| e.to_string())?;
+    // A reranking pipeline is served only with its model loaded (ADR-0053
+    // d8).
+    search
+        .require_reranker(reranker.is_some())
+        .map_err(|e| e.to_string())?;
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
@@ -1029,6 +1208,10 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     let app = lead_app(store, signing_key)
         .with_brief_max_tokens(brief_max_tokens)
         .with_search(search);
+    let app = match reranker {
+        Some(reranker) => app.with_reranker(reranker),
+        None => app,
+    };
     let app = match oauth_issuer {
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
@@ -1201,6 +1384,108 @@ mod tests {
             let err = load(extra).expect_err("refused");
             assert!(err.to_string().contains(says), "{err}");
         }
+    }
+
+    /// `search.rerank.*` default to the measured choice, floor off, read the
+    /// file's floats and booleans as the environment's strings, and stop the
+    /// start on a model this build does not pin or a value out of range
+    /// (ADR-0053 d2-d6).
+    #[test]
+    fn rerank_settings_default_to_the_measured_model_with_the_floor_off_and_refuse_the_unknown() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let load = |extra: &[(&str, &str)]| {
+            let env = env_of(&[base.as_slice(), extra].concat());
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let cfg = load(&[]).expect("defaults load");
+        assert_eq!(cfg.rerank, RerankSettings::default());
+        assert_eq!(cfg.rerank.model, oml_rerank::MINILM_L6);
+        assert!(!cfg.rerank.fetch, "no network at start unless asked");
+        assert_eq!(
+            cfg.search.rerank().floor,
+            None,
+            "the floor is off by default"
+        );
+        assert!(
+            !cfg.search.serves(Pipeline::Bm25Rerank),
+            "bm25-rerank is opt-in"
+        );
+        let file = "[postgres]\nurl = \"postgres://f/db\"\nowner_url = \"postgres://o@f/db\"\n[search]\nenabled = [\"bm25\", \"bm25-rerank\"]\ndefault = \"bm25\"\n[search.rerank]\nmodel = \"ms-marco-MiniLM-L4-v2\"\nmodel_dir = \"/var/lib/oml/l4\"\nfetch = true\ndepth = 10\nfloor = 0.005\nmax_concurrent = 3\ntimeout_ms = 750\n";
+        let cfg = Config::from_sources(Some(file), &|_| None).expect("the file loads");
+        assert_eq!(cfg.rerank.model, oml_rerank::MINILM_L4);
+        assert_eq!(cfg.rerank.model_dir, PathBuf::from("/var/lib/oml/l4"));
+        assert!(cfg.rerank.fetch);
+        assert_eq!(cfg.rerank.limits.max_concurrent, 3);
+        assert_eq!(
+            cfg.rerank.limits.timeout,
+            std::time::Duration::from_millis(750)
+        );
+        assert_eq!(cfg.search.rerank().depth, 10);
+        assert_eq!(cfg.search.rerank().floor, Some(0.005));
+        assert!(cfg.search.needs_reranker());
+        let off = load(&[("OML_SEARCH__RERANK__FLOOR", "off")]).expect("off loads");
+        assert_eq!(off.search.rerank().floor, None);
+        for (extra, says) in [
+            (
+                &[("OML_SEARCH__RERANK__MODEL", "jina-reranker-v2")][..],
+                "jina-reranker-v2",
+            ),
+            (
+                &[("OML_SEARCH__RERANK__DEPTH", "0")][..],
+                "search.rerank.depth",
+            ),
+            (&[("OML_SEARCH__RERANK__DEPTH", "101")][..], "depth"),
+            (&[("OML_SEARCH__RERANK__FLOOR", "1.5")][..], "floor"),
+            (
+                &[("OML_SEARCH__RERANK__FETCH", "yes")][..],
+                "search.rerank.fetch",
+            ),
+            (
+                &[("OML_SEARCH__RERANK__TIMEOUT_MS", "0")][..],
+                "search.rerank.timeout_ms",
+            ),
+        ] {
+            let err = load(extra).expect_err("refused");
+            assert!(err.to_string().contains(says), "{err}");
+        }
+    }
+
+    /// A configuration serving no reranking pipeline loads no model and
+    /// reads no file; one serving `bm25-rerank` with the model absent is
+    /// refused naming the file and the remedy, and fetches only when
+    /// `search.rerank.fetch` allows it (ADR-0053 d3, d8).
+    #[test]
+    fn a_reranking_pipeline_without_its_model_stops_the_start_naming_the_file() {
+        let dir = std::env::temp_dir().join(format!("oml-rerank-absent-{}", std::process::id()));
+        let settings = RerankSettings {
+            model_dir: dir.clone(),
+            ..RerankSettings::default()
+        };
+        let plain = default_search();
+        assert!(
+            load_reranker(&plain, &settings, |_| panic!("no fetch"))
+                .expect("nothing to load")
+                .is_none()
+        );
+        let reranking =
+            SearchConfig::new(&[Pipeline::Bm25, Pipeline::Bm25Rerank], Pipeline::Bm25).unwrap();
+        let err = load_reranker(&reranking, &settings, |_| panic!("fetch is off"))
+            .err()
+            .expect("refused");
+        assert!(err.contains("config.json is missing"), "{err}");
+        assert!(err.contains("search.rerank.fetch"), "{err}");
+        let fetching = RerankSettings {
+            fetch: true,
+            ..settings
+        };
+        let err = load_reranker(&reranking, &fetching, |_| Err("offline".to_owned()))
+            .err()
+            .expect("refused");
+        assert!(err.contains("offline"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

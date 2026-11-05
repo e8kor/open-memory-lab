@@ -8579,6 +8579,7 @@ async fn a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         Some(named),
+        None,
     )
     .await;
     let err = refused.err().expect("refused without pg_trgm");

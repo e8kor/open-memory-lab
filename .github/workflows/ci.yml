@@ -56,12 +56,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # The reranker's pinned files (ADR-0053 d3, d10), cached by revision and
+      # fetched with their digests checked when the cache is cold.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+          key: rerank-ms-marco-MiniLM-L6-v2-233902d25c440f23af6f7d6e94d2946bac0bee0a
+      - name: Fetch the reranker's pinned files
+        run: bash scripts/fetch_rerank_model.sh ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
       # POSTGRES_USER is the container's superuser, so every Postgres suite
       # mints its owner/serving role pair; a suite that cannot fails here
       # rather than printing its did-not-run line (ADR-0034 d8).
       - run: cargo test --workspace --locked
         env:
           OML_TEST_REQUIRE_SPLIT: "1"
+          OML_RERANK_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
 
   e2e:
     name: demo and quickstart (release binaries)
@@ -354,12 +363,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      # The reranker's pinned files (ADR-0053 d3, d10), cached by revision and
+      # fetched with their digests checked when the cache is cold.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+          key: rerank-ms-marco-MiniLM-L6-v2-233902d25c440f23af6f7d6e94d2946bac0bee0a
+      - name: Fetch the reranker's pinned files
+        run: bash scripts/fetch_rerank_model.sh ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
       - name: Run and gate
         env:
           PGHOST: 127.0.0.1
           PGPORT: "5432"
           PGUSER: oml
           PGPASSWORD: oml_dev_only
+          # bm25-rerank is measured beside the others and gated on quality;
+          # its deadline is raised so a slow runner measures the ranking, not
+          # its own CPU (ADR-0053 d9).
+          EVAL_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-rerank
+          OML_SEARCH__RERANK__MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+          OML_SEARCH__RERANK__TIMEOUT_MS: "60000"
         run: bash eval/recall/served.sh "$RUNNER_TEMP/recall-eval"
       - uses: actions/upload-artifact@v4
         if: always()

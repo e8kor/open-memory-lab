@@ -8,6 +8,7 @@ members = [
     "crates/oml-app",
     "crates/adapters/oml-pg",
     "crates/adapters/oml-fetch",
+    "crates/adapters/oml-rerank",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
     "crates/bins/oml-cli",
@@ -32,7 +33,21 @@ oml-server-lead = { path = "crates/bins/oml-server-lead" }
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
+oml-rerank = { path = "crates/adapters/oml-rerank" }
 axum = "0.8"
+# The local cross-encoder of the reranking stage (ADR-0053 d2): candle runs
+# the model on the CPU in pure Rust (ADR-0006), and tokenizers reads the
+# model's own tokenizer.json with its pure-Rust regex backend, never the
+# C oniguruma or the C++ esaxx defaults. Only oml-rerank, which only the
+# lead depends on, names them, so the CLI's targets never build them.
+candle-core = { version = "0.11", default-features = false }
+candle-nn = { version = "0.11", default-features = false }
+candle-transformers = { version = "0.11", default-features = false }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+# The reranker's own thread pool (ADR-0053 d5): candle's matrix products and
+# the tokenizer split their work over the pool they run in, so the stage's
+# CPU is bounded by the pool, never by the host's cores.
+rayon = "1.12"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"
 # /metrics on its own listener (ADR-0042 d11, d12): the Prometheus

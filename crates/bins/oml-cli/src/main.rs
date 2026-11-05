@@ -3717,6 +3717,31 @@ fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<
         .filter_map(Value::as_str)
         .collect();
     let mut lines = vec![format!("default {default}; enabled {}", enabled.join(", "))];
+    // The reranker the reranking pipelines call, and the stages it skipped
+    // since the lead started, by reason (ADR-0053 d9).
+    let rerank = &body["search"]["rerank"];
+    if let Some(model) = rerank["model"].as_str() {
+        let floor = rerank["floor"]
+            .as_f64()
+            .map_or_else(|| "off".to_owned(), |f| f.to_string());
+        lines.push(format!(
+            "rerank {model}, depth {}, floor {floor}",
+            rerank["depth"].as_u64().unwrap_or(0)
+        ));
+        let skipped: Vec<String> = ["busy", "timeout", "failed"]
+            .into_iter()
+            .filter_map(|reason| {
+                let n = rerank["skipped"][reason].as_u64().unwrap_or(0);
+                (n > 0).then(|| format!("{n} {reason}"))
+            })
+            .collect();
+        if !skipped.is_empty() {
+            lines.push(format!(
+                "warn search_rerank: reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
+                skipped.join(", ")
+            ));
+        }
+    }
     if default == "keyword-all" {
         lines.push(
             "warn search: the default is keyword-all, every word exactly, kept for comparison; set search.default"
@@ -3797,4 +3822,40 @@ fn refusal(e: &CliError) -> String {
 
 fn verdict(ok: bool) -> &'static str {
     if ok { "ok" } else { "fail" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_search_doctor_names_the_reranker_and_warns_on_skipped_reranks() {
+        let ready = (
+            200,
+            json!({"search": {
+                "enabled": ["bm25", "bm25-rerank"], "default": "bm25",
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null,
+                           "skipped": {"busy": 3, "timeout": 0, "failed": 1}},
+            }}),
+        );
+        let lines = search_doctor(Some(&ready), None);
+        assert_eq!(
+            lines[1],
+            "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
+        );
+        assert!(
+            lines[2]
+                .starts_with("warn search_rerank: reranks skipped since start (3 busy, 1 failed)"),
+            "{lines:?}"
+        );
+        let quiet = (
+            200,
+            json!({"search": {"enabled": ["bm25"], "default": "bm25", "rerank": null}}),
+        );
+        assert_eq!(
+            search_doctor(Some(&quiet), None).len(),
+            1,
+            "no reranker, no line"
+        );
+    }
 }

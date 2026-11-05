@@ -207,9 +207,11 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
               └── pipeline (search, else tenant default, else search.default)
                      ├── Retriever.retrieve(kind, scope, query)   one ranked list per kind
                      ├── fuse: single | reciprocal rank (60)      pure, in the core
-                     └── match all → every word; none → any word, fallback: any_term
+                     ├── match all → every word; none → any word, fallback: any_term
+                     └── rerank (bm25-rerank): hydrate the head, admit it (R3), Reranker.score,
+                         reorder; busy, late or failed → first stage's order, rerank: skipped
               │
-          k cut → budget cut → hydrate the served rows → re-check each (R3) → answer
+          k cut → floor (when reranked and set) → budget cut → hydrate → re-check each (R3) → answer
 ```
 
 | Pipeline | What ranks | Fusion |
@@ -218,6 +220,7 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
 | `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
 | `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
 | `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
+| `bm25-rerank` (proposed, [ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)) | `bm25`'s list, read `search.rerank.depth` deep (10), its head reordered by a local cross-encoder (`ms-marco-MiniLM-L6-v2` on the CPU, pure Rust) over the text of rows the core has admitted; the relevance is between 0 and 1 and reads the query and the text alone | one list, then the reranker |
 
 **Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
 `search.default` the default ([configuration](../operations/configuration.md)); a tenant's admin
@@ -239,7 +242,10 @@ compare within one answer only.
 widens it, never reads a verdict, a reviewer or `promoted_at`, and computes any statistic over
 the scope alone, so a row the key cannot read never moves another row's rank. Steering never
 enters a retriever. The laws every adapter passes, the in-memory test store and PostgreSQL
-alike, are in `oml-port-contracts` (ADR-0049 d7).
+alike, are in `oml-port-contracts` (ADR-0049 d7). A reranker is held to the same rule from the
+other side: the core hands it the query and the text of rows it would serve, and nothing else,
+and its laws (one relevance per passage, in `[0, 1]`, the same alone as among others) run against
+the test double and the real model alike (ADR-0053 d10).
 
 **Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
 default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
