@@ -10947,7 +10947,8 @@ pub async fn a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds
 
 /// A fixture row of the valid-time laws with its declared ends.
 fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> MemoryRecord {
-    m.valid = oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends");
+    m.valid =
+        Box::new(oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends"));
     m
 }
 

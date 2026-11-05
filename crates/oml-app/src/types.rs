@@ -1043,7 +1043,8 @@ pub struct MemoryRecord {
     pub guardrail: Option<Box<GuardrailFields>>,
     /// When the version says it holds, declared by its author and signed;
     /// open on both sides when it declares none (proposed ADR-0058 d2).
-    pub valid: ValidTime,
+    /// Boxed: most rows declare none, and every fold carries the record.
+    pub valid: Box<ValidTime>,
     /// The version's anchor as its author declared it, signed in its
     /// submission event and immutable (ADR-0057 d1, d2). Boxed: most rows
     /// carry none.

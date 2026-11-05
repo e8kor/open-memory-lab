@@ -1758,7 +1758,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
-        valid: valid_from_row(row)?,
+        valid: Box::new(valid_from_row(row)?),
         anchor: anchor_from_row(row)?.map(Box::new),
         source_check: source_check_from_row(row)?.map(Box::new),
     })
@@ -3082,7 +3082,7 @@ async fn apply_fold(
                 tenant_id,
                 successor,
                 replaced,
-                replaced_valid_until.as_ref(),
+                replaced_valid_until.as_deref(),
                 at,
             )
             .await?;

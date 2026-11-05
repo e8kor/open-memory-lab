@@ -4124,7 +4124,7 @@ where
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
             guardrail,
-            valid,
+            valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
         };
@@ -4745,7 +4745,7 @@ where
                         MetadataFold::TipSuperseded {
                             successor: memory_id,
                             replaced: target.memory_id,
-                            replaced_valid_until: replaced_end(&target, &memory),
+                            replaced_valid_until: replaced_end(&target, &memory).map(Box::new),
                         },
                     ),
                 };
@@ -6125,7 +6125,7 @@ where
             scan_finding: scan_finding.clone(),
             created_at: self.clock.now(),
             guardrail,
-            valid,
+            valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
         };

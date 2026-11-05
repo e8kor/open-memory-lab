@@ -1418,7 +1418,7 @@ fn apply_fold(
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
                 if let Some(end) = replaced_valid_until {
-                    target.valid.until = Some(end);
+                    target.valid.until = Some(*end);
                 }
             }
             if let Some(memory) = state.memories.get_mut(&successor) {
