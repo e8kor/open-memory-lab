@@ -121,7 +121,8 @@ pub const SPARSE_IDLE_SECONDS: u64 = 1;
 /// The longest wait between idle passes.
 pub const SPARSE_IDLE_MAX_SECONDS: u64 = 30;
 
-/// How often the backlog gauge is read, whatever the passes find.
+/// How often the backlog gauge is read while the passes find nothing; a
+/// pass with work reads it after itself.
 pub const SPARSE_GAUGE_SECONDS: u64 = 30;
 
 impl Default for SparseSettings {
@@ -219,7 +220,9 @@ pub fn spawn_sparse_encoder(
                     false
                 }
             };
-            if gauged.is_none_or(|t| t.elapsed().as_secs() >= SPARSE_GAUGE_SECONDS) {
+            // After every pass with work, so the gauge falls to zero as the
+            // queue drains, and every half minute while idle.
+            if busy || gauged.is_none_or(|t| t.elapsed().as_secs() >= SPARSE_GAUGE_SECONDS) {
                 if let Ok(waiting) = store.sparse_backlog().await {
                     metrics.sparse_backlog(waiting);
                 }

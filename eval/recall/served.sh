@@ -107,7 +107,7 @@ for pipeline in $PIPELINES; do
     # A sparse pipeline reads what the encoder wrote: the first run loaded
     # the corpus, so wait for the encoder's queue to drain (ADR-0052 d15).
     case "$pipeline" in sparse|bm25-sparse)
-        [ -f "$OUT/idmap.json" ] && { eval/bench/wait_sparse.sh "http://127.0.0.1:$METRICS_PORT" >/dev/null || fail "sparse backlog"; } ;;
+        [ -f "$OUT/idmap.json" ] && { eval/bench/wait_sparse.sh "http://127.0.0.1:$METRICS_PORT" "$(jq length "$OUT/idmap.json")" >/dev/null || fail "sparse backlog"; } ;;
     esac
     python3 eval/recall/run.py --url "$URL" --writer-key-file "$STATE/writer.key" \
         --reviewer-key-file "$STATE/reviewer.key" --out "$OUT" --search "$pipeline" \

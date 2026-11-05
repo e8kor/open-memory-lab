@@ -50,7 +50,8 @@ for ds in "$@"; do
     # A sparse pipeline reads what the encoder wrote: wait for its queue
     # to drain, and keep how long it took (ADR-0052 d15).
     case " ${BENCH_PIPELINES:-} " in *" sparse "*|*" bm25-sparse "*)
-        eval/bench/wait_sparse.sh "$(cat "$STATE/metrics_url")" >"$OUT/encode-wait-$ds.txt" || exit 1 ;;
+        LOADED=$(( ${LOADED:-0} + $(jq .written "$OUT/load-$ds.json") ))
+        eval/bench/wait_sparse.sh "$(cat "$STATE/metrics_url")" "$LOADED" >"$OUT/encode-wait-$ds.txt" || exit 1 ;;
     esac
     # shellcheck disable=SC2046 # one --search per served pipeline
     "$PY" eval/bench/bench.py --cache "$CACHE" run --state "$STATE" --out "$OUT" \
