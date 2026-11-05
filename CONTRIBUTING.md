@@ -80,6 +80,38 @@ and [http-api.md](docs/api/http-api.md) in step. `python scripts/check_contract_
 Commit messages use the imperative mood ("Add workarea export", not "Added"). The maintainer
 reviews every pull request; [CODEOWNERS](.github/CODEOWNERS) lists who owns which area.
 
+### Before you open the pull request
+
+- **Reserve numbers first.** Every ADR, FR and migration number is reserved in
+  [docs/NUMBERS.md](docs/NUMBERS.md) before the file or row exists:
+  `python scripts/reserve_number.py adr|fr|migration --branch <branch> --title "<title>"`, then
+  commit and push the reservation. CI (`scripts/check_numbers.py`) fails a pull request that
+  introduces a number reserved by another branch, or not reserved at all.
+- **Self-check.** Work through the [pre-review checklist](docs/contributing/review-checklist.md).
+  A build lane pastes the checked list into the pull request body.
+- **Lints.** `python scripts/lint_practices.py migrations|ports|like` runs the three lints CI runs;
+  `python -m unittest discover -s scripts/tests` runs their tests.
+- **Changelog fragment.** A change under `crates/` or `docs/adr/` adds `changes/<pr-or-branch>.md`
+  (see [changes/README.md](changes/README.md)); the `no-changelog` label skips the check. Do not
+  edit `docs/changelog.md` in a change: the release assembles it
+  ([releasing](docs/operations/releasing.md)).
+
+### Recalling the design from OML (dogfooding)
+
+Before reading a whole ADR, recall its decisions from OML: `oml_read` in the workarea
+`oml-knowledge.oml-design` with an anchor filter naming the ADR, and read the file only for what
+the recall does not answer. Write a new durable finding with `oml_write`. This takes effect once
+the operator has loaded the ADRs into that workarea; until then, read the ADR.
+
+### Lane hygiene
+
+- **Never `git stash` in a lane.** Stashes are shared across worktrees of one repository, so
+  another lane can pop yours. Commit work in progress to the lane's branch.
+- **Check the disk before building.** `scripts/disk_guard.sh <path> 85` exits non-zero when the
+  filesystem holding `<path>` is more than 85% full; do not start a build when it does.
+- **Never delete files in shared scratch with a glob.** Name each file or directory you created;
+  another lane's artefacts live beside yours.
+
 ### Changes to how OML works
 
 A change to a core behaviour, such as how memories are reviewed, how history is recorded or
