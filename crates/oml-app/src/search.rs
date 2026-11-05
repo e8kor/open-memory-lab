@@ -533,6 +533,10 @@ pub struct CandidateScope {
 pub struct OwnHeldScope {
     pub author_key_ids: Vec<Uuid>,
     pub nodes: Vec<Uuid>,
+    /// Inside an in-progress scope, the held rows of every author on
+    /// `nodes`, not the listed keys' alone (ADR-0030 d3). The core sets it
+    /// only when every node of `nodes` lies inside the scope's root.
+    pub any_author: bool,
 }
 
 /// The health of a tenant's integer postings, for doctor (ADR-0052 d12):

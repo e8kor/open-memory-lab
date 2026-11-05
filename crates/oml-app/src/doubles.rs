@@ -551,6 +551,7 @@ fn fold_poc_event(
             state.keys.insert(
                 key_id,
                 KeyRecord {
+                    profile: None,
                     key_id,
                     tenant_id,
                     role,
@@ -1097,6 +1098,17 @@ fn apply_fold(
                 )));
             };
             workarea.crew_id = Some(crew_id);
+        }
+        MetadataFold::WorkareaModeSet {
+            workarea_id,
+            in_progress,
+        } => {
+            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            };
+            workarea.in_progress = in_progress;
         }
         MetadataFold::NamesAssigned(naming) => {
             assign_names_fold(state, tenant_id, &naming)?;
@@ -1686,6 +1698,7 @@ fn assign_names_fold(
                     )));
                 };
                 let workarea = WorkareaRecord {
+                    in_progress: false,
                     workarea_id: id,
                     tenant_id,
                     parent_id: unnamed.parent_id,
@@ -1829,7 +1842,7 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
-                    && own.author_key_ids.contains(&m.author_key_id)
+                    && (own.any_author || own.author_key_ids.contains(&m.author_key_id))
                     && own.nodes.contains(&m.workarea_id)
             })
         };
@@ -2144,8 +2157,13 @@ impl JournalStore for MemStore {
             ListingScope::Own { key_ids, masked } => {
                 key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
             }
-            ListingScope::Tips { nodes } => {
-                m.status == MemoryStatus::Promoted && m.is_tip && nodes.contains(&m.workarea_id)
+            ListingScope::Tips { nodes, held } => {
+                nodes.contains(&m.workarea_id)
+                    && ((m.status == MemoryStatus::Promoted && m.is_tip)
+                        || (*held
+                            && m.status == MemoryStatus::Held
+                            && !m.retirement
+                            && HIT_KINDS.contains(&m.kind)))
             }
         };
         let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);
@@ -2205,6 +2223,18 @@ impl JournalStore for MemStore {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held && nodes.contains(&m.workarea_id))
+            .count() as u64)
     }
 
     async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {

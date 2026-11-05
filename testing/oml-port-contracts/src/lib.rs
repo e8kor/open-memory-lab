@@ -553,6 +553,7 @@ pub fn workarea_record(
     workarea_name: &str,
 ) -> WorkareaRecord {
     WorkareaRecord {
+        in_progress: false,
         workarea_id,
         tenant_id,
         parent_id,
@@ -586,6 +587,7 @@ pub fn crew_record(tenant_id: Uuid, crew_id: Uuid, crew_name: &str) -> CrewRecor
 #[must_use]
 pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<Uuid>) -> KeyRecord {
     KeyRecord {
+        profile: None,
         key_id,
         tenant_id,
         role,
@@ -969,6 +971,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
+                any_author: false,
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
             }),
@@ -1779,6 +1782,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(7);
     rig.seed_chain(store, 0).await;
     let record = KeyRecord {
+        profile: None,
         key_id: Uuid::from_u128(0xD9),
         tenant_id: rig.tenant_id,
         role: oml_app::domain::Role::Writer,
@@ -4348,7 +4352,7 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
                 .expect("list"),
         )
     };
-    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes });
+    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes, held: false });
 
     assert_eq!(list(tips(vec![wa])).await, vec![tip.memory_id]);
     assert_eq!(
@@ -9556,6 +9560,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
+            any_author: false,
             author_key_ids: vec![key],
             nodes: vec![wa],
         }),

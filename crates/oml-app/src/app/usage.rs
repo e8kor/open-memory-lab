@@ -322,7 +322,7 @@ where
                     workarea: Some(q.scope_workarea_id.into()),
                     kinds: Vec::new(),
                     include_text: false,
-                    include_unreviewed: false,
+                    include_unreviewed: Some(false),
                     max_tokens: None,
                     search: Some(pipeline.as_str().to_owned()),
                     match_mode: MatchMode::Any,

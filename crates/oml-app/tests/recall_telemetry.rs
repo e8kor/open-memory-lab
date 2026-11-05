@@ -89,6 +89,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .issue_key(
             &boot.admin_key.value,
             &IssueKeyRequest {
+                profile: None,
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
@@ -129,7 +130,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: true,
+        include_unreviewed: Some(true),
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,

@@ -41,6 +41,7 @@ pub mod chain;
 pub mod claim_edges;
 pub mod envelope;
 pub mod guardrail;
+pub mod in_progress;
 pub mod jcs;
 pub mod keys;
 pub mod ladder;

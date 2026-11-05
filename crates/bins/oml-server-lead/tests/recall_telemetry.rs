@@ -185,6 +185,7 @@ async fn issue(
     app.issue_key(
         &boot.admin_key.value,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),
@@ -1160,7 +1161,7 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,

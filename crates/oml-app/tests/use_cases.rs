@@ -137,6 +137,7 @@ fn fresh_key_name() -> Name {
 
 fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
+        profile: None,
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
@@ -214,7 +215,7 @@ fn recall_req(query: &str) -> RecallRequest {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,
@@ -3992,7 +3993,7 @@ fn tokens(text: &str) -> u64 {
 /// A recall of `query` that takes the calling key's own held rows too.
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
-        include_unreviewed: true,
+        include_unreviewed: Some(true),
         ..recall_req(query)
     }
 }
@@ -6170,6 +6171,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
     let value = "oml_operator-fixture-value".to_owned();
     let key_id = Uuid::from_u128(0x0BE7_0001);
     let record = KeyRecord {
+        profile: None,
         key_id,
         tenant_id: tenant,
         role: Role::Operator,
@@ -9284,7 +9286,7 @@ async fn recall_never_serves_kind_guardrail() {
         .recall(
             &author.value,
             &RecallRequest {
-                include_unreviewed: true,
+                include_unreviewed: Some(true),
                 ..recall_req("canary")
             },
         )

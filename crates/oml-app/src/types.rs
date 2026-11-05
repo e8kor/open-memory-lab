@@ -5,6 +5,7 @@ use oml_domain::anchor::{Anchor, CheckResult};
 use oml_domain::budget::Budget;
 use oml_domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_domain::guardrail::{GuardrailScope, Severity};
+use oml_domain::in_progress::{CuratorRefusal, InProgressReason, KeyProfile};
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
@@ -117,6 +118,9 @@ pub struct KeyRecord {
     /// `ancestors` (postgres-schema.md `api_keys.guardrail_scope`; proposed
     /// ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
+    /// The key's profile, fixed at issuance: `curator` narrows inside an
+    /// in-progress scope and never widens (ADR-0030 d8); `None` otherwise.
+    pub profile: Option<KeyProfile>,
 }
 
 /// A connect code as `connection.code_issued` mints it, for the commit's
@@ -758,6 +762,9 @@ pub struct WorkareaRecord {
     /// every user root included (ADR-0044 d5). Fixed at creation, since no
     /// node crosses a user root's boundary (d1).
     pub namespace: Option<Uuid>,
+    /// Whether a person's key put the node in progress (ADR-0030 d1):
+    /// `workareas.mode`, written by `workarea.mode_set` alone.
+    pub in_progress: bool,
 }
 
 impl WorkareaRecord {
@@ -896,6 +903,9 @@ pub struct CreatedWorkarea {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaInfo {
     pub workarea: WorkareaRecord,
+    /// The node's in-progress root, itself for a root, `None` outside every
+    /// in-progress subtree (ADR-0030 d13).
+    pub in_progress_root: Option<WorkareaRecord>,
     pub path: String,
     /// The crew record the workarea names, read from the store; `None` when
     /// it names none (ADR-0026 d8).
@@ -1278,6 +1288,8 @@ pub struct IssueKeyRequest {
     /// The key's guardrail scope; `None` takes the issuance default,
     /// `ancestors`, and journals it (proposed ADR-0037 d4).
     pub guardrail_scope: Option<GuardrailScope>,
+    /// `profile: "curator"` (ADR-0030 d8); `None` for every other key.
+    pub profile: Option<KeyProfile>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -1511,7 +1523,7 @@ pub struct RecallRequest {
     /// `include_unreviewed`: the calling key's own held rows join the
     /// ranked hits, flagged by state (retrieval.md, own held rows in recall;
     /// ADR-0025 d4, ADR-0039 d4).
-    pub include_unreviewed: bool,
+    pub include_unreviewed: Option<bool>,
     /// The budget in budget tokens under counter `oml-tc/1`; `None` is no
     /// budget (retrieval.md token budgets; ADR-0025 d7).
     pub max_tokens: Option<u64>,
@@ -1734,7 +1746,11 @@ pub enum ListingScope {
     /// The scoped listing: the promoted served tips on exactly these nodes,
     /// subtree(scope) ∩ reader effective access as the use-case computes
     /// it; an empty set lists nothing (ADR-0025 d1, d13).
-    Tips { nodes: Vec<Uuid> },
+    ///
+    /// With `held`, inside an in-progress scope, the held versions of every
+    /// author on the nodes too, never a retirement version, of kind `memory`
+    /// or `derived_fact` (ADR-0030 d3).
+    Tips { nodes: Vec<Uuid>, held: bool },
 }
 
 /// A listing's predicates, re-applied on every page: a cursor carries a
@@ -2492,6 +2508,37 @@ pub enum AppError {
     /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
     #[error("bulk review is a person's act: a {} key held by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
     BulkReviewHumanOnly { role: Role, held_by: HeldBy },
+    /// Only a person's key sets a workarea's mode (ADR-0030 d1; errors.md
+    /// `access.verb_ceiling`, reason `mode_is_human_only`).
+    #[error("a workarea's mode is set by a person's key: a {} key held by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
+    ModeHumanOnly { role: Role, held_by: HeldBy },
+    /// A curator key asked for a verb or a scope it never reaches (ADR-0030
+    /// d9; errors.md `access.verb_ceiling`, reason `curator_narrow_only` or
+    /// `curator_outside_in_progress`).
+    #[error("a curator key narrows inside an in-progress scope only: {verb} is refused ({}, ADR-0030 d9, access.verb_ceiling)", .refusal.as_str())]
+    Curator {
+        verb: &'static str,
+        refusal: CuratorRefusal,
+    },
+    /// A profile the key's role or attestation does not admit (ADR-0030
+    /// d8; request.validation, field `/profile`).
+    #[error(
+        "profile {profile} needs a dreamer key held by an agent (ADR-0030 d8, request.validation, field /profile)"
+    )]
+    ProfileMismatch { profile: &'static str },
+    /// An act refused by an in-progress subtree's rules (ADR-0030 d1, d6, d7;
+    /// errors.md `workarea.in_progress_refused`).
+    #[error("workarea {workarea_id}: {reason} (ADR-0030, workarea.in_progress_refused)")]
+    InProgressRefused {
+        workarea_id: Uuid,
+        reason: InProgressReason,
+    },
+    /// The commit of an in-progress root while a version in its subtree is
+    /// held (ADR-0030 d6; errors.md `workarea.held_remaining`).
+    #[error(
+        "workarea {workarea_id} still holds unreviewed memories in its subtree, so its commit waits on review (ADR-0030 d6, workarea.held_remaining)"
+    )]
+    HeldRemaining { workarea_id: Uuid },
     /// A bulk verdict's `artifact_ids` or a listing's `limit` outside what
     /// ADR-0055 d2 and d3 admit (request.validation, `details.field`).
     #[error("{reason} (ADR-0055, request.validation, field {field})")]

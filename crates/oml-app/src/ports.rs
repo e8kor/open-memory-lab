@@ -188,6 +188,12 @@ pub enum MetadataFold {
         workarea_id: Uuid,
         crew_id: Uuid,
     },
+    /// `workarea.mode_set`: the node's `mode` is now `in_progress` or
+    /// `standard` (ADR-0030 d1); the store refuses a node it does not hold.
+    WorkareaModeSet {
+        workarea_id: Uuid,
+        in_progress: bool,
+    },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
     /// the tenant itself, takes the name the event assigns, every workarea's
     /// path derives from those names, and each crew record is created and
@@ -823,6 +829,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
+
+    /// How many versions on `nodes` are in state `held`, dead-lettered ones
+    /// included: the commit's precondition and doctor's count (ADR-0030 d6,
+    /// d14).
+    fn held_count(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// How many promoted served tips on `workarea_id` itself read `stale`:
     /// their latest source check found the source `changed` or `removed`
@@ -1668,6 +1683,22 @@ pub trait RequestObserver: Send + Sync {
     /// default.
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
         let _ = (verdict, waited_seconds);
+    }
+
+    /// A recall served `n` hits labelled `unreviewed` (ADR-0030 d5).
+    fn unreviewed_hits(&self, n: u64) {
+        let _ = n;
+    }
+
+    /// A person's key set a workarea's mode (ADR-0030 d5).
+    fn mode_set(&self, mode: &'static str) {
+        let _ = mode;
+    }
+
+    /// A curator key committed an act: `reject`, `retire`, `flag` or
+    /// `write` (ADR-0030 d5, d9).
+    fn curation(&self, act: &'static str) {
+        let _ = act;
     }
 }
 
