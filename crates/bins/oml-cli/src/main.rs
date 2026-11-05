@@ -3732,6 +3732,80 @@ fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<
             settings["effective"].as_str().unwrap_or("the deployment's")
         ));
     }
+    lines.extend(postings_doctor(body, settings));
+    lines
+}
+
+/// The share of `bm25-postings`'s recalls since the lead started that the
+/// scan may answer before doctor warns (ADR-0052 open question 2).
+const SCAN_SHARE_WARN_PERCENT: u64 = 5;
+
+/// The fewest `bm25-postings` recalls since start over which doctor judges
+/// the scan share: below it one recall would swing it.
+const SCAN_SHARE_MIN_RECALLS: u64 = 20;
+
+/// The `bm25-postings` doctor lines (ADR-0052 d12): from `/readyz`, a
+/// warning when the scan answered more than 5% of its recalls since the lead
+/// started; and, read by an admin key from `GET /v2/search`, one warning per
+/// fault in the tenant's postings, each naming the repair, or one line
+/// saying they are complete.
+fn postings_doctor(ready: &Value, settings: Option<&Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    let access = &ready["search"]["access"]["bm25-postings"];
+    let (postings, scan) = (
+        access["postings"].as_u64().unwrap_or(0),
+        access["scan"].as_u64().unwrap_or(0),
+    );
+    let total = postings + scan;
+    if total >= SCAN_SHARE_MIN_RECALLS && scan * 100 > SCAN_SHARE_WARN_PERCENT * total {
+        #[allow(clippy::cast_precision_loss, reason = "a share of small counts")]
+        let percent = scan as f64 * 100.0 / total as f64;
+        lines.push(format!(
+            "warn search: bm25-postings answered {scan} of {total} recalls by the scan since the lead started ({percent:.1}%, above {SCAN_SHARE_WARN_PERCENT}%): their words are held by most memories the keys read, so those recalls cost what bm25 costs (ADR-0052 d6)"
+        ));
+    }
+    let Some(h) = settings.map(|s| &s["postings"]).filter(|h| h.is_object()) else {
+        return lines;
+    };
+    let n = |field: &str| h[field].as_u64().unwrap_or(0);
+    let refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_search_postings_refill('<tenant id>') rebuilds them (postgres-schema.md, search postings)";
+    if h["partition"] == Value::Bool(false) {
+        lines.push(
+            "warn search: this tenant has no postings partition, so bm25-postings finds nothing it writes; a defect: report it (ADR-0052 d1)".to_owned(),
+        );
+    }
+    if n("unfilled") > 0 {
+        lines.push(format!(
+            "warn search: the postings fill is incomplete: {} memory versions have no postings; {refill}",
+            n("unfilled")
+        ));
+    }
+    if n("served_behind") > 0 {
+        lines.push(format!(
+            "warn search: {} served memories have no served postings, so bm25-postings cannot find them; a defect: {refill}, and report it",
+            n("served_behind")
+        ));
+    }
+    if n("workarea_drift") > 0 || n("term_drift") > 0 {
+        lines.push(format!(
+            "warn search: the postings counts disagree: {} workarea count{}, {} of {} sampled word counts; a defect, which ranks by wrong frequencies: {refill}, and report it",
+            n("workarea_drift"),
+            if n("workarea_drift") == 1 { "" } else { "s" },
+            n("term_drift"),
+            n("terms_checked")
+        ));
+    }
+    let faulty = h["partition"] != Value::Bool(true)
+        || n("unfilled") > 0
+        || n("served_behind") > 0
+        || n("workarea_drift") > 0
+        || n("term_drift") > 0;
+    if !faulty {
+        lines.push(format!(
+            "postings complete; counts agree ({} sampled word counts)",
+            n("terms_checked")
+        ));
+    }
     lines
 }
 

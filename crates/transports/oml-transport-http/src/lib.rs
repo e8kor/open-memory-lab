@@ -446,6 +446,12 @@ where
             "search": {
                 "enabled": st.app.search_config().enabled().iter().map(|p| p.as_str()).collect::<Vec<_>>(),
                 "default": st.app.search_config().default_pipeline().as_str(),
+                // Each served pipeline's recalls since start, by how they
+                // were read: doctor's scan-share line (ADR-0052 d12).
+                "access": st.app.search_config().enabled().iter().map(|p| {
+                    let (postings, scan) = st.app.search_access(*p);
+                    (p.as_str().to_owned(), json!({"postings": postings, "scan": scan}))
+                }).collect::<serde_json::Map<String, Value>>(),
             },
         });
         let status = if ready {

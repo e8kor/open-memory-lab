@@ -2593,6 +2593,23 @@ components:
         deployment_default: { type: string, description: search.default. }
         tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
         effective: { type: string, description: The pipeline a recall naming none runs now. }
+        postings: { $ref: '#/components/schemas/PostingsHealth' }
+
+    PostingsHealth:
+      type: object
+      additionalProperties: false
+      description: >-
+        The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET
+        /v2/search where the deployment serves bm25-postings; absent from the answer to POST
+        /v2/search/default.
+      required: [partition, unfilled, served_behind, workarea_drift, term_drift, terms_checked]
+      properties:
+        partition: { type: boolean, description: The tenant's postings partition exists. }
+        unfilled: { type: integer, minimum: 0, description: 'Memory versions that should have postings and have none: the fill incomplete.' }
+        served_behind: { type: integer, minimum: 0, description: 'Served memories with no served posting, which bm25-postings cannot find.' }
+        workarea_drift: { type: integer, minimum: 0, description: Per-workarea counts that disagree with the served memories. }
+        term_drift: { type: integer, minimum: 0, description: 'Sampled word counts that disagree with the served postings, or are missing.' }
+        terms_checked: { type: integer, minimum: 0, description: How many word counts were sampled. }
 
     RecallBudget:
       type: object

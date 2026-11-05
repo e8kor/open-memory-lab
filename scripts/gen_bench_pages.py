@@ -34,7 +34,8 @@ SUITE_TITLES = {
     "locomo": "LoCoMo",
 }
 SUITE_ORDER = ["recall-synthetic", "beir-scifact", "beir-nfcorpus", "locomo", "beir-scifact-x10"]
-QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@100", "R@100"),
+QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@20", "R@20"),
+           ("recall@100", "R@100"),
            ("mrr@10", "RR@10"), ("success@1", "S@1"), ("success@5", "S@5"),
            ("zero_result_rate", "zero")]
 LATENCY_LINE_MS = 50

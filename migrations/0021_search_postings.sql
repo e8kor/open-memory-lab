@@ -323,11 +323,50 @@ CREATE TRIGGER memories_search_postings
     ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_postings_fold();
 
 ------------------------------------------------------------------------------
--- The fill: every existing version's postings and the served versions'
--- counts, read from the stored lexemes and never from text, under each
--- tenant's row security, the tenants enumerated under 0003's startup policy
--- as 0020 enumerates them. Writes wait for it (FR-103).
+-- oml_search_postings_refill — the fill: one tenant's postings and counts
+-- rebuilt from the stored lexemes, never from text: every version's
+-- postings, the served versions' counts. 0021 runs it for every tenant; the
+-- owner runs it for one when doctor names a fault (ADR-0052 d12;
+-- postgres-schema.md), in a transaction whose oml.tenant_id is that tenant,
+-- which it checks, so row security fences it as it fences the writes. It
+-- takes the trigger's lock on memories first, so no write lands between its
+-- read and its commit; writes wait for it (FR-103).
 ------------------------------------------------------------------------------
+CREATE FUNCTION oml_search_postings_refill(t uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    IF t IS DISTINCT FROM NULLIF(current_setting('oml.tenant_id', true), '')::uuid THEN
+        RAISE EXCEPTION 'oml_search_postings_refill(%) runs with oml.tenant_id set to that tenant', t;
+    END IF;
+    LOCK TABLE memories IN SHARE ROW EXCLUSIVE MODE;
+    DELETE FROM search_postings p WHERE p.tenant_id = t;
+    DELETE FROM search_term_rows c WHERE c.tenant_id = t;
+    DELETE FROM search_workarea_rows c WHERE c.tenant_id = t;
+    INSERT INTO search_postings (tenant_id, memory_id, workarea_id, token_id, weight, doc_len,
+                                 kind, memory_kind, state)
+    SELECT m.tenant_id, m.id, m.workarea_id, oml_token_id(u.lexeme),
+           GREATEST(cardinality(u.positions), 1), m.search_len, 1,
+           oml_search_memory_kind(m.kind),
+           oml_search_state(m.status, m.is_tip, m.retirement, m.kind)
+      FROM memories m CROSS JOIN LATERAL unnest(m.search_vector) u
+     WHERE m.tenant_id = t
+       AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) IS NOT NULL;
+    INSERT INTO search_term_rows (tenant_id, workarea_id, kind, memory_kind, token_id, rows)
+    SELECT p.tenant_id, p.workarea_id, 1, p.memory_kind, p.token_id, count(DISTINCT p.memory_id)
+      FROM search_postings p
+     WHERE p.tenant_id = t AND p.kind = 1 AND p.state = 1
+     GROUP BY p.tenant_id, p.workarea_id, p.memory_kind, p.token_id;
+    INSERT INTO search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows, total_len)
+    SELECT m.tenant_id, m.workarea_id, 1, oml_search_memory_kind(m.kind), count(*),
+           sum(m.search_len)
+      FROM memories m
+     WHERE m.tenant_id = t AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) = 1
+     GROUP BY m.tenant_id, m.workarea_id, oml_search_memory_kind(m.kind);
+END
+$$;
+
+-- The fill of every existing tenant, under each tenant's row security, the
+-- tenants enumerated under 0003's startup policy as 0020 enumerates them.
 DO $$
 DECLARE
     t uuid;
@@ -335,37 +374,9 @@ BEGIN
     PERFORM set_config('oml.startup_check', 'on', true);
     FOR t IN SELECT id FROM tenants ORDER BY id LOOP
         PERFORM set_config('oml.tenant_id', t::text, true);
-        INSERT INTO search_postings (tenant_id, memory_id, workarea_id, token_id, weight, doc_len,
-                                     kind, memory_kind, state)
-        SELECT m.tenant_id, m.id, m.workarea_id, oml_token_id(u.lexeme),
-               GREATEST(cardinality(u.positions), 1), m.search_len, 1,
-               oml_search_memory_kind(m.kind),
-               oml_search_state(m.status, m.is_tip, m.retirement, m.kind)
-          FROM memories m CROSS JOIN LATERAL unnest(m.search_vector) u
-         WHERE m.tenant_id = t
-           AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) IS NOT NULL;
-        INSERT INTO search_term_rows (tenant_id, workarea_id, kind, memory_kind, token_id, rows)
-        SELECT p.tenant_id, p.workarea_id, 1, p.memory_kind, p.token_id,
-               count(DISTINCT p.memory_id)
-          FROM search_postings p
-         WHERE p.tenant_id = t AND p.kind = 1 AND p.state = 1
-         GROUP BY p.tenant_id, p.workarea_id, p.memory_kind, p.token_id;
-        INSERT INTO search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows,
-                                          total_len)
-        SELECT m.tenant_id, m.workarea_id, 1, oml_search_memory_kind(m.kind), count(*),
-               sum(m.search_len)
-          FROM memories m
-         WHERE m.tenant_id = t AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) = 1
-         GROUP BY m.tenant_id, m.workarea_id, oml_search_memory_kind(m.kind);
+        PERFORM oml_search_postings_refill(t);
     END LOOP;
     PERFORM set_config('oml.tenant_id', '', true);
     PERFORM set_config('oml.startup_check', '', true);
-END
-$$;
-
--- oml_search_postings_refill: not yet built.
-CREATE FUNCTION oml_search_postings_refill(t uuid) RETURNS void
-    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
-BEGIN
 END
 $$;

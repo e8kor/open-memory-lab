@@ -8050,7 +8050,10 @@ async fn the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_f
         faulty.unfilled, 2,
         "the served and the held version: {faulty:?}"
     );
-    assert_eq!(faulty.workarea_drift, 1, "{faulty:?}");
+    assert_eq!(
+        faulty.workarea_drift, 2,
+        "0xE2's two count rows, memory and derived_fact: {faulty:?}"
+    );
     assert!(faulty.term_drift > 0, "{faulty:?}");
 
     as_owner(

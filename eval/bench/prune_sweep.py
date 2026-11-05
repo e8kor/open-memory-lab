@@ -89,6 +89,8 @@ def main():
             ms = sorted(g["ms"] for g in got)
             rows[label] = {
                 "ndcg@10": round(sum(per[i]["nDCG@10"] for i in ids) / len(ids), 4),
+                "recall@20": round(sum(per[i]["R@20"] for i in ids) / len(ids), 4),
+                "recall@100": round(sum(per[i]["R@100"] for i in ids) / len(ids), 4),
                 "scan_share": round(sum(g["access"] == "scan" for g in got) / len(got), 4),
                 "pruned_share": round(sum(bool(g["pruned"]) for g in got) / len(got), 4),
                 "store_p50_ms": round(ms[len(ms) // 2], 2),

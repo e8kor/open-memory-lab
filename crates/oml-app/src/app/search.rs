@@ -8,7 +8,7 @@ use oml_domain::{Role, event_types};
 
 use super::{App, require_role};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
-use crate::search::Pipeline;
+use crate::search::{Pipeline, PostingsHealth};
 use crate::types::{AppError, Bearer};
 
 /// What `GET /v2/search` answers: the deployment's served pipelines and
@@ -22,6 +22,10 @@ pub struct SearchSettings {
     /// deployment stopped serving stays here and is not `effective`.
     pub tenant_default: Option<String>,
     pub effective: Pipeline,
+    /// The tenant's postings health, read by `GET /v2/search` where the
+    /// deployment serves `bm25-postings` and the store keeps postings, for
+    /// doctor (ADR-0052 d12); `None` otherwise.
+    pub postings: Option<PostingsHealth>,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -39,7 +43,11 @@ where
     ) -> Result<SearchSettings, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "search_settings")?;
-        self.settings_of(admin.tenant_id).await
+        let mut settings = self.settings_of(admin.tenant_id).await?;
+        if self.search.serves(Pipeline::Bm25Postings) {
+            settings.postings = self.journal.postings_health(admin.tenant_id).await?;
+        }
+        Ok(settings)
     }
 
     /// `POST /v2/search/default`, admin by key role: the tenant's default
@@ -103,6 +111,7 @@ where
             deployment_default: self.search.default_pipeline(),
             tenant_default,
             effective,
+            postings: None,
         })
     }
 }

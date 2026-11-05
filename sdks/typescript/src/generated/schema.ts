@@ -1160,6 +1160,22 @@ export interface components {
             tenant_default: string | null;
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
+            postings?: components["schemas"]["PostingsHealth"];
+        };
+        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings; absent from the answer to POST /v2/search/default. */
+        PostingsHealth: {
+            /** @description The tenant's postings partition exists. */
+            partition: boolean;
+            /** @description Memory versions that should have postings and have none: the fill incomplete. */
+            unfilled: number;
+            /** @description Served memories with no served posting, which bm25-postings cannot find. */
+            served_behind: number;
+            /** @description Per-workarea counts that disagree with the served memories. */
+            workarea_drift: number;
+            /** @description Sampled word counts that disagree with the served postings, or are missing. */
+            term_drift: number;
+            /** @description How many word counts were sampled. */
+            terms_checked: number;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.

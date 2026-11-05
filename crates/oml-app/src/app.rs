@@ -173,6 +173,10 @@ pub struct App<J, S, C, I, Sc> {
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
+    /// Recalls since the process started, per pipeline in
+    /// [`Pipeline::ALL`] order, read from postings and by a scan: doctor's
+    /// scan-share line reads `bm25-postings`'s (ADR-0052 d6, d12).
+    search_access: [[AtomicU64; 2]; Pipeline::ALL.len()],
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -987,6 +991,7 @@ where
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
             search: SearchConfig::default(),
+            search_access: std::array::from_fn(|_| [AtomicU64::new(0), AtomicU64::new(0)]),
         }
     }
 
@@ -1048,6 +1053,20 @@ where
     #[must_use]
     pub fn connect_code_failures(&self) -> u64 {
         self.connect_code_failures.load(Ordering::Relaxed)
+    }
+
+    /// `pipeline`'s recalls since this process started, as (read from
+    /// postings, answered by a scan), across every tenant (ADR-0052 d12).
+    #[must_use]
+    pub fn search_access(&self, pipeline: Pipeline) -> (u64, u64) {
+        let i = Pipeline::ALL
+            .iter()
+            .position(|p| *p == pipeline)
+            .unwrap_or(0);
+        (
+            self.search_access[i][0].load(Ordering::Relaxed),
+            self.search_access[i][1].load(Ordering::Relaxed),
+        )
     }
 
     // -- internals ----------------------------------------------------------
@@ -4401,6 +4420,10 @@ where
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
         self.observer
             .search(pipeline.as_str(), fallback, ran.access.as_str());
+        if let Some(i) = Pipeline::ALL.iter().position(|p| *p == pipeline) {
+            let read = usize::from(ran.access == Access::Scan);
+            self.search_access[i][read].fetch_add(1, Ordering::Relaxed);
+        }
         // The k cut, then the budget cut over the counts `body_bytes` gives
         // without any body read; steering is never cut and spent first
         // (ADR-0025 d7).

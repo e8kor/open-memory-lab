@@ -115,6 +115,7 @@ from .memory_summary_severity import MemorySummarySeverity
 from .memory_summary_state import MemorySummaryState
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
+from .postings_health import PostingsHealth
 from .protected_resource_metadata import ProtectedResourceMetadata
 from .protected_resource_metadata_bearer_methods_supported_item import (
     ProtectedResourceMetadataBearerMethodsSupportedItem,
@@ -303,6 +304,7 @@ __all__ = (
     "MemorySummaryState",
     "OAuthError",
     "OAuthErrorError",
+    "PostingsHealth",
     "ProtectedResourceMetadata",
     "ProtectedResourceMetadataBearerMethodsSupportedItem",
     "ProtectedResourceMetadataScopesSupportedItem",

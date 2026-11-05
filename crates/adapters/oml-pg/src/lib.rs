@@ -816,6 +816,51 @@ pub fn bm25_postings_sql() -> String {
     )
 }
 
+/// The postings health statement (ADR-0052 d12), as the serving role under
+/// `$1`'s row security, `$2` its partition's name: whether the partition
+/// exists; the versions that should have postings (a hit kind, no
+/// retirement, not erased, some lexeme) and have none, the fill
+/// incomplete; the served versions with no served posting, behind; the
+/// per-workarea counts that disagree with the served versions; and, of
+/// 200 count rows and as many served (workarea, kind, token)
+/// triples, the ones whose count disagrees with the served postings or is
+/// missing. Each served posting read goes through `search_postings_served`.
+const POSTINGS_HEALTH: &str = "WITH v AS ( \
+         SELECT m.id, m.workarea_id, oml_search_memory_kind(m.kind) AS mk, m.search_len, \
+                oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
+         FROM memories m WHERE m.tenant_id = $1), \
+     want AS (SELECT * FROM v WHERE state IS NOT NULL AND search_len > 0), \
+     served AS (SELECT workarea_id, mk, count(*)::int8 AS rows, sum(search_len)::int8 AS len \
+                FROM v WHERE state = 1 GROUP BY workarea_id, mk), \
+     kept AS (SELECT workarea_id, memory_kind AS mk, rows::int8 AS rows, total_len AS len \
+              FROM search_workarea_rows WHERE tenant_id = $1 AND kind = 1), \
+     sampled AS (SELECT c.workarea_id, c.memory_kind, c.token_id, c.rows FROM search_term_rows c \
+                 WHERE c.tenant_id = $1 AND c.kind = 1 \
+                 ORDER BY c.token_id, c.workarea_id, c.memory_kind LIMIT 200), \
+     posted AS (SELECT DISTINCT p.workarea_id, p.memory_kind, p.token_id FROM search_postings p \
+                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 \
+                ORDER BY p.token_id, p.workarea_id, p.memory_kind LIMIT 200) \
+     SELECT to_regclass($2) IS NOT NULL AS partition, \
+       (SELECT count(*) FROM want w WHERE NOT EXISTS ( \
+            SELECT 1 FROM search_postings p WHERE p.tenant_id = $1 AND p.memory_id = w.id))::int8 \
+         AS unfilled, \
+       (SELECT count(*) FROM want w WHERE w.state = 1 AND NOT EXISTS ( \
+            SELECT 1 FROM search_postings p WHERE p.tenant_id = $1 AND p.memory_id = w.id \
+                                          AND p.state = 1))::int8 AS served_behind, \
+       (SELECT count(*) FROM served s FULL JOIN kept k USING (workarea_id, mk) \
+         WHERE s.rows IS DISTINCT FROM k.rows OR s.len IS DISTINCT FROM k.len)::int8 \
+         AS workarea_drift, \
+       ((SELECT count(*) FROM sampled c WHERE c.rows <> ( \
+            SELECT count(DISTINCT p.memory_id) FROM search_postings p \
+             WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = c.token_id \
+               AND p.workarea_id = c.workarea_id AND p.state = 1 \
+               AND p.memory_kind = c.memory_kind)) \
+        + (SELECT count(*) FROM posted t WHERE NOT EXISTS ( \
+            SELECT 1 FROM search_term_rows c WHERE c.tenant_id = $1 AND c.kind = 1 \
+               AND c.workarea_id = t.workarea_id AND c.memory_kind = t.memory_kind \
+               AND c.token_id = t.token_id)))::int8 AS term_drift, \
+       ((SELECT count(*) FROM sampled) + (SELECT count(*) FROM posted))::int8 AS terms_checked";
+
 /// A lexeme's posting id, as `oml_token_id` computes it in SQL: the first
 /// eight bytes of SHA-256 over its UTF-8 bytes, a signed big-endian integer
 /// (ADR-0052 d2). No table maps a word to an id, so a write assigns
@@ -871,13 +916,19 @@ impl PruneLimits {
     };
 
     /// The tokens pruned from `forms` (token, readable document frequency)
-    /// over `rows` readable rows: every frequent one, then, while the kept
-    /// ones' frequencies sum above the budget, the most frequent kept one,
-    /// ties by token id. A form no readable row holds is neither kept nor
-    /// pruned. It reads the readable counts alone, so which word is pruned
-    /// depends only on rows the key may read (ADR-0052 d6).
+    /// over `rows` readable rows: none while every form's postings together
+    /// fit the budget, so a scope that can be read whole is, and a row
+    /// holding only frequent words is still found; past it, every frequent
+    /// one, then, while the kept ones' frequencies sum above the budget,
+    /// the most frequent kept one, ties by token id. A form no readable row
+    /// holds is neither kept nor pruned. It reads the readable counts alone,
+    /// so which word is pruned depends only on rows the key may read
+    /// (ADR-0052 d6, amended 2026-11-05).
     #[must_use]
     pub fn pruned(&self, forms: &[(i64, u64)], rows: u64) -> BTreeSet<i64> {
+        if forms.iter().map(|(_, df)| df).sum::<u64>() <= self.posting_budget {
+            return BTreeSet::new();
+        }
         #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
         let bound = self.frequent_share * rows as f64;
         let mut pruned = BTreeSet::new();
@@ -3519,11 +3570,26 @@ impl Retriever for PgStore {
     }
 
     async fn postings_health(&self, tenant_id: Uuid) -> Result<Option<PostingsHealth>, StoreError> {
-        let _ = tenant_id;
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(POSTINGS_HEALTH)
+            .bind(tenant_id)
+            .bind(postings_partition(tenant_id))
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let count = |column: &str| -> Result<u64, StoreError> {
+            let value: i64 = row.try_get(column).map_err(backend)?;
+            u64::try_from(value).map_err(backend)
+        };
         Ok(Some(PostingsHealth {
-            partition: true,
-            terms_checked: 1,
-            ..PostingsHealth::default()
+            partition: row.try_get("partition").map_err(backend)?,
+            unfilled: count("unfilled")?,
+            served_behind: count("served_behind")?,
+            workarea_drift: count("workarea_drift")?,
+            term_drift: count("term_drift")?,
+            terms_checked: count("terms_checked")?,
         }))
     }
 }
