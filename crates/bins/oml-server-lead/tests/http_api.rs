@@ -8586,52 +8586,34 @@ async fn a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm
     drop_db(&db).await;
 }
 
-/// `/readyz` counts each served pipeline's recalls since start by how they
-/// were read, postings or a scan: doctor's scan-share line reads
-/// `bm25-postings`'s (ADR-0052 d6, d12).
+/// `/readyz`, unauthenticated on the public port, names no recall counts:
+/// how many recalls ran, and how, is the metrics listener's alone, so no
+/// caller learns another tenant's traffic (ADR-0042 d11; ADR-0052 d12).
 #[tokio::test]
-async fn readyz_counts_each_pipelines_recalls_by_how_they_were_read() {
+async fn readyz_names_no_recall_counts() {
     let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
         return;
     };
     let router = &rig.router;
-    let zero = json!({"postings": 0, "scan": 0});
-    let (_, _, before) = send(router, "GET", "/readyz", Call::default()).await;
-    assert_eq!(
-        before["search"]["access"],
-        json!({"keyword-any": zero, "bm25": zero, "bm25-postings": zero}),
-        "{before}"
-    );
-    for (i, body) in [
-        "deploy the billing service on friday",
-        "the ledger closes at midnight",
-        "rollback the release with one command",
-    ]
-    .iter()
-    .enumerate()
-    {
-        promoted_over_http(router, &agent, &dreamer, &format!("scan-{i}"), body).await;
-    }
-    for query in ["deploy", "zebra"] {
-        let read = recall_ok(router, &reader, json!({"query": query})).await;
-        assert_eq!(read["search"]["access"], "postings", "{read}");
-    }
-    let scanned = recall_ok(
+    promoted_over_http(
         router,
-        &reader,
-        json!({"query": "deploy", "search": "bm25"}),
+        &agent,
+        &dreamer,
+        "scan-0",
+        "deploy the billing service",
     )
     .await;
-    assert_eq!(scanned["search"]["access"], "scan", "{scanned}");
-    let (_, _, after) = send(router, "GET", "/readyz", Call::default()).await;
+    for query in ["deploy", "zebra"] {
+        recall_ok(router, &reader, json!({"query": query})).await;
+    }
+    let (_, _, ready) = send(router, "GET", "/readyz", Call::default()).await;
     assert_eq!(
-        after["search"]["access"],
+        ready["search"],
         json!({
-            "keyword-any": zero,
-            "bm25": {"postings": 0, "scan": 1},
-            "bm25-postings": {"postings": 2, "scan": 0},
+            "enabled": ["keyword-any", "bm25", "bm25-postings"],
+            "default": "bm25-postings",
         }),
-        "{after}"
+        "{ready}"
     );
     drop_db(&rig.db_name).await;
 }

@@ -7377,6 +7377,10 @@ async fn bm25_postings_contract_laws() {
         &postings_store(&created, LAW_PRUNING).await,
     )
     .await;
+    oml_port_contracts::a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach(
+        &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
     oml_port_contracts::a_scope_whose_postings_fit_the_budget_is_read_whole(
         &postings_store(&created, LAW_FITTING).await,
     )
@@ -7864,6 +7868,37 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
             .any(|l| l.contains("Index Cond") && l.contains("token_id")),
         "the token is an index condition under the policy: {plan}"
     );
+    // The served index carries what a score needs, ordered by workarea after
+    // the token, so a recall reads its readable workareas' postings alone,
+    // without the heap (ADR-0052 d1, open question 1).
+    assert!(
+        plan.lines()
+            .any(|l| l.contains("Index Only Scan") && l.contains("kind_token_id_workarea_id")),
+        "an index-only scan of the partition's search_postings_served: {plan}"
+    );
+    assert!(
+        plan.lines().any(|l| l.contains("Index Cond")
+            && l.contains("token_id")
+            && l.contains("workarea_id")),
+        "the readable workareas are an index condition beside the token: {plan}"
+    );
+    // The parent keeps no statistics of its own, which an ANALYZE of it
+    // would gather across every tenant; the tenant's partition keeps its own
+    // (FR-45; review F5).
+    let mut owner = owner_conn(&store).await;
+    let targets: Vec<(String, Option<i16>)> = sqlx::query_as(
+        "SELECT c.relname::text, a.attstattarget::int2 FROM pg_attribute a \
+           JOIN pg_class c ON c.oid = a.attrelid \
+          WHERE a.attname = 'token_id' \
+            AND (c.relname = 'search_postings' OR c.relname = $1) ORDER BY 1",
+    )
+    .bind(format!("search_postings_t_{}", rig.tenant_id.simple()))
+    .fetch_all(&mut owner)
+    .await
+    .expect("statistics targets");
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    assert_eq!(targets[0].1, Some(0), "the parent gathers none: {targets:?}");
+    assert_ne!(targets[1].1, Some(0), "the partition keeps its own: {targets:?}");
     drop_dbs(&created).await;
 }
 
@@ -8070,5 +8105,310 @@ async fn the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_f
         counts_from_postings(&store, tenant).await.0,
         "the refilled counts are the served postings'"
     );
+    drop_dbs(&created).await;
+}
+
+/// The served state alone of the postings, the counts and the refill are
+/// the trigger's and the owner's: the serving role may not run the refill
+/// (ADR-0052 d12; review F3).
+#[tokio::test]
+async fn the_serving_role_may_not_run_the_postings_refill() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(577);
+    rig.seed_chain(&store, 0).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let refused = sqlx::query("SELECT oml_search_postings_refill($1)")
+        .bind(rig.tenant_id)
+        .execute(&mut *tx)
+        .await
+        .expect_err("the serving role is refused");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("42501"),
+        "{refused}"
+    );
+    drop(tx);
+    drop_dbs(&created).await;
+}
+
+/// A refill holds its own tenant's writes, by that tenant's chain lock,
+/// and no other tenant's: another tenant's write commits while it runs
+/// (ADR-0052 d12; review F3).
+#[tokio::test]
+async fn a_refill_holds_its_own_tenants_writes_and_no_other_tenants() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut mine = ChainRig::new(578);
+    mine.seed_chain(&store, 0).await;
+    lifecycle_rows(&mut mine, &store).await;
+    let mut theirs = ChainRig::new(579);
+    theirs.seed_chain(&store, 0).await;
+    let mut owner = owner_conn(&store).await;
+    let mut refill = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(mine.tenant_id.to_string())
+        .execute(&mut *refill)
+        .await
+        .expect("tenant");
+    sqlx::query("SELECT oml_search_postings_refill($1)")
+        .bind(mine.tenant_id)
+        .execute(&mut *refill)
+        .await
+        .expect("refill");
+    let other = held_memory(
+        theirs.tenant_id,
+        Uuid::from_u128(0xE2),
+        Uuid::from_u128(0xC01),
+        "rita",
+        Uuid::from_u128(0xE5),
+        "another tenant writes during the refill",
+    );
+    let written = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        oml_port_contracts::hold(&mut theirs, &store, other),
+    )
+    .await;
+    assert!(
+        matches!(written, Ok(Ok(_))),
+        "another tenant's write is not held by the refill: {written:?}"
+    );
+    let own = held_memory(
+        mine.tenant_id,
+        Uuid::from_u128(0xE2),
+        Uuid::from_u128(0xC02),
+        "rita",
+        Uuid::from_u128(0xE5),
+        "this tenant waits for its refill",
+    );
+    let waited = tokio::time::timeout(
+        std::time::Duration::from_millis(1_500),
+        oml_port_contracts::hold(&mut mine, &store, own),
+    )
+    .await;
+    assert!(
+        waited.is_err(),
+        "the refilled tenant's write waits: {waited:?}"
+    );
+    refill.commit().await.expect("commit");
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// A tenant whose postings partition is missing, as a lead before 0021
+/// leaves a tenant it creates after another lead migrated, has every memory
+/// write refused; the next start's migration creates the partition and
+/// fills it, and its writes resume (ADR-0052 d1; review F4).
+#[tokio::test]
+async fn a_tenant_without_a_postings_partition_gets_one_at_the_next_start_and_its_writes_resume() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(580);
+    rig.seed_chain(&store, 0).await;
+    lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let partition = format!("search_postings_t_{}", tenant.simple());
+    let mut owner = owner_conn(&store).await;
+    owner
+        .execute(format!("ALTER TABLE search_postings DETACH PARTITION {partition}").as_str())
+        .await
+        .expect("detach");
+    owner
+        .execute(format!("DROP TABLE {partition}").as_str())
+        .await
+        .expect("drop");
+    drop(owner);
+    let row = |id: u128| {
+        held_memory(
+            tenant,
+            Uuid::from_u128(0xE2),
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            "written while the partition is missing",
+        )
+    };
+    assert!(
+        oml_port_contracts::hold(&mut rig, &store, row(0xC10))
+            .await
+            .is_err(),
+        "a write needs the tenant's postings partition"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("pg");
+    assert!(!health.partition, "{health:?}");
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("db");
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("the next start migrates");
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("pg");
+    assert!(health.partition, "the start creates it: {health:?}");
+    assert_eq!(
+        (
+            health.unfilled,
+            health.served_behind,
+            health.workarea_drift,
+            health.term_drift
+        ),
+        (0, 0, 0, 0),
+        "and fills it: {health:?}"
+    );
+    oml_port_contracts::hold(&mut rig, &store, row(0xC11))
+        .await
+        .expect("writes resume");
+    drop_dbs(&created).await;
+}
+
+/// The health check's word-count sample moves: drift in a count past the
+/// first 200 a fixed sample would read is found within a few reads
+/// (ADR-0052 d12; review F7).
+#[tokio::test]
+async fn the_postings_health_samples_word_counts_across_the_whole_range() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(581);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let words: Vec<String> = (0..600).map(|i| format!("word{i:04}")).collect();
+    for (n, chunk) in words.chunks(100).enumerate() {
+        let m = held_memory(
+            tenant,
+            Uuid::from_u128(0xE2),
+            Uuid::from_u128(0xD00 + n as u128),
+            "rita",
+            Uuid::from_u128(0xE5),
+            &chunk.join(" "),
+        );
+        oml_port_contracts::hold_and_promote(&mut rig, &store, m).await;
+    }
+    // The count of the largest token: past any fixed first 200.
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE search_term_rows SET rows = rows + 1 WHERE tenant_id = $1 AND token_id = \
+          (SELECT max(token_id) FROM search_term_rows WHERE tenant_id = $1) AND $2::uuid IS NOT NULL",
+        Uuid::nil(),
+    )
+    .await;
+    let mut found = false;
+    for _ in 0..20 {
+        let h = store
+            .postings_health(tenant)
+            .await
+            .expect("health")
+            .expect("pg");
+        found |= h.term_drift > 0;
+    }
+    assert!(found, "twenty reads sample the drifted count at least once");
+    drop_dbs(&created).await;
+}
+
+/// The counts' writes lock rows in token order alone, so concurrent writes
+/// that skip the chain lock, as a future encoder or repair may, neither
+/// deadlock nor race a count below zero (ADR-0052 d5; review F9).
+#[tokio::test]
+async fn concurrent_count_updates_without_the_chain_lock_never_deadlock() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(582);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("db");
+    // Half the words already counted once, so a take-back deletes some rows
+    // and updates others in the same call.
+    let half = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+    let all = format!("{half} kilo lima mike november oscar papa quebec romeo sierra tango");
+    let seed =
+        format!("SELECT oml_search_count($1, $2, 1::int2, to_tsvector('simple', '{half}'), 10, 1)");
+    let mut tasks = Vec::new();
+    {
+        let mut c = PgConnection::connect(&owner_url(&db)).await.expect("owner");
+        let mut tx = c.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        sqlx::query(&seed)
+            .bind(tenant)
+            .bind(Uuid::from_u128(0xE2))
+            .execute(&mut *tx)
+            .await
+            .expect("seed");
+        tx.commit().await.expect("commit");
+    }
+    for worker in 0..6 {
+        let url = owner_url(&db);
+        let all = all.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut c = PgConnection::connect(&url).await.expect("owner");
+            for i in 0..60 {
+                let delta = if (i + worker) % 2 == 0 { 1 } else { -1 };
+                let mut tx = c.begin().await.expect("begin");
+                sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                    .bind(tenant.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .expect("tenant");
+                let sql = format!(
+                    "SELECT oml_search_count($1, $2, 1::int2, to_tsvector('simple', '{all}'), 20, {delta})"
+                );
+                if let Err(e) = sqlx::query(&sql)
+                    .bind(tenant)
+                    .bind(Uuid::from_u128(0xE2))
+                    .execute(&mut *tx)
+                    .await
+                {
+                    return Err(e.to_string());
+                }
+                tx.commit().await.expect("commit");
+            }
+            Ok(())
+        }));
+    }
+    for t in tasks {
+        let done = t.await.expect("task");
+        assert!(
+            done.is_ok(),
+            "no deadlock and no count below zero: {done:?}"
+        );
+    }
     drop_dbs(&created).await;
 }

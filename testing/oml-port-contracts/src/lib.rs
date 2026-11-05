@@ -10224,8 +10224,9 @@ async fn postings_fixture<S: JournalStore>(rig: &mut ChainRig, store: &S) -> (Uu
 
 /// The queries the postings laws ask: frequent words alone, frequent words
 /// beside rare ones, inflections, identifiers, stop words and absent words.
-const POSTINGS_QUERIES: [&str; 12] = [
+const POSTINGS_QUERIES: [&str; 13] = [
     "billing",
+    "invoices tenant",
     "billing friday",
     "deploy billing",
     "deploying on friday",
@@ -10606,6 +10607,60 @@ pub async fn a_scope_whose_postings_fit_the_budget_is_read_whole<S: JournalStore
                 .any(|c| c.memory_id.as_u128() == 0xF06),
             "a row saying only the frequent billing is found: {got:?}"
         );
+    }
+}
+
+/// With pruning on, the list is `bm25`'s over the rows a word it read
+/// reaches: every row `bm25` ranks that holds a word the answer does not
+/// name in `pruned`, in `bm25`'s order with `bm25`'s scores, and only a row
+/// holding nothing but named words is missing. So `pruned: []` means the
+/// list is `bm25`'s (ADR-0052 d6, d11). The store prunes forms above a share
+/// of 0.3 of the readable rows once the query's readable postings pass a
+/// budget of 5.
+pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(428);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    for own_held in [None, Some(own)] {
+        let scope = scope_of(wa, own_held);
+        for query in POSTINGS_QUERIES {
+            for k in [1, 3, 10] {
+                let ask = |kind, k| {
+                    store.retrieve(
+                        rig.tenant_id,
+                        kind,
+                        &scope,
+                        RetrievalQuery {
+                            query,
+                            match_mode: MatchMode::Any,
+                            k,
+                        },
+                    )
+                };
+                let got = ask(RetrieverKind::Bm25Postings, k).await.expect("postings");
+                let full = ask(RetrieverKind::Bm25, 1_000).await.expect("bm25");
+                let reached: Vec<Candidate> = full
+                    .candidates
+                    .into_iter()
+                    .filter(|c| c.matched.iter().any(|w| !got.pruned.contains(w)))
+                    .take(k)
+                    .collect();
+                let want = Retrieved {
+                    candidates: reached,
+                    ..Retrieved::default()
+                };
+                same_list(
+                    &got,
+                    &want,
+                    &format!("{query:?} own {own_held:?} k {k} pruned {:?}", got.pruned),
+                );
+            }
+        }
     }
 }
 
