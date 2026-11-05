@@ -4306,6 +4306,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         &std::env::current_dir().unwrap_or_default(),
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    // The chat hooks' local state (ADR-0063 d13).
+    let chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
+    let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -4331,6 +4334,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || review_warn
         || telemetry_warn
         || sync_warn
+        || chat_warn
         || sources_warn
     {
         "warn"
@@ -4374,6 +4378,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "search": search,
             "review": review,
             "sync": sync,
+            "chat": chat,
             "telemetry": telemetry,
             "sources": sources,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -4483,6 +4488,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sync {
             println!("sync        : {line}");
+        }
+        for line in &chat {
+            println!("chat        : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");

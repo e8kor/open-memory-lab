@@ -633,6 +633,65 @@ pub fn on_pre_compact(
     Ok(Reply::Nothing)
 }
 
+/// `oml doctor`'s chat lines (ADR-0063 d13), from this machine alone: a
+/// switch with a value it does not take; capture or per-turn recall on
+/// with no chat workarea named; a salt file that is not 0600; sessions
+/// whose per-turn recall missed its budget.
+#[must_use]
+pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut on = Vec::new();
+    for name in [CAPTURE_SWITCH, TURN_RECALL_SWITCH, EXCERPT_SWITCH] {
+        match switch(var, name) {
+            Ok(true) => on.push(name),
+            Ok(false) => {}
+            Err(why) => out.push(format!("warn chat: {why}, so it is off")),
+        }
+    }
+    let capture_or_recall = on.contains(&CAPTURE_SWITCH) || on.contains(&TURN_RECALL_SWITCH);
+    match chat_workarea(var) {
+        None if on.contains(&CAPTURE_SWITCH) => out.push(format!(
+            "warn chat: {CAPTURE_SWITCH}=1 but no chat workarea is named, so nothing is captured; run oml chat init with your own key and set {WORKAREA_VAR}"
+        )),
+        None if capture_or_recall => out.push(format!(
+            "warn chat: {TURN_RECALL_SWITCH}=1 recalls from the key's default workarea alone; run oml chat init and set {WORKAREA_VAR} to recall your chat facts too"
+        )),
+        Some(w) if capture_or_recall => out.push(format!("ok chat: {} on, workarea {w}", on.join(", "))),
+        _ => {}
+    }
+    #[cfg(unix)]
+    if let Some(path) = salt_path(var)
+        && let Ok(meta) = std::fs::metadata(&path)
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            out.push(format!(
+                "warn chat: {} is mode {mode:o}, not 600; anyone who reads it can link your chat anchors to your sessions: chmod 600 it",
+                path.display()
+            ));
+        }
+    }
+    if let Some(dir) = cache_path(var, "x").and_then(|p| p.parent().map(Path::to_path_buf))
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        let missed = entries
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".chat.json"))
+            .filter(|e| ChatCache::load(&e.path()).misses > 0)
+            .count();
+        if missed > 0 {
+            out.push(format!(
+                "warn chat: per-turn recall missed its budget in {missed} open session(s); raise {BUDGET_VAR} (at most {BUDGET_MAX_MS}) or check the server's recall latency"
+            ));
+        }
+    }
+    if out.is_empty() {
+        out.push("ok chat: capture and per-turn recall are off".to_owned());
+    }
+    out
+}
+
 /// Deletes a session's chat cache, for `oml hook session-end`.
 pub fn forget_session(var: &dyn Fn(&str) -> Option<String>, session_id: &str) {
     if let Some(path) = chat_cache_path(var, session_id) {
@@ -692,6 +751,27 @@ mod tests {
     fn seeded(env: &Env) {
         let path = salt_path(&env.var()).expect("salt path");
         write_owner_only(&path, &hex::decode(SALT_HEX).expect("hex")).expect("salt");
+    }
+
+    #[test]
+    fn doctor_names_capture_without_a_chat_workarea_and_a_bad_switch() {
+        let env = Env::new(&[(CAPTURE_SWITCH, "1"), (TURN_RECALL_SWITCH, "on")]);
+        let lines = doctor_lines(&env.var());
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warn chat: OML_TURN_RECALL is \"on\"")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("oml chat init")),
+            "{lines:?}"
+        );
+        let env = Env::new(&[]);
+        assert_eq!(
+            doctor_lines(&env.var()),
+            vec!["ok chat: capture and per-turn recall are off"]
+        );
     }
 
     #[test]
