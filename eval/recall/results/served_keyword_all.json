@@ -16,7 +16,7 @@
    "mrr": 1.0,
    "ndcg10": 0.84,
    "zero": 0.0,
-   "median_latency_ms": 12.3,
+   "median_latency_ms": 16.5,
    "n": 11
   },
   "paraphrase": {
@@ -26,7 +26,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 11.9,
+   "median_latency_ms": 11.1,
    "n": 11
   },
   "inflection": {
@@ -36,7 +36,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 14.7,
+   "median_latency_ms": 12.6,
    "n": 11
   },
   "partial": {
@@ -46,7 +46,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 12.9,
+   "median_latency_ms": 10.3,
    "n": 11
   },
   "typo": {
@@ -56,7 +56,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 11.1,
+   "median_latency_ms": 13.4,
    "n": 11
   },
   "identifier": {
@@ -66,7 +66,7 @@
    "mrr": 0.727,
    "ndcg10": 0.711,
    "zero": 0.273,
-   "median_latency_ms": 14.2,
+   "median_latency_ms": 15.4,
    "n": 11
   },
   "question": {
@@ -76,7 +76,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 16.1,
+   "median_latency_ms": 15.7,
    "n": 11
   },
   "long": {
@@ -86,7 +86,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 16.6,
+   "median_latency_ms": 18.6,
    "n": 11
   },
   "negation": {
@@ -96,7 +96,7 @@
    "mrr": 0.182,
    "ndcg10": 0.166,
    "zero": 0.818,
-   "median_latency_ms": 10.0,
+   "median_latency_ms": 14.9,
    "n": 11
   },
   "temporal": {
@@ -106,7 +106,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 15.2,
+   "median_latency_ms": 10.4,
    "n": 11
   },
   "multihop": {
@@ -116,7 +116,7 @@
    "mrr": 0.0,
    "ndcg10": 0.0,
    "zero": 1.0,
-   "median_latency_ms": 15.4,
+   "median_latency_ms": 13.4,
    "n": 11
   },
   "overall": {
@@ -126,7 +126,7 @@
    "mrr": 0.174,
    "ndcg10": 0.156,
    "zero": 0.826,
-   "median_latency_ms": 14.6,
+   "median_latency_ms": 14.2,
    "n": 121
   }
  },
@@ -149,7 +149,7 @@
     "truncated": false,
     "used_tokens": 49
    },
-   "latency_ms": 15.93,
+   "latency_ms": 17.17,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -180,7 +180,7 @@
     "truncated": false,
     "used_tokens": 64
    },
-   "latency_ms": 20.19,
+   "latency_ms": 13.63,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -209,7 +209,7 @@
     "truncated": false,
     "used_tokens": 27
    },
-   "latency_ms": 32.56,
+   "latency_ms": 24.06,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -238,7 +238,7 @@
     "truncated": false,
     "used_tokens": 31
    },
-   "latency_ms": 42.61,
+   "latency_ms": 17.19,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -267,7 +267,7 @@
     "truncated": false,
     "used_tokens": 26
    },
-   "latency_ms": 24.68,
+   "latency_ms": 13.4,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -296,7 +296,7 @@
     "truncated": false,
     "used_tokens": 37
    },
-   "latency_ms": 12.27,
+   "latency_ms": 14.25,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -325,7 +325,7 @@
     "truncated": false,
     "used_tokens": 28
    },
-   "latency_ms": 6.81,
+   "latency_ms": 17.79,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -354,7 +354,7 @@
     "truncated": false,
     "used_tokens": 39
    },
-   "latency_ms": 6.89,
+   "latency_ms": 16.5,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -383,7 +383,7 @@
     "truncated": false,
     "used_tokens": 22
    },
-   "latency_ms": 6.85,
+   "latency_ms": 15.3,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -412,7 +412,7 @@
     "truncated": false,
     "used_tokens": 35
    },
-   "latency_ms": 6.59,
+   "latency_ms": 17.28,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -441,7 +441,7 @@
     "truncated": false,
     "used_tokens": 37
    },
-   "latency_ms": 6.73,
+   "latency_ms": 15.53,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -466,7 +466,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 7.19,
+   "latency_ms": 10.81,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -491,7 +491,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 6.83,
+   "latency_ms": 15.51,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -516,7 +516,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 7.13,
+   "latency_ms": 15.12,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -541,7 +541,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 8.06,
+   "latency_ms": 12.46,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -566,7 +566,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.91,
+   "latency_ms": 11.34,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -591,7 +591,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.03,
+   "latency_ms": 11.0,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -616,7 +616,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 18.48,
+   "latency_ms": 12.57,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -641,7 +641,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.87,
+   "latency_ms": 10.89,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -666,7 +666,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.18,
+   "latency_ms": 10.58,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -691,7 +691,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.01,
+   "latency_ms": 11.08,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -716,7 +716,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.93,
+   "latency_ms": 10.77,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -741,7 +741,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.69,
+   "latency_ms": 12.93,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -766,7 +766,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.02,
+   "latency_ms": 11.67,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -791,7 +791,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.74,
+   "latency_ms": 11.11,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -816,7 +816,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.83,
+   "latency_ms": 11.02,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -841,7 +841,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.75,
+   "latency_ms": 11.07,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -866,7 +866,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.7,
+   "latency_ms": 12.6,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -891,7 +891,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.2,
+   "latency_ms": 14.12,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -916,7 +916,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.89,
+   "latency_ms": 13.85,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -941,7 +941,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.55,
+   "latency_ms": 13.96,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -966,7 +966,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.66,
+   "latency_ms": 14.22,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -991,7 +991,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.73,
+   "latency_ms": 11.61,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1016,7 +1016,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.83,
+   "latency_ms": 10.61,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1041,7 +1041,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.33,
+   "latency_ms": 12.47,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1066,7 +1066,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.76,
+   "latency_ms": 9.84,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1091,7 +1091,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.71,
+   "latency_ms": 9.19,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1116,7 +1116,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.66,
+   "latency_ms": 12.31,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1141,7 +1141,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.93,
+   "latency_ms": 9.29,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1166,7 +1166,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.65,
+   "latency_ms": 9.0,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1191,7 +1191,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.18,
+   "latency_ms": 10.26,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1216,7 +1216,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.29,
+   "latency_ms": 13.35,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1241,7 +1241,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.4,
+   "latency_ms": 11.06,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1266,7 +1266,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 10.06,
+   "latency_ms": 8.62,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1291,7 +1291,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 9.02,
+   "latency_ms": 9.54,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1316,7 +1316,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 8.33,
+   "latency_ms": 12.37,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1341,7 +1341,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 6.73,
+   "latency_ms": 13.87,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1366,7 +1366,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 7.48,
+   "latency_ms": 15.15,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1391,7 +1391,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.8,
+   "latency_ms": 14.6,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1416,7 +1416,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 10.7,
+   "latency_ms": 13.81,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1441,7 +1441,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.7,
+   "latency_ms": 9.7,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1466,7 +1466,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.84,
+   "latency_ms": 12.87,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1491,7 +1491,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.48,
+   "latency_ms": 11.7,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1516,7 +1516,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.06,
+   "latency_ms": 13.4,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1541,7 +1541,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.36,
+   "latency_ms": 14.56,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1572,7 +1572,7 @@
     "truncated": false,
     "used_tokens": 58
    },
-   "latency_ms": 11.82,
+   "latency_ms": 15.66,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1601,7 +1601,7 @@
     "truncated": false,
     "used_tokens": 26
    },
-   "latency_ms": 15.5,
+   "latency_ms": 15.02,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1630,7 +1630,7 @@
     "truncated": false,
     "used_tokens": 30
    },
-   "latency_ms": 13.41,
+   "latency_ms": 15.09,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1659,7 +1659,7 @@
     "truncated": false,
     "used_tokens": 25
    },
-   "latency_ms": 16.2,
+   "latency_ms": 16.03,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1684,7 +1684,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.42,
+   "latency_ms": 15.05,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1715,7 +1715,7 @@
     "truncated": false,
     "used_tokens": 59
    },
-   "latency_ms": 11.11,
+   "latency_ms": 15.39,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1740,7 +1740,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.47,
+   "latency_ms": 15.05,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1765,7 +1765,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.15,
+   "latency_ms": 14.75,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1796,7 +1796,7 @@
     "truncated": false,
     "used_tokens": 66
    },
-   "latency_ms": 13.35,
+   "latency_ms": 15.51,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1825,7 +1825,7 @@
     "truncated": false,
     "used_tokens": 29
    },
-   "latency_ms": 16.77,
+   "latency_ms": 16.53,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1854,7 +1854,7 @@
     "truncated": false,
     "used_tokens": 34
    },
-   "latency_ms": 15.43,
+   "latency_ms": 15.72,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1879,7 +1879,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.78,
+   "latency_ms": 15.91,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1904,7 +1904,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.69,
+   "latency_ms": 16.13,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1929,7 +1929,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 19.05,
+   "latency_ms": 15.66,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1954,7 +1954,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.38,
+   "latency_ms": 15.45,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1979,7 +1979,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.38,
+   "latency_ms": 16.25,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2004,7 +2004,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.11,
+   "latency_ms": 15.69,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2029,7 +2029,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.79,
+   "latency_ms": 15.23,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2054,7 +2054,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.92,
+   "latency_ms": 15.48,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2079,7 +2079,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.04,
+   "latency_ms": 16.49,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2104,7 +2104,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 18.71,
+   "latency_ms": 15.13,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2129,7 +2129,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.12,
+   "latency_ms": 17.0,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2154,7 +2154,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.82,
+   "latency_ms": 22.77,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2179,7 +2179,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.57,
+   "latency_ms": 21.43,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2204,7 +2204,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 19.94,
+   "latency_ms": 18.97,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2229,7 +2229,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.96,
+   "latency_ms": 22.16,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2254,7 +2254,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.79,
+   "latency_ms": 17.07,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2279,7 +2279,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.12,
+   "latency_ms": 18.63,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2304,7 +2304,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.88,
+   "latency_ms": 21.4,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2329,7 +2329,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 18.14,
+   "latency_ms": 12.47,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2354,7 +2354,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.57,
+   "latency_ms": 18.05,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2379,7 +2379,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.88,
+   "latency_ms": 16.93,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2404,7 +2404,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.31,
+   "latency_ms": 17.29,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2429,7 +2429,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.31,
+   "latency_ms": 15.47,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2454,7 +2454,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 11.63,
+   "latency_ms": 14.58,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2479,7 +2479,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.63,
+   "latency_ms": 13.69,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2504,7 +2504,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 7.51,
+   "latency_ms": 12.56,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2529,7 +2529,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.76,
+   "latency_ms": 14.06,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2558,7 +2558,7 @@
     "truncated": false,
     "used_tokens": 32
    },
-   "latency_ms": 8.07,
+   "latency_ms": 14.94,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2583,7 +2583,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 7.39,
+   "latency_ms": 15.82,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2612,7 +2612,7 @@
     "truncated": false,
     "used_tokens": 31
    },
-   "latency_ms": 8.37,
+   "latency_ms": 15.01,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2637,7 +2637,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 9.99,
+   "latency_ms": 15.87,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2662,7 +2662,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 9.3,
+   "latency_ms": 16.39,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2687,7 +2687,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 10.95,
+   "latency_ms": 12.51,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2712,7 +2712,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 12.75,
+   "latency_ms": 16.78,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2737,7 +2737,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.19,
+   "latency_ms": 8.86,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2762,7 +2762,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.93,
+   "latency_ms": 8.38,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2787,7 +2787,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.68,
+   "latency_ms": 9.09,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2812,7 +2812,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.33,
+   "latency_ms": 14.85,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2837,7 +2837,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.05,
+   "latency_ms": 10.37,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2862,7 +2862,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.29,
+   "latency_ms": 8.0,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2887,7 +2887,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.62,
+   "latency_ms": 7.42,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2912,7 +2912,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.11,
+   "latency_ms": 13.17,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2937,7 +2937,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.09,
+   "latency_ms": 15.99,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2962,7 +2962,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.26,
+   "latency_ms": 15.13,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2987,7 +2987,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.98,
+   "latency_ms": 13.6,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3012,7 +3012,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.36,
+   "latency_ms": 16.6,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3037,7 +3037,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.35,
+   "latency_ms": 15.23,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3062,7 +3062,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 10.12,
+   "latency_ms": 10.46,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3087,7 +3087,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 13.8,
+   "latency_ms": 17.23,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3112,7 +3112,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 9.43,
+   "latency_ms": 13.42,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3137,7 +3137,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.23,
+   "latency_ms": 18.49,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3162,7 +3162,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 16.27,
+   "latency_ms": 9.52,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3187,7 +3187,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 17.72,
+   "latency_ms": 9.26,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3212,7 +3212,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 14.63,
+   "latency_ms": 9.55,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3237,7 +3237,7 @@
     "truncated": false,
     "used_tokens": 0
    },
-   "latency_ms": 15.6,
+   "latency_ms": 9.34,
    "fallback": null,
    "scores": {
     "s1": 0.0,
