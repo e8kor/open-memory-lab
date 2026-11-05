@@ -50,10 +50,17 @@ def test_write_without_claim_key_sends_none():
 def test_write_with_replaces_supersedes_its_target_and_sends_the_reason():
     requests, transport = recording(202, ACCEPTED | {"version": 2})
     with client(transport) as oml:
-        oml.write("Retired: the runbook moved.", replaces="art_1", retirement=True, reason="moved")
+        oml.write(
+            "Retired: the runbook moved.",
+            replaces="art_1",
+            expected_version=1,
+            retirement=True,
+            reason="moved",
+        )
     assert [(r.method, r.url.path) for r in requests] == [("POST", "/v1/memories/art_1/supersede")]
     assert json.loads(requests[0].content) == {
         "body": "Retired: the runbook moved.",
+        "expected_version": 1,
         "retirement": True,
         "reason": "moved",
     }
@@ -65,6 +72,8 @@ def test_write_with_replaces_supersedes_its_target_and_sends_the_reason():
         ({"retirement": True}, "/retirement"),
         ({"reason": "why"}, "/reason"),
         ({"replaces": "art_1", "claim_key": "k"}, "/claim_key"),
+        ({"replaces": "art_1"}, "/expected_version"),
+        ({"expected_version": 1}, "/expected_version"),
     ],
 )
 def test_a_write_argument_outside_its_mode_raises_before_sending(arguments, field):

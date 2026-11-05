@@ -109,7 +109,7 @@ describe("the agent loop", live, () => {
     const held = (
       await agent.write({ text: `The SDK README's canary rule, ${word}.`, claim_key: `tip-${word}`, workarea })
     ).value;
-    const supersede = { text: "Drain, then wait five minutes.", replaces: held.artifact_id };
+    const supersede = { text: "Drain, then wait five minutes.", replaces: held.artifact_id, expected_version: 1 };
     await assert.rejects(agent.write(supersede), (error: unknown) => {
       assert.ok(error instanceof SubmissionError);
       assert.equal(error.code, "submission.tip_conflict");

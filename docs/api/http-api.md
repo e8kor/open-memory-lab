@@ -525,6 +525,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only | served |
 | `GET /v1/memories/{artifact_id}` | reader; the calling key fetches its own rows in any state | served |
 | `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement | served |
+| `POST /v1/memories/{artifact_id}/source-check` | the version's author key, or dreamer on its workarea; a promoted, anchored served tip only | served |
 | `GET /v1/guardrails` | reader on the scope node; the set under the key's reader access and `guardrail_scope` ([Guardrails](#guardrails-get-v1guardrails)) | served |
 | `POST /v1/attachments/uploads` | writer | designed |
 | `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) | designed |
@@ -978,6 +979,14 @@ R2 keeps every proposer off the review. The target must be the current served ti
 `submission.tip_conflict` with `details.current_tip` when the caller can read it; a held version
 cannot be superseded ([RS-17](../product/roadmap.md)).
 
+*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):*
+`expected_version` is required: the claim's latest live version as the caller last read it, the
+greatest `version` among the claim's held and promoted versions in the workarea (the tip's own
+when nothing is held). Any other answers `409 submission.version_conflict` with
+`details.current_version`, after the target is known readable and before the tip check, and
+nothing is captured. A rejected or demoted version does not count. The successor declares its own
+`anchor` or has none ([Source anchors](#source-anchors)).
+
 The tip moves only at ratification, by compare-and-set;
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)
 owns the tip, version-ordinal, competing-successor, kind-change, retirement and retired-claim
@@ -1004,6 +1013,36 @@ d11). `body` is required and states why; it is scanned, normalized, bounded and 
 any body, and it is what the reviewer judges. Its refusals are [errors](errors.md)'
 `request.validation` and `workarea.frozen` rows; what a retired claim serves is declared on
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+
+### Source anchors
+
+*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1–d5, d18, d21)*
+
+**The anchor.** Submit and supersede take an optional `anchor`, the origin the author declares:
+`{repo, rev, path, fragment?, hash?, hasher?}` for a file in a git repository, or
+`{uri, rev?, fragment?, hash?, hasher?}` for a page outside one. It is signed in the submission
+event, immutable per version, never inherited by a successor, never fetched by the server, shown
+to the reviewer, and kept as clear metadata that erasure does not remove. A malformed anchor is
+`request.validation` naming the field (`/anchor/repo`, `/anchor/path`, …); the scan runs over
+`repo`, `uri`, `path` and `fragment`, and a finding is `submission.scan_veto`. A `fragment` is a
+heading slug, an ADR decision handle `dN` or a line span `L<n>` / `L<n>-L<m>`; `page=<n>` is
+reserved and refused. Every memory item carries `anchor` (or `null`), `stale` and
+`source_checked`.
+
+**Filters.** Recall and `GET /v1/memories` take `anchor_repo` (equal to the anchor's `repo`) and
+`anchor_path_prefix` (a byte prefix of its `path`), combined by AND with every other filter; either
+leaves out unanchored rows. Both run inside the candidate statement under row security, before
+ranking's cut, so a filtered recall never under-returns.
+
+**Source check — `POST /v1/memories/{artifact_id}/source-check`.** `{rev, result, hash?, path?,
+fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed`; `path` (and
+`fragment`) only with `moved`, where `path` is required. Admits a promoted, anchored served tip
+(else `request.validation`, `details.field` `/artifact_id`), from the version's author key or a
+dreamer on its workarea (a writer that can read it and did not author it is `403
+access.author_only`; a key that cannot read it, `access.not_found`). Journals `source.checked`;
+changes no text and no anchor. `200 {artifact_id, stale, source_checked, journal_seq}`. `stale`
+is `changed` or `removed` from the latest check of the served version, else `null`; it is never
+derived from a held version. `Idempotency-Key` required.
 
 ### Guardrails — `GET /v1/guardrails`
 

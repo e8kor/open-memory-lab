@@ -106,9 +106,13 @@ def sync_detailed(
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
     a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
-    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
-    designed.yaml (ADR-0039 d9).
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
+    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the ordinal of the
+    claim's latest live version (the greatest version among its held and promoted versions in the
+    workarea) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -171,9 +175,13 @@ def sync(
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
     a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
-    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
-    designed.yaml (ADR-0039 d9).
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
+    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the ordinal of the
+    claim's latest live version (the greatest version among its held and promoted versions in the
+    workarea) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -231,9 +239,13 @@ async def asyncio_detailed(
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
     a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
-    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
-    designed.yaml (ADR-0039 d9).
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
+    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the ordinal of the
+    claim's latest live version (the greatest version among its held and promoted versions in the
+    workarea) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -294,9 +306,13 @@ async def asyncio(
     target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
     the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
     a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The
-    designed attachment, simulation and vocabulary fields of a successor are declared in openapi-
-    designed.yaml (ADR-0039 d9).
+    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
+    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the ordinal of the
+    claim's latest live version (the greatest version among its held and promoted versions in the
+    workarea) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
