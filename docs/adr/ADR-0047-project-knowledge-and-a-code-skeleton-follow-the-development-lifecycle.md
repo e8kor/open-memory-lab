@@ -9,7 +9,7 @@ answers: what OML stores about a client project's code (a small structural skele
 
 **Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
 
-**Release:** planned, not assigned; gated on the evaluation harness (d17) and ADR-0030 ([releases](../product/releases.md#decisions)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), planned for v0.5.8
+**Release:** planned, not assigned; gated on the evaluation harness (d17) and ADR-0030 ([releases](../product/releases.md#decisions)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
 
 **Amends:** ADR-0025 (d10, d12), ADR-0029 (d2, d7), ADR-0039 (d3); and, on their branches,
 ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
