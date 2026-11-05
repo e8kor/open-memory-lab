@@ -23,6 +23,7 @@ use oml_domain::MemoryKind;
 
 use crate::types::AnchorFilter;
 use oml_domain::budget::hit_order;
+use oml_domain::valid_time::Window;
 
 /// One candidate generator an adapter may serve (ADR-0049 d2). Each is a
 /// ranking over the readable rows, never a visibility decision.
@@ -53,6 +54,11 @@ pub enum RetrieverKind {
     /// query's tokens of the shipped idf times the document's weight; no
     /// corpus statistic is read (ADR-0052 d14, d16).
     Sparse,
+    /// The rows whose declared valid time overlaps the query's date window,
+    /// read by leakproof `int8` comparisons on an index row security lets
+    /// serve, nearest start first; empty when the query names no window
+    /// (proposed ADR-0059 d7).
+    Time,
 }
 
 impl RetrieverKind {
@@ -66,6 +72,7 @@ impl RetrieverKind {
             Self::Trigram => "trigram",
             Self::Bm25Postings => "bm25_postings",
             Self::Sparse => "sparse",
+            Self::Time => "time",
         }
     }
 }
@@ -129,6 +136,10 @@ pub const CC_DEPTH: usize = 100;
 /// 0.007 nDCG@10 of each external set's own best (ADR-0052 d13).
 pub const CC_BM25_SPARSE: [f32; 2] = [0.3, 0.7];
 
+/// How deep the `time` list enters fusion once the core has ordered it by
+/// the text list: the cap (proposed ADR-0059 d7).
+pub const TIME_DEPTH: usize = FUSION_DEPTH;
+
 /// A recall serving fewer hits than this, or than its `k` when `k` is
 /// smaller, before the budget cut, is thin: only then does it offer
 /// `did_you_mean` (ADR-0049 d6, d12).
@@ -166,11 +177,14 @@ pub enum Pipeline {
     /// their fusion alone: the served baseline ADR-0052 d13 measures convex
     /// combination against.
     Bm25SparseRrf,
+    /// `bm25-postings-time`: `bm25-postings` and the `time` leg fused by
+    /// reciprocal rank (proposed ADR-0059 d7).
+    Bm25PostingsTime,
 }
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
@@ -180,6 +194,7 @@ impl Pipeline {
         Self::Sparse,
         Self::Bm25Sparse,
         Self::Bm25SparseRrf,
+        Self::Bm25PostingsTime,
     ];
 
     /// The pipeline's name, as configuration, requests and logs spell it.
@@ -195,6 +210,7 @@ impl Pipeline {
             Self::Sparse => "sparse",
             Self::Bm25Sparse => "bm25-sparse",
             Self::Bm25SparseRrf => "bm25-sparse-rrf",
+            Self::Bm25PostingsTime => "bm25-postings-time",
         }
     }
 
@@ -218,6 +234,7 @@ impl Pipeline {
             Self::Bm25Sparse | Self::Bm25SparseRrf => {
                 &[RetrieverKind::Bm25Postings, RetrieverKind::Sparse]
             }
+            Self::Bm25PostingsTime => &[RetrieverKind::Bm25Postings, RetrieverKind::Time],
         }
     }
 
@@ -231,7 +248,9 @@ impl Pipeline {
             | Self::Bm25Postings
             | Self::Bm25Rerank
             | Self::Sparse => Fusion::Single,
-            Self::Bm25Trigram | Self::Bm25SparseRrf => Fusion::Rrf { k: RRF_K },
+            Self::Bm25Trigram | Self::Bm25SparseRrf | Self::Bm25PostingsTime => {
+                Fusion::Rrf { k: RRF_K }
+            }
             Self::Bm25Sparse => Fusion::Cc {
                 weights: &CC_BM25_SPARSE,
             },
@@ -306,7 +325,7 @@ pub enum Stage {
 
 impl Stage {
     /// Every stage name, the label set of `oml_recall_stage_duration_seconds`.
-    pub const NAMES: [&'static str; 12] = [
+    pub const NAMES: [&'static str; 13] = [
         "scope",
         "retrieve_keyword_all",
         "retrieve_keyword_any",
@@ -314,6 +333,7 @@ impl Stage {
         "retrieve_trigram",
         "retrieve_bm25_postings",
         "retrieve_sparse",
+        "retrieve_time",
         "fuse",
         "rerank",
         "suggest",
@@ -332,6 +352,7 @@ impl Stage {
             Self::Retrieve(RetrieverKind::Trigram) => "retrieve_trigram",
             Self::Retrieve(RetrieverKind::Bm25Postings) => "retrieve_bm25_postings",
             Self::Retrieve(RetrieverKind::Sparse) => "retrieve_sparse",
+            Self::Retrieve(RetrieverKind::Time) => "retrieve_time",
             Self::Fuse => "fuse",
             Self::Rerank => "rerank",
             Self::Suggest => "suggest",
@@ -444,7 +465,7 @@ impl RerankPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchConfigError {
     #[error(
-        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse)"
+        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time)"
     )]
     Unknown(String),
     #[error("search.enabled is empty: a deployment serves at least one pipeline")]
@@ -645,6 +666,10 @@ pub struct CandidateScope {
     pub promoted_nodes: Vec<Uuid>,
     pub kinds: Vec<MemoryKind>,
     pub own_held: Option<OwnHeldScope>,
+    /// The request's now in microseconds: a version whose valid time ended
+    /// at or before it is outside the scope; `None` under
+    /// `include_expired` (proposed ADR-0059 d3).
+    pub expired_at: Option<i64>,
     /// The origin filters, a predicate of the scope itself, before any
     /// ranking or cut, so a filtered recall never under-returns (ADR-0057
     /// d4). Empty, they narrow nothing.
@@ -691,6 +716,14 @@ pub struct PostingsHealth {
     pub similar_drift: u64,
 }
 
+/// The tenant's valid time for doctor (proposed ADR-0059 d12): its served
+/// versions that declare a start, and those whose end has passed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidTimeCounts {
+    pub declared: u64,
+    pub expired: u64,
+}
+
 /// One retrieval: the query, whether every term must match, and how many
 /// candidates to return at most.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -701,6 +734,13 @@ pub struct RetrievalQuery<'a> {
     /// The query's learned sparse tokens, encoded by the core for a
     /// pipeline that reads them; empty otherwise (ADR-0052 d16).
     pub sparse: &'a [SparseTerm],
+    /// The query's date window, which the `time` retriever reads; `None`
+    /// when the query names none (proposed ADR-0059 d6, d7).
+    pub window: Option<&'a Window>,
+    /// The rows the `time` retriever may answer: the ids the pipeline's
+    /// text list found, which bound its read; empty for every other
+    /// retriever (proposed ADR-0059 d7).
+    pub within: &'a [Uuid],
 }
 
 /// One query token of the learned sparse encoder: its vocabulary id, its
@@ -919,11 +959,56 @@ pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
     (kept, withheld)
 }
 
-/// How a pipeline read its lists: `Postings` only when every list was read
-/// from postings, else `Scan` (ADR-0052 d11).
+/// Keeps the `time` list's rows the text list holds, orders them by the
+/// leg's score (the rows the window holds first, then those that began
+/// before it, nearest first), then by the text list's rank, and cuts it at
+/// [`TIME_DEPTH`] (proposed ADR-0059 d7): the leg lifts a row the words
+/// found and never adds one they did not. Pure: it reads the two lists and
+/// nothing else.
+#[must_use]
+pub fn order_time_list(time: Retrieved, text: &Retrieved) -> Retrieved {
+    let rank_in_text: BTreeMap<Uuid, usize> = text
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.memory_id, i))
+        .collect();
+    let mut ranked: Vec<(usize, usize, Candidate)> = time
+        .candidates
+        .into_iter()
+        .enumerate()
+        .filter_map(|(own, c)| {
+            let text_rank = rank_in_text.get(&c.memory_id).copied()?;
+            Some((text_rank, own, c))
+        })
+        .collect();
+    // The rows the window holds first (the leg scores them 1), then the
+    // ones that began before it, nearest first; within each, the text
+    // list's order.
+    ranked.sort_by(|(ta, oa, a), (tb, ob, b)| {
+        b.score
+            .total_cmp(&a.score)
+            .then(ta.cmp(tb))
+            .then(oa.cmp(ob))
+    });
+    ranked.truncate(TIME_DEPTH);
+    Retrieved {
+        candidates: ranked.into_iter().map(|(_, _, c)| c).collect(),
+        ..time
+    }
+}
+
+/// How a pipeline read its lists: `Postings` only when every text list was
+/// read from postings, else `Scan` (ADR-0052 d11).
 #[must_use]
 pub fn pipeline_access(lists: &[(RetrieverKind, Retrieved)]) -> Access {
-    if !lists.is_empty() && lists.iter().all(|(_, l)| l.access == Access::Postings) {
+    // The `time` leg reads its own index and says nothing of how the words
+    // were read (proposed ADR-0059 d7).
+    let text: Vec<_> = lists
+        .iter()
+        .filter(|(kind, _)| *kind != RetrieverKind::Time)
+        .collect();
+    if !text.is_empty() && text.iter().all(|(_, l)| l.access == Access::Postings) {
         Access::Postings
     } else {
         Access::Scan
@@ -1143,6 +1228,32 @@ mod tests {
         let plain = SearchConfig::new(&[Pipeline::Bm25Postings], Pipeline::Bm25Postings).unwrap();
         assert!(!plain.needs_sparse());
         assert_eq!(plain.require_sparse(false), Ok(()));
+    }
+
+    #[test]
+    fn the_time_list_keeps_the_words_rows_the_window_holds_first_in_the_words_order() {
+        let text = list(vec![
+            cand(1, 9.0, &["a"]),
+            cand(2, 8.0, &["a"]),
+            cand(3, 7.0, &["a"]),
+        ]);
+        // The leg: 3 and 2 inside the window, 1 before it, 4 matched no word.
+        let time = list(vec![
+            cand(2, 1.0, &[]),
+            cand(3, 1.0, &[]),
+            cand(4, 1.0, &[]),
+            cand(1, 0.5, &[]),
+        ]);
+        let ids: Vec<u128> = order_time_list(time, &text)
+            .candidates
+            .iter()
+            .map(|c| c.memory_id.as_u128())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![2, 3, 1],
+            "inside first, in the words' order; no row the words missed"
+        );
     }
 
     #[test]

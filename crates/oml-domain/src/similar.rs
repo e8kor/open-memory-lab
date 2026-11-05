@@ -6,7 +6,7 @@
 //! No model and no recall: a write is compared with the rows it may read by
 //! integer keys an index serves under row security, then each candidate by
 //! the exact Jaccard similarity of the two word sets. The keys equal
-//! migration 0026's `oml_similar_keys`, which a law holds (d17).
+//! migration 0027's `oml_similar_keys`, which a law holds (d17).
 //!
 //! Adopted from Graphiti's deterministic resolution (`dedup_helpers.py`,
 //! Apache-2.0), re-implemented: whole memories instead of entity names, so

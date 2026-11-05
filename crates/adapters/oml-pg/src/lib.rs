@@ -21,6 +21,7 @@ use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::valid_time::{ValidEnd, ValidTime};
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
 use oml_app::domain::{
@@ -595,7 +596,7 @@ fn similar_partition_ddl(tenant_id: Uuid) -> Vec<String> {
 /// Creates and fills the `similar_keys` partition of every tenant whose
 /// memories partition exists and whose similar keys partition does not, as
 /// [`ensure_postings_partitions`] does for postings: a lead built before
-/// 0026 creates a tenant without it, and that tenant's writes fail until it
+/// 0027 creates a tenant without it, and that tenant's writes fail until it
 /// exists (ADR-0050 d17). Returns the tenants repaired.
 async fn ensure_similar_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = owner.begin().await?;
@@ -792,19 +793,68 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 /// the own held author keys and `$5` their nodes: promoted served tips on
 /// the readable nodes, and the own held rows of the keys on theirs, never a
 /// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
-/// fence beneath it (ADR-0034 d11).
+/// fence beneath it (ADR-0034 d11). A version whose valid time ended at or
+/// before the request's now, bound as `$NOW` (an `int8`; the least `int8`
+/// under `include_expired`), is outside it: a leakproof comparison of a
+/// column with a parameter (proposed ADR-0059 d3). Each statement names its
+/// own number for `$NOW` with [`with_now`].
 const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
+       AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
          OR (m.status = 'held' AND m.author_key_id = ANY($4::uuid[]) \
              AND m.workarea_id = ANY($5::uuid[])))";
 
+/// `sql` with its `$NOW` placeholder numbered `$n`: the request's now as
+/// a bound `int8`, so the expiry cut compares a column with a parameter,
+/// leakproof, and an index serves it under row security (proposed ADR-0059
+/// d3; review M3).
+fn with_now(sql: &str, n: usize) -> String {
+    sql.replace("$NOW", &format!("${n}"))
+}
+
+/// The versions of the tenant `$1` whose valid time ended at or before the
+/// request's now, `$NOW`, read by the `memories_valid_until` index's
+/// condition; the postings statements leave them out (proposed ADR-0059 d3).
+const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
+     WHERE m.tenant_id = $1 AND m.valid_until_us <= $NOW::int8)";
+
+/// The `time` statement (proposed ADR-0059 d7): of the rows the text list
+/// found, `$10` by id, those in the scope whose declared valid time
+/// overlaps the window [`$6`, `$7`), either side open when null; a row with
+/// no `valid_from` never matches. A row that starts inside the window
+/// scores 1, one that started before it `1 / (1 + days from its start to
+/// the window's)`; ties by id; at most `$8`. `$9` the request's now. The
+/// read is a primary-key probe bounded by the text list, and every
+/// predicate on the bounds is a leakproof `int8` comparison. Exported so
+/// the suite plans the statement the adapter runs.
+#[must_use]
+pub fn time_sql() -> String {
+    with_now(
+        &format!(
+            "SELECT m.id, m.body_bytes, \
+                    (1.0 / (1.0 + GREATEST(COALESCE($6::int8, m.valid_from_us) - m.valid_from_us, 0)::float8 \
+                                    / 86400000000.0))::float4 AS score, \
+                    '{{}}'::text[] AS matched \
+             FROM memories m \
+             WHERE {SEARCH_SCOPE} AND m.id = ANY($10::uuid[]) AND m.valid_from_us IS NOT NULL \
+               AND ($7::int8 IS NULL OR m.valid_from_us < $7::int8) \
+               AND ($6::int8 IS NULL OR m.valid_until_us IS NULL OR m.valid_until_us > $6::int8) \
+             ORDER BY score DESC, m.id ASC \
+             LIMIT $8"
+        ),
+        9,
+    )
+}
+
 /// The `keyword-any` statement (ADR-0048 S1): the query's `simple` lexemes
 /// joined by OR on the existing GIN index, `ts_rank` normalization 0, ties
-/// by id; `$6` the query, `$7` `k`, `$8` whether every term must match.
+/// by id; `$6` the query, `$7` `k`, `$8` whether every term must match,
+/// `$9` the request's now, the anchor's binds from `$10`.
 fn keyword_any_sql(anchor: &str) -> String {
-    format!(
-        "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
+    with_now(
+        &format!(
+            "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
          SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), q.tq, 0) AS score, \
                 ARRAY(SELECT t FROM unnest(q.terms) t \
@@ -815,6 +865,8 @@ fn keyword_any_sql(anchor: &str) -> String {
            AND (NOT $8 OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $6)) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
+        ),
+        9,
     )
 }
 
@@ -854,7 +906,8 @@ pub fn bm25_sql() -> String {
     bm25_sql_within("")
 }
 
-/// [`bm25_sql`] with `anchor`, a predicate on `m` from `$9` on, narrowing
+/// [`bm25_sql`] with `anchor`, a predicate on `m` from `$10` on (`$9` the
+/// request's now), narrowing
 /// the scored rows and never the statistics or the document frequencies,
 /// so a filtered row scores as it does unfiltered (ADR-0057 d4).
 fn bm25_sql_within(anchor: &str) -> String {
@@ -868,8 +921,9 @@ fn bm25_sql_within(anchor: &str) -> String {
         )
     };
     let words = SEARCH_WORDS.replace("$1", "$6");
-    format!(
-        "WITH {words}, \
+    with_now(
+        &format!(
+            "WITH {words}, \
          forms AS (SELECT DISTINCT kept.w, f FROM kept \
                    CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f), \
          q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
@@ -894,6 +948,8 @@ fn bm25_sql_within(anchor: &str) -> String {
          WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
          ORDER BY score DESC, id ASC \
          LIMIT $7"
+        ),
+        9,
     )
 }
 
@@ -933,7 +989,19 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
 /// index (ADR-0052 d5, open question 7).
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' AND m.author_key_id = ANY($2::uuid[]) \
-       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement";
+       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
+       AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
+
+/// The served versions on the readable nodes `$2` of the kinds `$3` whose
+/// valid time ended at or before the request's now `$4`, with their
+/// lengths: the rows the per-workarea counts hold that the scope does not,
+/// taken out of the statistics so an expired version counts in none, as in
+/// `bm25`'s scan (proposed ADR-0059 d3; review M5). Read by the
+/// `memories_valid_until` index's condition.
+const POSTINGS_EXPIRED: &str = "SELECT m.id, m.search_len FROM memories m \
+     WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
+       AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
+       AND m.kind = ANY($3::text[])";
 
 /// Each token of `$3`'s document frequency among the own held rows `$2`,
 /// from their postings by the `(memory_id)` index.
@@ -969,11 +1037,12 @@ pub fn bm25_postings_sql() -> String {
 }
 
 /// [`bm25_postings_sql`] with `anchor`, a predicate on `p.memory_id` from
-/// `$15` on, in both parts of the generating postings, so the readable
+/// `$16` on (`$15` the request's now), in both parts of the generating postings, so the readable
 /// counts and every score are the unfiltered ones (ADR-0057 d4).
 fn bm25_postings_sql_within(anchor: &str) -> String {
-    format!(
-        "WITH q AS (SELECT q.w, q.token_id, ln(1 + ($8 - q.df + 0.5) / (q.df + 0.5)) AS idf \
+    with_now(
+        &format!(
+            "WITH q AS (SELECT q.w, q.token_id, ln(1 + ($8 - q.df + 0.5) / (q.df + 0.5)) AS idf \
                     FROM unnest($5::text[], $6::int8[], $7::float8[]) AS q(w, token_id, df)), \
          p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
@@ -985,7 +1054,9 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
                  AND p.token_id = ANY($10::int8[]){anchor}), \
          gen AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
                  FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, q.w), \
-         top AS (SELECT memory_id FROM gen GROUP BY memory_id \
+         {EXPIRED_IDS}, \
+         top AS (SELECT memory_id FROM gen \
+                 WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
                  ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $11), \
          scored AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
                     FROM top JOIN search_postings p ON p.memory_id = top.memory_id \
@@ -999,6 +1070,8 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
          WHERE NOT $12 OR cardinality(r.words) = $13 \
          ORDER BY score DESC, id ASC \
          LIMIT $14"
+        ),
+        15,
     )
 }
 
@@ -1017,10 +1090,10 @@ pub fn sparse_sql() -> String {
     sparse_sql_within("")
 }
 
-/// [`sparse_sql`] with `anchor`, a predicate on `p.memory_id` from `$11`
-/// on (ADR-0057 d4).
+/// [`sparse_sql`] with `anchor`, a predicate on `p.memory_id` from `$12`
+/// on (ADR-0057 d4); `$11` the request's now.
 fn sparse_sql_within(anchor: &str) -> String {
-    "WITH q AS (SELECT * FROM unnest($5::int8[], $6::float8[], $7::text[]) AS q(token_id, w, piece)), \
+    with_now(&format!("WITH q AS (SELECT * FROM unnest($5::int8[], $6::float8[], $7::text[]) AS q(token_id, w, piece)), \
      p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
            WHERE p.tenant_id = $1 AND p.kind = 2 AND p.token_id = ANY($5::int8[]) \
              AND p.workarea_id = ANY($2::uuid[]) AND p.state = 1 \
@@ -1031,7 +1104,9 @@ fn sparse_sql_within(anchor: &str) -> String {
              AND p.token_id = ANY($5::int8[]) /*anchor*/), \
      hit AS (SELECT p.memory_id, q.piece, q.w * p.weight::float8 AS c, p.doc_len = 1 AS in_text \
              FROM p JOIN q ON q.token_id = p.token_id), \
-     top AS (SELECT memory_id, sum(c) AS score FROM hit GROUP BY memory_id \
+     {EXPIRED_IDS}, \
+     top AS (SELECT memory_id, sum(c) AS score FROM hit \
+             WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
              HAVING NOT $8 OR count(*) = $9 \
              ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $10) \
      SELECT t.memory_id AS id, m.body_bytes, t.score::float4 AS score, \
@@ -1041,7 +1116,7 @@ fn sparse_sql_within(anchor: &str) -> String {
      FROM top t JOIN hit h ON h.memory_id = t.memory_id \
      JOIN memories m ON m.tenant_id = $1 AND m.id = t.memory_id \
      GROUP BY t.memory_id, m.body_bytes, t.score \
-     ORDER BY score DESC, id ASC"
+     ORDER BY score DESC, id ASC"), 11)
         .replace("/*anchor*/", anchor)
 }
 
@@ -1268,14 +1343,18 @@ impl PruneLimits {
 /// The `trigram` statement (ADR-0048 S3): `pg_trgm` word similarity of the
 /// query to the normalised text above 0.3, the threshold `SET LOCAL` gives
 /// `<%`. No index serves it: under row security `<%` is not leakproof, so it
-/// scans the scope (ADR-0034 d13; ADR-0049 d12). `$6` the query, `$7` `k`.
+/// scans the scope (ADR-0034 d13; ADR-0049 d12). `$6` the query, `$7` `k`,
+/// `$8` the request's now, the anchor's binds from `$9`.
 fn trigram_sql(anchor: &str) -> String {
-    format!(
-        "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
+    with_now(
+        &format!(
+            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
          FROM memories m \
          WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(m.claim) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
+        ),
+        8,
     )
 }
 
@@ -1493,7 +1572,7 @@ impl PgStore {
         ensure_postings_partitions(owner)
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
-        // A tenant a lead before 0026 created has no similar keys
+        // A tenant a lead before 0027 created has no similar keys
         // partition, and its writes fail until it does (ADR-0050 d17).
         ensure_similar_partitions(owner)
             .await
@@ -1794,6 +1873,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.severity, m.rule, \
+     m.valid_from, m.valid_until, m.valid_from_us, m.valid_until_us, \
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
      m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
@@ -1845,8 +1925,23 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
+        valid: Box::new(valid_from_row(row)?),
         anchor: anchor_from_row(row)?.map(Box::new),
         source_check: source_check_from_row(row)?.map(Box::new),
+    })
+}
+
+/// A row's declared valid time: each end's signed text and its bound
+/// (proposed ADR-0059 d2).
+fn valid_from_row(row: &PgRow) -> Result<ValidTime, StoreError> {
+    let end = |text: &str, micros: &str| -> Result<Option<ValidEnd>, StoreError> {
+        let text: Option<String> = row.try_get(text).map_err(backend)?;
+        let micros: Option<i64> = row.try_get(micros).map_err(backend)?;
+        Ok(text.zip(micros).map(|(t, m)| ValidEnd::from_stored(t, m)))
+    };
+    Ok(ValidTime {
+        from: end("valid_from", "valid_from_us")?,
+        until: end("valid_until", "valid_until_us")?,
     })
 }
 
@@ -2310,6 +2405,24 @@ async fn insert_memory(
             .bind(anchor.hash.as_ref().map(|(_, h)| h.as_str()));
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
+    // Declared valid time in the same transaction, only when declared, so a
+    // schema before 0026 still takes every row that declares none (proposed
+    // ADR-0059 d11).
+    if !m.valid.is_open() {
+        sqlx::query(
+            "UPDATE memories SET valid_from = $3, valid_until = $4, valid_from_us = $5, \
+             valid_until_us = $6 WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(m.valid.from.as_ref().map(ValidEnd::as_str))
+        .bind(m.valid.until.as_ref().map(ValidEnd::as_str))
+        .bind(m.valid.from.as_ref().map(ValidEnd::unix_micros))
+        .bind(m.valid.until.as_ref().map(ValidEnd::unix_micros))
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     Ok(())
 }
 
@@ -2389,8 +2502,11 @@ async fn supersede_tip(
     tenant_id: Uuid,
     successor: Uuid,
     replaced: Uuid,
+    replaced_valid_until: Option<&ValidEnd>,
     at: &EventTime,
 ) -> Result<(), StoreError> {
+    // The ratification's end for the replaced version, when it gives one
+    // (proposed ADR-0059 d4); null leaves the end as it was.
     let flipped = sqlx::query(
         "UPDATE memories t SET is_tip = false FROM memories s \
          WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'held' \
@@ -2407,6 +2523,19 @@ async fn supersede_tip(
     .map_err(backend)?;
     if flipped.rows_affected() != 1 {
         return Err(StoreError::TipMoved { replaced });
+    }
+    if let Some(end) = replaced_valid_until {
+        sqlx::query(
+            "UPDATE memories SET valid_until = $3, valid_until_us = $4 \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(replaced)
+        .bind(end.as_str())
+        .bind(end.unix_micros())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
     }
     promote_memory(tx, tenant_id, successor, at).await
 }
@@ -3113,8 +3242,17 @@ async fn apply_fold(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until,
         } => {
-            supersede_tip(tx, tenant_id, successor, replaced, at).await?;
+            supersede_tip(
+                tx,
+                tenant_id,
+                successor,
+                replaced,
+                replaced_valid_until.as_deref(),
+                at,
+            )
+            .await?;
         }
         MetadataFold::TransitionProposed(p) => {
             // The proposer principal must be the one the proposing key's
@@ -3775,13 +3913,16 @@ fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> 
 
 /// The statement a filtered list chooses its plan by: the readable anchored
 /// ids of the candidate scope, `$1`..`$5` as the search scope binds them,
-/// then the repository, the prefix's two bounds, and the limit. Exported so
+/// `$6` the request's now, then the repository, the prefix's two bounds, and the limit. Exported so
 /// the suite plans the statement the adapter runs.
 #[must_use]
 pub fn anchored_ids_sql(repo: bool, prefix: bool) -> String {
-    let columns = anchor_columns_sql("m", repo, prefix, prefix, 6);
-    let limit = 6 + usize::from(repo) + 2 * usize::from(prefix);
-    format!("SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{columns} LIMIT ${limit}")
+    let columns = anchor_columns_sql("m", repo, prefix, prefix, 7);
+    let limit = 7 + usize::from(repo) + 2 * usize::from(prefix);
+    with_now(
+        &format!("SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{columns} LIMIT ${limit}"),
+        6,
+    )
 }
 
 /// The least string greater than every string that starts with `prefix`:
@@ -3859,6 +4000,9 @@ struct ScopeBinds<'a> {
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
     anchor: &'a AnchorRead,
+    /// The request's now, the least `int8` under `include_expired`: every
+    /// statement's expiry bound (proposed ADR-0059 d3).
+    expired_at: i64,
 }
 
 /// What the `bm25_postings` retriever read: the query's words, its list,
@@ -3894,17 +4038,20 @@ impl PgStore {
             lo,
             hi,
         };
-        let sql = format!(
-            "SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{} LIMIT ${}",
-            columns.row("m", 6),
-            6 + match &columns {
-                AnchorRead::Columns { repo, lo, hi } => {
-                    usize::from(repo.is_some())
-                        + usize::from(lo.is_some())
-                        + usize::from(hi.is_some())
+        let sql = with_now(
+            &format!(
+                "SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{} LIMIT ${}",
+                columns.row("m", 7),
+                7 + match &columns {
+                    AnchorRead::Columns { repo, lo, hi } => {
+                        usize::from(repo.is_some())
+                            + usize::from(lo.is_some())
+                            + usize::from(hi.is_some())
+                    }
+                    _ => 0,
                 }
-                _ => 0,
-            }
+            ),
+            6,
         );
         let limit = i64::try_from(self.anchor_first_max.saturating_add(1)).unwrap_or(i64::MAX);
         let ids: Vec<Uuid> = columns
@@ -3914,7 +4061,8 @@ impl PgStore {
                     .bind(&scope.promoted_nodes)
                     .bind(kinds)
                     .bind(authors)
-                    .bind(held_nodes),
+                    .bind(held_nodes)
+                    .bind(scope.expired_at.unwrap_or(i64::MIN)),
             )
             .bind(limit)
             .fetch_all(&mut **tx)
@@ -3937,7 +4085,7 @@ impl PgStore {
         scope: &ScopeBinds<'_>,
         query: RetrievalQuery<'_>,
     ) -> Result<Vec<Candidate>, StoreError> {
-        let sql = bm25_sql_within(&scope.anchor.row("m", 9));
+        let sql = bm25_sql_within(&scope.anchor.row("m", 10));
         scope
             .anchor
             .bind(
@@ -3949,7 +4097,8 @@ impl PgStore {
                     .bind(scope.held_nodes)
                     .bind(query.query)
                     .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
-                    .bind(query.match_mode == MatchMode::All),
+                    .bind(query.match_mode == MatchMode::All)
+                    .bind(scope.expired_at),
             )
             .fetch_all(&mut **tx)
             .await
@@ -4027,6 +4176,39 @@ impl PgStore {
                 Some(token) => *df.entry(token).or_default() += n,
             }
         }
+        // An expired version counts in no statistic, as in bm25's scan: the
+        // per-workarea counts hold every served version, so the expired ones
+        // on the readable nodes are taken out by id (proposed ADR-0059 d3).
+        let expired: Vec<(Uuid, i32)> = sqlx::query_as(POSTINGS_EXPIRED)
+            .bind(scope.tenant_id)
+            .bind(scope.nodes)
+            .bind(scope.kinds)
+            .bind(scope.expired_at)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+        if !expired.is_empty() {
+            rows = rows.saturating_sub(expired.len() as u64);
+            total_len = total_len.saturating_sub(
+                expired
+                    .iter()
+                    .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
+                    .sum::<u64>(),
+            );
+            let ids: Vec<Uuid> = expired.iter().map(|(id, _)| *id).collect();
+            let gone: Vec<(i64, i64)> = sqlx::query_as(POSTINGS_OWN_HELD_DF)
+                .bind(scope.tenant_id)
+                .bind(&ids)
+                .bind(&tokens)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(backend)?;
+            for (token, n) in gone {
+                if let Some(df) = df.get_mut(&token) {
+                    *df = df.saturating_sub(u64::try_from(n).map_err(backend)?);
+                }
+            }
+        }
         let held: Vec<(Uuid, i32)> = if scope.authors.is_empty() || scope.held_nodes.is_empty() {
             Vec::new()
         } else {
@@ -4035,6 +4217,7 @@ impl PgStore {
                 .bind(scope.authors)
                 .bind(scope.held_nodes)
                 .bind(scope.kinds)
+                .bind(scope.expired_at)
                 .fetch_all(&mut **tx)
                 .await
                 .map_err(backend)?
@@ -4149,7 +4332,7 @@ impl PgStore {
         }
         #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
         let (n, avgdl) = (rows as f64, (total_len as f64 / rows as f64).max(1.0));
-        let sql = bm25_postings_sql_within(&scope.anchor.posting("p.memory_id", 15));
+        let sql = bm25_postings_sql_within(&scope.anchor.posting("p.memory_id", 16));
         let candidates = scope
             .anchor
             .bind(
@@ -4167,7 +4350,8 @@ impl PgStore {
                     .bind(depth.map(|d| i64::try_from(d).unwrap_or(i64::MAX)))
                     .bind(all)
                     .bind(i64::try_from(words.len()).unwrap_or(i64::MAX))
-                    .bind(i64::try_from(query.k).unwrap_or(i64::MAX)),
+                    .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
+                    .bind(scope.expired_at),
             )
             .fetch_all(&mut **tx)
             .await
@@ -4192,6 +4376,7 @@ impl Retriever for PgStore {
             RetrieverKind::Bm25,
             RetrieverKind::Bm25Postings,
             RetrieverKind::Sparse,
+            RetrieverKind::Time,
         ];
         if self.trigram.load(std::sync::atomic::Ordering::SeqCst) {
             served.push(RetrieverKind::Trigram);
@@ -4229,6 +4414,10 @@ impl Retriever for PgStore {
             .await
             .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // The expiry cut every statement but keyword-all's binds (proposed
+        // ADR-0059 d3): the request's now, or the least int8 under
+        // include_expired, so the cut keeps every row.
+        let expired_at = scope.expired_at.unwrap_or(i64::MIN);
         // The terms as the retriever reads them: the query's `simple`
         // lexemes, of the normalised query for bm25, bm25_postings and
         // trigram.
@@ -4243,7 +4432,7 @@ impl Retriever for PgStore {
             RetrieverKind::Bm25 | RetrieverKind::Trigram | RetrieverKind::Sparse => {
                 Some(search_terms_sql())
             }
-            RetrieverKind::Bm25Postings => None,
+            RetrieverKind::Bm25Postings | RetrieverKind::Time => None,
         };
         let mut terms: Vec<String> = match terms_sql {
             Some(sql) => sqlx::query_scalar(&sql)
@@ -4266,6 +4455,7 @@ impl Retriever for PgStore {
             authors: &authors,
             held_nodes: &held_nodes,
             anchor: &anchor,
+            expired_at,
         };
         let mut access = Access::Scan;
         let mut pruned = Vec::new();
@@ -4274,6 +4464,28 @@ impl Retriever for PgStore {
                 Self::keyword_all(&mut tx, tenant_id, scope, &kinds, query, &terms, &anchor).await?
             }
             RetrieverKind::Trigram if all => Vec::new(),
+            // The window's rows, by leakproof int8 comparisons; no window,
+            // no list (proposed ADR-0059 d7).
+            RetrieverKind::Time => match query.window {
+                None => Vec::new(),
+                Some(window) => sqlx::query(&time_sql())
+                    .bind(tenant_id)
+                    .bind(&scope.promoted_nodes)
+                    .bind(&kinds)
+                    .bind(&authors)
+                    .bind(&held_nodes)
+                    .bind(window.from_us)
+                    .bind(window.until_us)
+                    .bind(k)
+                    .bind(expired_at)
+                    .bind(query.within)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(candidate_from_row)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
             RetrieverKind::Bm25Postings => {
                 let read = self.bm25_postings(&mut tx, &scoped, query).await?;
                 terms = read.terms;
@@ -4297,9 +4509,9 @@ impl Retriever for PgStore {
                         .map_err(backend)?;
                 }
                 let sql = match kind {
-                    RetrieverKind::KeywordAny => keyword_any_sql(&anchor.row("m", 9)),
-                    RetrieverKind::Bm25 => bm25_sql_within(&anchor.row("m", 9)),
-                    _ => trigram_sql(&anchor.row("m", 8)),
+                    RetrieverKind::KeywordAny => keyword_any_sql(&anchor.row("m", 10)),
+                    RetrieverKind::Bm25 => bm25_sql_within(&anchor.row("m", 10)),
+                    _ => trigram_sql(&anchor.row("m", 9)),
                 };
                 let mut statement = sqlx::query(&sql)
                     .bind(tenant_id)
@@ -4312,6 +4524,7 @@ impl Retriever for PgStore {
                 if kind != RetrieverKind::Trigram {
                     statement = statement.bind(all);
                 }
+                statement = statement.bind(expired_at);
                 anchor
                     .bind(statement)
                     .fetch_all(&mut *tx)
@@ -4382,6 +4595,31 @@ impl Retriever for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(found)
+    }
+
+    async fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> Result<Option<oml_app::search::ValidTimeCounts>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (declared, expired): (i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE m.valid_from_us IS NOT NULL)::int8, \
+                    count(*) FILTER (WHERE m.valid_until_us <= $2)::int8 \
+             FROM memories m WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement",
+        )
+        .bind(tenant_id)
+        .bind(now_us)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(Some(oml_app::search::ValidTimeCounts {
+            declared: u64::try_from(declared).map_err(backend)?,
+            expired: u64::try_from(expired).map_err(backend)?,
+        }))
     }
 
     async fn postings_health(&self, tenant_id: Uuid) -> Result<Option<PostingsHealth>, StoreError> {
@@ -4721,6 +4959,7 @@ impl PgStore {
                 .bind(scope.authors)
                 .bind(scope.held_nodes)
                 .bind(scope.kinds)
+                .bind(scope.expired_at)
                 .fetch_all(&mut **tx)
                 .await
                 .map_err(backend)?
@@ -4731,7 +4970,7 @@ impl PgStore {
         let tokens: Vec<i64> = query.sparse.iter().map(|t| i64::from(t.token_id)).collect();
         let weights: Vec<f64> = query.sparse.iter().map(|t| f64::from(t.weight)).collect();
         let pieces: Vec<&str> = query.sparse.iter().map(|t| t.piece.as_str()).collect();
-        let sql = sparse_sql_within(&scope.anchor.posting("p.memory_id", 11));
+        let sql = sparse_sql_within(&scope.anchor.posting("p.memory_id", 12));
         scope
             .anchor
             .bind(
@@ -4745,7 +4984,8 @@ impl PgStore {
                     .bind(&pieces)
                     .bind(query.match_mode == MatchMode::All)
                     .bind(i64::try_from(tokens.len()).unwrap_or(i64::MAX))
-                    .bind(i64::try_from(query.k).unwrap_or(i64::MAX)),
+                    .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
+                    .bind(scope.expired_at),
             )
             .fetch_all(&mut **tx)
             .await

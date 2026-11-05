@@ -1452,7 +1452,7 @@ constants.
 
 ### similar keys (ADR-0050)
 
-*Introduced in v0.5.9, built in `migrations/0026_similar_keys.sql`
+*Introduced in v0.5.9, built in `migrations/0027_similar_keys.sql`
 ([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17).*
 
 The write-time similar check compares a write with the rows its key may read by integer keys, never
@@ -1491,11 +1491,11 @@ CREATE INDEX similar_keys_memory ON similar_keys (memory_id);
   or `state = 0` with the calling key as author on its readable nodes, grouped by version and
   ordered by keys held, then id, at most 32. The core reads each candidate's row, admits it as
   recall does, and verifies the relation exactly before naming it.
-- **Fill and repair.** 0026 fills every existing tenant under its row security;
+- **Fill and repair.** 0027 fills every existing tenant under its row security;
   `oml_similar_keys_refill(t)`, owner only, rebuilds one tenant's keys in a transaction whose
   `oml.tenant_id` is that tenant, under its chain lock. `oml doctor` names a missing partition,
   versions without keys and keys of the wrong state (`/v2/search`'s `postings.similar_*`). A lead
-  starting on 0026 creates the partition of a tenant an older lead created.
+  starting on 0027 creates the partition of a tenant an older lead created.
 - **No statistics on the parent**, as `search_postings` (FR-45).
 
 ### learned sparse postings and their queue (ADR-0052 d14, d15)

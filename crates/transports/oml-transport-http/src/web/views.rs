@@ -448,6 +448,8 @@ where
                         max_tokens: None,
                         search: None,
                         match_mode: oml_app::search::MatchMode::Any,
+                        include_expired: false,
+                        now: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                     },
                 )
@@ -862,18 +864,18 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             input("claim_key_prefix", "claim key prefix", filters[2].1, false),
         );
         let mut rows = String::from(
-            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th></tr>",
+            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th><th>Valid</th></tr>",
         );
         if page.items.is_empty() {
             rows.push_str(
-                r#"<tr><td colspan="7" class="dim">Nothing waits for you here.</td></tr>"#,
+                r#"<tr><td colspan="8" class="dim">Nothing waits for you here.</td></tr>"#,
             );
         }
         for (i, item) in page.items.iter().enumerate() {
             let m = &item.served.memory;
             let _ = write!(
                 rows,
-                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td></tr>"#,
+                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
                 m.memory_id,
                 if all { " checked" } else { "" },
                 short(&m.claim_key),
@@ -882,7 +884,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 if item.same_user { " (you)" } else { "" },
                 short(item.held_since.as_str()),
                 text(&m.body),
-                anchor_line(m.anchor.as_deref())
+                anchor_line(m.anchor.as_deref()),
+                valid_line(&item.served)
             );
         }
         rows.push_str("</table>");
@@ -1390,6 +1393,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     derives_from: vec![source],
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                     anchor: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
@@ -1447,6 +1452,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                     anchor: None,
                     expected_version,
                 };
@@ -1720,6 +1727,33 @@ fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
     }
 }
 
+/// A version's valid time as one line for a reviewer, and on a held
+/// successor the end approving it gives the version it replaces, so a
+/// verdict is given on what it makes true (proposed ADR-0059 d2, d4).
+fn valid_line(m: &ServedMemory) -> String {
+    let valid = &m.memory.valid;
+    let mut line = if valid.is_open() {
+        "none declared".to_owned()
+    } else {
+        format!(
+            "from {}, {}",
+            valid.from.as_ref().map_or("any time", |f| f.as_str()),
+            valid
+                .until
+                .as_ref()
+                .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
+        )
+    };
+    if let (Some(end), Some(replaces)) = (&m.replaces_valid_until, &m.replaces) {
+        line.push_str(&format!(
+            "; approving ends version {} at {}",
+            replaces.version,
+            end.as_str()
+        ));
+    }
+    text(&line)
+}
+
 fn memory_card(m: &ServedMemory) -> String {
     let from = if m.anonymous {
         "the shared area".to_owned()
@@ -1733,14 +1767,15 @@ fn memory_card(m: &ServedMemory) -> String {
     });
     warning
         + &format!(
-            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p></div>"#,
+            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
             state_tag(memory_state(m)),
             short(m.workarea_path.as_deref().unwrap_or("")),
             m.memory.version,
             text(&m.memory.body),
             short(&m.memory.claim_key),
             from,
-            anchor_line(m.memory.anchor.as_deref())
+            anchor_line(m.memory.anchor.as_deref()),
+            valid_line(m)
         )
 }
 
@@ -1786,6 +1821,26 @@ fn attribution_card(m: &AdminMemory) -> String {
         ),
         ("text digest", short(&m.memory.body_digest)),
         ("source", anchor_line(m.memory.anchor.as_deref())),
+        (
+            "valid",
+            if m.memory.valid.is_open() {
+                "none declared".to_owned()
+            } else {
+                text(&format!(
+                    "from {}, {}",
+                    m.memory
+                        .valid
+                        .from
+                        .as_ref()
+                        .map_or("any time", |f| f.as_str()),
+                    m.memory
+                        .valid
+                        .until
+                        .as_ref()
+                        .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
+                ))
+            },
+        ),
     ] {
         let _ = write!(
             out,

@@ -61,6 +61,10 @@ class SupersedeRequest:
                 rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
                 no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the
                 request digest. Since v0.5.9.
+            valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+            valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
     """
 
     body: str
@@ -74,6 +78,8 @@ class SupersedeRequest:
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
     on_similar: SupersedeRequestOnSimilar | Unset = UNSET
+    valid_from: str | Unset = UNSET
+    valid_until: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
@@ -114,6 +120,10 @@ class SupersedeRequest:
         if not isinstance(self.on_similar, Unset):
             on_similar = self.on_similar.value
 
+        valid_from = self.valid_from
+
+        valid_until = self.valid_until
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -140,6 +150,10 @@ class SupersedeRequest:
             field_dict["rule"] = rule
         if on_similar is not UNSET:
             field_dict["on_similar"] = on_similar
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
 
         return field_dict
 
@@ -201,6 +215,10 @@ class SupersedeRequest:
         else:
             on_similar = SupersedeRequestOnSimilar(_on_similar)
 
+        valid_from = d.pop("valid_from", UNSET)
+
+        valid_until = d.pop("valid_until", UNSET)
+
         supersede_request = cls(
             body=body,
             expected_version=expected_version,
@@ -213,6 +231,8 @@ class SupersedeRequest:
             severity=severity,
             rule=rule,
             on_similar=on_similar,
+            valid_from=valid_from,
+            valid_until=valid_until,
         )
 
         return supersede_request

@@ -20,7 +20,7 @@ are in [REPORT.md](REPORT.md); the numbers in `results/postings-*.json`.
 | `run.py`, `extra.py`, `run_all.sh`, `report.py` | the baseline lane: every candidate approach at 10k, 100k and 1M ([BASELINE.md](BASELINE.md)) |
 | `postings.py` | one run at one scale: database, migrations through 0020, load, 0021's fill timed, space, the query sweep, the access-index variant, own held rows and write cost |
 | `sparse.py` | the learned sparse lane (ADR-0052 d16): migrations through 0022, every version encoded by the real model through `sparse_encode` (oml-rerank's example) and its kind 2 rows written with its state, then `bm25_postings` and `sparse` at k 10, and the two lists `bm25-sparse` reads at depth 100, with the load average beside each run |
-| `similar.py` | the similar check's lane (ADR-0050 d17): migrations through 0024, the load, 0026's fill of the similar keys timed, their space, 330 writes' key lookup through `oml_pg::SIMILAR_CANDIDATES` and the read of their candidates at leaf, project and universe scopes, the plan, and the trigger's share of a write; results in `results/similar-*.json` |
+| `similar.py` | the similar check's lane (ADR-0050 d17): migrations through 0024, the load, 0027's fill of the similar keys timed, their space, 330 writes' key lookup through `oml_pg::SIMILAR_CANDIDATES` and the read of their candidates at leaf, project and universe scopes, the plan, and the trigger's share of a write; results in `results/similar-*.json` |
 | `../../crates/adapters/oml-pg/examples/search_scale.rs` | the driver: each query through `PgStore::retrieve`, the adapter's own statements, warm, one JSON line per call |
 
 ## The baseline lane

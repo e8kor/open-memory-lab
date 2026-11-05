@@ -172,7 +172,7 @@ the serving role under row security, then the read of its candidates' rows by id
 statements the lead runs per write. Half the 330 writes are a loaded memory with one word added,
 half new texts. ms, warm:
 
-| scale | lookup p50 / p95 | with the rows p50 / p95 | universe scope, with the rows p50 / p95 | candidates p50 (max 32) | keys (MiB, with indexes) | 0026's fill |
+| scale | lookup p50 / p95 | with the rows p50 / p95 | universe scope, with the rows p50 / p95 | candidates p50 (max 32) | keys (MiB, with indexes) | 0027's fill |
 |---|---:|---:|---:|---:|---:|---:|
 | 10k | 0.41 / 0.62 | 0.82 / 1.25 | 0.89 / 1.49 | 1 | 21 | 3.6 s |
 | 100k | 0.53 / 1.04 | 0.90 / 1.82 | 1.19 / 2.28 | 2 | 213 | 38 s |
@@ -184,6 +184,6 @@ and 180 ms p95 at 1M; this one costs 2.95 and 15.7. The plan is an index-only sc
 200 seeds, so its texts share far more words than real ones: at 1M a universe-scope write meets the
 32-candidate cap every time, which real text should rarely do. The keys take about twice the
 memories heap (2,124 MiB against 985 at 1M). The trigger adds 0.4 ms p50 to a held insert at 10k,
-2.1 at 100k and 6.2 at 1M (10.8 to 17.0), and nothing measurable to a promotion. 0026's fill holds
+2.1 at 100k and 6.2 at 1M (10.8 to 17.0), and nothing measurable to a promotion. 0027's fill holds
 the trigger's lock on `memories` for its whole run, 19 minutes at 1M on this host, so writes wait
 that long during the upgrade, as 0021's fill does (FR-103).

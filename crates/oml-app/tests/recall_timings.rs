@@ -76,6 +76,8 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
         .submit_memory(
             &keys[0],
             &SubmitRequest {
+                valid_from: None,
+                valid_until: None,
                 on_similar: Default::default(),
                 idempotency_key: "a".to_owned(),
                 claim_key: None,
@@ -101,6 +103,8 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
 
 fn recall(timings: bool) -> RecallRequest {
     RecallRequest {
+        include_expired: false,
+        now: None,
         timings,
         query: "canary traffic".to_owned(),
         k: 10,

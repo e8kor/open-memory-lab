@@ -322,6 +322,10 @@ pub enum MetadataFold {
     TipSuperseded {
         successor: Uuid,
         replaced: Uuid,
+        /// The end the ratification gives the replaced version: the
+        /// successor's declared start, when it begins inside the replaced
+        /// version's interval; `None` changes no end (proposed ADR-0059 d4).
+        replaced_valid_until: Option<Box<oml_domain::valid_time::ValidEnd>>,
     },
     /// `web.email_allowed`: the entry's row, with no pinned subject. The
     /// store refuses an email another tenant's entry holds with
@@ -609,6 +613,19 @@ pub trait Retriever: Send + Sync {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Option<PostingsHealth>, StoreError>> + Send {
         let _ = tenant_id;
+        async { Ok(None) }
+    }
+
+    /// The tenant's served versions that declare valid time, and those
+    /// ended at or before `now_us`, for doctor (proposed ADR-0059 d12);
+    /// `None` from an adapter that keeps none.
+    fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> impl Future<Output = Result<Option<crate::search::ValidTimeCounts>, StoreError>> + Send
+    {
+        let _ = (tenant_id, now_us);
         async { Ok(None) }
     }
 

@@ -52,8 +52,9 @@ class RecallRequest:
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
                 bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same
-                two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13). A name the deployment does not serve
-                is request.validation with details.field /search and details.served.
+                two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused
+                with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not
+                serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not
@@ -64,6 +65,10 @@ class RecallRequest:
             timings (bool | Unset): Omitted, false. true serves the answer's per-stage timings; refused with
                 request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since
                 v0.5.9.
+            include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
+                default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
+            now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
+                digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
     """
 
     query: str
@@ -79,6 +84,8 @@ class RecallRequest:
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
     feedback: Feedback | Unset = UNSET
     timings: bool | Unset = UNSET
+    include_expired: bool | Unset = False
+    now: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -122,6 +129,10 @@ class RecallRequest:
 
         timings = self.timings
 
+        include_expired = self.include_expired
+
+        now = self.now
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -153,6 +164,10 @@ class RecallRequest:
             field_dict["feedback"] = feedback
         if timings is not UNSET:
             field_dict["timings"] = timings
+        if include_expired is not UNSET:
+            field_dict["include_expired"] = include_expired
+        if now is not UNSET:
+            field_dict["now"] = now
 
         return field_dict
 
@@ -214,6 +229,10 @@ class RecallRequest:
 
         timings = d.pop("timings", UNSET)
 
+        include_expired = d.pop("include_expired", UNSET)
+
+        now = d.pop("now", UNSET)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -228,6 +247,8 @@ class RecallRequest:
             match=match,
             feedback=feedback,
             timings=timings,
+            include_expired=include_expired,
+            now=now,
         )
 
         return recall_request

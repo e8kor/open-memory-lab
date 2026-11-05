@@ -525,7 +525,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       Jaccard 0.9 shares a band with probability 1 − (1 − 0.9⁶)¹⁰ = 0.9995, at 0.85 with 0.991,
       at 0.5 with 0.15. The verification reads at most 32 candidates, those sharing the most
       bands first, then by artifact id.
-    - **Storage.** Migration 0026's `similar_keys`: one row per version and key, carrying the
+    - **Storage.** Migration 0027's `similar_keys`: one row per version and key, carrying the
       tenant, workarea, authoring key, memory id, band (0 for `same_text`, 1–10) and state (0 held,
       1 a served tip), list-partitioned by tenant as `search_postings` is, fenced, with no
       statistics on the parent; one index, `(key, workarea_id) INCLUDE (state, author_key_id,
@@ -534,7 +534,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       keys from `oml_similar_keys(claim)`, an immutable SQL function the core computes equally
       (a law holds the two equal), and follows the version's state: written held, served at
       promotion, deleted when the version is replaced, demoted, rejected or erased, so the table
-      holds only what d1 may name. 0026 fills every existing version; `oml_similar_keys_refill`
+      holds only what d1 may name. 0027 fills every existing version; `oml_similar_keys_refill`
       rebuilds one tenant's keys when the doctor names a fault (d15).
     - **The read.** One statement: the new text's keys, the scope's workareas, state 1, or state 0
       with the writing key as author; the core then reads the candidates' rows, admits each by
@@ -554,7 +554,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       the lookup and the read of the candidates' rows take 0.82 / 1.25 ms p50 / p95 at 10k
       versions, 0.90 / 1.82 at 100k and 2.95 / 15.7 at 1M, against 128 / 180 for r1's recall at
       1M; an index-only scan at every scale. The keys take about twice the memories heap; the
-      trigger adds 0.4 ms p50 to a held insert at 10k and 6.2 at 1M; 0026's fill takes 19 minutes
+      trigger adds 0.4 ms p50 to a held insert at 10k and 6.2 at 1M; 0027's fill takes 19 minutes
       at 1M with writes waiting, as 0021's does (FR-103). The scale lane's templated texts
       overstate the candidates.
     - **A generic plan visits more entries than the cost above shows** (review of 2026-11-05,
@@ -612,7 +612,7 @@ stay three.
   `stale`, `review_by`, `expired`); admission (advisory findings, `withdrawn`); audit and lineage
   (revision of a held version; the released key); retrieval (`stale`, `expired`, the new
   filters); the schema and the event catalog (`revises`, `duplicate_of`, the new columns);
-  the schema (0026's `similar_keys`); configuration (`similar.max_ms`, `freshness.review_days`,
+  the schema (0027's `similar_keys`); configuration (`similar.max_ms`, `freshness.review_days`,
   `freshness.stale_warn_share`, `write.max_batch`, `capture.max_per_session`); the `oml-memory`
   skill (d12); the user page's memories view (state, stale and review-by markers, withdrawn
   rows); and each amended record's Status line.

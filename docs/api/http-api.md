@@ -839,6 +839,19 @@ valid member changes nothing the recall answers. `oml_read` takes the same membe
 `retrieve_<retriever>` per list, `fuse`, `rerank`, `suggest`, `hydrate`, `cut`), where the
 deployment sets `search.timings`; elsewhere it is `request.validation` naming `/timings`. Every
 recall records the same stages in `oml_recall_stage_duration_seconds` either way.
+*Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)), built on draft branch `feat/valid-time`:* a memory may
+declare `valid_from` and `valid_until` on submit and supersede, each `YYYY`, `YYYY-MM`,
+`YYYY-MM-DD` or an RFC 3339 date-time with an offset; a period end names the whole period, so
+`valid_from: "2015", valid_until: "2015"` holds through 2015. Only `memory` and `derived_fact`
+take them, and every served memory carries both. Recall hides a version whose `valid_until` is at
+or before the request's `now` (the lead's clock when omitted) unless `include_expired` is true;
+get and the listings serve it. A ratified supersession whose successor declares `valid_from`
+ends the replaced version there, in the ratifying event; a held successor carries that instant
+as `replaces_valid_until`, so its reviewer sees it before the verdict. Periods and relative
+dates are read in UTC. `search.window` names the date window
+read from the query by rule (`in 2015`, `last week`, `since March 2025`), or `null`; the opt-in
+pipeline `bm25-postings-time` lifts the memories the words found whose valid time overlaps it,
+`matched.via` naming `time`.
 
 ### Recall telemetry
 

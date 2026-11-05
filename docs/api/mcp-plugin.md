@@ -392,9 +392,15 @@ naming it in `details.field`:
 | Mode | Arguments | Output | Rides |
 |---|---|---|---|
 | `get` | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `{mode, items}`, one item with `derives_from` and `attachments` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
-| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
+| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match`, `include_expired`, `now` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
 | `listing` | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `{mode, items, next_cursor}` | `GET /v1/memories` |
 
+- *Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)):*
+  `oml_write` takes `valid_from` and `valid_until`, when the claim holds, each a period
+  (`2015`, `2015-03`, `2015-03-14`) or an instant; every claim item carries both. Recall
+  hides a claim whose `valid_until` has passed unless `include_expired` is true, reads at
+  `now` (the server's clock when omitted), and names in `search.window` the date window it
+  read from the query, which the `bm25-postings-time` pipelines search.
 - **get** answers the calling key's own rows in any state and others'
   promoted versions within read access; anything else is
   `access.not_found`, as a nonexistent id is.

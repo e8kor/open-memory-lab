@@ -119,6 +119,8 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                valid_from: None,
+                valid_until: None,
             },
         )
         .await
@@ -135,6 +137,8 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,
+        include_expired: false,
+        now: None,
     };
     let full = Arc::new(Full::default());
     let without = plain.recall(writer.as_str(), &req).await.expect("recall");

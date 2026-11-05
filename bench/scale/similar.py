@@ -14,7 +14,7 @@ superuser). Each run:
    generator, templated from the recall eval's 200 memories, so its texts
    share far more words than real ones: the candidate counts are an upper
    end) into its partition, as postings.py does;
-3. applies 0026 and times it: the fill of every held version's and served
+3. applies 0027 and times it: the fill of every held version's and served
    tip's similar keys;
 4. measures the keys' space;
 5. asks 330 writes, each the text of a loaded memory with one word added (a
@@ -126,7 +126,7 @@ def apply_0025(db: str, owner: str, serving: str) -> float:
         c.execute("SET maintenance_work_mem = '1GB'")
         t0 = time.perf_counter()
         with c.transaction():
-            c.execute((REPO / "migrations" / "0026_similar_keys.sql").read_text())
+            c.execute((REPO / "migrations" / "0027_similar_keys.sql").read_text())
         return time.perf_counter() - t0
 
 

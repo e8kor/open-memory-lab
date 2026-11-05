@@ -1,4 +1,4 @@
--- 0026_similar_keys — the near-copy check's integer keys, which row security
+-- 0027_similar_keys — the near-copy check's integer keys, which row security
 -- lets an index serve, kept with each version's state by a trigger, and the
 -- fill of the rows already written (ADR-0050 d1, d17).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file
@@ -12,6 +12,9 @@
 -- marked LEAKPROOF.
 --
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
+--
+-- lint:allow lock_timeout the fill holds its lock on memories for the whole fill by design (FR-119), so a timeout would abort the upgrade half way
+-- lint:allow index similar_keys is created empty in this file, so its indexes build over no rows
 
 ------------------------------------------------------------------------------
 -- oml_similar_words — a text's words as ADR-0050 d17 defines them: ASCII
@@ -229,7 +232,7 @@ CREATE TRIGGER memories_similar_keys
 
 ------------------------------------------------------------------------------
 -- oml_similar_keys_refill — one tenant's keys rebuilt from its versions'
--- claims; 0026 runs it for every tenant, the owner for one when doctor names
+-- claims; 0027 runs it for every tenant, the owner for one when doctor names
 -- a fault (d15), with oml.tenant_id set to that tenant, under the tenant's
 -- chain lock, as oml_search_postings_refill. Owner only.
 ------------------------------------------------------------------------------

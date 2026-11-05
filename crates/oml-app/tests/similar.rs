@@ -143,6 +143,8 @@ fn submit(idem: &str, body: &str, workarea: Uuid, on_similar: OnSimilar) -> Subm
         severity: None,
         rule: None,
         anchor: None,
+        valid_from: None,
+        valid_until: None,
     }
 }
 
@@ -355,6 +357,8 @@ async fn a_supersession_never_lists_its_own_claim() {
                 severity: None,
                 rule: None,
                 anchor: None,
+                valid_from: None,
+                valid_until: None,
                 // The replace outcome: the listed row's version (ADR-0057 d19).
                 expected_version: 1,
             },
