@@ -30,6 +30,16 @@ const PIPELINES: [Pipeline; 3] = [
     Pipeline::Bm25PostingsTime,
 ];
 
+/// Every pipeline the expiry rule binds, `keyword-all` among them: its
+/// v0.5.0 statement keeps no expiry cut, so the core's re-check is its one
+/// fence (proposed ADR-0059 d3).
+const EVERY_PIPELINE: [Pipeline; 4] = [
+    Pipeline::KeywordAll,
+    Pipeline::KeywordAny,
+    Pipeline::Bm25Postings,
+    Pipeline::Bm25PostingsTime,
+];
+
 fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name")
 }
@@ -79,7 +89,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
 async fn world() -> World {
     let store = MemStore::new().answering_bm25_with_any_word();
     let clock = FixedClock::new();
-    let search = SearchConfig::new(&PIPELINES, Pipeline::Bm25Postings).expect("a served default");
+    let search =
+        SearchConfig::new(&EVERY_PIPELINE, Pipeline::Bm25Postings).expect("a served default");
     let app = App::new(
         store.clone(),
         MemSigner::new(TEST_SEED),
@@ -219,7 +230,7 @@ async fn an_expired_memory_is_hidden_from_recall_unless_asked() {
             None,
         )
         .await;
-    for pipeline in PIPELINES {
+    for pipeline in EVERY_PIPELINE {
         let hidden = w.recall(&recall("deploy canary", pipeline)).await;
         assert_eq!(ids(&hidden), vec![current], "{pipeline}");
         let asked = w

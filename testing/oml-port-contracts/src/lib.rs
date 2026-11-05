@@ -6766,6 +6766,101 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
 }
 
 /// Every journal-store law in one call, each against a fresh store.
+/// A ratified supersession that gives the replaced version an end writes it
+/// in the same commit that moves the tip, readable back exactly; an end the
+/// replaced version's own start forbids is refused and the commit changes
+/// nothing, its tip included (proposed ADR-0059 d4).
+pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: JournalStore>(store: &S) {
+    use oml_app::domain::valid_time::{ValidEnd, ValidTime};
+    let mut rig = ChainRig::new(433);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let mut v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x7201),
+        "rita",
+        key,
+        "the api is at v3",
+    );
+    v1.valid = Box::new(ValidTime::parse(Some("2025"), None).expect("ends"));
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    let mut v2 = successor_of(&v1, Uuid::from_u128(0x7202), "the api is at v4", false);
+    v2.valid = Box::new(ValidTime::parse(Some("2026-06-01"), None).expect("ends"));
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    // An end before v1's own start: refused, nothing moves.
+    let before = ValidEnd::from_stored(
+        "2024-01-01T00:00:00.000000Z".to_owned(),
+        1_704_067_200_000_000,
+    );
+    let refused = rig
+        .commit(
+            store,
+            event_types::LIFECYCLE_SUPERSEDE,
+            json!({ "new_artifact_id": v2.memory_id.to_string() }),
+            MetadataFold::TipSuperseded {
+                successor: v2.memory_id,
+                replaced: v1.memory_id,
+                replaced_valid_until: Some(Box::new(before)),
+            },
+            None,
+        )
+        .await;
+    assert!(refused.is_err(), "an end before the start is refused");
+    let still = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(
+        still.is_tip && still.valid.until.is_none(),
+        "the refused commit changed nothing"
+    );
+    let end = ValidEnd::from_stored(
+        "2026-06-01T00:00:00.000000Z".to_owned(),
+        1_780_272_000_000_000,
+    );
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({ "new_artifact_id": v2.memory_id.to_string() }),
+        MetadataFold::TipSuperseded {
+            successor: v2.memory_id,
+            replaced: v1.memory_id,
+            replaced_valid_until: Some(Box::new(end.clone())),
+        },
+        None,
+    )
+    .await
+    .expect("the ratification commits");
+    let ended = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(!ended.is_tip, "the tip moved");
+    assert_eq!(
+        ended.valid.until.as_ref(),
+        Some(&end),
+        "with the end it gave"
+    );
+    assert_eq!(
+        ended.valid.from.as_ref().map(ValidEnd::as_str),
+        Some("2025")
+    );
+    let tip = store
+        .memory(tenant, v2.memory_id)
+        .await
+        .expect("read")
+        .expect("v2");
+    assert!(tip.is_tip);
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -6785,6 +6880,10 @@ where
     )
     .await;
     Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(recall_serves_promoted_tips_only_within_the_readable_set(
         &new_store().await,
     ))
@@ -10519,6 +10618,64 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                     assert!(postings.pruned.is_empty(), "{what}: nothing pruned");
                 }
             }
+        }
+    }
+}
+
+/// An expired version counts in no statistic: `bm25` and `bm25-postings`
+/// rank the rows a scope keeps over the rows it keeps alone, so with
+/// readable versions ended both pipelines answer the same list, and the same
+/// list as a store in which those versions were never written; with
+/// `include_expired` both count them again (proposed ADR-0059 d3).
+pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(435);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let other = Uuid::from_u128(0xE5);
+    for (id, body) in [
+        (0xF31_u128, "billing billing billing friday deploy"),
+        (0xF32, "invoices billing ledger reconciled monthly"),
+    ] {
+        let mut m = held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
+        m.valid = Box::new(
+            oml_app::domain::valid_time::ValidTime::parse(None, Some("2020")).expect("ends"),
+        );
+        hold_and_promote(&mut rig, store, m).await;
+    }
+    let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
+    for query in POSTINGS_QUERIES {
+        for (own_held, expired_at) in [(None, Some(now)), (Some(own), Some(now)), (None, None)] {
+            let scope = CandidateScope {
+                expired_at,
+                ..scope_of(wa, own_held)
+            };
+            let ask = |kind| {
+                store.retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 12,
+                        sparse: &[],
+                        window: None,
+                    },
+                )
+            };
+            let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
+            let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
+            same_list(
+                &postings,
+                &scan,
+                &format!("{query:?} own {own_held:?} expired_at {expired_at:?}"),
+            );
         }
     }
 }

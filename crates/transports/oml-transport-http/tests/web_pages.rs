@@ -2106,3 +2106,103 @@ async fn the_admin_page_supersedes_and_retires_no_guardrail() {
             .collect::<Vec<_>>()
     );
 }
+
+/// A reviewer sees what a verdict makes true: the held version's own valid
+/// time and, on a supersession, the end approving it gives the version it
+/// replaces, on the review card and in the bulk table (proposed ADR-0059
+/// d2, d4).
+#[tokio::test]
+async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table()
+ {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let v1 = rig
+        .app
+        .submit_memory(
+            value.as_str(),
+            &oml_app::types::SubmitRequest {
+                anchor: None,
+                idempotency_key: "k-api-v3".to_owned(),
+                claim_key: Some("api-version".to_owned()),
+                verb: Some(oml_app::types::SubmitVerb::Remember),
+                kind: oml_app::domain::MemoryKind::Memory,
+                body: "the api is at version 3".to_owned(),
+                workarea: None,
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                valid_from: Some("2025".to_owned()),
+                valid_until: None,
+            },
+        )
+        .await
+        .expect("the agent writes")
+        .receipt
+        .memory_id;
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    assert!(page.contains("valid from 2025, open"), "{page}");
+    act(
+        &rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", v1.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    rig.app
+        .supersede(
+            value.as_str(),
+            &oml_app::types::SupersedeRequest {
+                idempotency_key: "k-api-v4".to_owned(),
+                target_id: v1,
+                body: "the api is at version 4".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workarea: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: Some("2026-06-01".to_owned()),
+                valid_until: None,
+                anchor: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect("the agent supersedes");
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    assert!(page.contains("the api is at version 4"), "{page}");
+    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
+    assert!(
+        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
+        "{page}"
+    );
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    act(
+        &rig,
+        &admin,
+        "/web/admin",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    let (_, _, page) = send(&rig.router, get("/web/admin?view=held", Some(&admin))).await;
+    assert!(page.contains("the api is at version 4"), "{page}");
+    assert!(page.contains("<th>Valid</th>"), "{page}");
+    assert!(
+        page.contains(
+            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
+        ),
+        "{page}"
+    );
+}
