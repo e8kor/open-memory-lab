@@ -182,6 +182,7 @@ test("write with replaces supersedes its target and sends the reason", async () 
   await client(fetcher).write({
     text: "Retired: the runbook moved.",
     replaces: "art_1",
+    expected_version: 1,
     retirement: true,
     reason: "moved",
   });
@@ -191,6 +192,7 @@ test("write with replaces supersedes its target and sends the reason", async () 
   );
   assert.deepEqual(await requests[0]?.json(), {
     body: "Retired: the runbook moved.",
+    expected_version: 1,
     retirement: true,
     reason: "moved",
   });
@@ -203,6 +205,8 @@ test("a write argument outside its mode raises before sending", async () => {
     [{ text: "t", retirement: true }, "/retirement"],
     [{ text: "t", reason: "why" }, "/reason"],
     [{ text: "t", replaces: "art_1", claim_key: "k" }, "/claim_key"],
+    [{ text: "t", replaces: "art_1" }, "/expected_version"],
+    [{ text: "t", expected_version: 1 }, "/expected_version"],
   ];
   for (const [input, field] of cases) await refusedNaming(() => oml.write(input), field);
   assert.deepEqual(requests, []);
@@ -398,7 +402,7 @@ test("the generated SDK carries no operation the server does not route", () => {
     readFileSync(new URL("../../../docs/api/openapi.yaml", import.meta.url), "utf8"),
   );
   assert.ok(declared.has("GET /v2/whoami"));
-  assert.equal(declared.size, 56);
+  assert.equal(declared.size, 57);
   const generated = generatedOperations(
     readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
   );

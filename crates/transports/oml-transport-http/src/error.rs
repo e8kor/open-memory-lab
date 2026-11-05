@@ -395,6 +395,24 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
                 None => error,
             }
         }
+        AppError::VersionConflict { current } => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.version_conflict",
+            "A supersession names the claim's latest version, so two sessions that read the same version never each leave a successor for the reviewer to arbitrate (ADR-0057 d19).",
+            format!("the claim's latest version is {current}: read it again before superseding"),
+        )
+        .with_details(json!({ "current_version": current })),
+        AppError::AnchorScanVeto { field, finding } => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "submission.scan_veto",
+            "The scan is rules, not a model: same input, same verdict — and it can veto but never promote (D11). An anchor is kept for good, so a finding in it refuses the write (ADR-0057 d2).",
+            format!("the deterministic scan vetoed {field}: {finding}"),
+        )
+        .with_details(json!({ "finding": finding, "field": field })),
+        AppError::SourceCheckInvalid { field, reason } => {
+            ApiError::validation(format!("{field}: {reason}"))
+                .with_details(json!({ "field": field }))
+        }
         AppError::WorkareaNotTarget { workarea } => ApiError::validation(format!(
             "workarea names {workarea}, but a supersession is captured in its target's workarea"
         ))
