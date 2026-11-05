@@ -330,7 +330,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
        over 51,830 abstracts in one workarea, 604 / 849 ms at `k` 100 and 572 / 807 ms at `k` 10;
        the statement alone over 51,830 abstracts in the lab, 639 / 947 ms (before the stem fix),
        where the first build's statement took 15.3 s at its median. The scale lane
-       (`feat/scale-bench`) puts an every-word match over a stored `simple` vector past 50 ms near
+       (`bench/scale/REPORT-baseline.md`) puts an every-word match over a stored `simple` vector past 50 ms near
        70,000 readable rows; `bm25` reads more per row. Larger scopes need what item 13 names;
        this record does not claim them. Loading the 51,830 copies through `review next` took 37
        minutes, a few rows a second while tens of thousands were held (FR-87).

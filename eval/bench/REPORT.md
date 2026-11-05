@@ -100,7 +100,7 @@ At 5,000 rows the default meets a 100 ms p95 at `k` 10 on abstract-length rows, 
 (a SciFact memory is about 1,400 characters, where OML's claims are a sentence or two; LoCoMo's
 turns answer in 31 / 38 ms at `k` 100), and misses it at `k` 100 by 13%. Latency grows with the
 readable rows: under row security no text index serves a read (ADR-0034 d13), so every recall
-reads the stored lexemes of every row in its scope. The scale lane (`feat/scale-bench`) measured
+reads the stored lexemes of every row in its scope. The scale lane (`bench/scale/REPORT-baseline.md`) measured
 an every-word match over a stored `simple` vector past 50 ms near 70,000 rows; `bm25` reads more
 per row: served over 51,830 abstracts it takes 604 / 849 ms at `k` 100 and 572 / 807 ms at
 `k` 10. Stored lexemes moved the curve down by more than an order of magnitude; they did not
@@ -253,7 +253,7 @@ twice per write, wrote SciFact at 62 a second. Two findings, now roadmap rows:
 - **Scale and latency.** SciFact ×10 gives one point at 51,830 rows; FiQA (57,638 documents)
   or TREC-COVID (171,332) would give a natural corpus at that size and above. Under row
   security no text index serves a read (ADR-0034 d13), so every pipeline's cost grows with the
-  readable rows: the scale lane's measurement (`feat/scale-bench`) puts an AND over a stored
+  readable rows: the scale lane's measurement (`bench/scale/REPORT-baseline.md`) puts an AND over a stored
   `simple` vector past 50 ms near 70,000 rows, and `bm25` is several times that statement's
   cost. Latency is not solved beyond a few thousand rows of abstract-length text.
 - **Short-claim mapping of long documents.** One sentence per memory, the best sentence
