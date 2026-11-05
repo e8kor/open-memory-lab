@@ -77,7 +77,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
-| adr | 0059 | `feat/valid-time` | #73 | a memory states when it is true recall hides what has ended and search | open |
+| adr | 0059 | `feat/valid-time-r2` | #83 | a memory states when it is true recall hides what has ended and search | open |
 | adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
@@ -246,7 +246,7 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0025 | `main` |  | source anchors | used |
 | migration | 0026 | `feat/lake-writer` | #75 | lake writer | open |
 | migration | 0026 | `feat/remember-dedup` | #72 | similar keys | open |
-| migration | 0026 | `feat/valid-time` | #73 | valid time | open |
+| migration | 0026 | `feat/valid-time-r2` | #83 | valid time | open |
 | migration | 0027 | `feat/in-progress-r2` | #79 | in progress | open |
 | migration | 0030 | `feat/chat-memory` | #78 | origin kind | open |
 | migration | 0031 | `feat/chat-memory` | #78 | origin kind validate | open |

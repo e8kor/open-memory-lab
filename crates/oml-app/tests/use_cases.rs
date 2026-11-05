@@ -196,6 +196,8 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         derives_from: Vec::new(),
         severity: None,
         rule: None,
+        valid_from: None,
+        valid_until: None,
     }
 }
 
@@ -218,6 +220,8 @@ fn recall_req(query: &str) -> RecallRequest {
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,
+        include_expired: false,
+        now: None,
     }
 }
 
@@ -238,6 +242,8 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         refuse_vocabulary_target: false,
         severity: None,
         rule: None,
+        valid_from: None,
+        valid_until: None,
     }
 }
 

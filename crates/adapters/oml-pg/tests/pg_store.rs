@@ -379,12 +379,15 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                             author_key_ids: vec![own],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k,
                         sparse: &[],
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await
@@ -2578,13 +2581,15 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
-            // written before it (ADR-0057 d1, d5).
+            // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
+            // on every existing row (proposed ADR-0059 d11).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
                  - 'anchor_fragment' - 'anchor_hash' - 'anchor_hasher' - 'source_check_rev' \
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
-                 - 'source_check_fragment' - 'source_check_at'"
+                 - 'source_check_fragment' - 'source_check_at' \
+                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5877,7 +5882,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7199,6 +7204,7 @@ async fn the_bm25_statement_reads_the_stored_lexemes_and_never_a_rows_claim() {
     .bind("the prices of useInvoiceFilters")
     .bind(10_i64)
     .bind(false)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -7230,12 +7236,15 @@ async fn bm25_list(
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
+                expired_at: None,
             },
             RetrievalQuery {
                 query,
                 match_mode: MatchMode::Any,
                 k: 50,
                 sparse: &[],
+                window: None,
+                within: &[],
             },
         )
         .await
@@ -7316,7 +7325,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7386,6 +7395,10 @@ async fn bm25_postings_contract_laws() {
     }
     let created = Mutex::new(Vec::new());
     oml_port_contracts::bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned(
+        &postings_store(&created, oml_pg::PruneLimits::NONE).await,
+    )
+    .await;
+    oml_port_contracts::bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired(
         &postings_store(&created, oml_pg::PruneLimits::NONE).await,
     )
     .await;
@@ -7882,6 +7895,7 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     .bind(false)
     .bind(1_i64)
     .bind(10_i64)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -7977,7 +7991,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(applied, 26, "every migration through 0026_valid_time");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8010,12 +8024,15 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k: 50,
                         sparse: &[],
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await
@@ -8897,5 +8914,131 @@ async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_c
     assert_eq!(oml_port_contracts::encode_sparse_backlog(&store).await, 1);
     let list = store.sparse_pending(tenant, 10).await.expect("pending");
     assert!(list.is_empty(), "written with the new claim and dequeued");
+    drop_dbs(&created).await;
+}
+
+/// Migration 0026 is shaped to run on a live database, as 0025 is: it waits
+/// for a lock 5 s at most, adds its check NOT VALID and validates it apart,
+/// and builds each partition's index on its own and attaches it to an
+/// index created ON ONLY the parent; over a database with a tenant
+/// partition the check ends validated and every index valid and attached
+/// (proposed ADR-0059 d11).
+#[tokio::test]
+async fn migration_0026_is_live_safe_and_leaves_every_partitions_indexes_attached() {
+    let sql = MIGRATOR
+        .iter()
+        .find(|m| m.version == 26)
+        .expect("migration 0026")
+        .sql
+        .to_string();
+    for shape in [
+        "SET LOCAL lock_timeout = '5s'",
+        ") NOT VALID;",
+        "VALIDATE CONSTRAINT memories_valid_time_ends",
+        "ON ONLY memories (tenant_id, valid_from_us)",
+        "ON ONLY memories (tenant_id, valid_until_us)",
+        "ATTACH PARTITION",
+    ] {
+        assert!(sql.contains(shape), "0026 lacks {shape:?}");
+    }
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 25).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(591);
+    rig.seed_chain(&store, 0).await;
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0026 applies over a database with a tenant partition");
+    let partitions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_inherits WHERE inhparent = 'memories'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("partitions");
+    assert!(partitions >= 1, "the seeded tenant has a partition");
+    for index in ["memories_valid_from", "memories_valid_until"] {
+        let (attached, valid): (i64, bool) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass), \
+                    (SELECT indisvalid FROM pg_index WHERE indexrelid = $1::regclass)",
+        )
+        .bind(index)
+        .fetch_one(&mut conn)
+        .await
+        .expect("index");
+        assert_eq!(attached, partitions, "{index}: one attached per partition");
+        assert!(valid, "{index} is valid once every partition's is attached");
+    }
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'memories_valid_time_ends' \
+           AND conrelid = 'memories'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("constraint");
+    assert!(validated, "the check is validated");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The expiry cut of `bm25-postings` compares `valid_until_us` with a bound
+/// `int8`, leakproof, so under row security the serving role reads the
+/// ended versions by `memories_valid_until`'s index condition instead of
+/// filtering every dated row of the tenant (proposed ADR-0059 d3).
+#[tokio::test]
+async fn the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_security() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(592);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &store, wa).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("seqscan off");
+    let token = oml_pg::token_id("deploy");
+    let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN {}", oml_pg::bm25_postings_sql()))
+        .bind(rig.tenant_id)
+        .bind(vec![wa])
+        .bind(vec![1_i16, 2])
+        .bind(Vec::<Uuid>::new())
+        .bind(vec!["deploy".to_owned()])
+        .bind(vec![token])
+        .bind(vec![2.0_f64])
+        .bind(5.0_f64)
+        .bind(10.0_f64)
+        .bind(vec![token])
+        .bind(Some(10_i64))
+        .bind(false)
+        .bind(1_i64)
+        .bind(10_i64)
+        .bind(1_793_000_000_000_000_i64)
+        .fetch_all(&mut *tx)
+        .await
+        .expect("plan");
+    tx.commit().await.expect("commit");
+    let plan = plan.join("\n");
+    eprintln!("bm25-postings plan as the serving role:\n{plan}");
+    assert!(
+        plan.lines()
+            .any(|l| l.contains("Index Cond") && l.contains("valid_until_us <=")),
+        "the expiry cut is an index condition under the policy: {plan}"
+    );
     drop_dbs(&created).await;
 }

@@ -1392,6 +1392,7 @@ fn apply_fold(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until,
         } => {
             // The compare-and-set: the successor is held and replaces
             // `replaced`, which is still the promoted tip under the
@@ -1414,8 +1415,26 @@ fn apply_fold(
             if !cas {
                 return Err(StoreError::TipMoved { replaced });
             }
+            // memories_valid_time_ends: an end at or before the replaced
+            // version's start is refused, and nothing moves (proposed
+            // ADR-0059 d4, d11).
+            if let (Some(end), Some(target)) =
+                (&replaced_valid_until, state.memories.get(&replaced))
+                && target
+                    .valid
+                    .from
+                    .as_ref()
+                    .is_some_and(|f| f.unix_micros() >= end.unix_micros())
+            {
+                return Err(StoreError::Backend(
+                    "memories_valid_time_ends: the end is not after the start".to_owned(),
+                ));
+            }
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
+                if let Some(end) = replaced_valid_until {
+                    target.valid.until = Some(*end);
+                }
             }
             if let Some(memory) = state.memories.get_mut(&successor) {
                 memory.status = MemoryStatus::Promoted;
@@ -1782,14 +1801,22 @@ impl Retriever for MemStore {
     /// trigrams, so a composition over it serves `keyword-all` and
     /// `keyword-any` alone (ADR-0049 d7).
     fn retrievers(&self) -> Vec<RetrieverKind> {
+        // The `time` leg is a predicate over declared bounds, served with
+        // PostgreSQL's semantics (proposed ADR-0059 d7).
         if self.bm25_as_any_word {
             vec![
                 RetrieverKind::KeywordAll,
                 RetrieverKind::KeywordAny,
                 RetrieverKind::Bm25,
+                RetrieverKind::Bm25Postings,
+                RetrieverKind::Time,
             ]
         } else {
-            vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+            vec![
+                RetrieverKind::KeywordAll,
+                RetrieverKind::KeywordAny,
+                RetrieverKind::Time,
+            ]
         }
     }
 
@@ -1821,6 +1848,14 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
+            // An ended version is outside the scope unless asked for
+            // (proposed ADR-0059 d3); keyword-all's v0.5.0 statement keeps
+            // no such cut on PostgreSQL, and the core re-checks either way.
+            if kind != RetrieverKind::KeywordAll
+                && scope.expired_at.is_some_and(|now| m.valid.expired_at(now))
+            {
+                return false;
+            }
             if !scope.anchor.admits(m.anchor.as_deref()) {
                 return false;
             }
@@ -1833,7 +1868,42 @@ impl Retriever for MemStore {
                     && own.nodes.contains(&m.workarea_id)
             })
         };
-        let kind = if kind == RetrieverKind::Bm25 {
+        if kind == RetrieverKind::Time {
+            let Some(window) = query.window else {
+                return Ok(Retrieved::default());
+            };
+            // Inside the window scores 1; an earlier start scores by its
+            // distance to the window's start (proposed ADR-0059 d7).
+            let start = window.from_us;
+            let mut candidates: Vec<Candidate> = state
+                .memories
+                .values()
+                .filter(admitted)
+                .filter(|m| query.within.contains(&m.memory_id))
+                .filter(|m| m.valid.overlaps(window))
+                .filter_map(|m| {
+                    let from = m.valid.from.as_ref()?.unix_micros();
+                    #[allow(clippy::cast_precision_loss, reason = "days apart")]
+                    let days = start.map_or(0, |s| (s - from).max(0)) as f64 / 86_400_000_000.0;
+                    #[allow(clippy::cast_possible_truncation, reason = "a score in (0, 1]")]
+                    let score = (1.0 / (1.0 + days)) as f32;
+                    Some(Candidate {
+                        memory_id: m.memory_id,
+                        body_bytes: m.body_bytes,
+                        score,
+                        matched: Vec::new(),
+                        tokens: Vec::new(),
+                    })
+                })
+                .collect();
+            hit_order(&mut candidates, |c| (c.score, c.memory_id));
+            candidates.truncate(query.k);
+            return Ok(Retrieved {
+                candidates,
+                ..Retrieved::default()
+            });
+        }
+        let kind = if matches!(kind, RetrieverKind::Bm25 | RetrieverKind::Bm25Postings) {
             RetrieverKind::KeywordAny
         } else {
             kind
@@ -1853,6 +1923,27 @@ impl Retriever for MemStore {
         _limit: usize,
     ) -> Result<Vec<String>, StoreError> {
         Ok(Vec::new())
+    }
+
+    async fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> Result<Option<crate::search::ValidTimeCounts>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Some(crate::search::ValidTimeCounts::default()));
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let served = || {
+            state
+                .memories
+                .values()
+                .filter(|m| served_tip(m) && !m.retirement)
+        };
+        Ok(Some(crate::search::ValidTimeCounts {
+            declared: served().filter(|m| m.valid.from.is_some()).count() as u64,
+            expired: served().filter(|m| m.valid.expired_at(now_us)).count() as u64,
+        }))
     }
 }
 
