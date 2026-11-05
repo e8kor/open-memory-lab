@@ -718,7 +718,7 @@ How it works: [ontologies](../architecture/ontologies.md).
 
 ## Sources
 
-Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
+Every use case here is **designed**: UC-SM-01 to UC-SM-05 are **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed), and UC-SM-07 to UC-SM-10 for v0.6.1 to v0.6.4 ([ADR-0062](../adr/ADR-0062-oml-sync-maps-a-delta-lakes-tables-into-anchored-claims-from-the-log-alone-on-the-client-and-catalogs-and-reviewed-terms-say-what-they-mean.md), proposed).
 
 ### Say where a memory came from
 
@@ -762,6 +762,40 @@ Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../ad
 - **Goal:** turn "this record amends that decision" lines into reviewed links between memories.
 - **How it plays out:** after the memories are approved, one person proposes the links the
   documents state and a second confirms them; a link is read like any other.
+
+### Load a lake's table descriptions and keep them in step
+
+- **Who:** a data engineer, an operator. **UC-SM-07.** Designed, planned for v0.6.1 and v0.6.2.
+- **Goal:** know which tables a lake holds, where each lives, its columns and partitioning, and
+  what its owners say it is for, without lake access and without any of its data.
+- **How it plays out:** with the lake build of `oml`, `oml sync s3://…/warehouse --workarea
+  lake-sales --adapter delta --dry-run` shows one memory per table, one for its schema and one per
+  described column; the run writes them for review. Appends write nothing; an added column, a
+  renamed column or an edited description proposes a corrected version.
+
+### Import what a catalog says about the lake
+
+- **Who:** a data engineer, an operator. **UC-SM-08.** Designed, planned for v0.6.3.
+- **Goal:** bring a catalog's descriptions, owners, tags, glossary terms and lineage into memories
+  agents can recall, each reviewed.
+- **How it plays out:** `oml lake fetch datahub --out snapshot.json`, then `oml sync snapshot.json
+  --adapter datahub`; after review, one person proposes the lineage links and a second confirms them.
+
+### Find what is known about a table
+
+- **Who:** an agent, a data engineer. **UC-SM-09.** Designed, planned for v0.6.1.
+- **Goal:** list or search only the memories about one table, or one prefix of a lake.
+- **How it plays out:** the agent asks for the memories whose origin starts with
+  `s3://…/warehouse/sales/orders` and reads its table, schema and column memories together.
+
+### Find the columns a reviewed term describes
+
+- **Who:** an agent, a data steward. **UC-SM-10.** Designed, planned for v0.6.4.
+- **Goal:** find every column that holds, say, an email address or a revenue figure, through terms
+  people reviewed rather than column names alone.
+- **How it plays out:** rules in a reviewed file and the catalog's glossary attach terms to
+  columns when they are written; a curator confirms terms added later; recall filtered by
+  `pii:` lists the columns that hold personal data.
 
 ## Files and deliverables
 

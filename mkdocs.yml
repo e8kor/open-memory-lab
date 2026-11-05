@@ -187,3 +187,4 @@ nav:
       - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
       - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
       - ADR-0057: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md
+      - ADR-0062: adr/ADR-0062-oml-sync-maps-a-delta-lakes-tables-into-anchored-claims-from-the-log-alone-on-the-client-and-catalogs-and-reviewed-terms-say-what-they-mean.md
