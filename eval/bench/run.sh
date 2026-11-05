@@ -52,7 +52,9 @@ for ds in "$@"; do
     case " ${BENCH_PIPELINES:-} " in *" sparse "*|*" bm25-sparse "*)
         eval/bench/wait_sparse.sh "$(cat "$STATE/metrics_url")" >"$OUT/encode-wait-$ds.txt" || exit 1 ;;
     esac
-    "$PY" eval/bench/bench.py --cache "$CACHE" run --state "$STATE" --out "$OUT" "$ds" || exit 1
+    # shellcheck disable=SC2046 # one --search per served pipeline
+    "$PY" eval/bench/bench.py --cache "$CACHE" run --state "$STATE" --out "$OUT" \
+        $(for p in ${BENCH_PIPELINES:-}; do printf -- '--search %s ' "$p"; done) "$ds" || exit 1
 done
 "$PY" eval/bench/reference.py --cache "$CACHE" "$OUT" "$@" || exit 1
 "$PY" eval/bench/bench.py report "$OUT" | tee "$OUT/tables.md"
