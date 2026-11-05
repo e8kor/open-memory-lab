@@ -9,14 +9,14 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | file | what it is |
 |---|---|
 | `corpus.json` | 200 memories a crew running a fictional invoicing service ("Tallyline") would store, one checkable claim each |
-| `queries.json` | 121 queries, 11 per UX category, each with graded relevance labels |
+| `queries.json` | 121 queries, 11 per UX category, each with graded relevance labels, and since data version 2, 22 `unanswerable` queries no memory answers |
 | `metrics.py` | the metrics and the table printer; standard library |
 | `run.py` | loads the corpus into a live server and runs every query through `oml_read`; standard library |
 | `baselines.py` | the offline and direct-PostgreSQL comparison methods; needs a scratch venv |
 | `tables.py` | prints `results/tables.md` from `results/*.json` |
 | `check_data.py` | CI check: the data parses and every label resolves (job `recall-eval-data`) |
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
-| `gate.py` | each pipeline's gate (ADR-0049 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
+| `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`
@@ -37,7 +37,7 @@ the things measured.
 
 ### `queries.json`
 
-`{"version": 1, "queries": [{id, category, query, relevant: {memory_id: grade}}]}`.
+`{"version": 2, "queries": [{id, category, query, relevant: {memory_id: grade}}]}`.
 Grade 2: the memory answers the query. Grade 1: related, useful beside an
 answer. Every query has at least one grade-2 memory. Unlabelled memories count
 as grade 0.
@@ -55,6 +55,12 @@ as grade 0.
 | `negation` | asks what not to do |
 | `temporal` | asks for the latest, current, before or after |
 | `multihop` | needs two memories from different topics |
+| `unanswerable` | (version 2) asks something no memory says, often in the corpus's own words ("which Redis version runs the rate limiter"); labels nothing |
+
+Unanswerable queries are scored apart: `summary.unanswerable.empty` is the share answered with
+no hit, and they never enter `overall`, so the ranking numbers stay comparable with version 1.
+They measure a relevance floor (ADR-0053 d6); `eval/bench/rerank_floor.py` sweeps one over a run
+made with none.
 
 ## Metrics
 

@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "queries": [
   {
    "id": "q001",
@@ -1076,6 +1076,138 @@
     "m011": 2,
     "m184": 2
    }
+  },
+  {
+   "id": "u001",
+   "category": "unanswerable",
+   "query": "which CDN serves the image assets of the iOS app",
+   "relevant": {}
+  },
+  {
+   "id": "u002",
+   "category": "unanswerable",
+   "query": "how do we load test the api before Black Friday",
+   "relevant": {}
+  },
+  {
+   "id": "u003",
+   "category": "unanswerable",
+   "query": "what is the parental leave policy for engineers",
+   "relevant": {}
+  },
+  {
+   "id": "u004",
+   "category": "unanswerable",
+   "query": "which Redis version runs the rate limiter",
+   "relevant": {}
+  },
+  {
+   "id": "u005",
+   "category": "unanswerable",
+   "query": "how many customers are on the Scale plan today",
+   "relevant": {}
+  },
+  {
+   "id": "u006",
+   "category": "unanswerable",
+   "query": "what is the password for the staging database",
+   "relevant": {}
+  },
+  {
+   "id": "u007",
+   "category": "unanswerable",
+   "query": "how would we migrate payments from Stripe to Adyen",
+   "relevant": {}
+  },
+  {
+   "id": "u008",
+   "category": "unanswerable",
+   "query": "which GraphQL gateway fronts the public api",
+   "relevant": {}
+  },
+  {
+   "id": "u009",
+   "category": "unanswerable",
+   "query": "how long does the Android app take to build in CI",
+   "relevant": {}
+  },
+  {
+   "id": "u010",
+   "category": "unanswerable",
+   "query": "who approved the Kafka cluster budget for 2027",
+   "relevant": {}
+  },
+  {
+   "id": "u011",
+   "category": "unanswerable",
+   "query": "what is the cache hit ratio of the Varnish layer",
+   "relevant": {}
+  },
+  {
+   "id": "u012",
+   "category": "unanswerable",
+   "query": "how do we issue NF-e electronic invoices for customers in Brazil",
+   "relevant": {}
+  },
+  {
+   "id": "u013",
+   "category": "unanswerable",
+   "query": "what time zone is the Singapore office in",
+   "relevant": {}
+  },
+  {
+   "id": "u014",
+   "category": "unanswerable",
+   "query": "which MongoDB collections store the audit log",
+   "relevant": {}
+  },
+  {
+   "id": "u015",
+   "category": "unanswerable",
+   "query": "how are Terraform state files locked",
+   "relevant": {}
+  },
+  {
+   "id": "u016",
+   "category": "unanswerable",
+   "query": "what is the recovery time objective for the BigQuery datasets",
+   "relevant": {}
+  },
+  {
+   "id": "u017",
+   "category": "unanswerable",
+   "query": "when was the Elasticsearch cluster upgraded to version 8",
+   "relevant": {}
+  },
+  {
+   "id": "u018",
+   "category": "unanswerable",
+   "query": "how do we rotate the Slack bot token",
+   "relevant": {}
+  },
+  {
+   "id": "u019",
+   "category": "unanswerable",
+   "query": "which font does the marketing site use for headings",
+   "relevant": {}
+  },
+  {
+   "id": "u020",
+   "category": "unanswerable",
+   "query": "how many replicas does the worker deployment run in staging",
+   "relevant": {}
+  },
+  {
+   "id": "u021",
+   "category": "unanswerable",
+   "query": "what caused the outage on 2026-11-02",
+   "relevant": {}
+  },
+  {
+   "id": "u022",
+   "category": "unanswerable",
+   "query": "which vendor sends the SMS codes for two-factor login",
+   "relevant": {}
   }
  ]
 }
