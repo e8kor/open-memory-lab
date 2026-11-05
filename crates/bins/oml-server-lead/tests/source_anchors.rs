@@ -1573,3 +1573,188 @@ async fn the_anchor_filter_is_an_index_range_for_the_serving_role_under_row_secu
     drop(serving);
     w.done().await;
 }
+
+/// FR-115's measurement, run by hand (`--ignored --nocapture`): 100,000
+/// promoted memories, the anchor filter matching 1%, 10% and 50% of them,
+/// each recall run 40 times warm, p95 printed for the old plan (the whole
+/// list read, filtered by id, then cut) and the served one (the filter in
+/// each candidate statement), with the host's load average.
+#[tokio::test]
+#[ignore = "a measurement: 100,000 rows, several minutes"]
+async fn anchor_filter_latency_at_100k() {
+    use oml_app::ports::Retriever as _;
+    use oml_app::search::{CandidateScope, MatchMode, RetrievalQuery, RetrieverKind};
+    use oml_app::types::AnchorFilter;
+    let Some(w) = world().await else { return };
+    let template = w
+        .written(
+            &w.writer,
+            w.node,
+            "template",
+            "rollback template",
+            Some(anchor("t.md", "t")),
+        )
+        .await;
+    w.approve(std::slice::from_ref(&template)).await;
+    let mut admin = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("connect");
+    let columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns \
+         WHERE table_name = 'memories' AND table_schema = 'public' \
+           AND is_generated = 'NEVER' ORDER BY ordinal_position",
+    )
+    .fetch_all(&mut admin)
+    .await
+    .expect("columns");
+    let pick = |c: &str| {
+        match c {
+        "id" => "gen_random_uuid()".to_owned(),
+        "claim" => "'note ' || g || ' topic' || (g % 20) || CASE WHEN g % 7 = 0 THEN ' rollback' ELSE '' END".to_owned(),
+        "claim_key" => "'bench-' || g".to_owned(),
+        "anchor_path" => "CASE WHEN g % 100 = 0 THEN 'one/' WHEN g % 100 <= 10 THEN 'ten/' \
+                          WHEN g % 100 <= 60 THEN 'half/' ELSE 'other/' END || g || '.md'".to_owned(),
+        "anchor_fragment" => "'s' || g".to_owned(),
+        "search_vector" | "search_len" => "NULL".to_owned(),
+        other => other.to_owned(),
+    }
+    };
+    let names: Vec<&String> = columns
+        .iter()
+        .filter(|c| !matches!(c.as_str(), "search_vector" | "search_len"))
+        .collect();
+    let sql = format!(
+        "INSERT INTO memories ({}) SELECT {} FROM memories, generate_series(1, 100000) g WHERE id = $1",
+        names
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        names.iter().map(|c| pick(c)).collect::<Vec<_>>().join(", "),
+    );
+    let started = std::time::Instant::now();
+    sqlx::query(&sql)
+        .bind(Uuid::parse_str(&template).expect("uuid"))
+        .execute(&mut admin)
+        .await
+        .expect("seed");
+    sqlx::query("ANALYZE memories")
+        .execute(&mut admin)
+        .await
+        .expect("analyze");
+    sqlx::query("ANALYZE search_postings")
+        .execute(&mut admin)
+        .await
+        .expect("analyze");
+    println!("seeded 100000 rows in {:?}", started.elapsed());
+    let tenant: Uuid = sqlx::query_scalar("SELECT tenant_id FROM memories LIMIT 1")
+        .fetch_one(&mut admin)
+        .await
+        .expect("tenant");
+    drop(admin);
+    let store = &w.rig.store;
+    let scope = |filter: AnchorFilter| CandidateScope {
+        promoted_nodes: vec![w.node],
+        kinds: vec![oml_app::domain::MemoryKind::Memory],
+        own_held: None,
+        anchor: filter,
+    };
+    let p95 = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[(v.len() * 95).div_ceil(100) - 1]
+    };
+    let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    println!("load average before: {}", load.trim());
+    for (share, prefix) in [("1%", "one/"), ("10%", "ten/"), ("50%", "half/")] {
+        for query_text in ["rollback", "topic3 note"] {
+            let filter = AnchorFilter {
+                repo: Some(REPO.to_owned()),
+                path_prefix: Some(prefix.to_owned()),
+            };
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            for run in 0..45 {
+                // The old plan: the whole list, then the id filter, then the cut.
+                let t0 = std::time::Instant::now();
+                let whole = store
+                    .retrieve(
+                        tenant,
+                        RetrieverKind::Bm25Postings,
+                        &scope(AnchorFilter::default()),
+                        RetrievalQuery {
+                            query: query_text,
+                            match_mode: MatchMode::Any,
+                            k: usize::MAX,
+                            sparse: &[],
+                        },
+                    )
+                    .await
+                    .expect("whole");
+                let ids: Vec<Uuid> = whole.candidates.iter().map(|c| c.memory_id).collect();
+                let mut conn = store.pool().acquire().await.expect("conn");
+                let mut tx = sqlx::Connection::begin(&mut *conn).await.expect("tx");
+                sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                    .bind(tenant.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .expect("tenant");
+                let kept: Vec<Uuid> = sqlx::query_scalar(
+                    "SELECT m.id FROM memories m WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) \
+                     AND m.anchor_repo = $3 AND m.anchor_path LIKE $4",
+                )
+                .bind(tenant)
+                .bind(&ids)
+                .bind(REPO)
+                .bind(format!("{prefix}%"))
+                .fetch_all(&mut *tx)
+                .await
+                .expect("filter");
+                tx.commit().await.expect("commit");
+                let old = t0.elapsed().as_secs_f64() * 1000.0;
+                let t1 = std::time::Instant::now();
+                let served = store
+                    .retrieve(
+                        tenant,
+                        RetrieverKind::Bm25Postings,
+                        &scope(filter.clone()),
+                        RetrievalQuery {
+                            query: query_text,
+                            match_mode: MatchMode::Any,
+                            k: 8,
+                            sparse: &[],
+                        },
+                    )
+                    .await
+                    .expect("served");
+                let new = t1.elapsed().as_secs_f64() * 1000.0;
+                if run >= 5 {
+                    before.push(old);
+                    after.push(new);
+                }
+                if run == 0 {
+                    let mut order: Vec<Uuid> = whole
+                        .candidates
+                        .iter()
+                        .map(|c| c.memory_id)
+                        .filter(|id| kept.contains(id))
+                        .take(8)
+                        .collect();
+                    let got: Vec<Uuid> = served.candidates.iter().map(|c| c.memory_id).collect();
+                    order.truncate(got.len().max(order.len()));
+                    assert_eq!(
+                        got, order,
+                        "{share} {query_text}: the served plan equals filter-then-cut"
+                    );
+                }
+            }
+            println!(
+                "filter {share:>3} query {query_text:<12} p95 before {:8.1} ms  after {:8.1} ms",
+                p95(before),
+                p95(after)
+            );
+        }
+    }
+    let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    println!("load average after: {}", load.trim());
+    w.done().await;
+}

@@ -980,9 +980,10 @@ R2 keeps every proposer off the review. The target must be the current served ti
 cannot be superseded ([RS-17](../product/roadmap.md)).
 
 *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):*
-`expected_version` is required: the claim's latest live version as the caller last read it, the
-greatest `version` among the claim's held and promoted versions in the workarea (the tip's own
-when nothing is held). Any other answers `409 submission.version_conflict` with
+`expected_version` is required: the claim's latest version the caller can read, as it last read
+it: the greatest `version` among the claim's promoted versions (where the caller reads the
+workarea) and the versions its own keys wrote, the tip's own when there is none. Another
+author's held version never counts. Any other answers `409 submission.version_conflict` with
 `details.current_version`, after the target is known readable and before the tip check, and
 nothing is captured. A rejected or demoted version does not count. The successor declares its own
 `anchor` or has none ([Source anchors](#source-anchors)).
