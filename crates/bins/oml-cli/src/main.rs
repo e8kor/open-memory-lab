@@ -165,6 +165,13 @@ enum Command {
     /// Tail the journal's events within the key's reader access, digests
     /// only (GET /v2/events; ADR-0039 d10).
     Events(EventsArgs),
+    /// Keep a workarea in step with a repository's committed documents:
+    /// extract claims at one commit, diff them against the workarea and
+    /// write, check or link them (ADR-0057 d6-d11, d14).
+    Sync(SyncArgs),
+    /// Print the anchor of a committed file or of one part of it, at
+    /// --rev, as one JSON object for oml write --anchor (ADR-0057 d13).
+    Anchor(AnchorArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
@@ -718,6 +725,101 @@ struct CrewsUpdateArgs {
     charter_uri: Option<String>,
     #[arg(long)]
     external_manager: Option<String>,
+}
+
+#[derive(Args)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one flag per mode of ADR-0057's contract sketch"
+)]
+struct SyncArgs {
+    /// A file or directory inside a git clone, read at --rev.
+    source: String,
+    /// The workarea to keep in step, by id or name; with --pr the parent of
+    /// the draft's `<workarea>-pr-<n>`.
+    #[arg(long)]
+    workarea: String,
+    /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
+    /// headings otherwise (ADR-0057 d7, d21).
+    #[arg(long)]
+    adapter: Option<String>,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The anchor's repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Print the plan and send nothing.
+    #[arg(long, conflicts_with_all = ["check", "edges"])]
+    dry_run: bool,
+    /// Report each anchored claim and edge against --rev; write no memory.
+    #[arg(long)]
+    check: bool,
+    /// With --check, record the source checks (ADR-0057 d5).
+    #[arg(long, requires = "check")]
+    record: bool,
+    /// The most memories one run writes, so one run is one bulk verdict
+    /// (ADR-0055 d3); the next run continues.
+    #[arg(long, visible_alias = "batch", default_value_t = oml_cli::sync::run::MAX_WRITES)]
+    max_writes: usize,
+    /// Supersede a tip with no anchor in this repository as changed.
+    #[arg(long)]
+    adopt: bool,
+    /// Propose retiring every claim this key wrote in the workarea under the
+    /// source, as when a draft's pull request closes (ADR-0057 d14).
+    #[arg(long, requires = "pr", conflicts_with_all = ["check", "edges"])]
+    retire_all: bool,
+    /// Propose the stated edges between promoted tips (a dreamer key).
+    #[arg(long, conflicts_with = "check")]
+    edges: bool,
+    /// With --edges, ratify the pending edges the source states that another
+    /// key proposed.
+    #[arg(long, requires = "edges")]
+    ratify: bool,
+    /// Allow the maintainer's public server, whose admins read every memory
+    /// and where an anchor and text are never erased (ADR-0057 d6).
+    #[arg(long)]
+    allow_public_server: bool,
+    /// Write a source equal to an older promoted version as changed, a
+    /// deliberate revert (ADR-0057 d20).
+    #[arg(long)]
+    allow_rollback: bool,
+    /// Allow --adapter to name another adapter than the one the workarea's
+    /// claims of this source were written by; the old adapter's claims are
+    /// then retired (ADR-0057 d7).
+    #[arg(long, requires = "adapter")]
+    change_adapter: bool,
+    /// Drafts: load the records pull request <n> adds or changes between
+    /// --base and --rev into `<workarea>-pr-<n>` (ADR-0057 d14).
+    #[arg(long)]
+    pr: Option<u64>,
+    /// A glob of paths left out of the source, repeatable (`docs/adr/**`):
+    /// never read, compared or retired. The set is recorded for the source
+    /// on this clone.
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Allow an exclude set other than the recorded one.
+    #[arg(long)]
+    change_exclude: bool,
+    /// With --pr, the branch the pull request targets.
+    #[arg(long, default_value = "origin/main", requires = "pr")]
+    base: String,
+}
+
+#[derive(Args)]
+struct AnchorArgs {
+    /// A path inside a git clone, with an optional #fragment: a decision
+    /// handle, a heading's slug, or a line span L<n> or L<n>-L<m>.
+    target: String,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// How the file is split into fragments: adr, headings or lines.
+    #[arg(long)]
+    adapter: Option<String>,
 }
 
 #[derive(Args)]
@@ -1574,6 +1676,27 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Guardrails { command } => run_guardrails(cli, &stored, command),
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Sync(args) => run_sync(cli, &stored, args),
+        Command::Anchor(args) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+            let adapter = args
+                .adapter
+                .as_deref()
+                .map(oml_cli::sync::adapter::Kind::parse)
+                .transpose()
+                .map_err(CliError::Local)?;
+            let anchor = oml_cli::sync::anchor::anchor(
+                &cwd,
+                &args.target,
+                &args.rev,
+                args.repo.as_deref(),
+                adapter,
+            )
+            .map_err(CliError::Local)?;
+            print_json(&anchor);
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Quickstart(args) => run_quickstart(args),
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
@@ -1715,6 +1838,77 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
             None => json!({ "workarea": node, "role": role }),
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml sync (ADR-0057)
+// ---------------------------------------------------------------------------
+
+/// `oml sync`: refuses the public server unless allowed, reads the source
+/// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
+fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    let client = resolve(cli, stored)?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+    if source::is_public_server(client.server()) {
+        if !args.allow_public_server {
+            return Err(CliError::local(format!(
+                "{} is the maintainer's public server: its admins read every memory, and a \
+                 written anchor and text are never erased; pass --allow-public-server to sync \
+                 to it (ADR-0057 d6)",
+                client.server()
+            )));
+        }
+        eprintln!(
+            "warn: syncing to the public server {}: its admins read every memory, and a written \
+             anchor and text are never erased",
+            client.server()
+        );
+        if let Ok(git) = source::Git::at(&cwd) {
+            let _ = git.set_config(source::ALLOW_PUBLIC_CONFIG, "true");
+        }
+    }
+    let opts = run::Options {
+        source: args.source.clone(),
+        workarea: args.workarea.clone(),
+        adapter: args
+            .adapter
+            .as_deref()
+            .map(Kind::parse)
+            .transpose()
+            .map_err(CliError::Local)?,
+        rev: args.rev.clone(),
+        repo: args.repo.clone(),
+        dry_run: args.dry_run,
+        check: args.check,
+        record: args.record,
+        json: cli.json,
+        max_writes: args.max_writes,
+        adopt: args.adopt,
+        retire_all: args.retire_all,
+        edges: args.edges,
+        ratify: args.ratify,
+        allow_rollback: args.allow_rollback,
+        change_adapter: args.change_adapter,
+        exclude: args.exclude.clone(),
+        change_exclude: args.change_exclude,
+        pr: args.pr,
+        base: args.base.clone(),
+    };
+    let loaded = run::load(&cwd, &opts).map_err(CliError::Local)?;
+    for warning in &loaded.warnings {
+        eprintln!("{warning}");
+    }
+    let api = HttpApi { client };
+    let report = run::execute(&api, &loaded, &opts, &mut std::io::stdout())?;
+    if !opts.dry_run && !opts.check && !opts.edges && report.exit == 0 {
+        run::record_exclude(&loaded, &opts).map_err(CliError::Local)?;
+    }
+    if cli.json {
+        print_json(&report.json);
+    }
+    Ok(ExitCode::from(report.exit))
 }
 
 // ---------------------------------------------------------------------------
@@ -3963,6 +4157,13 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    // The sync failures of ADR-0057 d17 that the clone alone answers; the
+    // stale count and the waiting edges are the sources lines'.
+    let sync = oml_cli::sync::doctor::lines(
+        source.as_ref().and_then(|s| s.url.map(String::as_str)),
+        &std::env::current_dir().unwrap_or_default(),
+    );
+    let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -3987,6 +4188,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || sync_warn
         || sources_warn
     {
         "warn"
@@ -4029,6 +4231,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "web": web,
             "search": search,
             "review": review,
+            "sync": sync,
             "telemetry": telemetry,
             "sources": sources,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -4135,6 +4338,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &sync {
+            println!("sync        : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");
@@ -4614,7 +4820,7 @@ fn sources_doctor(
         && !before_anchors(env!("CARGO_PKG_VERSION"))
     {
         lines.push(format!(
-            "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor and the anchor filters are refused; upgrade the server"
+            "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor, the anchor filters and oml sync are refused; upgrade the server"
         ));
     }
     if let Some(node) = default_node

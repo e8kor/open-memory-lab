@@ -1920,6 +1920,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "toml",
+ "unicode-normalization",
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
