@@ -1470,9 +1470,19 @@ CREATE TABLE search_sparse_queue (
     attempts    integer     NOT NULL DEFAULT 0,                  -- failed encodes
     next_at     timestamptz NOT NULL DEFAULT clock_timestamp(),  -- the next try, 2^attempts s, at most 1 h
     last_error  text,                                            -- the last failure, which doctor names
+    parked_at   timestamptz,                                     -- a dead letter after 5 failures
     PRIMARY KEY (tenant_id, memory_id)
 );
-CREATE INDEX search_sparse_queue_due ON search_sparse_queue (tenant_id, next_at, enqueued_at);
+CREATE INDEX search_sparse_queue_order ON search_sparse_queue (tenant_id, enqueued_at, memory_id)
+    WHERE parked_at IS NULL;                                     -- oldest first
+CREATE TABLE search_sparse_state (
+    tenant_id      uuid PRIMARY KEY REFERENCES tenants (id),
+    enabled        boolean NOT NULL,       -- the trigger and the refill enqueue only while on
+    backfill_after uuid,                   -- the last version id the backfill read
+    backfilled_at  timestamptz             -- when the backfill finished
+);
+-- both: tenant_isolation, and a SELECT-only lead_sparse_enumeration policy under
+-- oml.startup_check, so the encoder finds every tenant with work in one read
 -- ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the
 -- serving role; SET STATISTICS 0 (FR-45)
 CREATE OR REPLACE FUNCTION oml_search_postings_fold() ...;     -- 0021's, enqueueing too
@@ -1486,8 +1496,12 @@ postings. The encoder deletes an entry only when its `enqueued_at` is the one it
 version's state `FOR SHARE`, and writes the kind 2 rows with that state, all in one transaction.
 The refill rebuilds kind 1 from the stored lexemes, brings kind 2's states to their versions',
 drops kind 2 rows of versions that have no postings any more, and queues any version with none.
-0022 queues every existing version that has postings, oldest first. A deployment that serves no
-sparse pipeline runs no encoder, so its queue keeps one row per version until it does.
+0022 queues nothing: a lead serving no sparse pipeline turns every tenant's state off and
+empties the queue at start, and one serving a sparse pipeline turns each tenant's on in its
+encoder's first pass and backfills the versions written before, 1,000 per pass, resuming after
+the last id read. The drain holds the version `FOR SHARE` before it takes the entry, as the
+trigger does, takes entries `FOR UPDATE SKIP LOCKED` under a 5-minute lease, and parks an entry
+after 5 failed encodes.
 
 ## upload_sessions
 

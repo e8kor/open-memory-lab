@@ -20,9 +20,13 @@ class PostingsHealth:
             workarea_drift (int): Per-workarea counts that disagree with the served memories.
             term_drift (int): Sampled word counts that disagree with the served postings, or are missing.
             terms_checked (int): How many word counts were sampled.
-            sparse_backlog (int): Memory versions waiting for the learned sparse encoder, absent from sparse lists until it
-                writes their postings (ADR-0052 d15).
+            sparse_backlog (int): Memory versions waiting for the learned sparse encoder, parked ones aside, absent from
+                sparse lists until it writes their postings (ADR-0052 d15).
             sparse_failing (int): Of them, those whose last encode failed; each is retried after at most an hour.
+            sparse_parked (int): Memory versions parked after five failed encodes: kept with their reason, never retried
+                until written again (ADR-0052 d15).
+            sparse_enabled (bool): Whether the tenant's learned sparse queue is on: only a lead serving a sparse pipeline
+                turns it on, and nothing is queued while it is off.
     """
 
     partition: bool
@@ -33,6 +37,8 @@ class PostingsHealth:
     terms_checked: int
     sparse_backlog: int
     sparse_failing: int
+    sparse_parked: int
+    sparse_enabled: bool
 
     def to_dict(self) -> dict[str, Any]:
         partition = self.partition
@@ -51,6 +57,10 @@ class PostingsHealth:
 
         sparse_failing = self.sparse_failing
 
+        sparse_parked = self.sparse_parked
+
+        sparse_enabled = self.sparse_enabled
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -63,6 +73,8 @@ class PostingsHealth:
                 "terms_checked": terms_checked,
                 "sparse_backlog": sparse_backlog,
                 "sparse_failing": sparse_failing,
+                "sparse_parked": sparse_parked,
+                "sparse_enabled": sparse_enabled,
             }
         )
 
@@ -87,6 +99,10 @@ class PostingsHealth:
 
         sparse_failing = d.pop("sparse_failing")
 
+        sparse_parked = d.pop("sparse_parked")
+
+        sparse_enabled = d.pop("sparse_enabled")
+
         postings_health = cls(
             partition=partition,
             unfilled=unfilled,
@@ -96,6 +112,8 @@ class PostingsHealth:
             terms_checked=terms_checked,
             sparse_backlog=sparse_backlog,
             sparse_failing=sparse_failing,
+            sparse_parked=sparse_parked,
+            sparse_enabled=sparse_enabled,
         )
 
         return postings_health

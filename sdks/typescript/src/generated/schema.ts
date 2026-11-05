@@ -1209,10 +1209,14 @@ export interface components {
             term_drift: number;
             /** @description How many word counts were sampled. */
             terms_checked: number;
-            /** @description Memory versions waiting for the learned sparse encoder, absent from sparse lists until it writes their postings (ADR-0052 d15). */
+            /** @description Memory versions waiting for the learned sparse encoder, parked ones aside, absent from sparse lists until it writes their postings (ADR-0052 d15). */
             sparse_backlog: number;
             /** @description Of them, those whose last encode failed; each is retried after at most an hour. */
             sparse_failing: number;
+            /** @description Memory versions parked after five failed encodes: kept with their reason, never retried until written again (ADR-0052 d15). */
+            sparse_parked: number;
+            /** @description Whether the tenant's learned sparse queue is on: only a lead serving a sparse pipeline turns it on, and nothing is queued while it is off. */
+            sparse_enabled: boolean;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.

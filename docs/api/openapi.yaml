@@ -2639,7 +2639,7 @@ components:
         The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET
         /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
         /v2/search/default.
-      required: [partition, unfilled, served_behind, workarea_drift, term_drift, terms_checked, sparse_backlog, sparse_failing]
+      required: [partition, unfilled, served_behind, workarea_drift, term_drift, terms_checked, sparse_backlog, sparse_failing, sparse_parked, sparse_enabled]
       properties:
         partition: { type: boolean, description: The tenant's postings partition exists. }
         unfilled: { type: integer, minimum: 0, description: 'Memory versions that should have postings and have none: the fill incomplete.' }
@@ -2647,8 +2647,10 @@ components:
         workarea_drift: { type: integer, minimum: 0, description: Per-workarea counts that disagree with the served memories. }
         term_drift: { type: integer, minimum: 0, description: 'Sampled word counts that disagree with the served postings, or are missing.' }
         terms_checked: { type: integer, minimum: 0, description: How many word counts were sampled. }
-        sparse_backlog: { type: integer, minimum: 0, description: 'Memory versions waiting for the learned sparse encoder, absent from sparse lists until it writes their postings (ADR-0052 d15).' }
+        sparse_backlog: { type: integer, minimum: 0, description: 'Memory versions waiting for the learned sparse encoder, parked ones aside, absent from sparse lists until it writes their postings (ADR-0052 d15).' }
         sparse_failing: { type: integer, minimum: 0, description: 'Of them, those whose last encode failed; each is retried after at most an hour.' }
+        sparse_parked: { type: integer, minimum: 0, description: 'Memory versions parked after five failed encodes: kept with their reason, never retried until written again (ADR-0052 d15).' }
+        sparse_enabled: { type: boolean, description: 'Whether the tenant''s learned sparse queue is on: only a lead serving a sparse pipeline turns it on, and nothing is queued while it is off.' }
 
     RecallBudget:
       type: object

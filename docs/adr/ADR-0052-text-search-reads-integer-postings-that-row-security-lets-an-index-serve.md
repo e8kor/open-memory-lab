@@ -226,7 +226,7 @@ d11). Decided, not built.
   the trigger's lock on `memories` for its fill, so writes wait for it; the fill time at 100,000 and
   1,000,000 rows is measured before the release that carries 0021 (FR-100); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, FR-103). Kind
   2 is filled by the encoder after start, oldest first. `bm25-postings` enters the build disabled
-  (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; `sparse` and `bm25-sparse` are refused at start while the backlog is above zero.
+  (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; ~~`sparse` and `bm25-sparse` are refused at start while the backlog is above zero.~~ *Replaced by d15 (2026-11-05):* they are served while the backlog drains.
 
 - **d9 — Two retriever kinds behind the `Retriever` port, three named pipelines, and the default moved
   by evidence.** `RetrieverKind` gains `Bm25Postings` and, with the encoder, `Sparse`. `PgStore`
@@ -399,15 +399,38 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   flip waits for it or precedes it), and writes kind 2 rows with that state, `doc_len` 1 where the
   version's own tokens hold the token and 0 where the encoder added it (d17). A failure keeps the
   entry, counts the attempt, names the reason in `last_error` and retries after `2^attempts`
-  seconds, at most an hour. Counters `oml_sparse_encoded_total{outcome}` (`written`, `failed`) and
+  seconds, at most an hour. Counters `oml_sparse_encoded_total{outcome}` (`written`, `failed`, `parked`) and
   the gauge `oml_sparse_backlog` (entries waiting) on the metrics listener; the tenant's backlog and
   failing entries in the admin's postings health, which doctor reads: `search_sparse_backlog`
   warns while entries wait, `search_sparse_failed` when any failed, naming `last_error`'s place.
   A version not yet encoded is absent from the `sparse` list only; `bm25_postings` still finds it.
   So the pipelines are served while the backlog drains, rather than refused at start as d8 first
   read: a refusal would stop the lead whose encoder empties the queue. A deployment that serves no
-  sparse pipeline runs no encoder, reads no model file, and its queue holds one small row per
-  version until it does (the cost, carried openly).
+  sparse pipeline runs no encoder and reads no model file.
+
+  *Amended on review, 2026-11-05 (HIGH-1, HIGH-2, MEDIUM-1, MEDIUM-3, L1).* **Nothing is queued
+  where no sparse pipeline is served.** `search_sparse_state (tenant_id, enabled, backfill_after,
+  backfilled_at)` records per tenant whether the queue is on and how far its backfill went; the
+  trigger and the refill enqueue only for a tenant whose state is on, and 0022 fills nothing. A lead
+  serving no sparse pipeline turns every state off and empties the queue at start
+  (`sparse_queue_off`); one serving a sparse pipeline turns each tenant's on in its encoder's first
+  pass and backfills the versions written before, `SPARSE_BACKFILL_STEP` (1,000) versions per
+  pass, resuming after the last id read, until a step reads fewer than that and `backfilled_at` is
+  set. **One bad claim fails alone**: the encoder answers each text's postings or its own failure, a
+  panic included; a call that fails whole is split and each text tried alone; an entry failing
+  `SPARSE_MAX_ATTEMPTS` (5) times is **parked** (`parked_at`), a dead letter kept with its reason,
+  counted as `oml_sparse_encoded_total{outcome="parked"}` and by doctor's `search_sparse_parked`,
+  and never taken again until its version is written again. **Lock order**: the drain holds the
+  version `FOR SHARE` first, then takes its queue entry, the order a version's update or delete and
+  its trigger take them, so the drain and an erase never deadlock (`SPARSE_WRITE_ORDER`). **Idle
+  cost**: one statement per pass finds every tenant with work across tenants (under the
+  `oml.startup_check` marker 0003 introduced, with a SELECT-only policy on the queue and the state:
+  ids, times and reasons, no claim), an idle pass doubles its wait up to 30 s, and the gauge is
+  read every 30 s; the drain reads oldest first by `search_sparse_queue_order (tenant_id,
+  enqueued_at, memory_id) WHERE parked_at IS NULL`. **Several leads**: a pass takes its entries
+  `FOR UPDATE SKIP LOCKED` and leases them for 5 minutes, so another lead's pass skips them; the
+  `enqueued_at` guard keeps the result right either way. Doctor's `search_sparse_undrained` warns
+  when a tenant's queue holds entries and this lead serves no sparse pipeline.
 
 - **d16 — The pipelines, the laws, and what a missing model does.** `RetrieverKind::Sparse`
   (`sparse`) reads the query's token ids' kind 2 postings by the served index, as `bm25_postings`
@@ -417,10 +440,19 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   Under `match: all` a sparse candidate must hold every query token. The in-memory store serves
   neither, so a composition over it that enables one is refused at start. Laws, run by
   `pg_store.rs` with a deterministic test encoder: d12's scope and no-leak laws over `sparse`;
-  `sparse_scores_each_row_by_its_own_postings_alone`; `a_sparse_list_never_holds_a_version_its_scope_excludes`
-  through each state flip; `a_version_is_enqueued_with_its_write_and_leaves_the_queue_with_its_postings`;
-  `an_encoded_version_follows_promotion_supersession_and_demotion`; and
-  `a_refill_keeps_the_encoders_postings`. **A missing model fails closed**: a lead whose
+  `sparse_scores_each_row_by_its_own_postings_alone`; `a_sparse_list_never_holds_a_version_its_scope_excludes`;
+  `a_version_is_enqueued_with_its_write_and_leaves_the_queue_with_its_postings`;
+  `an_encoded_version_follows_promotion_supersession_and_retirement` (demotion is not built);
+  `a_refill_keeps_the_encoders_postings`; and, added on review,
+  `with_sparse_never_served_writes_and_refills_enqueue_nothing`,
+  `a_queue_turned_off_stays_empty_and_one_turned_on_backfills_in_resumable_steps`,
+  `a_claim_the_model_fails_on_fails_alone_and_its_batch_is_written`,
+  `a_failed_encode_stays_queued_and_a_stale_read_writes_nothing` (parked at the ceiling),
+  `a_version_enqueued_again_after_its_read_is_not_written_with_the_older_claim`,
+  `a_removed_queued_version_leaves_the_queue`, `the_drains_write_and_an_erase_never_deadlock` and
+  `two_tenants_sparse_queues_never_meet`. A sparse list's `search.terms` and `matched.terms` are
+  the query's words as `bm25` reads them, never word pieces, so `did_you_mean` never offers a
+  spelling for a piece. **A missing model fails closed**: a lead whose
   `search.enabled` names `sparse` or `bm25-sparse` and whose model files are absent or differ
   refuses to start, naming the file and the remedy, as ADR-0053 d8 does for the reranker; doctor
   prints `search: sparse <model>, backlog <n>` and warns `search_sparse_model` when a served sparse
