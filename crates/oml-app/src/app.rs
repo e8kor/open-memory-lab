@@ -4275,7 +4275,7 @@ where
     }
 
     /// A bulk verdict (ADR-0055 d3, d4): each named id judged in turn by
-    /// the single verdict's use case, [`Self::verdict_on`] — access, R2
+    /// the single verdict's use case, `verdict_on` — access, R2
     /// against the row's exclusion set, the transition, the frozen refusal,
     /// the compare-and-set, its own signed verdict and ratification in its
     /// own transaction — and answered with its outcome or the refusal a
