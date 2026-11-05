@@ -44,7 +44,7 @@ def numbers_on(root: Path, ref: str) -> dict[tuple[str, int], str]:
     for line in git(root, "show", f"{ref}:{ROADMAP}", check=False).splitlines():
         m = FR_ROW.match(line)
         if m:
-            out[("fr", int(m.group(1)))] = m.group(2).strip()[:70]
+            out[("fr", int(m.group(1)))] = plain(m.group(2).strip())[:70]
     return out
 
 
@@ -63,7 +63,7 @@ def numbers_added(root: Path, base: str, ref: str) -> dict[tuple[str, int], str]
         if line.startswith("+|"):
             m = FR_ROW.match(line[1:])
             if m:
-                out[("fr", int(m.group(1)))] = m.group(2).strip()[:70]
+                out[("fr", int(m.group(1)))] = plain(m.group(2).strip())[:70]
     return out
 
 
@@ -97,6 +97,11 @@ def registry_at(root: Path, ref: str) -> list[dict]:
     return parse_registry(git(root, "show", f"{ref}:{REGISTRY}", check=False))
 
 
+def plain(title: str) -> str:
+    """A title as plain text: a link in it would be resolved by the docs build."""
+    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title).replace("|", "/")
+
+
 def fmt(kind: str, n: int) -> str:
     return {"adr": f"ADR-{n:04d}", "fr": f"FR-{n}", "migration": f"migration {n:04d}"}[kind]
 
@@ -106,7 +111,7 @@ def render_rows(rows: list[dict]) -> str:
     lines = ["| kind | number | branch | PR | title | state |", "|---|---|---|---|---|---|"]
     for r in sorted(rows, key=lambda r: (order[r["kind"]], r["number"], r["branch"])):
         num = f"{r['number']:04d}" if r["kind"] != "fr" else str(r["number"])
-        lines.append(f"| {r['kind']} | {num} | `{r['branch']}` | {r['pr']} | {r['title'].replace('|', '/')} | {r['state']} |")
+        lines.append(f"| {r['kind']} | {num} | `{r['branch']}` | {r['pr']} | {plain(r['title'])} | {r['state']} |")
     return "\n".join(lines) + "\n"
 
 
