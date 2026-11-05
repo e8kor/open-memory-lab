@@ -1,4 +1,3 @@
 # Existing 5432 mentions, kept until their owners change them.
 scripts/lint_practices.py               # the lint's own pattern
 crates/bins/oml-cli/tests/cli_e2e.rs    # a connection string inside a scanner fixture, not a default
-crates/bins/oml-server-lead/tests/bulk_review.rs  # EXISTING VIOLATION: falls back to the live port
