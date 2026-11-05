@@ -32,7 +32,7 @@ const MAX_TOKENS: u64 = 9_007_199_254_740_991;
 
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
 }
 
 /// The password of every minted test role; the roles live only as long as
@@ -3404,7 +3404,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     assert_eq!(recalled["mode"], "recall", "{recalled}");
     assert_eq!(
         fields(&recalled),
-        ["budget", "hits", "mode", "search", "steering"]
+        ["budget", "hits", "mode", "recall_id", "search", "steering"]
     );
     let hit = &recalled["hits"][0];
     assert_eq!(hit["artifact_id"], stored.as_str(), "{recalled}");

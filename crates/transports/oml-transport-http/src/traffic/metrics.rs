@@ -12,7 +12,11 @@ use axum::routing::get;
 use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
+use std::sync::atomic::AtomicU64;
+
+use oml_app::ports::TelemetryMeter;
 use prometheus_client::registry::Registry;
 
 use std::sync::Arc;
@@ -49,6 +53,64 @@ struct RerankLabels {
     reason: String,
 }
 
+/// The review wait's bounds: one minute doubling fifteen times, to about
+/// 22.8 days, and `+Inf` (ADR-0054 d1).
+fn review_histogram() -> Histogram {
+    Histogram::new(exponential_buckets(60.0, 2.0, 16))
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct AnswerLabels {
+    pipeline: String,
+    result: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct PipelineLabels {
+    pipeline: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct LabelLabels {
+    label: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct OutcomeLabels {
+    outcome: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ReasonLabels {
+    reason: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct RelationLabels {
+    relation: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct VerdictLabels {
+    verdict: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct AgeLabels {
+    promoted_for: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct WebFailureLabels {
+    provider: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SparseLabels {
+    outcome: String,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct BulkLabels {
     outcome: String,
@@ -72,6 +134,101 @@ pub struct Metrics {
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
+    web_failures: Family<WebFailureLabels, Counter>,
+    quality: Quality,
+    sparse_encoded: Family<SparseLabels, Counter>,
+    sparse_backlog: Gauge,
+}
+
+/// The recall and remember quality families (ADR-0054 d1, as accepted):
+/// aggregates only, every label from a closed set, no tenant.
+#[derive(Debug)]
+struct Quality {
+    answers: Family<AnswerLabels, Counter>,
+    durations: Family<PipelineLabels, Histogram, fn() -> Histogram>,
+    outcomes: Family<LabelLabels, Counter>,
+    events: Family<OutcomeLabels, Counter>,
+    labels_dropped: Family<ReasonLabels, Counter>,
+    duplicates: Family<RelationLabels, Counter>,
+    review_wait: Family<VerdictLabels, Histogram, fn() -> Histogram>,
+    queue_depth: Gauge,
+    lag: Gauge<f64, AtomicU64>,
+    purge_overdue: Gauge,
+    unrecalled: Family<AgeLabels, Gauge>,
+}
+
+impl Quality {
+    fn register(registry: &mut Registry) -> Self {
+        let q = Self {
+            answers: Family::default(),
+            durations: Family::new_with_constructor(histogram as fn() -> Histogram),
+            outcomes: Family::default(),
+            events: Family::default(),
+            labels_dropped: Family::default(),
+            duplicates: Family::default(),
+            review_wait: Family::new_with_constructor(review_histogram as fn() -> Histogram),
+            queue_depth: Gauge::default(),
+            lag: Gauge::default(),
+            purge_overdue: Gauge::default(),
+            unrecalled: Family::default(),
+        };
+        registry.register(
+            "oml_recall_answers",
+            "recall answers by pipeline and shape: hits, empty, or below_floor when the relevance floor withheld a row",
+            q.answers.clone(),
+        );
+        registry.register(
+            "oml_recall_duration_seconds",
+            "time the app spent answering a recall, by pipeline",
+            q.durations.clone(),
+        );
+        registry.register(
+            "oml_recall_outcomes",
+            "labels of what a recall's reader did next, inferred or sent as feedback",
+            q.outcomes.clone(),
+        );
+        registry.register(
+            "oml_recall_events",
+            "recall events by outcome: written, or dropped with the reason",
+            q.events.clone(),
+        );
+        registry.register(
+            "oml_recall_labels_dropped",
+            "labels not stored, by reason",
+            q.labels_dropped.clone(),
+        );
+        registry.register(
+            "oml_remember_duplicates",
+            "memories written whose text a served memory of the same workarea already holds (same_text) or not (none)",
+            q.duplicates.clone(),
+        );
+        registry.register(
+            "oml_review_wait_seconds",
+            "time from a memory's submission to its verdict, by verdict; the count by verdict is the rejection rate",
+            q.review_wait.clone(),
+        );
+        registry.register(
+            "oml_telemetry_queue_depth",
+            "recall telemetry items waiting for the writer",
+            q.queue_depth.clone(),
+        );
+        registry.register(
+            "oml_labeller_lag_seconds",
+            "seconds since the labeller's last completed pass",
+            q.lag.clone(),
+        );
+        registry.register(
+            "oml_telemetry_purge_overdue",
+            "organisations holding recall telemetry rows past the 30 days and a minute: the purge is behind",
+            q.purge_overdue.clone(),
+        );
+        registry.register(
+            "oml_memories_unrecalled",
+            "served memories no recall of the last 30 days returned, by how long ago they were promoted",
+            q.unrecalled.clone(),
+        );
+        q
+    }
 }
 
 impl Default for Metrics {
@@ -89,6 +246,9 @@ impl Default for Metrics {
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
+        let web_failures = Family::<WebFailureLabels, Counter>::default();
+        let sparse_encoded = Family::<SparseLabels, Counter>::default();
+        let sparse_backlog = Gauge::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -136,6 +296,27 @@ impl Default for Metrics {
             "items of bulk verdicts by outcome",
             bulk_items.clone(),
         );
+        // Both labels are closed sets: the provider, and the exchange's
+        // failure reason (ADR-0045 d18), moved off /readyz (ADR-0054 d1).
+        registry.register(
+            "oml_web_exchanges_failed",
+            "sign-in provider exchanges that failed, by provider and reason",
+            web_failures.clone(),
+        );
+        let quality = Quality::register(&mut registry);
+        // The learned sparse encoder's outbox (ADR-0052 d15): versions
+        // written or failed, a closed set, and the entries waiting, summed
+        // over every tenant with no tenant label.
+        registry.register(
+            "oml_sparse_encoded",
+            "versions the learned sparse encoder wrote postings for, failed to, or parked as dead letters",
+            sparse_encoded.clone(),
+        );
+        registry.register(
+            "oml_sparse_backlog",
+            "versions waiting for the learned sparse encoder across the deployment",
+            sparse_backlog.clone(),
+        );
         Self {
             registry,
             http,
@@ -146,6 +327,10 @@ impl Default for Metrics {
             recalls,
             reranks,
             bulk_items,
+            web_failures,
+            quality,
+            sparse_encoded,
+            sparse_backlog,
         }
     }
 }
@@ -226,6 +411,70 @@ impl Metrics {
             .inc();
     }
 
+    /// One sign-in exchange with `provider` failed for `reason` (ADR-0045
+    /// d18).
+    pub fn web_failed(&self, provider: &'static str, reason: &'static str) {
+        self.web_failures
+            .get_or_create(&WebFailureLabels {
+                provider: provider.to_owned(),
+                reason: reason.to_owned(),
+            })
+            .inc();
+    }
+
+    /// One recall answered `result` in `seconds` through `pipeline`
+    /// (ADR-0054 d1).
+    pub(crate) fn recall_answered(
+        &self,
+        pipeline: &'static str,
+        result: &'static str,
+        seconds: f64,
+    ) {
+        self.quality
+            .answers
+            .get_or_create(&AnswerLabels {
+                pipeline: pipeline.to_owned(),
+                result: result.to_owned(),
+            })
+            .inc();
+        self.quality
+            .durations
+            .get_or_create(&PipelineLabels {
+                pipeline: pipeline.to_owned(),
+            })
+            .observe(seconds);
+    }
+
+    /// One verdict, `waited` seconds after its memory's submission.
+    pub(crate) fn verdict(&self, verdict: &'static str, waited: f64) {
+        self.quality
+            .review_wait
+            .get_or_create(&VerdictLabels {
+                verdict: verdict.to_owned(),
+            })
+            .observe(waited);
+    }
+
+    /// One encoder pass's versions: `written`, `failed`, and of those
+    /// `parked` at the attempts' ceiling (ADR-0052 d15).
+    pub fn sparse_pass(&self, written: u64, failed: u64, parked: u64) {
+        for (outcome, n) in [("written", written), ("failed", failed), ("parked", parked)] {
+            if n > 0 {
+                self.sparse_encoded
+                    .get_or_create(&SparseLabels {
+                        outcome: outcome.to_owned(),
+                    })
+                    .inc_by(n);
+            }
+        }
+    }
+
+    /// The entries waiting for the encoder (ADR-0052 d15).
+    pub fn sparse_backlog(&self, waiting: u64) {
+        self.sparse_backlog
+            .set(i64::try_from(waiting).unwrap_or(i64::MAX));
+    }
+
     /// One `/mcp` call, by the closed values of its `mcp_call` line.
     pub(crate) fn mcp_call(&self, tool: &str, mode: &str, outcome: &str, seconds: f64) {
         self.mcp
@@ -244,6 +493,68 @@ impl Metrics {
         // Writing into a String cannot fail.
         let _ = prometheus_client::encoding::text::encode(&mut out, &self.registry);
         out
+    }
+}
+
+/// The recall telemetry writer's counts and gauges (ADR-0054 d1).
+impl TelemetryMeter for Metrics {
+    fn events(&self, outcome: &'static str, n: u64) {
+        self.quality
+            .events
+            .get_or_create(&OutcomeLabels {
+                outcome: outcome.to_owned(),
+            })
+            .inc_by(n);
+    }
+
+    fn labels(&self, label: &'static str, n: u64) {
+        self.quality
+            .outcomes
+            .get_or_create(&LabelLabels {
+                label: label.to_owned(),
+            })
+            .inc_by(n);
+    }
+
+    fn labels_dropped(&self, reason: &'static str, n: u64) {
+        self.quality
+            .labels_dropped
+            .get_or_create(&ReasonLabels {
+                reason: reason.to_owned(),
+            })
+            .inc_by(n);
+    }
+
+    fn remembered(&self, relation: &'static str) {
+        self.quality
+            .duplicates
+            .get_or_create(&RelationLabels {
+                relation: relation.to_owned(),
+            })
+            .inc();
+    }
+
+    fn queue_depth(&self, depth: i64) {
+        self.quality.queue_depth.set(depth);
+    }
+
+    fn health(&self, purge_overdue: i64) {
+        self.quality.purge_overdue.set(purge_overdue);
+    }
+
+    fn lag(&self, seconds: f64) {
+        self.quality.lag.set(seconds);
+    }
+
+    fn unrecalled(&self, by_age: [i64; 4]) {
+        for (age, n) in ["7d", "30d", "90d", "older"].into_iter().zip(by_age) {
+            self.quality
+                .unrecalled
+                .get_or_create(&AgeLabels {
+                    promoted_for: age.to_owned(),
+                })
+                .set(n);
+        }
     }
 }
 

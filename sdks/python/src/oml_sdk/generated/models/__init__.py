@@ -85,6 +85,7 @@ from .error_envelope import ErrorEnvelope
 from .error_envelope_error import ErrorEnvelopeError
 from .error_envelope_error_details import ErrorEnvelopeErrorDetails
 from .events_page import EventsPage
+from .feedback import Feedback
 from .grant import Grant
 from .grant_covers import GrantCovers
 from .grant_deny_item import GrantDenyItem
@@ -140,7 +141,14 @@ from .ready_checks import ReadyChecks
 from .ready_status import ReadyStatus
 from .recall_budget import RecallBudget
 from .recall_budget_counter import RecallBudgetCounter
+from .recall_event import RecallEvent
+from .recall_event_access import RecallEventAccess
+from .recall_event_hits_item import RecallEventHitsItem
+from .recall_event_labels_item import RecallEventLabelsItem
+from .recall_event_labels_item_label import RecallEventLabelsItemLabel
+from .recall_event_labels_item_source import RecallEventLabelsItemSource
 from .recall_matched import RecallMatched
+from .recall_matched_tokens_item import RecallMatchedTokensItem
 from .recall_matched_via_item import RecallMatchedViaItem
 from .recall_request import RecallRequest
 from .recall_request_kinds_item import RecallRequestKindsItem
@@ -154,6 +162,8 @@ from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
+from .replay_report import ReplayReport
+from .replay_report_pipelines_item import ReplayReportPipelinesItem
 from .rerank_outcome import RerankOutcome
 from .rerank_reason import RerankReason
 from .review_next_body import ReviewNextBody
@@ -167,6 +177,7 @@ from .served_guardrail import ServedGuardrail
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
 from .set_search_default_body import SetSearchDefaultBody
+from .set_usage_settings_body import SetUsageSettingsBody
 from .severity import Severity
 from .submit_accepted import SubmitAccepted
 from .submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
@@ -188,6 +199,9 @@ from .transition_proposal import TransitionProposal
 from .transition_proposal_to import TransitionProposalTo
 from .transition_state import TransitionState
 from .transition_to import TransitionTo
+from .usage_eval_body import UsageEvalBody
+from .usage_events_response_200 import UsageEventsResponse200
+from .usage_settings import UsageSettings
 from .user_page_act_body import UserPageActBody
 from .user_page_act_body_action import UserPageActBodyAction
 from .user_page_view import UserPageView
@@ -286,6 +300,7 @@ __all__ = (
     "ErrorEnvelopeError",
     "ErrorEnvelopeErrorDetails",
     "EventsPage",
+    "Feedback",
     "Grant",
     "GrantCovers",
     "GrantDenyItem",
@@ -337,7 +352,14 @@ __all__ = (
     "ReadyStatus",
     "RecallBudget",
     "RecallBudgetCounter",
+    "RecallEvent",
+    "RecallEventAccess",
+    "RecallEventHitsItem",
+    "RecallEventLabelsItem",
+    "RecallEventLabelsItemLabel",
+    "RecallEventLabelsItemSource",
     "RecallMatched",
+    "RecallMatchedTokensItem",
     "RecallMatchedViaItem",
     "RecallRequest",
     "RecallRequestKindsItem",
@@ -351,6 +373,8 @@ __all__ = (
     "RecallSearchPipeline",
     "RemoveWebEmailBody",
     "RemoveWebEmailResponse200",
+    "ReplayReport",
+    "ReplayReportPipelinesItem",
     "RerankOutcome",
     "RerankReason",
     "ReviewNextBody",
@@ -364,6 +388,7 @@ __all__ = (
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemHeldBy",
     "SetSearchDefaultBody",
+    "SetUsageSettingsBody",
     "Severity",
     "SubmitAccepted",
     "SubmitAcceptedReplacesType0",
@@ -385,6 +410,9 @@ __all__ = (
     "TransitionProposalTo",
     "TransitionState",
     "TransitionTo",
+    "UsageEvalBody",
+    "UsageEventsResponse200",
+    "UsageSettings",
     "UserPageActBody",
     "UserPageActBodyAction",
     "UserPageView",

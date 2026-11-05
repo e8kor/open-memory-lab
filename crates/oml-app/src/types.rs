@@ -1468,6 +1468,10 @@ pub struct RecallHit {
     pub matched: Vec<String>,
     /// `matched.via`: the retrievers whose lists held the row.
     pub via: Vec<RetrieverKind>,
+    /// `matched.tokens`: the learned sparse tokens that scored the row,
+    /// with their contributions and whether the encoder added them
+    /// (ADR-0052 d17); empty for a hit no sparse list held.
+    pub tokens: Vec<crate::search::MatchedToken>,
     /// `matched.rerank`: the reranker's relevance in `[0, 1]`, for a hit it
     /// scored; the hit's `score` is then this relevance (ADR-0053 d7).
     pub rerank: Option<f32>,
@@ -1525,6 +1529,11 @@ impl core::ops::Deref for RecallHit {
 /// and then to the budget (ADR-0025 d7).
 #[derive(Debug, Clone)]
 pub struct RecallResult {
+    /// The recall's id, the answer's `recall_id`: the event that records it
+    /// and the id a `feedback` member names (ADR-0054 d2, d6).
+    pub recall_id: Uuid,
+    /// The workarea node the recall read, resolved.
+    pub scope_workarea_id: Uuid,
     pub steering: Vec<ServedMemory>,
     pub hits: Vec<RecallHit>,
     /// How the `max_tokens` cut was applied; `None` when no budget was sent,
@@ -2473,6 +2482,24 @@ pub enum AppError {
         field: &'static str,
         message: &'static str,
     },
+    /// A read's `feedback` member the read refuses, with the field it
+    /// names; the read is not run (request.validation, `details.field`;
+    /// ADR-0054 d6).
+    #[error("{message}")]
+    Feedback { field: String, message: String },
+    /// The key's explicit labels today are at their cap (`limit.rate`;
+    /// ADR-0054 d6, as accepted).
+    #[error("this key's feedback today is at its cap of 1000 labels")]
+    FeedbackRateLimited,
+    /// The deployment records no recall, so it has no event to list or
+    /// replay (`system.unavailable`; ADR-0054 d2).
+    #[error("this server records no recall")]
+    TelemetryOff,
+    /// A replay naming a reranking pipeline: the replay never takes the
+    /// reranker's slots from live recalls (request.validation, field
+    /// `/pipelines`; ADR-0054 d11, as amended).
+    #[error("the replay runs no reranking pipeline: {name}")]
+    ReplayReranks { name: String },
     #[error(transparent)]
     Store(StoreError),
 }

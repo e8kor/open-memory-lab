@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -22,6 +23,7 @@ T = TypeVar("T", bound="RecallResponse")
 class RecallResponse:
     """
     Attributes:
+        recall_id (UUID): The recall's id: the feedback member of a later read names it (ADR-0054 d6).
         steering (list[Memory]): Applicable steering, ordered structurally and never cut by a budget — membership and
             order declared in docs/architecture/retrieval.md (ADR-0025 d8).
         hits (list[RecallResponseHitsItem]):
@@ -34,6 +36,7 @@ class RecallResponse:
             250}.
     """
 
+    recall_id: UUID
     steering: list[Memory]
     hits: list[RecallResponseHitsItem]
     query_digest: str
@@ -42,6 +45,8 @@ class RecallResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        recall_id = str(self.recall_id)
+
         steering = []
         for steering_item_data in self.steering:
             steering_item = steering_item_data.to_dict()
@@ -64,6 +69,7 @@ class RecallResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "recall_id": recall_id,
                 "steering": steering,
                 "hits": hits,
                 "query_digest": query_digest,
@@ -83,6 +89,8 @@ class RecallResponse:
         from ..models.recall_search import RecallSearch
 
         d = dict(src_dict)
+        recall_id = UUID(d.pop("recall_id"))
+
         steering = []
         _steering = d.pop("steering")
         for steering_item_data in _steering:
@@ -109,6 +117,7 @@ class RecallResponse:
             budget = RecallBudget.from_dict(_budget)
 
         recall_response = cls(
+            recall_id=recall_id,
             steering=steering,
             hits=hits,
             query_digest=query_digest,

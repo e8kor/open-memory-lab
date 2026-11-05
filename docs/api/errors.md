@@ -288,7 +288,7 @@ existed.
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `limit.rate` | 429 | The key or tenant exceeds its journalled rate-limit grant attribute. **Retryable**, with `Retry-After`. | Rate limits are journalled grant attributes (D6). v1 enforcement is per-replica token buckets at limit/N — a documented approximation, [FR-8](../product/roadmap.md); a burst may transiently pass, a refusal is always honest. |
+| `limit.rate` | 429 | The key or tenant exceeds its journalled rate-limit grant attribute. **Retryable**, with `Retry-After`. Also a read whose `feedback` member would take the key past 1,000 explicit labels in a UTC day; the read is not run ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d6). | Rate limits are journalled grant attributes (D6). v1 enforcement is per-replica token buckets at limit/N — a documented approximation, [FR-8](../product/roadmap.md); a burst may transiently pass, a refusal is always honest. |
 | `limit.quota` | 429 | A journalled quota attribute (e.g. a storage or submission budget) is exhausted. **Retryable** only where the budget replenishes; `details.quota` names the attribute. | Quotas are journalled grant attributes, so every enforcement decision is reproducible from the journal (D6). |
 
 ## `export`, `settings`
@@ -304,7 +304,7 @@ existed.
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
 | `system.internal` | 500 | A defect. `request_id` is the handle for the operator. | — |
-| `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`); or a tenant's creation lost the lock contest for its FTS partition's DDL, a lock timeout or a deadlock, before any commit, journalling nothing and spending no enrollment token (`details.reason` `partition_lock_timeout`, [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d11). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
+| `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`); or a tenant's creation lost the lock contest for its FTS partition's DDL, a lock timeout or a deadlock, before any commit, journalling nothing and spending no enrollment token (`details.reason` `partition_lock_timeout`, [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d11). Also `telemetry_off`: the server records no recall, so it has no event to list or replay ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
 
 Review *unavailability* — a workarea whose policy cannot currently be satisfied by any eligible
 reviewer — is deliberately **not** an API error: submissions still land `held`, wait, and expire

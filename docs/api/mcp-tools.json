@@ -83,7 +83,7 @@
     },
     {
       "name": "oml_read",
-      "description": "Search the team's reviewed memory for facts, decisions and known pitfalls before non-trivial work, on a project term you do not know, and after a failed command: pass query with the words a note would use, or a question, such as an identifier, an error code, a module or a file name; any word may match, an identifier matches by its parts and a word by its stem, rows holding more of the words rank higher, each hit's matched lists the words it holds, and a recall that finds little offers did_you_mean spellings, so try other words before concluding nothing is stored. Find, fetch or list claims; the fields present choose the mode. artifact_id fetches one version (GET /v1/memories/{artifact_id}): the calling key's own rows in any state, others' promoted versions within read access, anything else access.not_found. query recalls (POST /v1/memories/recall): promoted claims in a workarea subtree, steering first and never ranked or cut by max_tokens, and with include_unreviewed the key's own held rows flagged state held. Neither lists (GET /v1/memories): own true, the default, is everything the key wrote, newest first, in any state, so state tells an agent whether its write was approved or rejected; own false is the promoted tips of a workarea. An argument outside the chosen mode, or artifact_id and query together, is refused with request.validation naming it in details.field. Every mode answers claim items with their text under mode: get, recall or listing.",
+      "description": "Search the team's reviewed memory for facts, decisions and known pitfalls before non-trivial work, on a project term you do not know, and after a failed command: pass query with the words a note would use, or a question, such as an identifier, an error code, a module or a file name; any word may match, an identifier matches by its parts and a word by its stem, rows holding more of the words rank higher, each hit's matched lists the words it holds, and a recall that finds little offers did_you_mean spellings, so try other words before concluding nothing is stored. Find, fetch or list claims; the fields present choose the mode. artifact_id fetches one version (GET /v1/memories/{artifact_id}): the calling key's own rows in any state, others' promoted versions within read access, anything else access.not_found. query recalls (POST /v1/memories/recall): promoted claims in a workarea subtree, steering first and never ranked or cut by max_tokens, and with include_unreviewed the key's own held rows flagged state held. Neither lists (GET /v1/memories): own true, the default, is everything the key wrote, newest first, in any state, so state tells an agent whether its write was approved or rejected; own false is the promoted tips of a workarea. An argument outside the chosen mode, or artifact_id and query together, is refused with request.validation naming it in details.field. Every mode answers claim items with their text under mode: get, recall or listing. A recall also answers recall_id; on your next read, in any mode, feedback names which of its hits answered the question and which did not.",
       "annotations": {
         "readOnlyHint": true,
         "idempotentHint": true,
@@ -141,9 +141,11 @@
               "bm25",
               "bm25-trigram",
               "bm25-postings",
-              "bm25-rerank"
+              "bm25-rerank",
+              "sparse",
+              "bm25-sparse"
             ],
-            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings, each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
           },
           "match": {
             "type": "string",
@@ -205,6 +207,37 @@
           "cursor": {
             "type": "string",
             "description": "Listing: the opaque next_cursor of the previous page; the client holds it (stateless)."
+          },
+          "feedback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "recall_id"
+            ],
+            "properties": {
+              "recall_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "The recall_id of this key's recall, in the last 24 hours, that the feedback is about."
+              },
+              "useful": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "Hits of that recall that answered the question."
+              },
+              "not_useful": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "Hits of that recall that did not."
+              }
+            },
+            "description": "Any mode. Which hits of this key's last recall answered its question and which did not, at most 20 ids, each a hit that recall served; checked before the read runs, refused by field, and never changes what this read answers. Recall improves for the next reader from it."
           }
         },
         "required": [],

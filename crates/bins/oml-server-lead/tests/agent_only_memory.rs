@@ -48,7 +48,7 @@ const FOREIGN: &str = "Kumasi Metals aluminium price is 415 USD/t, quote KM-3310
 
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
 }
 
 /// The password of every minted test role; the roles live only as long as
@@ -662,7 +662,12 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
             "next_hit_tokens": tokens(texts[&ranked[1]]),
         })
     );
-    let again = agent.ok("oml_read", budgeted_request).await;
+    let mut again = agent.ok("oml_read", budgeted_request).await;
+    // Each recall has an id of its own (ADR-0054 d2); the rest is the same.
+    let mut budgeted = budgeted;
+    for answer in [&mut again, &mut budgeted] {
+        answer.as_object_mut().map(|o| o.remove("recall_id"));
+    }
     assert_eq!(again, budgeted, "the cut is deterministic");
 
     // 9. A write with replaces enters admission held and replays once; the

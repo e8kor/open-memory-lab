@@ -471,6 +471,19 @@ request names none. Admin key role. A request still names its own with `oml read
 | `oml search show` | `GET /v2/search`: the pipeline in effect, the organisation's default (or the deployment's), the deployment's default and the enabled pipelines. |
 | `oml search set-default <pipeline>` | `POST /v2/search/default`: the organisation's default becomes `<pipeline>`, journalled as `search.default_set` and used from the next recall, no restart; `deployment` clears it so the deployment's `search.default` applies. A pipeline the server does not serve is `request.validation` naming `/search` and the served names. |
 
+## `oml usage` — the recalls this organisation made
+
+*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d11*
+
+What each recall served and what its reader did next, kept 30 days. Admin key role.
+
+| Verb | Does |
+|---|---|
+| `oml usage settings` | `GET /v2/usage/settings`: whether the server records recalls, whether their query text is kept and since when, and the retention. |
+| `oml usage settings --query-text on\|off` | `POST /v2/usage/settings`: keep the text of recalls from now, for the replay, or stop and clear the text kept; journalled as `telemetry.settings_set`. |
+| `oml usage events [--limit N]` | `GET /v2/usage/events`: the latest recalls, newest first, each with its pipeline, its hit count, its labels and its text where kept. |
+| `oml usage eval --pipelines a,b` | `POST /v2/usage/eval`: each labelled recall replayed through each pipeline inside the server, under its original key's scope; prints success@1, success@5, nDCG@10 and R@10 per pipeline, and how many were skipped because their key is revoked. No query, hit or id leaves the server. |
+
 ## `oml admin read` — every memory, with its attribution
 
 *Available since v0.5.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*

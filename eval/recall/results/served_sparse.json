@@ -1,0 +1,8672 @@
+{
+ "method": "served_sparse",
+ "description": "OML recall as served: oml_read over /mcp, search pipeline sparse",
+ "pipeline": "sparse",
+ "params": {
+  "k": 10,
+  "max_tokens": 2000,
+  "match": null,
+  "keywords": false
+ },
+ "summary": {
+  "exact": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 0.909,
+   "mrr": 1.0,
+   "ndcg10": 0.964,
+   "zero": 0.0,
+   "median_latency_ms": 10.0,
+   "n": 11
+  },
+  "paraphrase": {
+   "s1": 0.455,
+   "s5": 0.727,
+   "r10": 0.682,
+   "mrr": 0.593,
+   "ndcg10": 0.631,
+   "zero": 0.0,
+   "median_latency_ms": 10.9,
+   "n": 11
+  },
+  "inflection": {
+   "s1": 0.818,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 0.909,
+   "ndcg10": 0.929,
+   "zero": 0.0,
+   "median_latency_ms": 9.7,
+   "n": 11
+  },
+  "partial": {
+   "s1": 0.818,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 0.886,
+   "ndcg10": 0.926,
+   "zero": 0.0,
+   "median_latency_ms": 8.6,
+   "n": 11
+  },
+  "typo": {
+   "s1": 0.909,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 0.939,
+   "ndcg10": 0.955,
+   "zero": 0.0,
+   "median_latency_ms": 8.2,
+   "n": 11
+  },
+  "identifier": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 1.0,
+   "ndcg10": 1.0,
+   "zero": 0.0,
+   "median_latency_ms": 10.0,
+   "n": 11
+  },
+  "question": {
+   "s1": 0.727,
+   "s5": 1.0,
+   "r10": 0.909,
+   "mrr": 0.841,
+   "ndcg10": 0.852,
+   "zero": 0.0,
+   "median_latency_ms": 8.5,
+   "n": 11
+  },
+  "long": {
+   "s1": 0.909,
+   "s5": 0.909,
+   "r10": 0.894,
+   "mrr": 0.909,
+   "ndcg10": 0.868,
+   "zero": 0.0,
+   "median_latency_ms": 9.4,
+   "n": 11
+  },
+  "negation": {
+   "s1": 1.0,
+   "s5": 1.0,
+   "r10": 1.0,
+   "mrr": 1.0,
+   "ndcg10": 0.996,
+   "zero": 0.0,
+   "median_latency_ms": 7.6,
+   "n": 11
+  },
+  "temporal": {
+   "s1": 0.455,
+   "s5": 1.0,
+   "r10": 0.97,
+   "mrr": 0.644,
+   "ndcg10": 0.787,
+   "zero": 0.0,
+   "median_latency_ms": 10.6,
+   "n": 11
+  },
+  "multihop": {
+   "s1": 0.909,
+   "s5": 1.0,
+   "r10": 0.947,
+   "mrr": 0.955,
+   "ndcg10": 0.893,
+   "zero": 0.0,
+   "median_latency_ms": 9.3,
+   "n": 11
+  },
+  "overall": {
+   "s1": 0.818,
+   "s5": 0.967,
+   "r10": 0.937,
+   "mrr": 0.88,
+   "ndcg10": 0.891,
+   "zero": 0.0,
+   "median_latency_ms": 9.2,
+   "n": 121
+  },
+  "unanswerable": {
+   "empty": 0.0,
+   "median_latency_ms": 10.4,
+   "n": 22
+  }
+ },
+ "per_query": {
+  "q001": {
+   "sent": "canary 5% traffic",
+   "ranked": [
+    "m001",
+    "m091",
+    "m081",
+    "m164",
+    "m037",
+    "m013",
+    "m110",
+    "m165",
+    "m146",
+    "m145"
+   ],
+   "scores_raw": [
+    10.014607429504396,
+    3.020575523376465,
+    2.908561944961548,
+    2.608034372329712,
+    2.035459518432617,
+    1.079486608505249,
+    0.9820566773414612,
+    0.9449425339698792,
+    0.7174481153488159,
+    0.6125544309616089
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 360
+   },
+   "latency_ms": 8.68,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q002": {
+   "sent": "PgBouncer transaction mode",
+   "ranked": [
+    "m036",
+    "m035",
+    "m028",
+    "m039",
+    "m185",
+    "m049",
+    "m025",
+    "m183",
+    "m032",
+    "m190"
+   ],
+   "scores_raw": [
+    19.70396423339844,
+    17.392539978027344,
+    4.818742752075195,
+    3.944257259368897,
+    3.847679615020752,
+    3.8454437255859375,
+    3.527627944946289,
+    3.0611796379089355,
+    3.0208380222320557,
+    2.769524335861206
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 312
+   },
+   "latency_ms": 9.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q003": {
+   "sent": "Idempotency-Key header",
+   "ranked": [
+    "m054",
+    "m055",
+    "m182",
+    "m181",
+    "m030",
+    "m071",
+    "m085",
+    "m079",
+    "m147",
+    "m082"
+   ],
+   "scores_raw": [
+    19.081518173217773,
+    15.508377075195312,
+    11.49018383026123,
+    9.756818771362305,
+    6.84278678894043,
+    4.304959297180176,
+    3.716442108154297,
+    3.6877267360687256,
+    3.577171802520752,
+    3.55287504196167
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 311
+   },
+   "latency_ms": 14.11,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q004": {
+   "sent": "Datastream BIGNUMERIC",
+   "ranked": [
+    "m126",
+    "m123",
+    "m137",
+    "m136",
+    "m132",
+    "m135",
+    "m130",
+    "m053",
+    "m139",
+    "m030"
+   ],
+   "scores_raw": [
+    15.911086082458496,
+    8.555694580078125,
+    7.2159423828125,
+    6.6487627029418945,
+    5.183986186981201,
+    5.158092975616455,
+    5.123233318328857,
+    3.669128894805908,
+    3.407330274581909,
+    3.338989019393921
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 317
+   },
+   "latency_ms": 16.45,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q005": {
+   "sent": "dunning reminders",
+   "ranked": [
+    "m150",
+    "m151",
+    "m193",
+    "m055",
+    "m085",
+    "m110",
+    "m084",
+    "m147",
+    "m082",
+    "m038"
+   ],
+   "scores_raw": [
+    13.694912910461426,
+    6.3815765380859375,
+    6.2642998695373535,
+    2.0438921451568604,
+    1.1559418439865112,
+    1.151365041732788,
+    1.044161319732666,
+    0.8690402507781982,
+    0.7656190991401672,
+    0.7652620673179626
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 299
+   },
+   "latency_ms": 13.45,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q006": {
+   "sent": "reverse charge VAT ID",
+   "ranked": [
+    "m146",
+    "m147",
+    "m144",
+    "m197",
+    "m181",
+    "m145",
+    "m182",
+    "m129",
+    "m161",
+    "m046"
+   ],
+   "scores_raw": [
+    16.388147354125977,
+    8.709054946899414,
+    6.574907302856445,
+    5.987146377563477,
+    5.924838542938232,
+    5.493009090423584,
+    5.069748878479004,
+    4.935727119445801,
+    4.74967098236084,
+    3.506122589111328
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 316
+   },
+   "latency_ms": 6.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q007": {
+   "sent": "Playwright staging",
+   "ranked": [
+    "m097",
+    "m003",
+    "m098",
+    "m127",
+    "m031",
+    "m140"
+   ],
+   "scores_raw": [
+    9.994796752929688,
+    5.61419677734375,
+    5.286808967590332,
+    4.999406337738037,
+    4.817918300628662,
+    3.698640823364258
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 173
+   },
+   "latency_ms": 7.39,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q008": {
+   "sent": "External Secrets Operator",
+   "ranked": [
+    "m020",
+    "m021",
+    "m194",
+    "m176",
+    "m155",
+    "m059",
+    "m095",
+    "m079",
+    "m074",
+    "m023"
+   ],
+   "scores_raw": [
+    11.90944480895996,
+    4.462979316711426,
+    2.2132697105407715,
+    2.0773661136627197,
+    2.0448973178863525,
+    1.8021141290664673,
+    1.6866458654403689,
+    1.648569941520691,
+    1.505213975906372,
+    1.387728929519653
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 344
+   },
+   "latency_ms": 9.1,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9832184408687481,
+    "zero": 0.0
+   }
+  },
+  "q009": {
+   "sent": "Looker LookML marts",
+   "ranked": [
+    "m140",
+    "m127",
+    "m137",
+    "m124",
+    "m081",
+    "m108",
+    "m103",
+    "m109",
+    "m042",
+    "m158"
+   ],
+   "scores_raw": [
+    15.02023696899414,
+    4.3431010246276855,
+    3.754230499267578,
+    3.65700364112854,
+    2.2922682762145996,
+    2.267672300338745,
+    2.1496026515960693,
+    1.8084076642990112,
+    1.7941018342971802,
+    1.4902257919311523
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 293
+   },
+   "latency_ms": 10.01,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q010": {
+   "sent": "status page incident commander",
+   "ranked": [
+    "m179",
+    "m053",
+    "m174",
+    "m176",
+    "m184",
+    "m166",
+    "m177",
+    "m068",
+    "m037",
+    "m175"
+   ],
+   "scores_raw": [
+    15.179176330566406,
+    4.21161413192749,
+    3.622929096221924,
+    3.490275621414185,
+    3.376305341720581,
+    3.235568046569824,
+    3.168549060821533,
+    3.132319688796997,
+    3.012420654296875,
+    2.8957338333129883
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 333
+   },
+   "latency_ms": 10.66,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q011": {
+   "sent": "TanStack Query refetchOnWindowFocus",
+   "ranked": [
+    "m091",
+    "m090",
+    "m027",
+    "m183",
+    "m178",
+    "m021",
+    "m149",
+    "m130",
+    "m072",
+    "m044"
+   ],
+   "scores_raw": [
+    26.397377014160156,
+    11.396865844726562,
+    3.4737086296081543,
+    3.207918405532837,
+    3.143411636352539,
+    2.742387294769287,
+    2.627889633178711,
+    2.094879150390625,
+    1.8731458187103271,
+    1.8333975076675415
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 331
+   },
+   "latency_ms": 10.85,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q012": {
+   "sent": "how do we undo a bad release",
+   "ranked": [
+    "m116",
+    "m005",
+    "m093",
+    "m006",
+    "m114",
+    "m117",
+    "m049",
+    "m040",
+    "m015",
+    "m119"
+   ],
+   "scores_raw": [
+    5.460446357727051,
+    4.725215911865234,
+    2.984177350997925,
+    2.839527368545532,
+    2.4532904624938965,
+    2.097090005874634,
+    1.974037170410156,
+    1.884778380393982,
+    1.795459508895874,
+    1.442254900932312
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 287
+   },
+   "latency_ms": 17.96,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.25,
+    "ndcg10": 0.35583989829307827,
+    "zero": 0.0
+   }
+  },
+  "q013": {
+   "sent": "where do pods get their credentials from",
+   "ranked": [
+    "m020",
+    "m021",
+    "m009",
+    "m024",
+    "m012",
+    "m169",
+    "m014",
+    "m015",
+    "m078",
+    "m002"
+   ],
+   "scores_raw": [
+    6.200013160705566,
+    5.925289154052734,
+    5.624351501464844,
+    5.4437079429626465,
+    4.331521034240723,
+    4.223021030426025,
+    3.230440378189087,
+    2.566580295562744,
+    2.3163113594055176,
+    1.8621971607208252
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 305
+   },
+   "latency_ms": 7.74,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q014": {
+   "sent": "schedule for chasing customers who pay late",
+   "ranked": [
+    "m192",
+    "m163",
+    "m008",
+    "m007",
+    "m158",
+    "m166",
+    "m151",
+    "m135",
+    "m048",
+    "m176"
+   ],
+   "scores_raw": [
+    7.733815193176269,
+    5.583510875701904,
+    5.261529922485352,
+    5.088919639587402,
+    4.597848415374756,
+    4.330339431762695,
+    4.298667907714844,
+    4.007709980010986,
+    3.753480672836304,
+    3.136384963989258
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 292
+   },
+   "latency_ms": 7.51,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.5,
+    "mrr": 0.14285714285714285,
+    "ndcg10": 0.20438239758848614,
+    "zero": 0.0
+   }
+  },
+  "q015": {
+   "sent": "database failover copy in another zone",
+   "ranked": [
+    "m048",
+    "m025",
+    "m173",
+    "m060",
+    "m023",
+    "m047",
+    "m174",
+    "m096",
+    "m110",
+    "m083"
+   ],
+   "scores_raw": [
+    8.526901245117188,
+    7.03766393661499,
+    6.2204437255859375,
+    4.542657852172852,
+    4.300022602081299,
+    4.252285003662109,
+    4.176640510559082,
+    4.0823974609375,
+    4.024075508117676,
+    4.010653495788574
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 330
+   },
+   "latency_ms": 11.34,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.5,
+    "ndcg10": 0.52129602861432,
+    "zero": 0.0
+   }
+  },
+  "q016": {
+   "sent": "how long are logs kept",
+   "ranked": [
+    "m160",
+    "m137",
+    "m177",
+    "m034",
+    "m072",
+    "m055",
+    "m175",
+    "m189",
+    "m119",
+    "m086"
+   ],
+   "scores_raw": [
+    12.577180862426758,
+    8.10615348815918,
+    6.581259727478027,
+    6.085236072540283,
+    5.735243320465088,
+    5.561405181884766,
+    5.37782621383667,
+    5.158180236816406,
+    5.051154613494873,
+    5.045902252197266
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 315
+   },
+   "latency_ms": 9.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q017": {
+   "sent": "warehouse query cost too high",
+   "ranked": [
+    "m130",
+    "m027",
+    "m091",
+    "m178",
+    "m090",
+    "m171",
+    "m044",
+    "m146",
+    "m086",
+    "m108"
+   ],
+   "scores_raw": [
+    3.712802410125733,
+    3.4737086296081543,
+    3.455970764160156,
+    3.143411636352539,
+    2.9965734481811523,
+    2.6140217781066895,
+    1.8333975076675415,
+    1.6810524463653564,
+    1.6476469039916992,
+    1.5971522331237793
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 330
+   },
+   "latency_ms": 11.69,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q018": {
+   "sent": "gitops continuous delivery tool for kubernetes",
+   "ranked": [
+    "m002",
+    "m023",
+    "m004",
+    "m014",
+    "m061",
+    "m021",
+    "m103",
+    "m012",
+    "m118",
+    "m156"
+   ],
+   "scores_raw": [
+    11.879805564880373,
+    10.99928855895996,
+    9.629266738891602,
+    5.34216833114624,
+    3.964721918106079,
+    3.927698373794556,
+    3.8642094135284424,
+    3.5983779430389404,
+    3.445924758911133,
+    3.154346227645874
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 11.08,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.0,
+    "mrr": 0.0,
+    "ndcg10": 0.0,
+    "zero": 0.0
+   }
+  },
+  "q019": {
+   "sent": "who gets woken up at night when something breaks",
+   "ranked": [
+    "m048",
+    "m135",
+    "m064",
+    "m170",
+    "m173",
+    "m007",
+    "m008",
+    "m166",
+    "m134",
+    "m186"
+   ],
+   "scores_raw": [
+    4.153936386108398,
+    3.6639034748077393,
+    3.286229372024536,
+    2.6288580894470215,
+    2.4451828002929688,
+    2.439640522003174,
+    2.4279468059539795,
+    2.29427719116211,
+    2.024479627609253,
+    2.0158352851867676
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 283
+   },
+   "latency_ms": 13.37,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.5,
+    "mrr": 0.125,
+    "ndcg10": 0.26064801430716,
+    "zero": 0.0
+   }
+  },
+  "q020": {
+   "sent": "slow invoice page caused by full table scans",
+   "ranked": [
+    "m043",
+    "m052",
+    "m033",
+    "m031",
+    "m138",
+    "m178",
+    "m042",
+    "m176",
+    "m098",
+    "m130"
+   ],
+   "scores_raw": [
+    11.594284057617188,
+    10.89563274383545,
+    9.342042922973633,
+    8.279745101928711,
+    7.807962894439697,
+    7.26045036315918,
+    7.164412498474121,
+    7.098221778869629,
+    6.91485071182251,
+    6.616295337677002
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 343
+   },
+   "latency_ms": 10.7,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q021": {
+   "sent": "client retry creates duplicate invoice",
+   "ranked": [
+    "m054",
+    "m142",
+    "m172",
+    "m141",
+    "m031",
+    "m033",
+    "m196",
+    "m176",
+    "m156",
+    "m043"
+   ],
+   "scores_raw": [
+    15.344923973083496,
+    9.633713722229004,
+    6.863966464996338,
+    6.03100061416626,
+    5.80396032333374,
+    5.349100589752197,
+    5.210596561431885,
+    5.142309665679932,
+    5.129759788513184,
+    4.923580646514893
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 321
+   },
+   "latency_ms": 10.92,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q022": {
+   "sent": "store currency values as integers not decimals",
+   "ranked": [
+    "m064",
+    "m063",
+    "m094",
+    "m195",
+    "m189",
+    "m144",
+    "m126",
+    "m075",
+    "m198",
+    "m034"
+   ],
+   "scores_raw": [
+    9.85800075531006,
+    9.737592697143556,
+    8.486132621765137,
+    5.834220886230469,
+    4.618253707885742,
+    4.38469123840332,
+    4.323731899261475,
+    3.707261800765991,
+    2.329896926879883,
+    2.2995197772979736
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 316
+   },
+   "latency_ms": 7.8,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7760026829567223,
+    "zero": 0.0
+   }
+  },
+  "q023": {
+   "sent": "rollback deployment",
+   "ranked": [
+    "m006",
+    "m001",
+    "m021",
+    "m013",
+    "m007",
+    "m008",
+    "m017",
+    "m004",
+    "m023",
+    "m186"
+   ],
+   "scores_raw": [
+    9.261148452758787,
+    5.869962692260742,
+    5.8680243492126465,
+    5.102477073669434,
+    5.0432963371276855,
+    4.578857421875,
+    3.166290521621704,
+    3.146017551422119,
+    2.9426865577697754,
+    2.815105438232422
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 336
+   },
+   "latency_ms": 7.64,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q024": {
+   "sent": "invoice numbered sequentially",
+   "ranked": [
+    "m141",
+    "m043",
+    "m110",
+    "m172",
+    "m033",
+    "m200",
+    "m196",
+    "m176",
+    "m142",
+    "m198"
+   ],
+   "scores_raw": [
+    14.222797393798828,
+    9.548113822937012,
+    6.737277984619141,
+    5.736713409423828,
+    5.349100589752197,
+    5.3340325355529785,
+    5.210596561431885,
+    5.142309665679932,
+    5.121893882751465,
+    4.846622467041016
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 329
+   },
+   "latency_ms": 10.28,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9091417955461737,
+    "zero": 0.0
+   }
+  },
+  "q025": {
+   "sent": "renewing certificates failed",
+   "ranked": [
+    "m011",
+    "m110",
+    "m184",
+    "m060",
+    "m174",
+    "m010",
+    "m173",
+    "m150",
+    "m004",
+    "m083"
+   ],
+   "scores_raw": [
+    7.878309726715088,
+    4.740031719207764,
+    4.239045143127441,
+    4.038142204284668,
+    3.715134382247925,
+    3.626230239868164,
+    3.15748929977417,
+    3.0292842388153076,
+    2.9682180881500244,
+    2.936984062194824
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 338
+   },
+   "latency_ms": 7.48,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9243382314975351,
+    "zero": 0.0
+   }
+  },
+  "q026": {
+   "sent": "running database migration jobs",
+   "ranked": [
+    "m023",
+    "m041",
+    "m032",
+    "m173",
+    "m178",
+    "m026",
+    "m048",
+    "m025",
+    "m047",
+    "m124"
+   ],
+   "scores_raw": [
+    13.291346549987791,
+    8.710545539855957,
+    6.934969902038574,
+    6.878511428833008,
+    5.5931501388549805,
+    5.283281326293945,
+    4.529317378997803,
+    4.44157075881958,
+    4.252285003662109,
+    3.743733167648315
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 313
+   },
+   "latency_ms": 10.33,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q027": {
+   "sent": "flaky tests quarantine",
+   "ranked": [
+    "m111",
+    "m110",
+    "m098",
+    "m109",
+    "m097",
+    "m076",
+    "m166",
+    "m094",
+    "m014",
+    "m100"
+   ],
+   "scores_raw": [
+    15.504140853881836,
+    10.097495079040527,
+    7.015815258026123,
+    3.817536592483521,
+    3.737555503845215,
+    2.5734503269195557,
+    1.612156629562378,
+    1.4762119054794312,
+    1.050027847290039,
+    0.861239492893219
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 305
+   },
+   "latency_ms": 10.6,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q028": {
+   "sent": "webhook signatures verify",
+   "ranked": [
+    "m060",
+    "m059",
+    "m155",
+    "m174",
+    "m061",
+    "m083",
+    "m058",
+    "m082",
+    "m101",
+    "m053"
+   ],
+   "scores_raw": [
+    15.102517127990724,
+    14.817840576171877,
+    12.99921417236328,
+    10.031633377075195,
+    9.239439964294434,
+    8.927034378051758,
+    8.198405265808105,
+    3.4855453968048096,
+    2.913106918334961,
+    2.267487049102783
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 314
+   },
+   "latency_ms": 11.28,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q029": {
+   "sent": "partitioning invoices by months",
+   "ranked": [
+    "m034",
+    "m033",
+    "m052",
+    "m130",
+    "m141",
+    "m142",
+    "m172",
+    "m110",
+    "m157",
+    "m189"
+   ],
+   "scores_raw": [
+    12.023569107055664,
+    10.8966703414917,
+    8.355209350585938,
+    7.587594032287598,
+    6.444779872894287,
+    5.862930774688721,
+    5.72201681137085,
+    5.6675872802734375,
+    5.52357816696167,
+    5.190240859985352
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 335
+   },
+   "latency_ms": 23.24,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q030": {
+   "sent": "alert paged on symptom",
+   "ranked": [
+    "m163",
+    "m117",
+    "m168",
+    "m165",
+    "m167",
+    "m166",
+    "m053",
+    "m179",
+    "m052",
+    "m081"
+   ],
+   "scores_raw": [
+    8.859726905822754,
+    7.864969253540039,
+    5.829246520996094,
+    4.731675148010254,
+    4.580122947692871,
+    4.437464714050293,
+    4.21161413192749,
+    2.890214443206787,
+    2.4580795764923096,
+    1.9864649772644043
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 316
+   },
+   "latency_ms": 7.67,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q031": {
+   "sent": "refunded double charges",
+   "ranked": [
+    "m183",
+    "m181",
+    "m149",
+    "m182",
+    "m091",
+    "m129",
+    "m146",
+    "m130",
+    "m021",
+    "m078"
+   ],
+   "scores_raw": [
+    12.041570663452148,
+    9.112692832946776,
+    6.528311252593994,
+    4.837010383605957,
+    4.159281253814697,
+    3.793395757675171,
+    3.676837921142578,
+    3.47414231300354,
+    2.742387294769287,
+    2.4692394733428955
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 317
+   },
+   "latency_ms": 9.69,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9871451602176229,
+    "zero": 0.0
+   }
+  },
+  "q032": {
+   "sent": "pods restarted after secrets rotated",
+   "ranked": [
+    "m020",
+    "m021",
+    "m169",
+    "m009",
+    "m024",
+    "m012",
+    "m166",
+    "m082",
+    "m014",
+    "m176"
+   ],
+   "scores_raw": [
+    11.032350540161133,
+    10.84933090209961,
+    6.644583702087402,
+    5.624351501464844,
+    5.4437079429626465,
+    4.331521034240723,
+    3.766331195831299,
+    3.377200126647949,
+    3.230440378189087,
+    2.5094099044799805
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 9.59,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6009078211678822,
+    "zero": 0.0
+   }
+  },
+  "q033": {
+   "sent": "rendered invoices PDF",
+   "ranked": [
+    "m198",
+    "m019",
+    "m200",
+    "m009",
+    "m189",
+    "m168",
+    "m018",
+    "m033",
+    "m141",
+    "m034"
+   ],
+   "scores_raw": [
+    13.711560249328612,
+    12.894678115844728,
+    11.876313209533691,
+    11.500245094299316,
+    9.781461715698242,
+    7.90863847732544,
+    7.5887274742126465,
+    6.747043132781982,
+    6.444779872894287,
+    6.288819313049316
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 319
+   },
+   "latency_ms": 9.3,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q034": {
+   "sent": "postgres version",
+   "ranked": [
+    "m026",
+    "m027",
+    "m028",
+    "m025",
+    "m126",
+    "m123",
+    "m177",
+    "m054",
+    "m050",
+    "m116"
+   ],
+   "scores_raw": [
+    7.374858379364014,
+    6.286365985870361,
+    6.256534576416016,
+    5.801906585693359,
+    5.572022914886475,
+    4.915336608886719,
+    3.4180023670196533,
+    2.9330668449401855,
+    2.884690761566162,
+    2.8806025981903076
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 317
+   },
+   "latency_ms": 8.17,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.25,
+    "ndcg10": 0.631251450669265,
+    "zero": 0.0
+   }
+  },
+  "q035": {
+   "sent": "kube cluster name",
+   "ranked": [
+    "m002",
+    "m014",
+    "m021",
+    "m080",
+    "m003",
+    "m011",
+    "m004",
+    "m016",
+    "m023",
+    "m015"
+   ],
+   "scores_raw": [
+    9.701997756958008,
+    8.418052673339844,
+    7.129093170166016,
+    5.195858001708984,
+    4.974441051483154,
+    4.562191963195801,
+    4.347690582275391,
+    4.285498142242432,
+    4.163994789123535,
+    3.453230142593384
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 318
+   },
+   "latency_ms": 8.0,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9327783893101107,
+    "zero": 0.0
+   }
+  },
+  "q036": {
+   "sent": "autoscal replicas",
+   "ranked": [
+    "m040",
+    "m013",
+    "m017",
+    "m003",
+    "m037",
+    "m184",
+    "m200",
+    "m048",
+    "m094",
+    "m087"
+   ],
+   "scores_raw": [
+    6.056033611297607,
+    5.782299518585205,
+    4.499108791351318,
+    3.2095324993133545,
+    2.9227375984191895,
+    2.8324952125549316,
+    2.7361345291137695,
+    2.6097075939178467,
+    2.5601232051849365,
+    2.4442503452301025
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 293
+   },
+   "latency_ms": 8.64,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6590018048024133,
+    "zero": 0.0
+   }
+  },
+  "q037": {
+   "sent": "pseudonym salt",
+   "ranked": [
+    "m139"
+   ],
+   "scores_raw": [
+    9.783138275146484
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 31
+   },
+   "latency_ms": 8.55,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q038": {
+   "sent": "idempot batch",
+   "ranked": [
+    "m182",
+    "m055",
+    "m181",
+    "m054",
+    "m040",
+    "m147",
+    "m046",
+    "m030",
+    "m172",
+    "m133"
+   ],
+   "scores_raw": [
+    11.364442825317385,
+    8.347519874572754,
+    7.95551872253418,
+    7.636505126953125,
+    3.788265228271485,
+    3.577171802520752,
+    3.506122589111328,
+    3.460200309753418,
+    3.4536685943603516,
+    3.4445297718048096
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 304
+   },
+   "latency_ms": 10.13,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q039": {
+   "sent": "otel trace sampling",
+   "ranked": [
+    "m162",
+    "m012",
+    "m140"
+   ],
+   "scores_raw": [
+    13.00529670715332,
+    2.9556994438171387,
+    1.0443795919418335
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 83
+   },
+   "latency_ms": 6.29,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q040": {
+   "sent": "e-invoic italy",
+   "ranked": [
+    "m157",
+    "m033",
+    "m141",
+    "m172",
+    "m176",
+    "m196",
+    "m142",
+    "m145",
+    "m054",
+    "m043"
+   ],
+   "scores_raw": [
+    10.88947868347168,
+    3.645489692687988,
+    3.6378352642059326,
+    3.2803773880004883,
+    3.213716745376587,
+    3.1159539222717285,
+    3.0621490478515625,
+    2.954019784927368,
+    2.88142466545105,
+    2.8529789447784424
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 7.51,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q041": {
+   "sent": "dependabot PRs",
+   "ranked": [
+    "m112",
+    "m187",
+    "m105",
+    "m144",
+    "m085",
+    "m084",
+    "m147",
+    "m197",
+    "m082",
+    "m044"
+   ],
+   "scores_raw": [
+    9.343652725219728,
+    2.5675103664398193,
+    1.5541847944259644,
+    1.339593529701233,
+    1.1559418439865112,
+    1.044161319732666,
+    0.8690402507781982,
+    0.7734915614128113,
+    0.7656190991401672,
+    0.7191658616065979
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 327
+   },
+   "latency_ms": 10.89,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q042": {
+   "sent": "authz checks service layer",
+   "ranked": [
+    "m073",
+    "m077",
+    "m072",
+    "m170",
+    "m070",
+    "m087",
+    "m139",
+    "m060",
+    "m127",
+    "m080"
+   ],
+   "scores_raw": [
+    9.606656074523926,
+    8.462923049926758,
+    7.657588005065918,
+    7.158963680267334,
+    6.710104465484619,
+    5.78212833404541,
+    4.4709248542785645,
+    3.6803362369537354,
+    3.1781623363494873,
+    3.1204919815063477
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 294
+   },
+   "latency_ms": 9.26,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q043": {
+   "sent": "termination grace",
+   "ranked": [
+    "m009",
+    "m010",
+    "m150"
+   ],
+   "scores_raw": [
+    4.528984069824219,
+    2.019055128097534,
+    1.1629761457443235
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 91
+   },
+   "latency_ms": 5.76,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q044": {
+   "sent": "2fa admins",
+   "ranked": [
+    "m078",
+    "m190",
+    "m074",
+    "m022",
+    "m184",
+    "m192",
+    "m113",
+    "m087",
+    "m050",
+    "m066"
+   ],
+   "scores_raw": [
+    4.968437194824219,
+    3.6801719665527344,
+    3.319999933242798,
+    1.335967779159546,
+    1.2378004789352417,
+    0.9689303636550904,
+    0.888931930065155,
+    0.6431547403335571,
+    0.4464904963970184,
+    0.4175462424755096
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 260
+   },
+   "latency_ms": 8.86,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q045": {
+   "sent": "PgBouncr prepared statments",
+   "ranked": [
+    "m036",
+    "m035",
+    "m185",
+    "m028",
+    "m039",
+    "m049",
+    "m025",
+    "m084",
+    "m098",
+    "m085"
+   ],
+   "scores_raw": [
+    10.69006061553955,
+    6.319094181060791,
+    5.477802276611328,
+    4.818742752075195,
+    3.944257259368897,
+    3.8454437255859375,
+    3.527627944946289,
+    2.555800199508667,
+    2.465060234069824,
+    1.4971622228622437
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 321
+   },
+   "latency_ms": 8.17,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q046": {
+   "sent": "kubernets cluster europe",
+   "ranked": [
+    "m002",
+    "m023",
+    "m003",
+    "m004",
+    "m080",
+    "m016",
+    "m021",
+    "m011",
+    "m014",
+    "m015"
+   ],
+   "scores_raw": [
+    18.148221969604492,
+    7.721682548522949,
+    6.498129844665527,
+    5.761362552642822,
+    5.195858001708984,
+    4.958668231964111,
+    4.661479473114014,
+    4.562191963195801,
+    4.226202011108398,
+    3.453230142593384
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 318
+   },
+   "latency_ms": 6.67,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q047": {
+   "sent": "cert-manger renewal",
+   "ranked": [
+    "m011",
+    "m010",
+    "m184",
+    "m007",
+    "m166",
+    "m008",
+    "m192",
+    "m079",
+    "m120",
+    "m034"
+   ],
+   "scores_raw": [
+    10.232163429260254,
+    4.489819526672363,
+    3.43619155883789,
+    3.152940511703491,
+    3.03779673576355,
+    2.851505994796753,
+    2.336704730987549,
+    2.1079282760620117,
+    1.56498384475708,
+    1.5592724084854126
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 289
+   },
+   "latency_ms": 6.98,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q048": {
+   "sent": "idempotancy key",
+   "ranked": [
+    "m055",
+    "m054",
+    "m182",
+    "m181",
+    "m030",
+    "m171",
+    "m175",
+    "m071",
+    "m085",
+    "m079"
+   ],
+   "scores_raw": [
+    12.438194274902344,
+    11.506552696228027,
+    8.925748825073242,
+    7.407866954803467,
+    6.84278678894043,
+    4.546157360076904,
+    4.466672420501709,
+    4.304959297180176,
+    3.716442108154297,
+    3.6877267360687256
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 310
+   },
+   "latency_ms": 8.93,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q049": {
+   "sent": "postgress upgrade downtime",
+   "ranked": [
+    "m026",
+    "m028",
+    "m027",
+    "m025",
+    "m126",
+    "m123",
+    "m153",
+    "m004",
+    "m129",
+    "m199"
+   ],
+   "scores_raw": [
+    14.210553169250488,
+    9.612003326416016,
+    8.763474464416504,
+    5.801906585693359,
+    5.572022914886475,
+    4.915336608886719,
+    4.566730499267578,
+    4.555303573608398,
+    4.528892993927002,
+    4.107771873474121
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 341
+   },
+   "latency_ms": 7.9,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q050": {
+   "sent": "Datastrem numeric cents",
+   "ranked": [
+    "m126",
+    "m138",
+    "m139",
+    "m064",
+    "m137",
+    "m084",
+    "m136",
+    "m027",
+    "m123",
+    "m124"
+   ],
+   "scores_raw": [
+    9.19848918914795,
+    3.4548251628875732,
+    3.407330274581909,
+    3.3569648265838623,
+    3.1369740962982178,
+    2.9839303493499756,
+    2.76411771774292,
+    2.582141637802124,
+    2.360614061355591,
+    2.1683013439178467
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 314
+   },
+   "latency_ms": 9.17,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q051": {
+   "sent": "Playwrite flaky",
+   "ranked": [
+    "m110",
+    "m111",
+    "m098",
+    "m031",
+    "m094",
+    "m100",
+    "m097",
+    "m166",
+    "m014",
+    "m015"
+   ],
+   "scores_raw": [
+    7.122192859649658,
+    6.839951038360596,
+    5.2158098220825195,
+    2.9495346546173096,
+    2.0644185543060303,
+    1.6991732120513916,
+    1.6239876747131348,
+    1.612156629562378,
+    1.050027847290039,
+    0.9351189732551576
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 307
+   },
+   "latency_ms": 8.61,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.3333333333333333,
+    "ndcg10": 0.5049211793563422,
+    "zero": 0.0
+   }
+  },
+  "q052": {
+   "sent": "dunnig schedule",
+   "ranked": [
+    "m150",
+    "m193",
+    "m192",
+    "m007",
+    "m166",
+    "m008",
+    "m158",
+    "m085",
+    "m003",
+    "m136"
+   ],
+   "scores_raw": [
+    6.999281883239746,
+    4.842531204223633,
+    3.621196985244751,
+    3.124715566635132,
+    2.982103109359741,
+    2.873934745788574,
+    2.737255334854126,
+    2.6119179725646973,
+    2.1556315422058105,
+    2.126595973968506
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 280
+   },
+   "latency_ms": 6.78,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q053": {
+   "sent": "webhok retries",
+   "ranked": [
+    "m061",
+    "m060",
+    "m059",
+    "m174",
+    "m083",
+    "m155",
+    "m058",
+    "m054",
+    "m091",
+    "m193"
+   ],
+   "scores_raw": [
+    11.200096130371094,
+    8.064752578735352,
+    7.40333080291748,
+    6.7501630783081055,
+    6.038914680480957,
+    5.9478302001953125,
+    5.341135501861572,
+    3.328192234039306,
+    2.640784502029419,
+    2.538604259490967
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 8.91,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q054": {
+   "sent": "Strpie event order",
+   "ranked": [
+    "m156",
+    "m132",
+    "m139",
+    "m129",
+    "m127",
+    "m137",
+    "m044",
+    "m160",
+    "m191",
+    "m179"
+   ],
+   "scores_raw": [
+    6.157377243041992,
+    4.25632905960083,
+    3.614448308944702,
+    3.3045666217803955,
+    3.2706456184387207,
+    3.204637050628662,
+    2.854801654815674,
+    2.504848003387451,
+    1.2761188745498655,
+    1.2148969173431396
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 290
+   },
+   "latency_ms": 6.56,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q055": {
+   "sent": "tanstak query",
+   "ranked": [
+    "m091",
+    "m090",
+    "m027",
+    "m178",
+    "m130",
+    "m044",
+    "m108",
+    "m100",
+    "m047",
+    "m073"
+   ],
+   "scores_raw": [
+    10.63082790374756,
+    10.235391616821287,
+    3.4737086296081543,
+    3.143411636352539,
+    2.094879150390625,
+    1.8333975076675415,
+    1.5619142055511477,
+    1.524512529373169,
+    1.2730649709701538,
+    1.2511684894561768
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 302
+   },
+   "latency_ms": 9.01,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q056": {
+   "sent": "fct_mrr_daily",
+   "ranked": [
+    "m128",
+    "m129",
+    "m127",
+    "m138",
+    "m197",
+    "m161",
+    "m190",
+    "m124",
+    "m042",
+    "m028"
+   ],
+   "scores_raw": [
+    17.23237419128418,
+    15.75479793548584,
+    6.931365489959717,
+    4.982093334197998,
+    3.93391752243042,
+    3.2741541862487793,
+    2.769524335861206,
+    2.665304660797119,
+    2.6103298664093018,
+    2.532064437866211
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 308
+   },
+   "latency_ms": 13.14,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q057": {
+   "sent": "compute_line_vat",
+   "ranked": [
+    "m197",
+    "m144",
+    "m145",
+    "m161",
+    "m147",
+    "m138",
+    "m146",
+    "m127",
+    "m125",
+    "m129"
+   ],
+   "scores_raw": [
+    14.760906219482422,
+    8.695210456848145,
+    8.135848999023438,
+    5.811184406280518,
+    5.131882667541504,
+    4.982093334197998,
+    4.407511234283447,
+    4.094242095947266,
+    4.0280866622924805,
+    3.315866470336914
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 317
+   },
+   "latency_ms": 11.41,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q058": {
+   "sent": "TL_PDF_CONCURRENCY",
+   "ranked": [
+    "m200",
+    "m189",
+    "m130",
+    "m198",
+    "m123",
+    "m071",
+    "m048",
+    "m039",
+    "m049",
+    "m003"
+   ],
+   "scores_raw": [
+    17.429738998413086,
+    8.217033386230469,
+    5.845717906951904,
+    5.333305358886719,
+    5.078915596008301,
+    4.957230091094971,
+    4.403167724609375,
+    4.264401435852051,
+    4.231031894683838,
+    4.120704650878906
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 301
+   },
+   "latency_ms": 6.93,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q059": {
+   "sent": ".github/workflows/ci.yml",
+   "ranked": [
+    "m103",
+    "m118",
+    "m117",
+    "m134",
+    "m012",
+    "m105",
+    "m140",
+    "m161",
+    "m077",
+    "m072"
+   ],
+   "scores_raw": [
+    22.25411605834961,
+    8.33849048614502,
+    6.427796363830566,
+    3.737184762954712,
+    3.5983779430389404,
+    3.4745068550109863,
+    3.3871541023254395,
+    3.3250575065612793,
+    3.278665065765381,
+    3.138063907623291
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 302
+   },
+   "latency_ms": 12.8,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q060": {
+   "sent": "useInvoiceFilters",
+   "ranked": [
+    "m089",
+    "m196",
+    "m198",
+    "m141",
+    "m172",
+    "m189",
+    "m033",
+    "m176",
+    "m142",
+    "m034"
+   ],
+   "scores_raw": [
+    9.932903289794922,
+    6.275186538696289,
+    5.680379867553711,
+    5.531164169311523,
+    5.351667404174805,
+    4.915628433227539,
+    4.881425857543945,
+    4.803668975830078,
+    4.801917552947998,
+    4.700967311859131
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 331
+   },
+   "latency_ms": 10.83,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q061": {
+   "sent": "app.tenant_id",
+   "ranked": [
+    "m046",
+    "m045",
+    "m171",
+    "m161",
+    "m070",
+    "m172",
+    "m043",
+    "m154",
+    "m051",
+    "m085"
+   ],
+   "scores_raw": [
+    13.445834159851074,
+    11.652194023132324,
+    10.459052085876465,
+    8.909719467163086,
+    8.177716255187988,
+    5.574176788330078,
+    5.062241077423096,
+    4.925370216369629,
+    4.857565402984619,
+    4.724118232727051
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 328
+   },
+   "latency_ms": 7.16,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q062": {
+   "sent": "europe-west1-docker.pkg.dev/tallyline/images",
+   "ranked": [
+    "m108",
+    "m092",
+    "m179",
+    "m002",
+    "m170",
+    "m109",
+    "m159",
+    "m070",
+    "m081",
+    "m003"
+   ],
+   "scores_raw": [
+    28.873743057250977,
+    8.252182006835938,
+    7.876101970672607,
+    7.479977130889893,
+    7.133947849273682,
+    6.6081767082214355,
+    6.029428005218506,
+    6.01749849319458,
+    4.998631477355957,
+    3.9967410564422607
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 307
+   },
+   "latency_ms": 7.69,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q063": {
+   "sent": "InvoiceNumberingTest",
+   "ranked": [
+    "m110",
+    "m098",
+    "m141",
+    "m172",
+    "m142",
+    "m033",
+    "m196",
+    "m176",
+    "m043",
+    "m198"
+   ],
+   "scores_raw": [
+    13.453924179077148,
+    6.069558143615723,
+    6.03100061416626,
+    5.736713409423828,
+    5.5636305809021,
+    5.349100589752197,
+    5.210596561431885,
+    5.142309665679932,
+    4.923580646514893,
+    4.846622467041016
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 333
+   },
+   "latency_ms": 8.53,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q064": {
+   "sent": "OpenPDF 1.3.30",
+   "ranked": [
+    "m199",
+    "m198",
+    "m062",
+    "m070",
+    "m162",
+    "m188",
+    "m101",
+    "m112",
+    "m064",
+    "m185"
+   ],
+   "scores_raw": [
+    9.883467674255373,
+    9.160477638244627,
+    3.273129463195801,
+    3.172651767730713,
+    3.076261043548584,
+    2.5752530097961426,
+    2.2084505558013916,
+    2.1207730770111084,
+    1.884911298751831,
+    1.4677942991256714
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 295
+   },
+   "latency_ms": 9.69,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q065": {
+   "sent": "stripe_customer_id",
+   "ranked": [
+    "m154",
+    "m182",
+    "m183",
+    "m156",
+    "m155",
+    "m172",
+    "m171",
+    "m161",
+    "m046",
+    "m153"
+   ],
+   "scores_raw": [
+    13.944344520568848,
+    9.10599136352539,
+    7.554696559906006,
+    7.08503532409668,
+    6.348872184753418,
+    5.574176788330078,
+    5.493967533111572,
+    5.400032997131348,
+    5.361731052398682,
+    5.343546390533447
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 307
+   },
+   "latency_ms": 10.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q066": {
+   "sent": "terminationGracePeriodSeconds",
+   "ranked": [
+    "m009",
+    "m073",
+    "m010",
+    "m039",
+    "m150",
+    "m085",
+    "m084",
+    "m081",
+    "m064",
+    "m147"
+   ],
+   "scores_raw": [
+    11.672896385192873,
+    2.980140447616577,
+    2.019055128097534,
+    1.2689698934555054,
+    1.1629761457443235,
+    1.1559418439865112,
+    1.044161319732666,
+    1.004591703414917,
+    0.9674091935157776,
+    0.8690402507781982
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 319
+   },
+   "latency_ms": 9.97,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q067": {
+   "sent": "What is the maximum page size for the API?",
+   "ranked": [
+    "m053",
+    "m057",
+    "m013",
+    "m077",
+    "m164",
+    "m051",
+    "m071",
+    "m065",
+    "m066",
+    "m063"
+   ],
+   "scores_raw": [
+    12.44052791595459,
+    7.587672710418701,
+    6.915510177612305,
+    6.147396564483643,
+    5.947463512420654,
+    5.514763832092285,
+    5.443630218505859,
+    5.184289455413818,
+    5.124475479125977,
+    4.730191707611084
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 290
+   },
+   "latency_ms": 9.53,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.8262346571285599,
+    "zero": 0.0
+   }
+  },
+  "q068": {
+   "sent": "How long do we keep database backups and where are they stored?",
+   "ranked": [
+    "m137",
+    "m048",
+    "m177",
+    "m034",
+    "m189",
+    "m160",
+    "m026",
+    "m055",
+    "m072",
+    "m149"
+   ],
+   "scores_raw": [
+    13.078116416931152,
+    11.537246704101562,
+    10.773296356201172,
+    8.904281616210938,
+    8.800167083740234,
+    7.650029182434082,
+    7.501641750335693,
+    7.368163585662842,
+    6.676853179931641,
+    6.529330253601074
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 311
+   },
+   "latency_ms": 8.48,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 0.5,
+    "ndcg10": 0.3868528072345416,
+    "zero": 0.0
+   }
+  },
+  "q069": {
+   "sent": "Why did we choose Argo CD?",
+   "ranked": [
+    "m015",
+    "m016",
+    "m017",
+    "m088",
+    "m184",
+    "m173",
+    "m168",
+    "m174",
+    "m176",
+    "m122"
+   ],
+   "scores_raw": [
+    11.793859481811523,
+    11.07176399230957,
+    10.810647010803224,
+    3.769864797592163,
+    2.6817047595977783,
+    2.6794915199279785,
+    2.1929616928100586,
+    1.9636203050613403,
+    1.9408173561096191,
+    1.571684956550598
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 340
+   },
+   "latency_ms": 10.23,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q070": {
+   "sent": "When is the deploy window?",
+   "ranked": [
+    "m007",
+    "m008",
+    "m186",
+    "m013",
+    "m001",
+    "m091",
+    "m016",
+    "m096",
+    "m004",
+    "m192"
+   ],
+   "scores_raw": [
+    11.79513454437256,
+    6.912117958068848,
+    4.248437881469727,
+    3.844747304916382,
+    3.5459444522857666,
+    3.0593340396881104,
+    2.7916197776794434,
+    2.1627893447875977,
+    1.9629093408584597,
+    1.862453818321228
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 319
+   },
+   "latency_ms": 10.44,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.8213137146137828,
+    "zero": 0.0
+   }
+  },
+  "q071": {
+   "sent": "Which roles can delete the organization?",
+   "ranked": [
+    "m074",
+    "m085",
+    "m185",
+    "m078",
+    "m096",
+    "m141",
+    "m188",
+    "m068",
+    "m011",
+    "m079"
+   ],
+   "scores_raw": [
+    11.9019136428833,
+    5.602116584777832,
+    4.44197940826416,
+    3.199624300003052,
+    2.4665932655334473,
+    2.4168741703033447,
+    1.9890947341918943,
+    1.8789737224578855,
+    1.6208908557891846,
+    1.0455487966537476
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 329
+   },
+   "latency_ms": 7.1,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q072": {
+   "sent": "What happens when a webhook endpoint keeps failing?",
+   "ranked": [
+    "m060",
+    "m174",
+    "m059",
+    "m061",
+    "m083",
+    "m058",
+    "m155",
+    "m011",
+    "m173",
+    "m153"
+   ],
+   "scores_raw": [
+    14.16069507598877,
+    14.113309860229492,
+    13.977215766906738,
+    13.53513240814209,
+    13.198326110839844,
+    9.64456272125244,
+    9.347036361694336,
+    4.633049964904785,
+    4.563870429992676,
+    4.305685520172119
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 342
+   },
+   "latency_ms": 7.9,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.25,
+    "ndcg10": 0.4306765580733931,
+    "zero": 0.0
+   }
+  },
+  "q073": {
+   "sent": "How are API keys stored?",
+   "ranked": [
+    "m071",
+    "m082",
+    "m057",
+    "m079",
+    "m055",
+    "m066",
+    "m164",
+    "m013",
+    "m050",
+    "m105"
+   ],
+   "scores_raw": [
+    14.682764053344728,
+    8.794137954711914,
+    8.095952033996582,
+    7.396652221679688,
+    6.979419708251953,
+    6.016819477081299,
+    6.003353118896484,
+    5.895802021026611,
+    5.765413761138916,
+    5.625665664672852
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 294
+   },
+   "latency_ms": 7.81,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q074": {
+   "sent": "Who needs to approve changes to billing code?",
+   "ranked": [
+    "m194",
+    "m183",
+    "m074",
+    "m106",
+    "m197",
+    "m136",
+    "m042",
+    "m129",
+    "m180",
+    "m064"
+   ],
+   "scores_raw": [
+    11.686683654785156,
+    6.040605068206787,
+    5.696788787841797,
+    4.752467632293701,
+    3.5480308532714844,
+    3.537867784500122,
+    3.3772544860839844,
+    3.170703887939453,
+    2.8944554328918457,
+    2.6578638553619385
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 320
+   },
+   "latency_ms": 8.84,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.944847956559586,
+    "zero": 0.0
+   }
+  },
+  "q075": {
+   "sent": "What language and framework is the api written in?",
+   "ranked": [
+    "m066",
+    "m104",
+    "m051",
+    "m101",
+    "m013",
+    "m071",
+    "m050",
+    "m102",
+    "m065",
+    "m164"
+   ],
+   "scores_raw": [
+    10.10007095336914,
+    7.862061500549316,
+    6.3402204513549805,
+    5.683230876922607,
+    5.59338903427124,
+    5.443630218505859,
+    5.293652057647705,
+    5.192045211791992,
+    5.184289455413818,
+    5.146259307861328
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 274
+   },
+   "latency_ms": 9.56,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q076": {
+   "sent": "How often does on-call rotate?",
+   "ranked": [
+    "m166",
+    "m082",
+    "m021",
+    "m176",
+    "m080",
+    "m040",
+    "m135",
+    "m150",
+    "m174",
+    "m151"
+   ],
+   "scores_raw": [
+    11.540826797485352,
+    6.505526065826416,
+    3.729865312576294,
+    3.3028111457824707,
+    3.207260847091675,
+    3.0972201824188232,
+    2.908291816711426,
+    2.6874868869781494,
+    2.5787763595581055,
+    2.3765981197357178
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 311
+   },
+   "latency_ms": 8.1,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q077": {
+   "sent": "Where do the dbt models live?",
+   "ranked": [
+    "m124",
+    "m138",
+    "m127",
+    "m126",
+    "m041",
+    "m125",
+    "m128",
+    "m159",
+    "m048",
+    "m025"
+   ],
+   "scores_raw": [
+    13.114643096923828,
+    10.046133041381836,
+    9.90786361694336,
+    7.480359077453613,
+    6.821502685546875,
+    6.381420612335205,
+    4.630529403686523,
+    3.560485601425171,
+    3.3023877143859863,
+    3.282391309738159
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 292
+   },
+   "latency_ms": 7.51,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q078": {
+   "sent": "We need to add a column with a default to the big invoices table without locking it for minutes in production, what should I watch out for?",
+   "ranked": [
+    "m031",
+    "m033",
+    "m130",
+    "m126",
+    "m042",
+    "m098",
+    "m053",
+    "m172",
+    "m199",
+    "m019"
+   ],
+   "scores_raw": [
+    23.812299728393555,
+    13.999576568603516,
+    11.054461479187012,
+    8.553756713867188,
+    8.516496658325195,
+    7.910846710205078,
+    7.828547954559326,
+    7.755331993103027,
+    7.182471752166748,
+    7.180023670196533
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 313
+   },
+   "latency_ms": 9.9,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.5,
+    "mrr": 1.0,
+    "ndcg10": 0.7959761332981399,
+    "zero": 0.0
+   }
+  },
+  "q079": {
+   "sent": "The worker is killing PDF render jobs during a rolling deploy and invoices end up half rendered, how do we stop that?",
+   "ranked": [
+    "m009",
+    "m019",
+    "m200",
+    "m198",
+    "m168",
+    "m018",
+    "m189",
+    "m176",
+    "m182",
+    "m033"
+   ],
+   "scores_raw": [
+    29.89396858215332,
+    19.1672420501709,
+    18.60995864868164,
+    18.349946975708008,
+    14.90335464477539,
+    12.47249698638916,
+    11.226699829101562,
+    8.578123092651367,
+    8.095053672790527,
+    7.66481351852417
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 313
+   },
+   "latency_ms": 10.89,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9639404333166532,
+    "zero": 0.0
+   }
+  },
+  "q080": {
+   "sent": "A partner integration is hammering the invoices list endpoint and getting rate limited, what is the limit and what should they use instead?",
+   "ranked": [
+    "m058",
+    "m057",
+    "m145",
+    "m077",
+    "m153",
+    "m033",
+    "m042",
+    "m052",
+    "m034",
+    "m143"
+   ],
+   "scores_raw": [
+    12.073758125305176,
+    10.044821739196776,
+    9.038613319396973,
+    9.016521453857422,
+    7.72064733505249,
+    7.394639015197754,
+    7.319662570953369,
+    7.178323268890381,
+    7.113285064697266,
+    6.948426246643066
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 338
+   },
+   "latency_ms": 9.26,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.9072836011519267,
+    "zero": 0.0
+   }
+  },
+  "q081": {
+   "sent": "After rotating the API key of the email provider the invoice emails stopped going out, what do we need to do after a secret rotation?",
+   "ranked": [
+    "m176",
+    "m082",
+    "m054",
+    "m071",
+    "m051",
+    "m021",
+    "m079",
+    "m157",
+    "m174",
+    "m057"
+   ],
+   "scores_raw": [
+    23.27775001525879,
+    11.33202075958252,
+    10.069101333618164,
+    9.748589515686035,
+    9.379502296447754,
+    9.275731086730955,
+    8.766766548156738,
+    8.426811218261719,
+    8.080718994140625,
+    7.9628400802612305
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 331
+   },
+   "latency_ms": 7.76,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8315546295836226,
+    "zero": 0.0
+   }
+  },
+  "q082": {
+   "sent": "A customer in Kuwait sees wrong amounts because of decimal places on the invoice in the console and the API",
+   "ranked": [
+    "m088",
+    "m176",
+    "m063",
+    "m051",
+    "m094",
+    "m107",
+    "m106",
+    "m189",
+    "m157",
+    "m091"
+   ],
+   "scores_raw": [
+    11.643482208251951,
+    8.923676490783691,
+    8.592639923095703,
+    8.573953628540039,
+    8.27625560760498,
+    7.871143817901611,
+    7.868780136108398,
+    7.098085403442383,
+    6.745185375213623,
+    6.5495100021362305
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 329
+   },
+   "latency_ms": 7.37,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 0.0,
+    "r10": 0.6666666666666666,
+    "mrr": 0.0,
+    "ndcg10": 0.21468600536424026,
+    "zero": 0.0
+   }
+  },
+  "q083": {
+   "sent": "Which German tax rule decides how VAT is rounded on an invoice and why do accountants reject our totals",
+   "ranked": [
+    "m145",
+    "m144",
+    "m107",
+    "m146",
+    "m042",
+    "m199",
+    "m147",
+    "m176",
+    "m141",
+    "m033"
+   ],
+   "scores_raw": [
+    24.886144638061523,
+    18.78083038330078,
+    11.064757347106934,
+    8.797235488891602,
+    8.523627281188965,
+    7.814630031585693,
+    7.2400054931640625,
+    7.018235206604004,
+    6.378086090087891,
+    6.266870498657227
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 338
+   },
+   "latency_ms": 9.41,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q084": {
+   "sent": "Our Prometheus bill exploded after adding a label per invoice, what is the rule on metric labels",
+   "ranked": [
+    "m172",
+    "m171",
+    "m159",
+    "m131",
+    "m086",
+    "m169",
+    "m043",
+    "m141",
+    "m031",
+    "m143"
+   ],
+   "scores_raw": [
+    30.769441604614254,
+    23.17956161499023,
+    13.489985466003418,
+    12.138106346130373,
+    9.991965293884276,
+    8.497769355773926,
+    8.493767738342285,
+    7.749821662902832,
+    6.578891754150391,
+    6.1237897872924805
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 10.55,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q085": {
+   "sent": "Console users keep getting logged out with 401 errors in the afternoon because of token expiry",
+   "ranked": [
+    "m072",
+    "m099",
+    "m075",
+    "m094",
+    "m079",
+    "m133",
+    "m088",
+    "m092",
+    "m093",
+    "m120"
+   ],
+   "scores_raw": [
+    19.961048126220703,
+    12.106672286987305,
+    7.029653549194336,
+    6.7890424728393555,
+    6.685207366943359,
+    5.591991424560547,
+    5.429315090179443,
+    5.352255821228027,
+    5.183125972747803,
+    5.038459777832031
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 323
+   },
+   "latency_ms": 9.54,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q086": {
+   "sent": "Bulk importing users into the identity provider fails halfway through, is there a rate limit",
+   "ranked": [
+    "m077",
+    "m057",
+    "m070",
+    "m110",
+    "m060",
+    "m161",
+    "m183",
+    "m053",
+    "m133",
+    "m174"
+   ],
+   "scores_raw": [
+    19.019779205322266,
+    7.891144275665283,
+    7.195544719696045,
+    5.1046271324157715,
+    4.753208160400391,
+    4.66658353805542,
+    4.212424278259277,
+    3.658412456512451,
+    3.5481770038604736,
+    3.433755397796631
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 333
+   },
+   "latency_ms": 7.82,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q087": {
+   "sent": "Upgrading the web framework to the next major version is blocked by the compiler and annotation processors, what is the plan",
+   "ranked": [
+    "m113",
+    "m104",
+    "m114",
+    "m153",
+    "m028",
+    "m129",
+    "m199",
+    "m026",
+    "m111",
+    "m004"
+   ],
+   "scores_raw": [
+    13.152255058288574,
+    7.995177745819092,
+    7.653891086578369,
+    7.461625576019287,
+    6.942237854003906,
+    6.186184883117676,
+    5.947235107421875,
+    5.8606486320495605,
+    5.535148620605469,
+    5.188806533813477
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 323
+   },
+   "latency_ms": 12.63,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9197207891481876,
+    "zero": 0.0
+   }
+  },
+  "q088": {
+   "sent": "The nightly finance DAG misses its SLA after a schema change on an exported table, what process avoids that",
+   "ranked": [
+    "m135",
+    "m134",
+    "m136",
+    "m123",
+    "m139",
+    "m027",
+    "m040",
+    "m048",
+    "m164",
+    "m101"
+   ],
+   "scores_raw": [
+    25.59986114501953,
+    14.365267753601074,
+    14.046096801757812,
+    8.146660804748535,
+    6.647463798522949,
+    5.897921562194824,
+    5.703461170196533,
+    4.740440845489502,
+    4.593394756317139,
+    3.8842830657958984
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 293
+   },
+   "latency_ms": 8.42,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9197207891481876,
+    "zero": 0.0
+   }
+  },
+  "q089": {
+   "sent": "what not to do with money types",
+   "ranked": [
+    "m195",
+    "m063",
+    "m064",
+    "m198",
+    "m088",
+    "m029",
+    "m180",
+    "m115",
+    "m094",
+    "m144"
+   ],
+   "scores_raw": [
+    6.552034854888916,
+    3.786158561706543,
+    2.9677906036376953,
+    2.8536338806152344,
+    2.1860315799713135,
+    2.1575660705566406,
+    2.1189234256744385,
+    2.102285861968994,
+    1.9025962352752688,
+    1.824220061302185
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 303
+   },
+   "latency_ms": 9.71,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q090": {
+   "sent": "don't deploy on Friday",
+   "ranked": [
+    "m008",
+    "m186",
+    "m007",
+    "m016",
+    "m013",
+    "m001",
+    "m021",
+    "m048",
+    "m095",
+    "m039"
+   ],
+   "scores_raw": [
+    7.981866359710693,
+    7.04347038269043,
+    5.460002899169922,
+    4.542506217956543,
+    3.844747304916382,
+    3.005037307739258,
+    2.2519760131835938,
+    2.15653657913208,
+    2.1382977962493896,
+    2.133156061172486
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 300
+   },
+   "latency_ms": 17.21,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q091": {
+   "sent": "never use latest image tag",
+   "ranked": [
+    "m012",
+    "m116",
+    "m006",
+    "m117",
+    "m108",
+    "m189",
+    "m079",
+    "m173",
+    "m065",
+    "m046"
+   ],
+   "scores_raw": [
+    8.205251693725586,
+    6.723763465881348,
+    4.906096935272217,
+    3.217207431793213,
+    3.0740363597869873,
+    2.9847331047058105,
+    2.825143575668335,
+    2.598478078842163,
+    2.549703359603882,
+    2.519540786743164
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 328
+   },
+   "latency_ms": 8.68,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q092": {
+   "sent": "avoid floats for amounts",
+   "ranked": [
+    "m063",
+    "m126",
+    "m195",
+    "m163",
+    "m145",
+    "m117",
+    "m015",
+    "m115",
+    "m097",
+    "m127"
+   ],
+   "scores_raw": [
+    6.261719226837158,
+    3.6471896171569824,
+    3.348736524581909,
+    2.0100879669189453,
+    0.802513837814331,
+    0.17711281776428223,
+    0.15259480476379397,
+    0.14637699723243713,
+    0.12988883256912231,
+    0.12352172285318376
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 293
+   },
+   "latency_ms": 7.32,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9514426589871553,
+    "zero": 0.0
+   }
+  },
+  "q093": {
+   "sent": "do not edit the generated api client",
+   "ranked": [
+    "m188",
+    "m102",
+    "m101",
+    "m051",
+    "m106",
+    "m065",
+    "m013",
+    "m071",
+    "m187",
+    "m079"
+   ],
+   "scores_raw": [
+    13.461786270141602,
+    11.12448024749756,
+    7.428092002868652,
+    6.215435028076172,
+    5.728834629058838,
+    5.684845924377441,
+    5.59338903427124,
+    5.443630218505859,
+    5.387222766876221,
+    5.334802627563477
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 311
+   },
+   "latency_ms": 7.96,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q094": {
+   "sent": "never compare jsonb as text",
+   "ranked": [
+    "m044",
+    "m051",
+    "m082",
+    "m160",
+    "m067",
+    "m095",
+    "m120",
+    "m060",
+    "m101",
+    "m117"
+   ],
+   "scores_raw": [
+    16.576181411743164,
+    7.002155780792236,
+    5.678775787353516,
+    5.670993328094482,
+    5.520266056060791,
+    5.421258926391602,
+    5.080313682556152,
+    4.898738384246826,
+    4.473759651184082,
+    4.0343098640441895
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 287
+   },
+   "latency_ms": 7.17,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q095": {
+   "sent": "what must never be committed to the infra repository",
+   "ranked": [
+    "m020",
+    "m016",
+    "m107",
+    "m167",
+    "m194",
+    "m124",
+    "m189",
+    "m046",
+    "m177",
+    "m118"
+   ],
+   "scores_raw": [
+    8.14194107055664,
+    6.995133876800537,
+    4.027886867523193,
+    3.830704689025879,
+    3.666219711303711,
+    3.360197067260742,
+    3.1720337867736816,
+    2.904137134552002,
+    2.8756966590881348,
+    2.8620636463165283
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 327
+   },
+   "latency_ms": 6.57,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q096": {
+   "sent": "forbidden labels on metrics",
+   "ranked": [
+    "m171",
+    "m172",
+    "m159",
+    "m125",
+    "m086",
+    "m008",
+    "m131",
+    "m004",
+    "m116",
+    "m144"
+   ],
+   "scores_raw": [
+    11.947284698486328,
+    7.669938087463379,
+    5.56043004989624,
+    5.441134929656982,
+    4.746515274047852,
+    3.347409248352051,
+    3.2523813247680664,
+    2.9290525913238525,
+    1.55141282081604,
+    1.2857635021209717
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 308
+   },
+   "latency_ms": 7.62,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q097": {
+   "sent": "no triggers for business logic",
+   "ranked": [
+    "m047",
+    "m174",
+    "m083",
+    "m161",
+    "m138",
+    "m087",
+    "m177",
+    "m167",
+    "m046",
+    "m079"
+   ],
+   "scores_raw": [
+    13.176727294921877,
+    2.4327642917633057,
+    2.363776683807373,
+    1.2984143495559692,
+    1.1475907564163208,
+    1.1289525032043457,
+    1.1182814836502075,
+    1.116502046585083,
+    1.1054658889770508,
+    1.062146782875061
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 315
+   },
+   "latency_ms": 7.3,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q098": {
+   "sent": "do not run destructive SQL on production",
+   "ranked": [
+    "m185",
+    "m014",
+    "m028",
+    "m023",
+    "m032",
+    "m026",
+    "m073",
+    "m047",
+    "m186",
+    "m025"
+   ],
+   "scores_raw": [
+    11.315890312194824,
+    5.677369117736816,
+    5.068118572235107,
+    4.90285062789917,
+    4.875396728515625,
+    4.858176231384277,
+    4.8204803466796875,
+    4.528032302856445,
+    4.520219802856445,
+    4.357648849487305
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 317
+   },
+   "latency_ms": 6.43,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q099": {
+   "sent": "do not reuse a voided invoice number",
+   "ranked": [
+    "m142",
+    "m141",
+    "m033",
+    "m054",
+    "m198",
+    "m172",
+    "m200",
+    "m110",
+    "m031",
+    "m189"
+   ],
+   "scores_raw": [
+    16.666015625,
+    9.352370262145996,
+    8.510011672973633,
+    7.649590492248535,
+    7.176519393920898,
+    6.397933006286621,
+    6.256795883178711,
+    6.021820068359375,
+    5.80396032333374,
+    5.780277729034424
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 318
+   },
+   "latency_ms": 9.79,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q100": {
+   "sent": "latest deploy window",
+   "ranked": [
+    "m007",
+    "m008",
+    "m013",
+    "m091",
+    "m186",
+    "m001",
+    "m016",
+    "m114",
+    "m012",
+    "m042"
+   ],
+   "scores_raw": [
+    9.586012840270996,
+    4.704412937164307,
+    3.844747304916382,
+    3.0593340396881104,
+    3.0400314331054688,
+    3.005037307739258,
+    2.7916197776794434,
+    2.4676079750061035,
+    2.3461616039276123,
+    2.338257312774658
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 312
+   },
+   "latency_ms": 8.24,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q101": {
+   "sent": "after the postgres upgrade",
+   "ranked": [
+    "m028",
+    "m026",
+    "m027",
+    "m025",
+    "m126",
+    "m123",
+    "m153",
+    "m004",
+    "m129",
+    "m199"
+   ],
+   "scores_raw": [
+    10.850507736206056,
+    10.318169593811035,
+    8.763474464416504,
+    5.801906585693359,
+    5.572022914886475,
+    4.915336608886719,
+    4.566730499267578,
+    4.555303573608398,
+    4.528892993927002,
+    4.107771873474121
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 341
+   },
+   "latency_ms": 6.45,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9514426589871553,
+    "zero": 0.0
+   }
+  },
+  "q102": {
+   "sent": "what changed after the August incident",
+   "ranked": [
+    "m129",
+    "m179",
+    "m174",
+    "m175",
+    "m177",
+    "m176",
+    "m184",
+    "m191",
+    "m136",
+    "m102"
+   ],
+   "scores_raw": [
+    5.2538886070251465,
+    4.513987064361572,
+    4.313790798187256,
+    3.7352004051208496,
+    3.5926389694213867,
+    3.490275621414185,
+    3.376305341720581,
+    2.6634225845336914,
+    1.9732502698898315,
+    1.906545877456665
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 337
+   },
+   "latency_ms": 6.33,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 0.25,
+    "ndcg10": 0.43380783046984833,
+    "zero": 0.0
+   }
+  },
+  "q103": {
+   "sent": "current API version",
+   "ranked": [
+    "m050",
+    "m066",
+    "m065",
+    "m104",
+    "m013",
+    "m164",
+    "m071",
+    "m106",
+    "m173",
+    "m102"
+   ],
+   "scores_raw": [
+    10.410755157470703,
+    6.663906097412109,
+    6.539542198181152,
+    6.506965160369873,
+    6.344515323638916,
+    5.801905632019043,
+    5.443630218505859,
+    5.391092777252197,
+    5.216915607452393,
+    5.177036762237549
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 279
+   },
+   "latency_ms": 10.55,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q104": {
+   "sent": "which postgres version before the upgrade",
+   "ranked": [
+    "m026",
+    "m028",
+    "m027",
+    "m025",
+    "m004",
+    "m126",
+    "m199",
+    "m123",
+    "m153",
+    "m129"
+   ],
+   "scores_raw": [
+    13.727232933044434,
+    10.829968452453612,
+    9.71187686920166,
+    6.268338203430176,
+    5.648463726043701,
+    5.572022914886475,
+    5.54036808013916,
+    4.915336608886719,
+    4.566730499267578,
+    4.528892993927002
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 341
+   },
+   "latency_ms": 9.12,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q105": {
+   "sent": "what changed since the double charge",
+   "ranked": [
+    "m181",
+    "m183",
+    "m129",
+    "m182",
+    "m146",
+    "m130",
+    "m149",
+    "m191",
+    "m078",
+    "m152"
+   ],
+   "scores_raw": [
+    7.925640106201172,
+    6.833634853363037,
+    5.587431907653809,
+    5.555510997772217,
+    3.996138334274292,
+    2.951413154602051,
+    2.8209612369537354,
+    2.6634225845336914,
+    2.4692394733428955,
+    2.072575569152832
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 296
+   },
+   "latency_ms": 10.5,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.25,
+    "ndcg10": 0.631251450669265,
+    "zero": 0.0
+   }
+  },
+  "q106": {
+   "sent": "most recent incident",
+   "ranked": [
+    "m179",
+    "m174",
+    "m176",
+    "m184",
+    "m177",
+    "m175",
+    "m050",
+    "m058",
+    "m042",
+    "m099"
+   ],
+   "scores_raw": [
+    4.513987064361572,
+    3.622929096221924,
+    3.490275621414185,
+    3.376305341720581,
+    3.168549060821533,
+    2.8957338333129883,
+    1.251936435699463,
+    1.0615952014923096,
+    1.0299780368804932,
+    0.9738585948944092
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 350
+   },
+   "latency_ms": 11.94,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.3333333333333333,
+    "ndcg10": 0.5,
+    "zero": 0.0
+   }
+  },
+  "q107": {
+   "sent": "since when is two-factor mandatory",
+   "ranked": [
+    "m078",
+    "m192",
+    "m181",
+    "m007",
+    "m054",
+    "m008",
+    "m050",
+    "m026",
+    "m049",
+    "m093"
+   ],
+   "scores_raw": [
+    13.387778282165527,
+    3.620832920074463,
+    2.9783308506011963,
+    2.589543104171753,
+    2.234604597091675,
+    2.207704782485962,
+    1.8125139474868777,
+    1.7692068815231323,
+    1.7138593196868896,
+    1.6716591119766235
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 271
+   },
+   "latency_ms": 15.22,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q108": {
+   "sent": "what is planned for Q1 2027",
+   "ranked": [
+    "m050",
+    "m168",
+    "m129",
+    "m114",
+    "m058",
+    "m141",
+    "m158",
+    "m030",
+    "m181",
+    "m076"
+   ],
+   "scores_raw": [
+    5.270965099334717,
+    5.187106609344482,
+    4.38981294631958,
+    3.9382362365722656,
+    3.404710054397583,
+    3.233093738555908,
+    3.1605687141418457,
+    3.0306296348571777,
+    2.98693585395813,
+    2.8934216499328613
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 306
+   },
+   "latency_ms": 12.81,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.25,
+    "ndcg10": 0.631251450669265,
+    "zero": 0.0
+   }
+  },
+  "q109": {
+   "sent": "results after moving pdf rendering to new nodes",
+   "ranked": [
+    "m018",
+    "m019",
+    "m198",
+    "m168",
+    "m200",
+    "m009",
+    "m151",
+    "m189",
+    "m086",
+    "m055"
+   ],
+   "scores_raw": [
+    11.63984203338623,
+    10.297916412353516,
+    9.316631317138672,
+    8.43942642211914,
+    8.035364151000977,
+    7.975599765777588,
+    4.780945777893066,
+    4.591220855712891,
+    2.4877898693084717,
+    2.005774736404419
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 306
+   },
+   "latency_ms": 11.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.7967075809905066,
+    "zero": 0.0
+   }
+  },
+  "q110": {
+   "sent": "what changed after the pentest",
+   "ranked": [
+    "m075",
+    "m110",
+    "m111",
+    "m191",
+    "m097",
+    "m109",
+    "m076",
+    "m136",
+    "m102",
+    "m098"
+   ],
+   "scores_raw": [
+    4.665672302246094,
+    3.4497251510620117,
+    3.009244441986084,
+    2.6634225845336914,
+    2.6604437828063965,
+    2.497352361679077,
+    2.100726366043091,
+    1.9732502698898315,
+    1.906545877456665,
+    1.839084506034851
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 315
+   },
+   "latency_ms": 10.94,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9180385079206221,
+    "zero": 0.0
+   }
+  },
+  "q111": {
+   "sent": "which machine type renders invoices and what font does it embed",
+   "ranked": [
+    "m198",
+    "m019",
+    "m200",
+    "m009",
+    "m018",
+    "m157",
+    "m141",
+    "m033",
+    "m034",
+    "m143"
+   ],
+   "scores_raw": [
+    18.936603546142575,
+    9.95281219482422,
+    8.793785095214844,
+    8.336009979248047,
+    7.782585144042969,
+    6.897438049316406,
+    6.756959438323975,
+    6.747043132781982,
+    6.599847793579102,
+    5.813665866851807
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 315
+   },
+   "latency_ms": 8.86,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8503449055347546,
+    "zero": 0.0
+   }
+  },
+  "q112": {
+   "sent": "how does SEPA payment finality affect dunning",
+   "ranked": [
+    "m149",
+    "m193",
+    "m148",
+    "m150",
+    "m181",
+    "m182",
+    "m043",
+    "m151",
+    "m163",
+    "m135"
+   ],
+   "scores_raw": [
+    11.731087684631348,
+    11.3912353515625,
+    11.36703395843506,
+    9.962237358093262,
+    6.7059712409973145,
+    4.310051918029785,
+    3.5118470191955566,
+    2.7087953090667725,
+    2.524771213531494,
+    2.406400680541992
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 300
+   },
+   "latency_ms": 10.72,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8885994691336017,
+    "zero": 0.0
+   }
+  },
+  "q113": {
+   "sent": "the outage that motivated the canary",
+   "ranked": [
+    "m001",
+    "m173",
+    "m165",
+    "m017",
+    "m069",
+    "m072",
+    "m122",
+    "m196",
+    "m114",
+    "m009"
+   ],
+   "scores_raw": [
+    9.8326997756958,
+    4.671641826629639,
+    2.9329488277435303,
+    2.0139100551605225,
+    1.4309632778167725,
+    1.3680713176727295,
+    0.7126354575157166,
+    0.6926419734954834,
+    0.6774700880050659,
+    0.507504940032959
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 360
+   },
+   "latency_ms": 10.03,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q114": {
+   "sent": "incidents caused by secret or key rotation",
+   "ranked": [
+    "m174",
+    "m176",
+    "m082",
+    "m021",
+    "m020",
+    "m175",
+    "m079",
+    "m071",
+    "m055",
+    "m054"
+   ],
+   "scores_raw": [
+    8.812515258789062,
+    6.764781951904297,
+    5.8248419761657715,
+    5.361935615539551,
+    5.2297186851501465,
+    4.865564346313477,
+    4.701625347137451,
+    4.304959297180176,
+    4.090673923492432,
+    3.8700478076934814
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 327
+   },
+   "latency_ms": 9.6,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.75,
+    "mrr": 1.0,
+    "ndcg10": 0.9141404765548908,
+    "zero": 0.0
+   }
+  },
+  "q115": {
+   "sent": "where tenant isolation is enforced in the database and in logs",
+   "ranked": [
+    "m171",
+    "m161",
+    "m070",
+    "m081",
+    "m160",
+    "m045",
+    "m046",
+    "m084",
+    "m025",
+    "m085"
+   ],
+   "scores_raw": [
+    9.040623664855955,
+    8.710779190063477,
+    6.808517932891846,
+    6.526178359985352,
+    6.468094348907471,
+    6.057643413543701,
+    5.989711761474609,
+    5.691748142242432,
+    4.974447727203369,
+    4.724118232727051
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 318
+   },
+   "latency_ms": 11.84,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 0.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 0.5,
+    "ndcg10": 0.6109536264236152,
+    "zero": 0.0
+   }
+  },
+  "q116": {
+   "sent": "how does the analytics pipeline get invoice data and when do dbt models run",
+   "ranked": [
+    "m124",
+    "m123",
+    "m138",
+    "m126",
+    "m127",
+    "m135",
+    "m130",
+    "m098",
+    "m131",
+    "m026"
+   ],
+   "scores_raw": [
+    18.73301887512207,
+    16.330551147460938,
+    10.767939567565918,
+    10.331350326538086,
+    9.90786361694336,
+    9.498791694641112,
+    9.043827056884766,
+    8.278682708740234,
+    7.898013114929199,
+    7.742608547210693
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 312
+   },
+   "latency_ms": 8.94,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "q117": {
+   "sent": "idempotency across the API and payment jobs",
+   "ranked": [
+    "m182",
+    "m055",
+    "m054",
+    "m181",
+    "m051",
+    "m043",
+    "m063",
+    "m023",
+    "m013",
+    "m071"
+   ],
+   "scores_raw": [
+    15.220541000366213,
+    11.417702674865724,
+    10.61606788635254,
+    8.471061706542969,
+    7.557069301605225,
+    6.423341751098633,
+    6.020789623260498,
+    5.792303085327148,
+    5.59338903427124,
+    5.443630218505859
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 310
+   },
+   "latency_ms": 7.21,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.9514426589871553,
+    "zero": 0.0
+   }
+  },
+  "q118": {
+   "sent": "what depends on the Kotlin version",
+   "ranked": [
+    "m114",
+    "m104",
+    "m066",
+    "m067",
+    "m068",
+    "m113",
+    "m194",
+    "m115",
+    "m196",
+    "m010"
+   ],
+   "scores_raw": [
+    9.854864120483398,
+    9.341793060302734,
+    9.062654495239258,
+    8.080023765563965,
+    7.9262919425964355,
+    6.996358394622803,
+    6.96085786819458,
+    6.917956829071045,
+    6.353760242462158,
+    3.274479866027832
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 290
+   },
+   "latency_ms": 7.74,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8714509482376813,
+    "zero": 0.0
+   }
+  },
+  "q119": {
+   "sent": "personal data protection in the database and in analytics",
+   "ranked": [
+    "m139",
+    "m084",
+    "m123",
+    "m124",
+    "m048",
+    "m025",
+    "m047",
+    "m023",
+    "m137",
+    "m026"
+   ],
+   "scores_raw": [
+    10.452052116394045,
+    8.672994613647461,
+    8.568974494934082,
+    7.68508243560791,
+    6.680098056793213,
+    6.545761585235596,
+    6.148619174957275,
+    6.048551559448242,
+    6.030133247375488,
+    5.4812211990356445
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 300
+   },
+   "latency_ms": 15.59,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 0.6666666666666666,
+    "mrr": 1.0,
+    "ndcg10": 0.9072836011519267,
+    "zero": 0.0
+   }
+  },
+  "q120": {
+   "sent": "lock problems caused by migrations",
+   "ranked": [
+    "m178",
+    "m173",
+    "m041",
+    "m023",
+    "m032",
+    "m031",
+    "m085",
+    "m055",
+    "m084",
+    "m082"
+   ],
+   "scores_raw": [
+    8.699322700500488,
+    6.686024188995361,
+    5.872122764587402,
+    5.79789924621582,
+    4.814070701599121,
+    4.246081352233887,
+    3.722433090209961,
+    2.677975654602051,
+    2.49296498298645,
+    2.257479190826416
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 323
+   },
+   "latency_ms": 7.77,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 0.8261910772252947,
+    "zero": 0.0
+   }
+  },
+  "q121": {
+   "sent": "certificate and domain renewal failures",
+   "ranked": [
+    "m184",
+    "m011",
+    "m010",
+    "m139",
+    "m050",
+    "m059",
+    "m060",
+    "m174",
+    "m155",
+    "m025"
+   ],
+   "scores_raw": [
+    7.399501323699951,
+    5.752928733825684,
+    4.615241527557373,
+    1.9684381484985352,
+    1.724943995475769,
+    1.6669864654541016,
+    1.5676929950714111,
+    1.5584521293640137,
+    1.4918255805969238,
+    1.4689806699752808
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 324
+   },
+   "latency_ms": 9.29,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "s1": 1.0,
+    "s5": 1.0,
+    "r10": 1.0,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
+    "zero": 0.0
+   }
+  },
+  "u001": {
+   "sent": "which CDN serves the image assets of the iOS app",
+   "ranked": [
+    "m088",
+    "m017",
+    "m015",
+    "m016",
+    "m173",
+    "m117",
+    "m045",
+    "m012",
+    "m038",
+    "m108"
+   ],
+   "scores_raw": [
+    9.201051712036133,
+    5.97488260269165,
+    5.036671161651611,
+    4.241305351257324,
+    3.7953217029571538,
+    3.754100561141968,
+    3.4278454780578613,
+    3.39579439163208,
+    3.2402536869049072,
+    3.0740363597869873
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 304
+   },
+   "latency_ms": 8.16,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u002": {
+   "sent": "how do we load test the api before Black Friday",
+   "ranked": [
+    "m001",
+    "m164",
+    "m013",
+    "m071",
+    "m186",
+    "m077",
+    "m098",
+    "m057",
+    "m187",
+    "m065"
+   ],
+   "scores_raw": [
+    7.283112525939941,
+    6.003353118896484,
+    5.895802021026611,
+    5.854541301727295,
+    5.520932674407959,
+    5.459336280822754,
+    5.4269938468933105,
+    5.399017333984375,
+    5.286152362823486,
+    5.184289455413818
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 322
+   },
+   "latency_ms": 7.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u003": {
+   "sent": "what is the parental leave policy for engineers",
+   "ranked": [
+    "m152",
+    "m140",
+    "m143",
+    "m150",
+    "m087",
+    "m196",
+    "m009",
+    "m153",
+    "m004",
+    "m088"
+   ],
+   "scores_raw": [
+    1.680583357810974,
+    1.045846939086914,
+    0.966919243335724,
+    0.869485080242157,
+    0.7119855880737305,
+    0.701802670955658,
+    0.6660792231559753,
+    0.6121273636817932,
+    0.6113308668136597,
+    0.5791571140289307
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 318
+   },
+   "latency_ms": 7.8,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u004": {
+   "sent": "which Redis version runs the rate limiter",
+   "ranked": [
+    "m057",
+    "m077",
+    "m090",
+    "m053",
+    "m109",
+    "m103",
+    "m140",
+    "m108",
+    "m013",
+    "m164"
+   ],
+   "scores_raw": [
+    13.883111953735352,
+    6.8538594245910645,
+    4.284372329711914,
+    4.196248531341553,
+    4.097827434539795,
+    3.785059690475464,
+    3.408653736114502,
+    3.317354917526245,
+    3.3104569911956787,
+    3.1713178157806396
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 283
+   },
+   "latency_ms": 7.59,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u005": {
+   "sent": "how many customers are on the Scale plan today",
+   "ranked": [
+    "m152",
+    "m013",
+    "m183",
+    "m191",
+    "m180",
+    "m033",
+    "m153",
+    "m200",
+    "m087",
+    "m088"
+   ],
+   "scores_raw": [
+    6.493454456329346,
+    4.996280670166016,
+    3.718945264816284,
+    3.541721820831299,
+    3.510768413543701,
+    3.345576286315918,
+    3.205854892730713,
+    3.0862011909484863,
+    2.9126696586608887,
+    2.8075711727142334
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 293
+   },
+   "latency_ms": 8.25,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u006": {
+   "sent": "what is the password for the staging database",
+   "ranked": [
+    "m127",
+    "m031",
+    "m140",
+    "m003",
+    "m097",
+    "m139",
+    "m048",
+    "m025",
+    "m047",
+    "m023"
+   ],
+   "scores_raw": [
+    7.229532241821289,
+    6.204673767089844,
+    5.869016647338867,
+    5.61419677734375,
+    5.252506732940674,
+    4.680227279663086,
+    4.529317378997803,
+    4.44157075881958,
+    4.347198009490967,
+    4.300022602081299
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 289
+   },
+   "latency_ms": 6.4,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u007": {
+   "sent": "how would we migrate payments from Stripe to Adyen",
+   "ranked": [
+    "m148",
+    "m182",
+    "m156",
+    "m154",
+    "m155",
+    "m183",
+    "m023",
+    "m041",
+    "m153",
+    "m032"
+   ],
+   "scores_raw": [
+    9.30909252166748,
+    9.0543794631958,
+    7.481366634368896,
+    6.776386737823486,
+    6.348872184753418,
+    6.242499351501465,
+    5.741655349731445,
+    5.479823112487793,
+    5.343546390533447,
+    4.559397220611572
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 316
+   },
+   "latency_ms": 9.12,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u008": {
+   "sent": "which GraphQL gateway fronts the public api",
+   "ranked": [
+    "m050",
+    "m071",
+    "m004",
+    "m013",
+    "m065",
+    "m123",
+    "m051",
+    "m164",
+    "m066",
+    "m063"
+   ],
+   "scores_raw": [
+    9.902003288269045,
+    7.3536696434021,
+    5.679503440856934,
+    5.59338903427124,
+    5.184289455413818,
+    5.17145299911499,
+    5.166362285614014,
+    5.146259307861328,
+    5.124475479125977,
+    4.730191707611084
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 304
+   },
+   "latency_ms": 6.75,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u009": {
+   "sent": "how long does the Android app take to build in CI",
+   "ranked": [
+    "m105",
+    "m119",
+    "m024",
+    "m001",
+    "m164",
+    "m176",
+    "m040",
+    "m148",
+    "m086",
+    "m061"
+   ],
+   "scores_raw": [
+    12.36752700805664,
+    9.604453086853027,
+    9.028687477111816,
+    7.259438991546631,
+    6.909236431121826,
+    6.6516571044921875,
+    6.25187349319458,
+    6.165040016174316,
+    6.160166263580322,
+    5.9365620613098145
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 344
+   },
+   "latency_ms": 9.99,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u010": {
+   "sent": "who approved the Kafka cluster budget for 2027",
+   "ranked": [
+    "m011",
+    "m002",
+    "m015",
+    "m114",
+    "m080",
+    "m003",
+    "m181",
+    "m016",
+    "m135",
+    "m058"
+   ],
+   "scores_raw": [
+    6.619466304779053,
+    6.5854034423828125,
+    5.899730205535889,
+    5.7712931632995605,
+    5.195858001708984,
+    4.974441051483154,
+    4.8389892578125,
+    4.285498142242432,
+    3.866263866424561,
+    3.404710054397583
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 298
+   },
+   "latency_ms": 8.61,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u011": {
+   "sent": "what is the cache hit ratio of the Varnish layer",
+   "ranked": [
+    "m118",
+    "m175",
+    "m105",
+    "m083",
+    "m174",
+    "m024",
+    "m090",
+    "m139",
+    "m127",
+    "m073"
+   ],
+   "scores_raw": [
+    5.582772731781006,
+    5.465879440307617,
+    5.267137050628662,
+    5.006885051727295,
+    4.36920690536499,
+    3.991643905639648,
+    3.676045417785645,
+    3.2106688022613525,
+    3.1781623363494873,
+    3.047914505004883
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 314
+   },
+   "latency_ms": 11.51,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u012": {
+   "sent": "how do we issue NF-e electronic invoices for customers in Brazil",
+   "ranked": [
+    "m157",
+    "m033",
+    "m199",
+    "m198",
+    "m034",
+    "m189",
+    "m141",
+    "m142",
+    "m031",
+    "m172"
+   ],
+   "scores_raw": [
+    13.337663650512695,
+    8.966134071350098,
+    7.49354887008667,
+    7.237545967102051,
+    7.218201160430908,
+    6.961341857910156,
+    6.791865348815918,
+    6.733908176422119,
+    6.246574878692627,
+    6.156454563140869
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 323
+   },
+   "latency_ms": 11.89,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u013": {
+   "sent": "what time zone is the Singapore office in",
+   "ranked": [
+    "m096",
+    "m065",
+    "m019",
+    "m008",
+    "m048",
+    "m069",
+    "m007",
+    "m025",
+    "m192",
+    "m166"
+   ],
+   "scores_raw": [
+    8.024662971496582,
+    5.751407146453857,
+    4.454084396362305,
+    4.208784103393555,
+    4.056147575378418,
+    3.187107801437378,
+    2.833038568496704,
+    2.596092939376831,
+    2.5810062885284424,
+    2.4945712089538574
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 282
+   },
+   "latency_ms": 24.64,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u014": {
+   "sent": "which MongoDB collections store the audit log",
+   "ranked": [
+    "m047",
+    "m160",
+    "m038",
+    "m161",
+    "m025",
+    "m048",
+    "m079",
+    "m125",
+    "m189",
+    "m015"
+   ],
+   "scores_raw": [
+    6.508347511291504,
+    5.57363748550415,
+    4.86986780166626,
+    4.207029342651367,
+    3.4637033939361572,
+    3.4430530071258545,
+    3.3747754096984863,
+    3.370490312576294,
+    3.2466061115264893,
+    3.170896530151367
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 300
+   },
+   "latency_ms": 15.53,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u015": {
+   "sent": "how are Terraform state files locked",
+   "ranked": [
+    "m031",
+    "m178",
+    "m090",
+    "m041",
+    "m177",
+    "m189",
+    "m105",
+    "m089",
+    "m188",
+    "m020"
+   ],
+   "scores_raw": [
+    4.693515300750732,
+    4.157829284667969,
+    4.06072473526001,
+    3.389784097671509,
+    3.388760805130005,
+    3.088510513305664,
+    2.9816412925720215,
+    2.755556106567383,
+    2.753100872039795,
+    2.732647657394409
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 343
+   },
+   "latency_ms": 13.02,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u016": {
+   "sent": "what is the recovery time objective for the BigQuery datasets",
+   "ranked": [
+    "m137",
+    "m123",
+    "m132",
+    "m126",
+    "m130",
+    "m039",
+    "m048",
+    "m030",
+    "m093",
+    "m135"
+   ],
+   "scores_raw": [
+    12.703479766845703,
+    10.42437744140625,
+    9.574822425842283,
+    9.354851722717283,
+    8.588741302490234,
+    6.292822360992432,
+    5.225191116333008,
+    4.7539544105529785,
+    4.442525386810303,
+    4.3285346031188965
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 305
+   },
+   "latency_ms": 11.66,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u017": {
+   "sent": "when was the Elasticsearch cluster upgraded to version 8",
+   "ranked": [
+    "m026",
+    "m003",
+    "m015",
+    "m011",
+    "m080",
+    "m002",
+    "m129",
+    "m016",
+    "m050",
+    "m028"
+   ],
+   "scores_raw": [
+    7.284255027770996,
+    6.3585896492004395,
+    6.02454948425293,
+    5.996792793273926,
+    5.6299357414245605,
+    5.405126571655273,
+    5.239475250244141,
+    5.195566177368164,
+    4.606975555419922,
+    4.600995063781738
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 306
+   },
+   "latency_ms": 14.96,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u018": {
+   "sent": "how do we rotate the Slack bot token",
+   "ranked": [
+    "m072",
+    "m075",
+    "m166",
+    "m057",
+    "m080",
+    "m079",
+    "m082",
+    "m021",
+    "m176",
+    "m174"
+   ],
+   "scores_raw": [
+    6.16336727142334,
+    5.556924819946289,
+    4.802780628204346,
+    4.766328811645508,
+    4.593726634979248,
+    4.460973262786865,
+    3.7368764877319336,
+    3.522002696990967,
+    3.3028111457824707,
+    2.5787763595581055
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 325
+   },
+   "latency_ms": 14.61,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u019": {
+   "sent": "which font does the marketing site use for headings",
+   "ranked": [
+    "m022",
+    "m184",
+    "m198",
+    "m089",
+    "m159",
+    "m120",
+    "m030",
+    "m195",
+    "m100",
+    "m015"
+   ],
+   "scores_raw": [
+    5.863927841186523,
+    5.556525230407715,
+    5.203489303588867,
+    2.3230159282684326,
+    1.8400373458862305,
+    1.7699934244155884,
+    1.7510207891464231,
+    1.71789288520813,
+    1.678918480873108,
+    1.612084150314331
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 280
+   },
+   "latency_ms": 14.79,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u020": {
+   "sent": "how many replicas does the worker deployment run in staging",
+   "ranked": [
+    "m013",
+    "m040",
+    "m017",
+    "m097",
+    "m003",
+    "m009",
+    "m031",
+    "m200",
+    "m127",
+    "m021"
+   ],
+   "scores_raw": [
+    14.75754451751709,
+    8.188098907470703,
+    7.665399551391602,
+    6.993669033050537,
+    6.678158760070801,
+    6.516470432281494,
+    6.256451606750488,
+    5.7871880531311035,
+    5.321803569793701,
+    5.1848978996276855
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 307
+   },
+   "latency_ms": 10.44,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u021": {
+   "sent": "what caused the outage on 2026-11-02",
+   "ranked": [
+    "m173",
+    "m001",
+    "m141",
+    "m181",
+    "m058",
+    "m076",
+    "m178",
+    "m176",
+    "m184",
+    "m174"
+   ],
+   "scores_raw": [
+    14.057652473449709,
+    6.795332431793213,
+    5.431821823120117,
+    5.39314079284668,
+    4.424908638000488,
+    4.3122148513793945,
+    4.197844505310059,
+    3.891023159027099,
+    3.8589234352111816,
+    3.839667320251465
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 359
+   },
+   "latency_ms": 15.37,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  },
+  "u022": {
+   "sent": "which vendor sends the SMS codes for two-factor login",
+   "ranked": [
+    "m078",
+    "m160",
+    "m194",
+    "m161",
+    "m070",
+    "m079",
+    "m171",
+    "m064",
+    "m195",
+    "m132"
+   ],
+   "scores_raw": [
+    8.296630859375,
+    4.989291667938232,
+    4.6115851402282715,
+    4.207029342651367,
+    3.592550754547119,
+    3.3747754096984863,
+    3.1592111587524414,
+    2.967355489730835,
+    2.6622402667999268,
+    2.4706239700317383
+   ],
+   "steering": 0,
+   "budget": {
+    "counter": "oml-tc/1",
+    "hits_omitted": 0,
+    "max_tokens": 2000,
+    "next_hit_tokens": null,
+    "steering_tokens": 0,
+    "truncated": false,
+    "used_tokens": 298
+   },
+   "latency_ms": 10.29,
+   "fallback": null,
+   "rerank": null,
+   "rerank_scores": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "below_floor": 0,
+   "scores": {
+    "empty": 0.0
+   }
+  }
+ }
+}

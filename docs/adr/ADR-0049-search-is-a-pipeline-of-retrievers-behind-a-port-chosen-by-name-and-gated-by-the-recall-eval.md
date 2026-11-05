@@ -82,6 +82,9 @@ reorders results, and steering rows, which precede hits, are never ranked"
   pipeline reads each list 50 deep before fusing, so a candidate one list ranks first is not lost
   to another's cut. The budget cut stays after fusion, in the core, unchanged
   ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d7).
+  *Amended 2026-11-05 by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13:* a third fusion, `Cc { weights }`, a convex combination
+  of each list's scores min-max normalised over that list's own candidates for the query, read 100
+  deep; `bm25-sparse` fuses by it with weights 0.3 and 0.7.
 
 - **d4 — A pipeline is chosen by name: the deployment enables, a tenant picks, a request may
   name.** A **pipeline** is a fixed list of retriever kinds and a fusion; the build knows four:

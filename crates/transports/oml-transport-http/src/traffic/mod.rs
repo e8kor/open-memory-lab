@@ -74,6 +74,10 @@ struct Observed {
     /// The search pipeline a recall ran, whether `match: all` fell back,
     /// and whether postings or a scan answered (ADR-0049 d4; ADR-0052 d11).
     search: Option<(&'static str, bool, &'static str)>,
+    /// A recall's answer shape and its seconds, by pipeline (ADR-0054 d1).
+    answered: Option<(&'static str, &'static str, f64)>,
+    /// A verdict and the seconds its memory waited for it (ADR-0054 d1).
+    verdict: Option<(&'static str, f64)>,
 }
 
 impl Scope {
@@ -166,6 +170,18 @@ pub fn rerank(outcome: &'static str, reason: Option<&'static str>) {
     in_scope(|scope| scope.update(|o, _| o.rerank = Some((outcome, reason))));
 }
 
+/// The request's recall through `pipeline` answered `result` in `seconds`
+/// (ADR-0054 d1).
+pub fn recall_answered(pipeline: &'static str, result: &'static str, seconds: f64) {
+    in_scope(|scope| scope.update(|o, _| o.answered = Some((pipeline, result, seconds))));
+}
+
+/// The request's verdict committed `waited` seconds after its memory was
+/// submitted (ADR-0054 d1).
+pub fn verdict(verdict: &'static str, waited: f64) {
+    in_scope(|scope| scope.update(|o, _| o.verdict = Some((verdict, waited))));
+}
+
 /// One call into the store port took `elapsed`: summed into the request's
 /// `store_ms` and counted in `store_calls` (ADR-0042 d14). Outside a
 /// request, as the startup and the hourly sweep are, nothing is recorded.
@@ -200,6 +216,14 @@ impl RequestObserver for ScopeObserver {
         if let Some(outcome) = outcome {
             rerank(outcome, reason);
         }
+    }
+
+    fn recall_answered(&self, pipeline: &'static str, result: &'static str, seconds: f64) {
+        recall_answered(pipeline, result, seconds);
+    }
+
+    fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
+        self::verdict(verdict, waited_seconds);
     }
 }
 
@@ -478,6 +502,12 @@ pub(crate) async fn layer(
     }
     if let Some((outcome, reason)) = observed.rerank {
         traffic.metrics.rerank(outcome, reason);
+    }
+    if let Some((pipeline, result, seconds)) = observed.answered {
+        traffic.metrics.recall_answered(pipeline, result, seconds);
+    }
+    if let Some((verdict, waited)) = observed.verdict {
+        traffic.metrics.verdict(verdict, waited);
     }
     response
 }

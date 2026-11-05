@@ -566,6 +566,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
 | `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *since v0.5.5* ([search settings](#search-settings)) | served |
+| `GET /v2/usage/settings` · `POST /v2/usage/settings` · `GET /v2/usage/events` · `POST /v2/usage/eval` | admin (key role); the tenant's recalls, its query-text setting journalled as `telemetry.settings_set`, and the real-usage replay; *since v0.5.7* ([recall telemetry](#recall-telemetry)) | served |
 
 A `held_by: service` key is refused every review-class verb above — the review endpoints and
 edge ratify of either kind — and status-transition ratify, with
@@ -753,9 +754,10 @@ ADR-0021). Response separates what is ranked from what is not:
   "steering": [ {"artifact_id": "…", "kind": "steering", "tokens": 120, "text": "…"} ],
   "hits": [ {"memory": {"artifact_id": "…", "claim_key": "…", "version": 4, "tip": true, "state": "promoted", "tokens": 300, "text": "…"}, "score": 0.032,
               "matched": {"terms": ["deploy", "window"], "of": 2, "via": ["bm25_postings"],
-                          "rerank": null, "rank_before": null}} ],
+                          "rerank": null, "rank_before": null, "tokens": [], "expanded": []}} ],
   "budget": {"max_tokens": 500, "counter": "oml-tc/1", "steering_tokens": 120, "used_tokens": 420,
              "truncated": true, "hits_omitted": 2, "next_hit_tokens": 250},
+  "recall_id": "0193…",
   "query_digest": "sha256:…",
   "search": {"pipeline": "bm25-postings", "match": "any", "terms": ["deploy", "window"],
              "fallback": null, "did_you_mean": [], "access": "postings", "pruned": [],
@@ -787,6 +789,15 @@ names it and `search.below_floor` counts the first `k` candidates it withheld: a
 hit and `below_floor` above 0 means nothing scored above the floor, not that nothing matched a
 word. The relevance reads the query and the memory's text alone, never a review.
 
+*Since v0.5.7 ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13 to d17), served where a deployment enables `sparse` or `bm25-sparse`:*
+a hit a learned sparse list found carries `matched.tokens`, the model's word pieces that scored it,
+largest contribution first, each with its `weight` (the weight the model ships for the query's
+token times the memory's own) and `expanded`, true when the model added the piece and the memory's
+text does not hold it; `matched.expanded` lists those pieces, so a match by expansion never reads
+as a word the memory says. Both are `[]` for a hit no sparse list held. `bm25-sparse` fuses
+`bm25-postings` and `sparse` by a convex combination of their scores, each normalised over that
+list's own candidates for the query, so its `score` lies between 0 and 1.
+
 Steering rows precede hits and carry no score — the recall-ordering contract: the gate changes
 visibility, not ranking (R3/D12). Which steering applies, the total order of hits and the budget
 cut are declared on [retrieval.md](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked);
@@ -799,6 +810,50 @@ The read is logged with the ids served after truncation and the canonical reques
 measured per pipeline by the recall eval in CI (`eval/recall/`, ADR-0049 d9), and quality and
 latency on public benchmarks, at 5,000 and 50,000 rows, are on the generated
 [benchmark pages](benchmarks/index.md).
+
+*Since v0.5.7 ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d6):* every answer carries `recall_id`. The body takes an
+optional `feedback: {recall_id, useful: [...], not_useful: [...]}` naming which hits of this
+key's earlier recall answered its question and which did not, at most 20 ids. It is checked
+before the recall runs: a `recall_id` this key did not receive in the last 24 hours, an id that
+recall did not serve it, an id named twice, or a member of another shape is
+`request.validation` naming the field (`/feedback/recall_id`, `/feedback/useful/0`, …), and the
+recall is not run; past 1,000 feedback members from one key in a UTC day, refused or not, or
+1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
+valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
+
+### Recall telemetry
+
+*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d11*
+
+Each recall is recorded for 30 days, written after the answer and off its path: the key, the
+workarea, the pipeline, the request's `query_digest`, the served hits and their scores, and the
+query's text only where the tenant keeps it. What the reader did next labels it: a get of a hit
+within 10 minutes (`get`), a write citing it within 24 hours (`derived`), a supersession of it
+(`superseded`), feedback (`feedback_useful`, `feedback_not_useful`), a second recall in other
+words within 2 minutes with nothing used (`requery`), and nothing used after 30 minutes
+(`no_use`). Only the recalling key's own acts label its recall.
+
+- `GET /v2/usage/settings` answers `{recording, query_text, query_text_since, retention_days}`.
+- `POST /v2/usage/settings` takes `{query_text}` with an `Idempotency-Key`. `true` keeps the
+  text of recalls made from that instant; `false` stops and nulls the text already kept, in the
+  same commit. Journalled as `telemetry.settings_set` with the choice and the admin key.
+- `GET /v2/usage/events?limit=&before=` answers `{items, next_before}`, the tenant's events
+  of the last 30 days, newest first, each with its labels; `before` is the page before's
+  `next_before`. Each read is journalled as `telemetry.events_read`, with the count, how many
+  carried text and the page's bounds, never a query.
+- `POST /v2/usage/eval` takes `{pipelines}` and replays each recall that kept its text and
+  carries feedback, a get or a citation, through each pipeline, under its original key's scope
+  as that key reads now, inside the server. It answers `{labelled, skipped_revoked,
+  window_days, capped, pipelines: [{pipeline, queries, success_at_1, success_at_5, ndcg_at_10,
+  recall_at_10}]}`: numbers and counts, never a query, a hit or an id. It runs the newest 500
+  labelled recalls at most and stops at 60 seconds, `capped` saying so; it refuses a reranking
+  pipeline with `request.validation` naming `/pipelines`, so it never takes a live recall's
+  reranker slot. It records no recall event, and it is journalled as `telemetry.replayed`.
+
+All four are admin by key role, as `oml usage settings`, `oml usage events` and `oml usage
+eval` call them; every other key role is `access.verb_ceiling`, on every transport, and
+`oml_read` has no mode that reaches them. A server that records no recall answers
+`system.unavailable` with `details.reason: "telemetry_off"` to the listing and the replay.
 
 ### Search settings
 
@@ -1706,6 +1761,14 @@ show/validate/apply shape and the retired-key refusal.
   Times are UTC, `YYYY-MM-DDTHH:MM:SSZ`. A field nothing could supply reads `unknown`, never a
   guess: a build from a source tree with no git metadata and no `OML_BUILD_COMMIT` /
   `OML_BUILD_COMMIT_TIME` build arguments reports both as `unknown`.
+
+`/readyz` also names the configuration doctor reads: the served search pipelines and the default
+(`search.enabled`, `search.default`), the reranker's `model`, `depth` and `floor`
+(`search.rerank`, or `null`), and the sign-in providers (`web.providers`, or `null`). It carries no
+count of any kind: recalls, skipped reranks and failed sign-in exchanges are every tenant's
+traffic, and they are the metrics listener's alone, which doctor reads where `OML_METRICS_URL`
+names it ([observability](../operations/observability.md);
+[ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d1).
 
 Both are unauthenticated, carry no tenant data, and are the probe targets the Helm chart wires up
 ([deployment.md](../operations/deployment.md)). The cost of `build`: anyone who can reach

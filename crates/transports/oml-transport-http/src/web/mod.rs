@@ -23,8 +23,8 @@ pub mod views;
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
@@ -108,8 +108,7 @@ const FORM: &str = "application/x-www-form-urlencoded";
 /// the configured providers with their client ids, the exchange that
 /// reaches them, the session lifetime, the sealer of the sign-in cookie
 /// under its own purpose and in-memory key, and per provider the calls in
-/// flight and the failed exchanges since start, which `/readyz` serves for
-/// doctor (ADR-0045 d15, d18).
+/// flight (ADR-0045 d15).
 pub struct WebPages {
     providers: Vec<(Provider, String)>,
     exchange: Arc<dyn DynExchange>,
@@ -121,8 +120,6 @@ pub struct WebPages {
 #[derive(Default)]
 struct ProviderCounter {
     in_flight: AtomicUsize,
-    failures: AtomicU64,
-    last: Mutex<Option<&'static str>>,
 }
 
 impl std::fmt::Debug for WebPages {
@@ -176,32 +173,13 @@ impl WebPages {
         }]
     }
 
-    fn failed(&self, provider: Provider, reason: &'static str) {
-        let counter = self.counter(provider);
-        counter.failures.fetch_add(1, Ordering::Relaxed);
-        *counter.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(reason);
-    }
-
-    /// `/readyz`'s `web` section: each configured provider's failed
-    /// exchanges since start and the last reason, for the doctor line
-    /// (ADR-0045 d18).
+    /// `/readyz`'s `web` section: the configured providers, by name. Their
+    /// failed exchanges are counted on the metrics listener,
+    /// `oml_web_exchanges_failed_total`, never here: this probe answers
+    /// anyone (ADR-0045 d18; ADR-0054 d1).
     #[must_use]
     pub fn readyz(&self) -> Value {
-        let providers: serde_json::Map<String, Value> = self
-            .providers
-            .iter()
-            .map(|(p, _)| {
-                let counter = self.counter(*p);
-                (
-                    p.as_str().to_owned(),
-                    json!({
-                        "failed_exchanges": counter.failures.load(Ordering::Relaxed),
-                        "last_failure": *counter.last.lock().unwrap_or_else(PoisonError::into_inner),
-                    }),
-                )
-            })
-            .collect();
-        json!({ "providers": providers })
+        json!({ "providers": self.provider_list().iter().map(|p| p.as_str()).collect::<Vec<_>>() })
     }
 
     /// One exchange under the provider's cap on concurrent calls.
@@ -754,7 +732,7 @@ where
                         r.reason(),
                     ),
                     CallbackRefusal::Provider(ProviderFailure::Busy) => {
-                        self.pages().failed(provider, "busy");
+                        self.traffic.metrics().web_failed(provider.as_str(), "busy");
                         (
                             ApiError::new(
                                 StatusCode::TOO_MANY_REQUESTS,
@@ -767,7 +745,7 @@ where
                         )
                     }
                     CallbackRefusal::Provider(ProviderFailure::Refused(reason)) => {
-                        self.pages().failed(provider, reason);
+                        self.traffic.metrics().web_failed(provider.as_str(), reason);
                         (
                             map_app_error(
                                 AppError::WebSignIn(SignInRefusal::ProviderRefused),

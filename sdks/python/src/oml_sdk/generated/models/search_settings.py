@@ -24,7 +24,8 @@ class SearchSettings:
             and is not effective.
         effective (str): The pipeline a recall naming none runs now.
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
-            on GET /v2/search where the deployment serves bm25-postings; absent from the answer to POST /v2/search/default.
+            on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
+            /v2/search/default.
     """
 
     enabled: list[str]

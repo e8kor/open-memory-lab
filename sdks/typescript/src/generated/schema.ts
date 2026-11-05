@@ -798,6 +798,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/usage/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether this server records recalls, and whether the tenant's keep their query text.
+         * @description Requires: admin key role (ADR-0054 d3). Since v0.5.7.
+         */
+        get: operations["usageSettings"];
+        put?: never;
+        /**
+         * Keep the query text of the tenant's recalls from now, or stop and clear the text kept.
+         * @description Requires: admin key role (ADR-0054 d3). Journalled as telemetry.settings_set with the choice and the admin key; on keeps the text of recalls made from this instant, for the real-usage replay; off stops and nulls the text of the tenant's stored recalls in the same commit. Setting what is already set journals nothing. Since v0.5.7.
+         */
+        post: operations["setUsageSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/usage/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's recalls of the last 30 days, with what their readers did next, newest first.
+         * @description Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page's bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.
+         */
+        get: operations["usageEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/usage/eval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay the tenant's labelled recalls through each named pipeline and answer the scores alone.
+         * @description Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and which carries feedback, a get or a citation is replayed inside the server under its original key's scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and counts, never a query, a hit or an id; the replay records no recall event and is journalled as telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
+         */
+        post: operations["usageEval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/web": {
         parameters: {
             query?: never;
@@ -1138,18 +1202,31 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
              * @enum {string}
              */
             match?: "any" | "all";
+            feedback?: components["schemas"]["Feedback"];
+        };
+        /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
+        Feedback: {
+            /** Format: uuid */
+            recall_id: string;
+            useful?: string[];
+            not_useful?: string[];
         };
         RecallResponse: {
+            /**
+             * Format: uuid
+             * @description The recall's id: the feedback member of a later read names it (ADR-0054 d6).
+             */
+            recall_id: string;
             /** @description Applicable steering, ordered structurally and never cut by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8). */
             steering: components["schemas"]["Memory"][];
             hits: {
@@ -1170,16 +1247,27 @@ export interface components {
             /** @description How many words the query had. */
             of: number;
             /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings")[];
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse")[];
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
             rank_before?: number | null;
+            /** @description The learned sparse tokens (word pieces) that scored the row, largest contribution first; empty when no sparse list held it (ADR-0052 d17). */
+            tokens?: {
+                /** @description The word piece. */
+                token: string;
+                /** @description Its contribution to the sparse score: the query weight (the model's idf) times the row's weight. */
+                weight: number;
+                /** @description true when the encoder added the piece and the row's own text does not hold it. */
+                expanded: boolean;
+            }[];
+            /** @description The pieces the row matched only through the encoder's expansion, so not words it says (ADR-0052 d17). */
+            expanded?: string[];
         };
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1224,7 +1312,70 @@ export interface components {
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
         };
-        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings; absent from the answer to POST /v2/search/default. */
+        UsageSettings: {
+            /** @description Whether this server records recalls. */
+            recording: boolean;
+            /** @description Whether the tenant's recalls keep their query text (telemetry.query_text). */
+            query_text: boolean;
+            /** @description When it was turned on; null when off. */
+            query_text_since: string | null;
+            /** @description How long an event and its labels are kept: 30. */
+            retention_days: number;
+        };
+        /** @description One recall as recorded (ADR-0054 d2). */
+        RecallEvent: {
+            /** Format: uuid */
+            recall_id: string;
+            created_at: string;
+            /** Format: uuid */
+            key_id: string;
+            principal: string;
+            /**
+             * Format: uuid
+             * @description The workarea the recall read.
+             */
+            workarea_id: string;
+            pipeline: string;
+            /** @enum {string} */
+            access: "postings" | "scan" | "none";
+            query_digest: components["schemas"]["Digest"];
+            /** @description Present only where the tenant kept text when the recall ran. */
+            query_text: string | null;
+            hits: {
+                /** Format: uuid */
+                artifact_id: string;
+                score: number;
+            }[];
+            labels: {
+                /**
+                 * Format: uuid
+                 * @description Null for requery and no_use, which label the whole recall.
+                 */
+                artifact_id: string | null;
+                /** @enum {string} */
+                label: "get" | "derived" | "superseded" | "feedback_useful" | "feedback_not_useful" | "requery" | "no_use";
+                /** @enum {string} */
+                source: "inferred" | "explicit";
+                at: string;
+            }[];
+        };
+        /** @description The real-usage replay's scores, numbers and counts alone (ADR-0054 d11). */
+        ReplayReport: {
+            labelled: number;
+            /** @description The replay stopped short: past 500 labelled recalls the newest 500 ran, or it reached its 60-second deadline. */
+            capped: boolean;
+            skipped_revoked: number;
+            window_days: number;
+            pipelines: {
+                pipeline: string;
+                queries: number;
+                success_at_1: number;
+                success_at_5: number;
+                ndcg_at_10: number;
+                recall_at_10: number;
+            }[];
+        };
+        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST /v2/search/default. */
         PostingsHealth: {
             /** @description The tenant's postings partition exists. */
             partition: boolean;
@@ -1238,6 +1389,14 @@ export interface components {
             term_drift: number;
             /** @description How many word counts were sampled. */
             terms_checked: number;
+            /** @description Memory versions waiting for the learned sparse encoder, parked ones aside, absent from sparse lists until it writes their postings (ADR-0052 d15). */
+            sparse_backlog: number;
+            /** @description Of them, those whose last encode failed; each is retried after at most an hour. */
+            sparse_failing: number;
+            /** @description Memory versions parked after five failed encodes: kept with their reason, never retried until written again (ADR-0052 d15). */
+            sparse_parked: number;
+            /** @description Whether the tenant's learned sparse queue is on: only a lead serving a sparse pipeline turns it on, and nothing is queued while it is off. */
+            sparse_enabled: boolean;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.
@@ -4647,6 +4806,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    usageSettings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "recording": true,
+                     *       "query_text": false,
+                     *       "query_text_since": null,
+                     *       "retention_days": 30
+                     *     }
+                     */
+                    "application/json": components["schemas"]["UsageSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setUsageSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "query_text": true
+                 *     }
+                 */
+                "application/json": {
+                    query_text: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The settings as they now are. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    usageEvents: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description The next_before of the page before. */
+                before?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of events. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["RecallEvent"][];
+                        next_before: string | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    usageEval: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "pipelines": [
+                 *         "bm25-postings",
+                 *         "bm25-rerank"
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    pipelines: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The scores. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "labelled": 212,
+                     *       "capped": false,
+                     *       "skipped_revoked": 3,
+                     *       "window_days": 30,
+                     *       "pipelines": [
+                     *         {
+                     *           "pipeline": "bm25-postings",
+                     *           "queries": 209,
+                     *           "success_at_1": 0.61,
+                     *           "success_at_5": 0.83,
+                     *           "ndcg_at_10": 0.66,
+                     *           "recall_at_10": 0.79
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ReplayReport"];
                 };
             };
             403: components["responses"]["Forbidden"];

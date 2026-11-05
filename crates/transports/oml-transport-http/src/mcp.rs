@@ -191,6 +191,8 @@ struct ReadArgs {
     search: Option<String>,
     #[serde(rename = "match")]
     match_mode: Option<String>,
+    /// Feedback on the key's last recall, in any mode (ADR-0054 d6).
+    feedback: Option<Value>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
@@ -667,6 +669,16 @@ where
                 ),
             ));
         }
+        // Feedback on the key's last recall rides any mode's read: refused
+        // by its field before the read runs, and never changing what the
+        // read answers (ADR-0054 d6).
+        if let Some(feedback) = &args.feedback {
+            ring_outcome(
+                Self::feedback_inner(st, &ring_headers(presented), presented.connection, feedback)
+                    .await,
+            )
+            .await?;
+        }
         let mut out = if let Some(artifact_id) = args.artifact_id {
             let memory = ring_outcome(
                 Self::get_memory_inner(
@@ -886,7 +898,12 @@ fn recall_output(result: &Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
-    let mut out = json!({ "steering": steering, "hits": hits, "search": result["search"] });
+    let mut out = json!({
+        "recall_id": result["recall_id"],
+        "steering": steering,
+        "hits": hits,
+        "search": result["search"],
+    });
     if let (Some(budget), Some(obj)) = (result.get("budget"), out.as_object_mut()) {
         obj.insert("budget".to_owned(), budget.clone());
     }

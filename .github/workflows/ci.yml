@@ -64,6 +64,14 @@ jobs:
           key: rerank-ms-marco-MiniLM-L6-v2-233902d25c440f23af6f7d6e94d2946bac0bee0a
       - name: Fetch the reranker's pinned files
         run: bash scripts/fetch_rerank_model.sh ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+      # The learned sparse encoder's pinned files (ADR-0052 d14), cached by
+      # revision and fetched with their digests checked when the cache is cold.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
+          key: sparse-doc-v3-distill-babf71f3c48695e2e53a978208e8aba48335e3c0
+      - name: Fetch the sparse encoder's pinned files
+        run: bash scripts/fetch_sparse_model.sh ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
       # POSTGRES_USER is the container's superuser, so every Postgres suite
       # mints its owner/serving role pair; a suite that cannot fails here
       # rather than printing its did-not-run line (ADR-0034 d8).
@@ -75,6 +83,7 @@ jobs:
       - run: cargo test --locked -p oml-rerank -- --ignored
         env:
           OML_RERANK_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+          OML_SPARSE_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
 
   e2e:
     name: demo and quickstart (release binaries)
@@ -98,6 +107,9 @@ jobs:
       # drops its own uniquely named role pair (ADR-0034 d8).
       - name: PoC demo
         run: bash scripts/poc-demo.sh
+        env:
+          # Named, never defaulted: the job's own service container.
+          PGPORT: "5432"
       # The service container is this job's own cluster, so the pair takes
       # the fixed names (ADR-0034 d2): the lead migrates as oml_owner and
       # serves as oml_server.
@@ -375,6 +387,14 @@ jobs:
           key: rerank-ms-marco-MiniLM-L6-v2-233902d25c440f23af6f7d6e94d2946bac0bee0a
       - name: Fetch the reranker's pinned files
         run: bash scripts/fetch_rerank_model.sh ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+      # The learned sparse encoder's pinned files (ADR-0052 d14), cached by
+      # revision and fetched with their digests checked when the cache is cold.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
+          key: sparse-doc-v3-distill-babf71f3c48695e2e53a978208e8aba48335e3c0
+      - name: Fetch the sparse encoder's pinned files
+        run: bash scripts/fetch_sparse_model.sh ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
       - name: Run and gate
         env:
           PGHOST: 127.0.0.1
@@ -384,8 +404,11 @@ jobs:
           # bm25-rerank is measured beside the others and gated on quality;
           # its deadline is raised so a slow runner measures the ranking, not
           # its own CPU (ADR-0053 d9).
-          EVAL_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-postings bm25-rerank
+          # sparse and bm25-sparse follow bm25-postings, whose run loads the
+          # corpus, so served.sh waits for the encoder first (ADR-0052 d15).
+          EVAL_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-postings bm25-rerank sparse bm25-sparse
           OML_SEARCH__RERANK__MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
+          OML_SEARCH__SPARSE__MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
           OML_SEARCH__RERANK__TIMEOUT_MS: "60000"
         run: bash eval/recall/served.sh "$RUNNER_TEMP/recall-eval"
       - uses: actions/upload-artifact@v4

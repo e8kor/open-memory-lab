@@ -73,7 +73,6 @@ except ImportError as missing:
 
 ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = ROOT / "migrations"
-DEFAULT_DSN = "postgresql://oml:oml_dev_only@127.0.0.1:5432/oml_dev"
 SEED_BEFORE = "0004"  # seed both tenants after 0003, before this migration
 
 NS = uuid.UUID("6f6d6c2d-7370-696b-6533-2d726c732d31")
@@ -1526,12 +1525,15 @@ def shown(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dsn", default=os.environ.get("OML_SPIKE_PG_DSN", DEFAULT_DSN),
-                        help="a role that can CREATE DATABASE; a superuser also runs S3.2")
+    parser.add_argument("--dsn", default=os.environ.get("OML_SPIKE_PG_DSN"),
+                        help="a role that can CREATE DATABASE; a superuser also runs S3.2; "
+                             "required, with no default, so no run reaches a live server")
     parser.add_argument("--require-all", action="store_true", help="a scenario that did not run is a failure")
     parser.add_argument("--migrations", type=Path, default=MIGRATIONS,
                         help="the directory of *.sql migrations to apply (default: the repository's)")
     args = parser.parse_args()
+    if not args.dsn:
+        parser.error("set --dsn or OML_SPIKE_PG_DSN to a throwaway cluster")
     # S3.3 returns a connection inside an open transaction on purpose; the pool's warning
     # about rolling it back is the behaviour under test, and the check reports it.
     logging.getLogger("psycopg.pool").setLevel(logging.ERROR)

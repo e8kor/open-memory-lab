@@ -146,3 +146,19 @@ counts are updated. One client; contention between promotions in one workarea is
   ran, and 1,000,000 memories need about 7 GiB for the postings alone. The 1M figures above are
   extrapolations, as FR-100 says they must not stay.
 - **Cold caches.** Every number is warm: the second of two runs of each query.
+
+## The learned sparse lane (2026-11-05, ADR-0052 d16)
+
+`sparse.py` on this branch's release build, PostgreSQL 18.6, through `PgStore::retrieve` as the
+serving role, warm (`results/sparse-10k.json`, `results/sparse-100k.json`). p95 ms, universe
+scope / every scope:
+
+| memories (readable at universe) | load average | `bm25_postings` k 10 | `sparse` k 10 | `bm25-sparse`'s two lists, 100 deep |
+|---|---|---:|---:|---:|
+| 10,000 (6,104) | 11 to 13, an upper bound | 10.2 / 7.4 | 16.9 / 9.4 | 28.3 / 23.1 |
+| 100,000 (60,341) | 1.7 to 2.1 | 29.2 / 20.4 | 164 / 78 | 272 / 114 |
+
+About 104 kind 2 postings per version; at 100,000 memories the kind 2 heap is 1,276 MiB and the
+served index 985 MiB. The 100,000 point reuses the 10,000 point's encodings (`--reuse`: each
+version takes one of 9,189 encoded texts by its text's digest), so it measures the read, not the
+ranking. The sparse leg misses ADR-0052 d9's 50 ms bar at 100,000 readable rows: FR-118.

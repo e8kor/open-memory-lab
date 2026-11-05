@@ -272,3 +272,12 @@ twice per write, wrote SciFact at 62 a second. Two findings, now roadmap rows:
   so nine near duplicates compete with every relevant abstract. It is there for latency.
 - PostgreSQL 17.9 ran with `fsync` off, which speeds loading and does not change what recall
   returns.
+
+## The learned sparse pipelines, served (2026-11-05, ADR-0052 d16)
+
+`sparse` and `bm25-sparse` through `oml_read`, every query, `k` 100, beside `bm25-postings` on the
+same load (`results/*/sparse.json`, `results/*/bm25-sparse.json`). nDCG@10: synthetic 0.874 /
+0.891 / 0.909, SciFact 0.685 / 0.710 / 0.730, NFCorpus 0.321 / 0.343 / 0.349, LoCoMo categories
+1–4 0.503 / 0.530 / 0.550 (`bm25-postings` / `sparse` / `bm25-sparse`), within 0.004 of the
+offline experiment's floor-0.1, 128-token row (`results/offline/REPORT.md`). The latencies on these
+pages ran while other lanes held the load average at 3.6 to 14 and are upper bounds.

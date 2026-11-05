@@ -29,6 +29,7 @@ use oml_app::domain::{
     SignedEnvelope, WorkareaStatus, event_types, key_fingerprint, next_envelope,
     sha256_digest_string, sign, verify_chain,
 };
+use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
     AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
@@ -36,8 +37,8 @@ use oml_app::ports::{
     Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::search::{
-    Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved,
-    RetrieverKind,
+    Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
+    Retrieved, RetrieverKind, SparsePending,
 };
 use oml_app::types::{
     AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
@@ -943,6 +944,7 @@ pub trait KeywordAllReads: Retriever {
                     query: &query,
                     match_mode: MatchMode::All,
                     k,
+                    sparse: &[],
                 },
             )
             .await
@@ -977,6 +979,7 @@ pub trait KeywordAllReads: Retriever {
                     query: &query,
                     match_mode: MatchMode::All,
                     k,
+                    sparse: &[],
                 },
             )
             .await
@@ -9555,6 +9558,14 @@ async fn run<S: Retriever>(
     query: &str,
     match_mode: MatchMode,
 ) -> Retrieved {
+    // A sparse list reads what the encoder wrote, so every waiting version
+    // is encoded first, by the deterministic double (ADR-0052 d16).
+    let sparse = if kind == RetrieverKind::Sparse {
+        encode_sparse_backlog(store).await;
+        oml_app::ports::SparseEncoder::encode_query(&FakeSparseEncoder::new(), query)
+    } else {
+        Vec::new()
+    };
     store
         .retrieve(
             tenant,
@@ -9564,10 +9575,28 @@ async fn run<S: Retriever>(
                 query,
                 match_mode,
                 k: 50,
+                sparse: &sparse,
             },
         )
         .await
         .expect("retrieve")
+}
+
+/// Turns every tenant's sparse queue on and writes every waiting
+/// version's kind 2 postings with [`FakeSparseEncoder`], through the
+/// encoder's own pass, as the lead's task does; returns how many it wrote
+/// (ADR-0052 d15).
+pub async fn encode_sparse_backlog<S: Retriever>(store: &S) -> u64 {
+    let mut written = 0;
+    loop {
+        let pass = oml_app::app::encode_sparse_pass(store, &FakeSparseEncoder::new(), 256)
+            .await
+            .expect("sparse pass");
+        written += pass.written;
+        if !pass.busy() {
+            return written;
+        }
+    }
 }
 
 const LAW_QUERIES: [&str; 6] = [
@@ -10448,6 +10477,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                                 query,
                                 match_mode: mode,
                                 k,
+                                sparse: &[],
                             },
                         )
                     };
@@ -10786,6 +10816,7 @@ pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: Jo
                             query,
                             match_mode: MatchMode::Any,
                             k,
+                            sparse: &[],
                         },
                     )
                 };
@@ -10992,4 +11023,511 @@ pub async fn run_reranker_suite<R: Reranker + ?Sized>(r: &R) {
     a_reranker_scores_lie_in_the_unit_interval(r).await;
     a_reranker_scores_a_passage_alone_as_among_others(r).await;
     a_reranker_ranks_an_answer_above_an_unrelated_passage(r).await;
+}
+
+// ---------------------------------------------------------------------------
+// Learned sparse laws (ADR-0052 d15, d16, d17), for a store serving the
+// `sparse` retriever, with the deterministic encoder double.
+// ---------------------------------------------------------------------------
+
+fn sparse_ids(list: &Retrieved) -> Vec<u128> {
+    list.candidates
+        .iter()
+        .map(|c| c.memory_id.as_u128())
+        .collect()
+}
+
+/// Each `sparse` candidate's score is the sum over the query's tokens of
+/// its idf weight times the row's own weight, and nothing else; its
+/// `tokens` name each contribution, largest first, and mark the encoder's
+/// expansions, and `matched` names only the pieces its text holds
+/// (ADR-0052 d16, d17).
+pub async fn sparse_scores_each_row_by_its_own_postings_alone<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(store, 0).await;
+    let (promoted, _, wa, own) = retriever_fixture(&mut rig, store, true).await;
+    let encoder = FakeSparseEncoder::new();
+    for query in ["billing invoice", "deploy friday", "rollback zebra"] {
+        let list = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Sparse,
+            &scope_of(wa, Some(own)),
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(list.access, Access::Postings, "{query}");
+        let terms = oml_app::ports::SparseEncoder::encode_query(&encoder, query);
+        for c in &list.candidates {
+            let body = promoted
+                .iter()
+                .find(|(id, _)| *id == c.memory_id)
+                .map(|(_, b)| *b)
+                .unwrap_or("billing deploy notes held");
+            let doc = FakeSparseEncoder::document(body);
+            let mut want = 0.0_f64;
+            for t in &terms {
+                if let Some(p) = doc.iter().find(|p| p.token_id == t.token_id) {
+                    want += f64::from(t.weight) * f64::from(p.weight);
+                }
+            }
+            #[allow(clippy::cast_possible_truncation, reason = "the score is a float4")]
+            let want = want as f32;
+            assert!(
+                (c.score - want).abs() <= 1e-5 * want.max(1.0),
+                "{query}: {} scored {} where its own postings give {want}",
+                c.memory_id,
+                c.score
+            );
+            for pair in c.tokens.windows(2) {
+                assert!(
+                    pair[0].weight >= pair[1].weight,
+                    "{query}: tokens largest first"
+                );
+            }
+            for t in &c.tokens {
+                let in_text = body.split(' ').any(|w| w == t.token);
+                assert_eq!(t.expanded, !in_text, "{query}: {} expanded", t.token);
+            }
+            assert!(c.matched.iter().all(|m| body.split(' ').any(|w| w == m)));
+        }
+    }
+    // "invoice" is said by no row; "invoices" expands to it, so the rows
+    // saying "invoices" are found and the match is named an expansion.
+    let expanded = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Sparse,
+        &scope_of(wa, None),
+        "invoice",
+        MatchMode::Any,
+    )
+    .await;
+    let mut ids = sparse_ids(&expanded);
+    ids.sort_unstable();
+    assert_eq!(ids, vec![0xF02, 0xF04]);
+    for c in &expanded.candidates {
+        assert!(c.matched.is_empty(), "the text does not say invoice");
+        assert!(c.tokens.iter().all(|t| t.expanded && t.token == "invoice"));
+    }
+}
+
+/// A version is enqueued for the encoder in its own write's transaction,
+/// leaves the queue when its postings are written, and its kind 2
+/// postings follow its state: found while it is the served tip, not after
+/// its supersession or retirement, and a rejected held version's never
+/// (ADR-0052 d7, d15).
+pub async fn an_encoded_version_follows_promotion_supersession_and_retirement<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let first = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA01),
+        "rita",
+        key,
+        "quokka habitat notes",
+    );
+    hold(&mut rig, store, first.clone()).await.expect("hold");
+    assert_eq!(encode_sparse_backlog(store).await, 1, "one version encoded");
+    let find = |rig_tenant: Uuid| async move {
+        sparse_ids(
+            &store
+                .retrieve(
+                    rig_tenant,
+                    RetrieverKind::Sparse,
+                    &scope_of(wa, None),
+                    RetrievalQuery {
+                        query: "quokka",
+                        match_mode: MatchMode::Any,
+                        k: 10,
+                        sparse: &oml_app::ports::SparseEncoder::encode_query(
+                            &FakeSparseEncoder::new(),
+                            "quokka",
+                        ),
+                    },
+                )
+                .await
+                .expect("retrieve"),
+        )
+    };
+    assert!(
+        find(tenant).await.is_empty(),
+        "a held version is no promoted hit"
+    );
+    promote(&mut rig, store, first.memory_id)
+        .await
+        .expect("promote");
+    assert_eq!(
+        find(tenant).await,
+        vec![0xA01],
+        "promotion serves its postings"
+    );
+    supersede(
+        &mut rig,
+        store,
+        &first,
+        Uuid::from_u128(0xA02),
+        "quokka burrow notes",
+        false,
+    )
+    .await;
+    encode_sparse_backlog(store).await;
+    assert_eq!(
+        find(tenant).await,
+        vec![0xA02],
+        "the successor is served and the replaced version is not"
+    );
+    let second = successor_of(&first, Uuid::from_u128(0xA02), "quokka burrow notes", false);
+    supersede(
+        &mut rig,
+        store,
+        &second,
+        Uuid::from_u128(0xA03),
+        "quokka",
+        true,
+    )
+    .await;
+    encode_sparse_backlog(store).await;
+    assert!(find(tenant).await.is_empty(), "a retired claim is no hit");
+    let rejected = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA04),
+        "rita",
+        key,
+        "quokka rejected",
+    );
+    hold(&mut rig, store, rejected).await.expect("hold");
+    encode_sparse_backlog(store).await;
+    reject(&mut rig, store, Uuid::from_u128(0xA04))
+        .await
+        .expect("reject");
+    assert!(
+        find(tenant).await.is_empty(),
+        "a rejected version is no hit"
+    );
+}
+
+/// A failed encode keeps its version queued, counts the attempt and puts
+/// the next try off, so the next pass does not take it at once; a version
+/// enqueued again after it was read is not written with the older claim
+/// (ADR-0052 d15).
+pub async fn a_failed_encode_stays_queued_and_a_stale_read_writes_nothing<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(433);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let row = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA11),
+        "rita",
+        key,
+        "wombat notes",
+    );
+    encode_sparse_backlog(store).await;
+    hold(&mut rig, store, row).await.expect("hold");
+    let pass = oml_app::app::encode_sparse_pass(store, &FakeSparseEncoder::failing("no model"), 16)
+        .await
+        .expect("pass");
+    assert_eq!((pass.written, pass.failed, pass.parked), (0, 1, 0));
+    assert!(
+        store
+            .sparse_pending(tenant, 10)
+            .await
+            .expect("pending")
+            .is_empty(),
+        "a failed version waits before its next try"
+    );
+    let h = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a store serving sparse keeps postings");
+    assert_eq!(
+        (h.sparse_backlog, h.sparse_failing, h.sparse_parked),
+        (1, 1, 0),
+        "{h:?}"
+    );
+    assert!(h.sparse_enabled, "{h:?}");
+    let stale = SparsePending {
+        memory_id: Uuid::from_u128(0xA11),
+        claim: "wombat notes".to_owned(),
+        enqueued_at_us: 0,
+    };
+    assert!(
+        !store
+            .sparse_write(tenant, &stale, &FakeSparseEncoder::document("wombat notes"))
+            .await
+            .expect("write"),
+        "an entry read before its re-enqueue writes nothing"
+    );
+    // Failed again and again, it is parked at the attempts' ceiling: a
+    // dead letter, counted apart, never taken again.
+    let entry = SparsePending {
+        enqueued_at_us: 1,
+        ..stale
+    };
+    let mut parked_after = None;
+    for attempt in 2..=20 {
+        if store
+            .sparse_failed(tenant, &entry, "still failing")
+            .await
+            .expect("fail")
+        {
+            parked_after = Some(attempt);
+            break;
+        }
+    }
+    assert!(
+        parked_after.is_some(),
+        "an entry is parked within 20 attempts"
+    );
+    let h = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("postings");
+    assert_eq!((h.sparse_backlog, h.sparse_parked), (0, 1), "{h:?}");
+    assert!(
+        store
+            .sparse_pending(tenant, 10)
+            .await
+            .expect("pending")
+            .is_empty()
+    );
+}
+
+/// A version is enqueued with its own write once the tenant's sparse
+/// queue is on, and leaves the queue when its postings are written
+/// (ADR-0052 d15, d16).
+pub async fn a_version_is_enqueued_with_its_write_and_leaves_the_queue_with_its_postings<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(438);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    encode_sparse_backlog(store).await;
+    let backlog = |h: Option<PostingsHealth>| h.expect("postings").sparse_backlog;
+    assert_eq!(
+        backlog(store.postings_health(tenant).await.expect("health")),
+        0
+    );
+    hold(
+        &mut rig,
+        store,
+        held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0xA51),
+            "rita",
+            Uuid::from_u128(0xE5),
+            "potoroo",
+        ),
+    )
+    .await
+    .expect("hold");
+    assert_eq!(
+        backlog(store.postings_health(tenant).await.expect("health")),
+        1,
+        "the write enqueued its version"
+    );
+    assert_eq!(encode_sparse_backlog(store).await, 1);
+    assert_eq!(
+        backlog(store.postings_health(tenant).await.expect("health")),
+        0,
+        "it left the queue with its postings"
+    );
+}
+
+/// One claim the model fails on fails alone: the other versions of its
+/// batch are written in the same pass, and only it stays queued with the
+/// reason (ADR-0052 d15).
+pub async fn a_claim_the_model_fails_on_fails_alone_and_its_batch_is_written<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(434);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    for (id, body) in [
+        (0xA21, "numbat notes"),
+        (0xA22, "poison claim here"),
+        (0xA23, "bilby notes"),
+    ] {
+        hold(
+            &mut rig,
+            store,
+            held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, body),
+        )
+        .await
+        .expect("hold");
+    }
+    let mut written = 0;
+    let mut failed = 0;
+    for _ in 0..4 {
+        let pass =
+            oml_app::app::encode_sparse_pass(store, &FakeSparseEncoder::failing_on("poison"), 16)
+                .await
+                .expect("pass");
+        written += pass.written;
+        failed += pass.failed;
+    }
+    assert_eq!(written, 2, "the two good claims are written");
+    assert_eq!(failed, 1, "only the bad claim fails, once, then waits");
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a store serving sparse keeps postings");
+    assert_eq!(health.sparse_failing, 1, "{health:?}");
+}
+
+/// Two tenants' queues never meet: one tenant's pending versions are its
+/// own, and a pass writes each tenant's postings under its own row
+/// security (ADR-0052 d15).
+pub async fn two_tenants_sparse_queues_never_meet<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let mut a = ChainRig::new(435);
+    a.seed_chain(store, 0).await;
+    let mut b = ChainRig::new(436);
+    b.seed_chain(store, 0).await;
+    let (ta, tb) = (a.tenant_id, b.tenant_id);
+    hold_and_promote(
+        &mut a,
+        store,
+        held_memory(ta, wa, Uuid::from_u128(0xA31), "rita", key, "quoll den"),
+    )
+    .await;
+    hold_and_promote(
+        &mut b,
+        store,
+        held_memory(tb, wa, Uuid::from_u128(0xA32), "rita", key, "quoll den"),
+    )
+    .await;
+    encode_sparse_backlog(store).await;
+    for (rig, mine, theirs) in [(&a, 0xA31_u128, 0xA32_u128), (&b, 0xA32, 0xA31)] {
+        let list = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Sparse,
+            &scope_of(wa, None),
+            "quoll",
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(sparse_ids(&list), vec![mine], "its own version alone");
+        assert!(!sparse_ids(&list).contains(&theirs));
+    }
+}
+
+/// A sparse list never holds a version its scope excludes, however the
+/// version was encoded: another workarea's served version, another key's
+/// held version and a held version when no own keys are named are absent
+/// (ADR-0049 d2; ADR-0052 d16).
+pub async fn a_sparse_list_never_holds_a_version_its_scope_excludes<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(437);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let (wa, elsewhere) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let (own, other) = (Uuid::from_u128(0xE4), Uuid::from_u128(0xE5));
+    let row = |id: u128, node: Uuid, key: Uuid| {
+        held_memory(
+            tenant,
+            node,
+            Uuid::from_u128(id),
+            "rita",
+            key,
+            "dunnart burrow",
+        )
+    };
+    hold_and_promote(&mut rig, store, row(0xA41, wa, other)).await;
+    hold_and_promote(&mut rig, store, row(0xA42, elsewhere, other)).await;
+    hold(&mut rig, store, row(0xA43, wa, own))
+        .await
+        .expect("own held");
+    hold(&mut rig, store, row(0xA44, wa, other))
+        .await
+        .expect("another's held");
+    encode_sparse_backlog(store).await;
+    let without = run(
+        store,
+        tenant,
+        RetrieverKind::Sparse,
+        &scope_of(wa, None),
+        "dunnart",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(sparse_ids(&without), vec![0xA41]);
+    let mut with = sparse_ids(
+        &run(
+            store,
+            tenant,
+            RetrieverKind::Sparse,
+            &scope_of(wa, Some(own)),
+            "dunnart",
+            MatchMode::Any,
+        )
+        .await,
+    );
+    with.sort_unstable();
+    assert_eq!(
+        with,
+        vec![0xA41, 0xA43],
+        "the own held version joins, no other"
+    );
+}
+
+/// Every learned sparse law, for a store serving the `sparse` retriever.
+pub async fn run_sparse_suite<S, F, Fut>(new_store: F)
+where
+    S: JournalStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    sparse_scores_each_row_by_its_own_postings_alone(&new_store().await).await;
+    an_encoded_version_follows_promotion_supersession_and_retirement(&new_store().await).await;
+    a_failed_encode_stays_queued_and_a_stale_read_writes_nothing(&new_store().await).await;
+    a_version_is_enqueued_with_its_write_and_leaves_the_queue_with_its_postings(&new_store().await)
+        .await;
+    a_claim_the_model_fails_on_fails_alone_and_its_batch_is_written(&new_store().await).await;
+    two_tenants_sparse_queues_never_meet(&new_store().await).await;
+    a_sparse_list_never_holds_a_version_its_scope_excludes(&new_store().await).await;
 }
