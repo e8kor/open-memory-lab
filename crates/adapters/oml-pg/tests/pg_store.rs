@@ -2576,9 +2576,15 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             (true, "grants") => "to_jsonb(t) - 'covers'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
-            // lexemes, generated from the claim (ADR-0049 d12).
+            // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
+            // the anchor and the latest source check, null on every row
+            // written before it (ADR-0057 d1, d5).
             (true, "memories") => {
-                "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len'"
+                "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
+                 - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
+                 - 'anchor_fragment' - 'anchor_hash' - 'anchor_hasher' - 'source_check_rev' \
+                 - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
+                 - 'source_check_fragment' - 'source_check_at'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5871,10 +5877,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7313,10 +7316,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7977,10 +7977,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 24,
-        "every migration through 0024_review_queue_order"
-    );
+    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

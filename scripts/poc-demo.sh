@@ -231,7 +231,7 @@ step "verdict with the author's key is refused — R2 against the lineage closur
 # --- supersede: the author replaces the promoted tip -------------------------
 step "supersede the promoted tip with the writer key (successor enters held)" 0 \
     "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json write \
-    "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t." --replaces "$ARTIFACT"
+    "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t." --replaces "$ARTIFACT" --expected-version 1
 SUCCESSOR="$(jqf .artifact_id)"
 [ "$(jqf .state)" = "held" ] || fail "successor is not held"
 [ "$(jqf .replaces.artifact_id)" = "$ARTIFACT" ] || fail "the successor does not name the version it replaces"

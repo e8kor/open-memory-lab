@@ -5749,6 +5749,15 @@ where
             .await?;
         let latest = claim_state.latest_live_version.unwrap_or(target.version);
         if req.expected_version != latest {
+            // An attempt under the same key that committed since the lookup
+            // above made the claim move on: its record answers this one, as
+            // it answers any replay (http-api.md idempotency).
+            if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
+                return Ok(SupersedeOutcome {
+                    receipt,
+                    replayed: true,
+                });
+            }
             return Err(AppError::VersionConflict { current: latest });
         }
         if target.status != MemoryStatus::Promoted || !target.is_tip {

@@ -241,6 +241,14 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     }
 }
 
+/// `req` naming `version` as the claim's latest (ADR-0057 d19).
+fn at_version(req: SupersedeRequest, version: u32) -> SupersedeRequest {
+    SupersedeRequest {
+        expected_version: version,
+        ..req
+    }
+}
+
 /// The retire-proposal of `target`: a supersession carrying `retirement`
 /// whose body states why (ADR-0025 d11).
 fn retire_req(idem: &str, target: Uuid, why: &str) -> SupersedeRequest {
@@ -727,13 +735,14 @@ async fn supersede_is_author_only_and_tip_only() {
     assert!(matches!(err, AppError::NotFound), "{err:?}");
 
     // Held successors of one tip coexist, each at its own ordinal, and
-    // none blocks another (ADR-0025 d10).
+    // none blocks another (ADR-0025 d10), once each names the claim's
+    // latest version (ADR-0057 d19).
     let v2 = app
         .supersede(&writer.value, &revise("v2"))
         .await
         .expect("supersede");
     let v3 = app
-        .supersede(&writer.value, &revise("v3"))
+        .supersede(&writer.value, &at_version(revise("v3"), 2))
         .await
         .expect("a second held successor of the same tip");
     assert_eq!(
@@ -3093,7 +3102,10 @@ async fn a_supersession_whose_target_lost_the_tip_is_tip_conflict_at_verdict_and
         .expect("revision")
         .receipt;
     let edit = app
-        .supersede(&editor.value, &supersede_req("sup-e", first, "edit"))
+        .supersede(
+            &editor.value,
+            &at_version(supersede_req("sup-e", first, "edit"), 2),
+        )
         .await
         .expect("edit")
         .receipt;
@@ -3413,7 +3425,10 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
         .await
         .expect("ratify");
     let err = app
-        .supersede(&writer.value, &supersede_req("sup-2", first, "v3"))
+        .supersede(
+            &writer.value,
+            &at_version(supersede_req("sup-2", first, "v3"), 2),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -3444,8 +3459,21 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     app.post_verdict(&approver.value, edit, Verdict::Approve, None)
         .await
         .expect("ratify the edit");
+    // Naming the version it read, it learns only that the claim moved on:
+    // the ordinal, the count residual FR-31 states (ADR-0057 d19).
     let err = app
         .supersede(&blind.value, &supersede_req("sup-b", blind_first, "v3"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::VersionConflict { current: 2 }),
+        "{err:?}"
+    );
+    let err = app
+        .supersede(
+            &blind.value,
+            &at_version(supersede_req("sup-b2", blind_first, "v3"), 2),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -3565,7 +3593,10 @@ async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
     let revived = app
         .supersede(
             &writer.value,
-            &supersede_req("sup-1", retirement, "the canary drains again"),
+            &at_version(
+                supersede_req("sup-1", retirement, "the canary drains again"),
+                2,
+            ),
         )
         .await
         .expect("supersede the retirement version")
@@ -3655,7 +3686,15 @@ async fn a_successor_kind_changes_only_within_its_class() {
         ("s-4", memory, MemoryKind::DerivedFact, true),
     ] {
         let err = app
-            .supersede(&writer.value, &with_kind(idem, target, kind, retirement))
+            .supersede(
+                &writer.value,
+                &SupersedeRequest {
+                    // The memory's held steering successor is its latest
+                    // version (ADR-0057 d19).
+                    expected_version: if target == memory { 2 } else { 1 },
+                    ..with_kind(idem, target, kind, retirement)
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::KindChangeRefused { .. }), "{err:?}");
@@ -3922,7 +3961,10 @@ async fn a_rival_successors_author_is_kept_off_the_others_review() {
         .receipt
         .memory_id;
     let revision = app
-        .supersede(&writer.value, &supersede_req("w-1", first, "revision"))
+        .supersede(
+            &writer.value,
+            &at_version(supersede_req("w-1", first, "revision"), 2),
+        )
         .await
         .expect("revision")
         .receipt

@@ -2086,11 +2086,9 @@ async fn insert_memory(
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule, anchor_repo, anchor_uri, anchor_rev, anchor_path, anchor_fragment, \
-         anchor_hash, anchor_hasher) \
+         severity, rule) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24, $25, $26, $27, $28, \
-         $29, $30, $31)",
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24)",
     )
     .bind(m.memory_id)
     .bind(m.tenant_id)
@@ -2116,19 +2114,35 @@ async fn insert_memory(
     .bind(m.replaces)
     .bind(m.guardrail.as_ref().map(|g| g.severity.as_str()))
     .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()))
-    .bind(anchor.and_then(Anchor::repo))
-    .bind(anchor.and_then(|a| match &a.origin {
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    // The anchor, in the capture's own transaction, so the row is never
+    // seen without it; an unanchored row names none of its columns
+    // (ADR-0057 d2; migration 0025).
+    let Some(anchor) = anchor else {
+        return Ok(());
+    };
+    sqlx::query(
+        "UPDATE memories SET anchor_repo = $3, anchor_uri = $4, anchor_rev = $5, \
+         anchor_path = $6, anchor_fragment = $7, anchor_hash = $8, anchor_hasher = $9 \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(m.tenant_id)
+    .bind(m.memory_id)
+    .bind(anchor.repo())
+    .bind(match &anchor.origin {
         Origin::Uri { uri, .. } => Some(uri.as_str()),
         Origin::Repo { .. } => None,
-    }))
-    .bind(anchor.and_then(|a| match &a.origin {
+    })
+    .bind(match &anchor.origin {
         Origin::Repo { rev, .. } => Some(rev.as_str()),
         Origin::Uri { rev, .. } => rev.as_deref(),
-    }))
-    .bind(anchor.and_then(Anchor::path))
-    .bind(anchor.and_then(|a| a.fragment.as_deref()))
-    .bind(anchor.and_then(|a| a.hash.as_ref().map(|(h, _)| h.as_str())))
-    .bind(anchor.and_then(|a| a.hash.as_ref().map(|(_, h)| h.as_str())))
+    })
+    .bind(anchor.path())
+    .bind(anchor.fragment.as_deref())
+    .bind(anchor.hash.as_ref().map(|(h, _)| h.as_str()))
+    .bind(anchor.hash.as_ref().map(|(_, h)| h.as_str()))
     .execute(&mut **tx)
     .await
     .map_err(backend)?;

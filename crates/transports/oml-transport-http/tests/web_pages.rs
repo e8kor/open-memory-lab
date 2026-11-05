@@ -2075,6 +2075,7 @@ async fn the_admin_page_supersedes_and_retires_no_guardrail() {
         let mut fields = vec![
             ("action", "supersede"),
             ("memory", target.as_str()),
+            ("expected_version", "1"),
             ("text", "Run the tests sometimes."),
         ];
         fields.extend(retirement);

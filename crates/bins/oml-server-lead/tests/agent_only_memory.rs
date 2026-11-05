@@ -673,6 +673,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     // 9. A write with replaces enters admission held and replays once; the
     // tip moves only when another identity ratifies it (d10; ADR-0039 d3).
     let update = json!({
+        "expected_version": 1,
         "replaces": quote,
         "text": QUOTE_REVISED,
         "reason": "supplier issued a revised quote",
@@ -738,6 +739,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .ok(
             "oml_write",
             json!({
+                "expected_version": 2,
                 "replaces": revised,
                 "text": RETIREMENT,
                 "retirement": true,
@@ -1182,7 +1184,7 @@ async fn the_x_oml_workarea_header_is_refused_naming_workarea() {
             "POST",
             format!("/v1/memories/{target}/supersede"),
             Some("hdr-2"),
-            Some(json!({ "body": QUOTE_REVISED })),
+            Some(json!({ "expected_version": 1, "body": QUOTE_REVISED })),
             "/workarea",
         ),
         (
@@ -1574,7 +1576,7 @@ async fn one_open_item_then_two(router: &Router) {
         &format!("/v1/memories/{tip}/supersede"),
         Some(&crew.agent.token),
         Some("two-1"),
-        Some(&json!({ "body": QUOTE_REVISED })),
+        Some(&json!({ "expected_version": 1, "body": QUOTE_REVISED })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
@@ -1585,7 +1587,7 @@ async fn one_open_item_then_two(router: &Router) {
         &format!("/v1/memories/{tip}/supersede"),
         Some(&rev),
         Some("two-2"),
-        Some(&json!({ "body": "Accra Metals quote AM-7741 is 410 USD/t.", "reason": "the quote moved" })),
+        Some(&json!({ "expected_version": 2, "body": "Accra Metals quote AM-7741 is 410 USD/t.", "reason": "the quote moved" })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
