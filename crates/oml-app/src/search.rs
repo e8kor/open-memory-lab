@@ -523,9 +523,20 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
 /// before (`RerankError::Failed`).
 #[must_use]
 pub fn rerank_order(head: Vec<Fused>, scores: &[f32]) -> Vec<Fused> {
-    // Not built yet: the first stage's order, unscored (ADR-0053 d1).
-    let _ = scores;
-    head
+    debug_assert_eq!(head.len(), scores.len());
+    let mut ranked: Vec<(usize, Fused)> = head
+        .into_iter()
+        .zip(scores)
+        .enumerate()
+        .map(|(i, (mut f, &s))| {
+            f.rerank = Some(s);
+            f.score = s;
+            f.rank_before = Some(u32::try_from(i + 1).unwrap_or(u32::MAX));
+            (i, f)
+        })
+        .collect();
+    ranked.sort_by(|(ia, a), (ib, b)| b.score.total_cmp(&a.score).then(ia.cmp(ib)));
+    ranked.into_iter().map(|(_, f)| f).collect()
 }
 
 /// The relevance floor over the served head (ADR-0053 d6): the candidates
@@ -534,9 +545,13 @@ pub fn rerank_order(head: Vec<Fused>, scores: &[f32]) -> Vec<Fused> {
 /// scored, is withheld, and the count withheld is returned.
 #[must_use]
 pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
-    // Not built yet: nothing withheld (ADR-0053 d6).
-    let _ = floor;
-    (candidates, 0)
+    let before = candidates.len();
+    let kept: Vec<Fused> = candidates
+        .into_iter()
+        .filter(|c| c.rerank.is_some_and(|r| r >= floor))
+        .collect();
+    let withheld = before - kept.len();
+    (kept, withheld)
 }
 
 /// The query's distinct terms across the lists, sorted: `matched.of`'s

@@ -43,6 +43,12 @@ struct RecallLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct RerankLabels {
+    outcome: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -58,6 +64,7 @@ pub struct Metrics {
     conflicts: Counter,
     oauth_tokens: Family<TokenLabels, Counter>,
     recalls: Family<RecallLabels, Counter>,
+    reranks: Family<RerankLabels, Counter>,
 }
 
 impl Default for Metrics {
@@ -73,6 +80,7 @@ impl Default for Metrics {
         let conflicts = Counter::default();
         let oauth_tokens = Family::<TokenLabels, Counter>::default();
         let recalls = Family::<RecallLabels, Counter>::default();
+        let reranks = Family::<RerankLabels, Counter>::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -106,6 +114,13 @@ impl Default for Metrics {
             "recalls by the search pipeline that ranked them and whether match all fell back",
             recalls.clone(),
         );
+        // Both labels are closed sets: applied or skipped, and none, busy,
+        // timeout or failed (ADR-0053 d9).
+        registry.register(
+            "oml_reranks",
+            "reranking stages by outcome, and why a skipped one was skipped",
+            reranks.clone(),
+        );
         Self {
             registry,
             http,
@@ -114,6 +129,7 @@ impl Default for Metrics {
             conflicts,
             oauth_tokens,
             recalls,
+            reranks,
         }
     }
 }
@@ -167,6 +183,17 @@ impl Metrics {
             .get_or_create(&RecallLabels {
                 pipeline: pipeline.to_owned(),
                 fallback: fallback.to_string(),
+            })
+            .inc();
+    }
+
+    /// One recall's reranking stage: `applied`, or `skipped` with its
+    /// reason (ADR-0053 d9).
+    pub(crate) fn rerank(&self, outcome: &'static str, reason: Option<&'static str>) {
+        self.reranks
+            .get_or_create(&RerankLabels {
+                outcome: outcome.to_owned(),
+                reason: reason.unwrap_or("none").to_owned(),
             })
             .inc();
     }

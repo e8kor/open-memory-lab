@@ -446,6 +446,23 @@ where
             "search": {
                 "enabled": st.app.search_config().enabled().iter().map(|p| p.as_str()).collect::<Vec<_>>(),
                 "default": st.app.search_config().default_pipeline().as_str(),
+                // The reranker the reranking pipelines call, its policy and
+                // the stages skipped since start: doctor's rerank line reads
+                // them (ADR-0053 d9).
+                "rerank": st.app.reranker_model().map(|model| {
+                    let policy = st.app.search_config().rerank();
+                    let skipped = st.app.rerank_skipped();
+                    json!({
+                        "model": model,
+                        "depth": policy.depth,
+                        "floor": policy.floor,
+                        "skipped": {
+                            "busy": skipped[0],
+                            "timeout": skipped[1],
+                            "failed": skipped[2],
+                        },
+                    })
+                }),
             },
         });
         let status = if ready {
@@ -733,6 +750,8 @@ where
                         "terms": hit.matched,
                         "of": result.terms.len(),
                         "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+                        "rerank": hit.rerank,
+                        "rank_before": hit.rank_before,
                     },
                 })
             })
@@ -748,6 +767,10 @@ where
                 "terms": result.terms,
                 "fallback": result.fallback.then_some("any_term"),
                 "did_you_mean": result.did_you_mean,
+                "rerank": result.rerank.as_str(),
+                "rerank_reason": result.rerank.reason(),
+                "floor": result.floor,
+                "below_floor": result.below_floor,
             },
         });
         // The budget object is present if and only if max_tokens was sent

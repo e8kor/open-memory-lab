@@ -8360,9 +8360,14 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     assert_eq!(named["search"]["pipeline"], "keyword-any", "{named}");
     assert_eq!(
         named["hits"][0]["matched"],
-        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"]}),
+        json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"], "rerank": null, "rank_before": null}),
         "{named}"
     );
+    // A pipeline that does not rerank says so, and applies no floor
+    // (ADR-0053 d5, d6).
+    assert_eq!(named["search"]["rerank"], Value::Null, "{named}");
+    assert_eq!(named["search"]["floor"], Value::Null, "{named}");
+    assert_eq!(named["search"]["below_floor"], 0, "{named}");
 
     drop_db(&rig.db_name).await;
 }

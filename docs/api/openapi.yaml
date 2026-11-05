@@ -2524,7 +2524,7 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         search:
           type: string
-          enum: [keyword-all, keyword-any, bm25, bm25-trigram]
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-rerank]
           description: >-
             The search pipeline, among those the deployment serves (search.enabled); omitted, the
             tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not
@@ -2569,18 +2569,24 @@ components:
         terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
         of: { type: integer, minimum: 0, description: How many words the query had. }
         via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram] }, description: The retrievers whose lists held the row. }
+        rerank: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'The reranker''s relevance of the row to the query, when a reranking pipeline scored it; the hit''s score is then this relevance (ADR-0053 d7).' }
+        rank_before: { type: [integer, 'null'], minimum: 1, description: 'The row''s rank in the first stage''s list, from 1, when the reranker scored it (ADR-0053 d7).' }
 
     RecallSearch:
       type: object
       additionalProperties: false
-      description: What ran and how the query was read (ADR-0049 d5, d6).
-      required: [pipeline, match, terms, fallback, did_you_mean]
+      description: What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7).
+      required: [pipeline, match, terms, fallback, did_you_mean, rerank, rerank_reason, floor, below_floor]
       properties:
-        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram] }
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-rerank] }
         match: { type: string, enum: [any, all] }
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
         did_you_mean: { type: array, items: { type: string }, description: 'Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty.' }
+        rerank: { type: [string, 'null'], enum: [applied, skipped, null], description: 'applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage''s order was served; null when the pipeline does not rerank or found nothing.' }
+        rerank_reason: { type: [string, 'null'], enum: [busy, timeout, failed, null], description: Why the rerank was skipped; null otherwise. }
+        floor: { type: [number, 'null'], description: 'The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was.' }
+        below_floor: { type: integer, minimum: 0, description: 'How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6).' }
 
     SearchSettings:
       type: object
