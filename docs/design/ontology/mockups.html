@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reviewed terms — mockups</title>
+<meta name="description" content="Design mockups for the proposed ADR-0051: a memory says what it is about in reviewed terms, and recall finds it by them.">
+<meta name="theme-color" content="#0A0D22">
+<style>
+:root {
+  --ground: #0A0D22; --ground-alt: #0E1230; --panel: #111638; --term: #070918;
+  --ink: #EFE9DA; --ink-dim: #B7B4C6; --ink-faint: #8C8FA8;
+  --rule: #262C52; --rule-soft: #1A1F42;
+  --ice: #9FC6E6; --star: #F6A83E; --ok: #7FD1AE; --bad: #E58A8A;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: var(--ice); text-decoration: none; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.label { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+code, .mono { font-family: var(--mono); }
+code { font-size: .9em; background: var(--rule-soft); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+header.top { border-bottom: 1px solid var(--rule-soft); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 60px; padding: 8px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.pill { font: 11px var(--mono); color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.hero { padding: 40px 0 16px; }
+h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 10px 0 14px; font-weight: 650; }
+h1 em { font-style: normal; color: var(--star); }
+.lede { color: var(--ink-dim); max-width: 46em; margin: 0 0 12px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.toc a { display: inline-block; font: 13px var(--mono); color: var(--ink-dim); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+section { border-top: 1px solid var(--rule-soft); padding: 44px 0; }
+h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.2; margin: 8px 0 10px; font-weight: 620; }
+h3 { font-size: 17px; margin: 0 0 8px; }
+.sub { color: var(--ink-dim); max-width: 46em; margin: 0 0 24px; }
+.cite { font: 12px var(--mono); color: var(--ink-faint); }
+
+/* diagram */
+.fig { background: var(--ground-alt); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; }
+.fig svg { width: 100%; height: auto; display: block; }
+.fig .tall { display: none; }
+@media (max-width: 760px) { .fig .wide { display: none; } .fig .tall { display: block; max-width: 380px; margin: 0 auto; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font: 12px var(--mono); color: var(--ink-faint); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+/* terminal */
+.term { background: var(--term); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .tb { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rule-soft); font: 12px var(--mono); color: var(--ink-faint); flex-wrap: wrap; }
+.term pre { margin: 0; padding: 14px 16px 16px; font: 13px/1.65 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.c { color: var(--ink-faint); } .p { color: var(--star); } .o { color: var(--ok); } .h { color: var(--star); } .i { color: var(--ice); } .b { color: var(--bad); }
+.you { color: var(--ink); font-weight: 600; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+/* pull request mock */
+.pr { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--ground-alt); }
+.pr .head { padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.pr .head b { font-weight: 600; }
+.pr .cols { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) { .pr .cols { grid-template-columns: 1fr; } }
+.pr .col { padding: 14px 16px; min-width: 0; }
+.pr .col + .col { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 860px) { .pr .col + .col { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.diff { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .ctx { color: var(--ink-faint); }
+.fact { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; background: var(--panel); }
+.fact .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font: 12px var(--mono); color: var(--ink-faint); margin-bottom: 6px; }
+.fact p { margin: 0 0 8px; font-size: 14.5px; }
+.fact .old { color: var(--ink-faint); text-decoration: line-through; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 13px var(--sans); border-radius: 7px; padding: 5px 12px; border: 1px solid var(--rule); color: var(--ink); background: transparent; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #0B1A13; }
+.btn.star { background: var(--star); border-color: var(--star); color: #1A1206; }
+.tag { display: inline-block; font: 12px var(--mono); padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; line-height: 1.6; }
+.t-add { color: var(--ok); } .t-upd { color: var(--ice); } .t-stale { color: var(--star); } .t-ret { color: var(--bad); } .t-dim { color: var(--ink-faint); }
+
+/* search */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip { font: 12px var(--mono); border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; color: var(--ink-dim); background: var(--panel); }
+.chip b { color: var(--ice); font-weight: 400; }
+.hit { display: grid; grid-template-columns: 36px 1fr; gap: 10px; border-top: 1px solid var(--rule-soft); padding: 12px 0; }
+.hit .n { font: 13px var(--mono); color: var(--ink-faint); }
+.hit p { margin: 0 0 6px; }
+.why { display: flex; flex-wrap: wrap; gap: 6px; font: 12px var(--mono); }
+.why span { border-radius: 6px; padding: 0 7px; background: var(--rule-soft); color: var(--ink-dim); }
+.why .kw { color: var(--ice); } .why .se { color: var(--ok); } .why .an { color: var(--star); }
+
+/* user page mock (ADR-0045 chrome) */
+.page { border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--ground); }
+.page .ph { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--rule-soft); }
+.page .ph .b2 { font-weight: 600; } .page .ph .b2 b { color: var(--star); font-weight: 600; }
+.page .who { font: 12px var(--mono); color: var(--ink-faint); }
+.page main { padding: 18px; }
+nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--rule-soft); margin: 0 0 18px; }
+nav.tabs a { padding: 8px 12px; color: var(--ink-dim); font-size: 14px; border-bottom: 2px solid transparent; }
+nav.tabs a.on { color: var(--ink); border-bottom-color: var(--star); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 18px; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: var(--ground-alt); }
+.stat .v { font: 600 22px var(--mono); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th { text-align: left; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+table.t td { padding: 9px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  table.t thead { display: none; }
+  table.t tr { display: block; border: 1px solid var(--rule-soft); border-radius: 10px; margin: 0 0 10px; padding: 6px 4px; }
+  table.t td { display: flex; gap: 10px; border: 0; padding: 4px 8px; }
+  table.t td::before { content: attr(data-l); flex: 0 0 7.5em; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding-top: 2px; }
+}
+.note { font-size: 13px; color: var(--ink-faint); margin: 10px 0 0; }
+footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: var(--ink-faint); font: 12px var(--mono); }
+
+/* search mockups */
+.chart svg.one { max-width: 420px; }
+.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.st { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; background: var(--ground-alt); }
+.st .sn { font: 600 18px var(--mono); }
+.st.go { border-color: var(--ok); } .st.go .sn { color: var(--ok); }
+.st.wait .sn { color: var(--star); }
+.st.no { opacity: .85; } .st.no .sn { color: var(--bad); }
+.st .g { margin: 4px 0 0; font: 12.5px/1.5 var(--mono); color: var(--ink-faint); }
+/* remember mockups */
+.tag { white-space: nowrap; }
+.bars { margin: 0 0 18px; }
+.bars h3 { font-size: 15px; margin: 0 0 6px; }
+.bars svg { width: 100%; max-width: 420px; height: auto; display: block; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font: 12.5px/1.5 var(--mono); margin: 0 0 10px; }
+.kv dt { color: var(--ink-faint); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.terms { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 10px; }
+.terms span { font: 12px var(--mono); padding: 0 7px; border-radius: 6px; background: var(--rule-soft); color: var(--ink-dim); }
+.terms .k { color: var(--ice); } .terms .t { color: var(--star); }
+.warn { font: 12px var(--mono); color: var(--star); margin: 0 0 8px; }
+.near { font-size: 14px; }
+.near .meta { margin-bottom: 4px; }
+
+/* ontology mockups */
+.tm { color: var(--star); }
+table.t td > div { min-width: 0; }
+table.t td .acts { margin: 0 0 4px; }
+.why .an { color: var(--star); }
+</style>
+
+</head>
+<body>
+<header class="top"><div class="wrap bar">
+  <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>Open Memory Lab <span class="pill">design mockups</span></span>
+  <span class="pill">ADR-0051 · proposed 2026-11-04</span>
+</div></header>
+
+<main class="wrap">
+<div class="hero">
+  <p class="label">Design artefact, not a built feature</p>
+  <h1>Say what a memory is <em>about</em>, in words the crew agreed on</h1>
+  <p class="lede">One agent writes “credentials”, another “secrets”, and recall for either misses the other. ADR-0051 gives a crew a few small reviewed vocabularies, one per facet. The writing agent picks up to three terms from candidates the server finds by matching labels; the reviewer sees them with the memory; recall finds memories by the terms a query names, and says which label matched.</p>
+  <p class="note">Memory texts come from the recall eval (<code>eval/recall/</code>, version 1, synthetic) and the terms from <code>eval/recall/ontology/vocabulary.json</code>. The chart's numbers are the offline run of 2026-11-04 and are upper bounds. Every response field, page layout and identifier on this page is illustrative.</p>
+  <ul class="toc">
+    <li><a href="#write">Write</a></li><li><a href="#recall">Recall</a></li><li><a href="#vocab">Vocabulary</a></li><li><a href="#review">Reviewer</a></li><li><a href="#eval">Eval</a></li><li><a href="#build">Build</a></li>
+  </ul>
+</div>
+
+<section id="write">
+  <p class="label">ADR-0051 d3, d4, d5 · illustrative</p>
+  <h2>A write is offered terms and chooses three</h2>
+  <p class="sub">The agent asks which terms fit its draft. The server matches labels, nothing more, and returns candidates with the label that matched. The agent chooses two of them and proposes a third concept the vocabulary lacks. Nothing is attached by the server; the reviewer decides the memory and its terms together.</p>
+  <div class="term">
+    <div class="tb"><span>claude · ~/src/tallyline-infra</span><span>mockup</span></div>
+<pre><span class="you">› The SendGrid key rotation broke invoice emails because the worker's ExternalSecret was never refreshed. Remember the fix.</span>
+
+<span class="p">●</span> oml_read <span class="c">{"terms_for":"After rotating a secret in Secret Manager, run kubectl rollout restart on every Deployment that mounts it; an ExternalSecret refresh does not restart pods."}</span>
+  candidates
+   <span class="tm">topic:secrets</span> secrets <span class="c">· via “secret”, “rotating … secret”</span>
+   <span class="tm">tech:external-secrets</span> external secrets operator <span class="c">· via “externalsecret”, “secret manager”</span>
+   <span class="tm">tech:kubernetes</span> kubernetes <span class="c">· via “kubectl”, “pods”</span>
+   <span class="tm">topic:deployment</span> deployment <span class="c">· via “rollout”</span>
+
+<span class="p">●</span> oml_write <span class="c">{"text":"After rotating a secret in Secret Manager, run kubectl rollout restart …",
+  "title":"Restart pods after a secret rotation","claim_key":"secret-rotation-restart",
+  "about":["topic:secrets","tech:external-secrets",
+           {"label":"secret rotation runbook","facet":"proc",
+            "alt_labels":["key rotation steps"],"definition":"The steps to rotate a credential safely."}],
+  "idempotency_key":"s52/t1/1"}</span>
+  <span class="o">held</span> · mode submit · v1
+  about           <span class="tm">topic:secrets</span> · <span class="tm">tech:external-secrets</span> <span class="c">· proposed with the memory</span>
+  proposed_terms  <span class="i">proc:secret-rotation-runbook</span> <span class="h">held</span> <span class="c">· waits for a curator of proc:</span>
+  candidate_terms <span class="tm">tech:kubernetes</span> · <span class="tm">topic:deployment</span> <span class="c">· not chosen</span>
+  review          waits for 1 verdict by another identity
+
+<span class="you">Answer.</span> Proposed the memory with two terms and a new process term; the term
+waits for a curator, the memory for a reviewer, and neither is visible to others until approved.</pre>
+  </div>
+  <p class="note">A label in <code>about</code> works as well as a CURIE when it names one term; <code>"rollout"</code> would resolve to <code>topic:deployment</code>. A label that two facets share answers <code>request.validation</code> with both candidates (d4).</p>
+</section>
+
+<section id="recall">
+  <p class="label">ADR-0051 d6, d7, d8 · illustrative</p>
+  <h2>“credentials” finds the memories about secrets</h2>
+  <p class="sub">The query word “credentials” is an alternative label of <code>topic:secrets</code>. The term list brings the memories tagged with it, whatever their text says, fused with BM25's list by reciprocal rank; the third hit is BM25's alone, for the word itself. The query text is never rewritten. Each hit says how it matched.</p>
+  <div class="term">
+    <div class="tb"><span>oml_read · pipeline bm25-term</span><span>mockup</span></div>
+<pre><span class="p">●</span> oml_read <span class="c">{"query":"where do pods get their credentials from","search":"bm25-term"}</span>
+  search  pipeline <span class="i">bm25-term</span> · match any · terms <span class="tm">topic:secrets</span> <span class="c">(via “credentials”)</span>, <span class="tm">tech:kubernetes</span> <span class="c">(via “pods”)</span></pre>
+  </div>
+  <div class="fig" style="margin-top:12px">
+    <div class="filters"><span class="chip">about <b>any term</b></span><span class="chip">facet <b>topic:</b> · <b>tech:</b> · <b>cmp:</b> · <b>proc:</b></span><span class="chip">k <b>10</b></span></div>
+    <div class="hit"><span class="n">1</span><div><p>An ExternalSecret refresh does not restart pods; after rotating a secret, run kubectl rollout restart on the Deployment that mounts it.</p>
+      <div class="why"><span class="an">term topic:secrets via “credentials”</span><span class="an">term tech:kubernetes via “pods”</span><span>words: pods (1 of 4)</span><span>via bm25 · term</span></div></div></div>
+    <div class="hit"><span class="n">2</span><div><p>Secrets reach pods through the External Secrets Operator from Google Secret Manager; no secret is ever committed to the infra repository, even encrypted.</p>
+      <div class="why"><span class="an">term topic:secrets via “credentials”</span><span>words: pods (1 of 4)</span><span>via bm25 · term</span></div></div></div>
+    <div class="hit"><span class="n">3</span><div><p>We chose Argo CD over Flux in January 2026 because Argo's UI let the on-call reviewer see drift without cluster credentials.</p>
+      <div class="why"><span>words: credentials (1 of 4)</span><span>via bm25</span></div></div></div>
+    <p class="note">On the eval this query's nDCG@10 went from 0.12 under BM25 alone to 0.80 with the term list (q013). Without a matching label nothing changes: “who gets woken up at night” matched no term and gained nothing (q019).</p>
+  </div>
+</section>
+
+<section id="vocab">
+  <p class="label">ADR-0051 d1, d2, d9, d10 · user page, illustrative</p>
+  <h2>The vocabulary page</h2>
+  <p class="sub">A tab on the person's own page (ADR-0045 chrome). Each facet is a vocabulary with a prefix; each term has a preferred label, synonyms and a definition. Counts are memories this person can read, never a tenant-wide figure. Proposed terms wait for a curator, who is never their author.</p>
+  <div class="page">
+    <div class="ph"><span class="b2">Open Memory Lab · <b>tallyline</b></span><span class="who">ana@tallyline.example · ana.infra</span></div>
+    <main>
+      <nav class="tabs"><a>Memories</a><a>Review</a><a class="on">Vocabulary</a><a>Keys</a><a>Workareas</a></nav>
+      <div class="stats">
+        <div class="stat"><div class="label">facets</div><div class="v">4</div></div>
+        <div class="stat"><div class="label">active terms</div><div class="v">80</div></div>
+        <div class="stat"><div class="label">proposed</div><div class="v">3</div></div>
+        <div class="stat"><div class="label">broad labels</div><div class="v">5</div></div>
+      </div>
+      <div class="filters"><span class="chip"><b>cmp:</b> component · 11</span><span class="chip"><b>tech:</b> technology · 26</span><span class="chip" style="border-color:var(--star)"><b>topic:</b> topic · 36</span><span class="chip"><b>proc:</b> process · 7</span></div>
+      <table class="t">
+        <thead><tr><th>Term</th><th>Preferred label</th><th>Synonyms</th><th>Memories</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Term" class="mono">topic:secrets</td><td data-l="Label">secrets</td><td data-l="Synonyms"><div class="terms"><span>secret</span><span>credentials</span><span>credential</span><span>api key</span><span>password</span><span>key rotation</span></div></td><td data-l="Memories" class="mono">8</td></tr>
+          <tr><td data-l="Term" class="mono">topic:deployment</td><td data-l="Label">deployment</td><td data-l="Synonyms"><div class="terms"><span>deploy</span><span>rollout</span><span>release</span><span>canary</span><span>deploy window</span></div></td><td data-l="Memories" class="mono">10</td></tr>
+          <tr><td data-l="Term" class="mono">topic:idempotency</td><td data-l="Label">idempotency</td><td data-l="Synonyms"><div class="terms"><span>idempotency key</span><span>duplicate</span><span>double charge</span><span>dedup</span><span>retries</span></div></td><td data-l="Memories" class="mono">5</td></tr>
+          <tr><td data-l="Term" class="mono">topic:cost</td><td data-l="Label">cost</td><td data-l="Synonyms"><div class="terms"><span>bill</span><span>spend</span><span>expensive</span><span>bytes scanned</span></div></td><td data-l="Memories" class="mono">2</td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin-top:22px">Proposed terms, waiting for a curator</h3>
+      <table class="t">
+        <thead><tr><th>Proposed</th><th>Facet</th><th>By</th><th>Linked from</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Proposed"><div><span class="mono">proc:secret-rotation-runbook</span><br>secret rotation runbook <span class="t-dim">· key rotation steps</span></div></td><td data-l="Facet" class="mono">proc:</td><td data-l="By">ana.claude</td><td data-l="Linked from">1 held memory</td><td data-l="Action"><div><div class="acts"><span class="btn ok">Promote as ana.review</span><span class="btn">Reject</span></div><span class="t-dim">your agent proposed it; your reviewer key decides, marked same_user</span></div></td></tr>
+          <tr><td data-l="Proposed"><div><span class="mono">tech:feature-store</span><br>feature store <span class="t-dim">· feast</span></div></td><td data-l="Facet" class="mono">tech:</td><td data-l="By">data.agent</td><td data-l="Linked from">2 held memories</td><td data-l="Action"><div class="acts"><span class="btn ok">Promote</span><span class="btn">Reject</span></div></td></tr>
+        </tbody>
+      </table>
+      <p class="warn">Broad labels: “invoice” (topic:invoicing) appears in 18% of the memories you can read, “api” (cmp:api) in 15%; a query that says either draws these terms in. Narrow or drop the label (d12).</p>
+      <p class="note">Start from a seed with <code>oml vocab seed software-project --under ana</code>, or import SKOS with <code>oml vocab import terms.ttl --under ana</code>; every term arrives held for review (d10).</p>
+    </main>
+  </div>
+</section>
+
+<section id="review">
+  <p class="label">ADR-0051 d3, d14 · illustrative</p>
+  <h2>The reviewer sees the terms as part of the memory</h2>
+  <p class="sub">The serve lists each proposed term with its facet, label, definition and state. The reviewer approves the memory and its terms together, or rejects with a reason that names the term. No verdict adds or removes a term, so review never changes what the memory is found by.</p>
+  <div class="pr">
+    <div class="head"><b>Held memory · secret-rotation-restart v1</b><span class="cite">workarea ana.infra · author ana.claude · policy k = 1</span></div>
+    <div class="cols">
+      <div class="col">
+        <div class="fact"><div class="meta"><span class="tag t-add">new</span><span>Restart pods after a secret rotation</span></div>
+          <p>After rotating a secret in Secret Manager, run kubectl rollout restart on every Deployment that mounts it; an ExternalSecret refresh does not restart pods.</p></div>
+        <dl class="kv"><dt>sources</dt><dd>session:s52</dd><dt>similar</dt><dd>m021 “An ExternalSecret refresh does not restart pods …” <span class="t-dim">shares 0.52</span></dd></dl>
+      </div>
+      <div class="col">
+        <p class="label" style="margin:0 0 8px">About (proposed with the memory)</p>
+        <div class="fact"><div class="meta"><span class="mono">topic:secrets</span><span class="tag t-add">active</span></div><p>secrets — credentials, keys and passwords and how they are stored and rotated.</p></div>
+        <div class="fact"><div class="meta"><span class="mono">tech:external-secrets</span><span class="tag t-add">active</span></div><p>external secrets operator — syncs Secret Manager entries into Kubernetes Secrets.</p></div>
+        <div class="fact"><div class="meta"><span class="mono">proc:secret-rotation-runbook</span><span class="tag t-stale">held term</span></div><p>secret rotation runbook — the steps to rotate a credential safely. <span class="t-dim">The link matches nothing until a curator promotes the term.</span></p></div>
+        <div class="acts"><span class="btn ok">Approve memory and terms</span><span class="btn">Reject, naming a term</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="eval">
+  <p class="label">ADR-0051 context · recall eval v1, offline, synthetic</p>
+  <h2>What the vocabulary bought on the eval</h2>
+  <p class="sub">80 terms in four facets and 0 to 3 terms on each of 200 memories, written before the 121 queries were read. One model wrote all of it, so these are upper bounds. The term list helps; putting labels into the query text does not; wrong tags hurt more than right ones help.</p>
+  <div class="fig chart">
+<div class="bars"><h3>nDCG@10, all 121 queries <span class="cite">higher is better</span></h3><svg viewBox="0 0 340 280" role="img" aria-label="nDCG@10, all 121 queries: any word (S1) 0.59, any word + term list 0.74, BM25 (S2) 0.84, BM25 + labels in the query text 0.83, BM25 + term list (d6) 0.88, BM25 + term list, noisy tags 0.74, dense, committed 0.85, hybrid, committed 0.88"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">any word (S1)</text><g><title>any word (S1): 0.59 (recall eval v1, offline, synthetic)</title><rect x="0" y="19" width="166.0" height="10" rx="2" fill="#6B6F8A"/><text x="172.0" y="28.5" fill="#EFE9DA" font-size="12">0.59</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">any word + term list</text><g><title>any word + term list: 0.74 (recall eval v1, offline, synthetic)</title><rect x="0" y="54" width="207.5" height="10" rx="2" fill="#9FC6E6"/><text x="213.5" y="63.5" fill="#EFE9DA" font-size="12">0.74</text></g><text x="0" y="84" fill="#B7B4C6" font-size="12">BM25 (S2)</text><g><title>BM25 (S2): 0.84 (recall eval v1, offline, synthetic)</title><rect x="0" y="89" width="236.6" height="10" rx="2" fill="#6B6F8A"/><text x="242.6" y="98.5" fill="#EFE9DA" font-size="12">0.84</text></g><text x="0" y="119" fill="#B7B4C6" font-size="12">BM25 + labels in the query text</text><g><title>BM25 + labels in the query text: 0.83 (recall eval v1, offline, synthetic)</title><rect x="0" y="124" width="233.8" height="10" rx="2" fill="#E58A8A"/><text x="239.8" y="133.5" fill="#EFE9DA" font-size="12">0.83</text></g><text x="0" y="154" fill="#B7B4C6" font-size="12">BM25 + term list (d6)</text><g><title>BM25 + term list (d6): 0.88 (recall eval v1, offline, synthetic)</title><rect x="0" y="159" width="245.6" height="10" rx="2" fill="#9FC6E6"/><text x="251.6" y="168.5" fill="#EFE9DA" font-size="12">0.88</text></g><text x="0" y="189" fill="#B7B4C6" font-size="12">BM25 + term list, noisy tags</text><g><title>BM25 + term list, noisy tags: 0.74 (recall eval v1, offline, synthetic)</title><rect x="0" y="194" width="206.9" height="10" rx="2" fill="#E58A8A"/><text x="212.9" y="203.5" fill="#EFE9DA" font-size="12">0.74</text></g><text x="0" y="224" fill="#B7B4C6" font-size="12">dense, committed</text><g><title>dense, committed: 0.85 (recall eval v1, offline, synthetic)</title><rect x="0" y="229" width="239.4" height="10" rx="2" fill="#B7B4C6"/><text x="245.4" y="238.5" fill="#EFE9DA" font-size="12">0.85</text></g><text x="0" y="259" fill="#B7B4C6" font-size="12">hybrid, committed</text><g><title>hybrid, committed: 0.88 (recall eval v1, offline, synthetic)</title><rect x="0" y="264" width="246.1" height="10" rx="2" fill="#B7B4C6"/><text x="252.1" y="273.5" fill="#EFE9DA" font-size="12">0.88</text></g></g></svg></div><div class="bars"><h3>success@5, the 11 paraphrase queries <span class="cite">higher is better</span></h3><svg viewBox="0 0 340 175" role="img" aria-label="success@5, the 11 paraphrase queries: BM25 (S2) 0.64, BM25 + term list (d6) 0.82, BM25 + term list, noisy tags 0.64, dense, committed 0.82, hybrid, committed 0.82"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">BM25 (S2)</text><g><title>BM25 (S2): 0.64 (recall eval v1, offline, synthetic)</title><rect x="0" y="19" width="178.1" height="10" rx="2" fill="#6B6F8A"/><text x="184.1" y="28.5" fill="#EFE9DA" font-size="12">0.64</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">BM25 + term list (d6)</text><g><title>BM25 + term list (d6): 0.82 (recall eval v1, offline, synthetic)</title><rect x="0" y="54" width="229.0" height="10" rx="2" fill="#9FC6E6"/><text x="235.0" y="63.5" fill="#EFE9DA" font-size="12">0.82</text></g><text x="0" y="84" fill="#B7B4C6" font-size="12">BM25 + term list, noisy tags</text><g><title>BM25 + term list, noisy tags: 0.64 (recall eval v1, offline, synthetic)</title><rect x="0" y="89" width="178.1" height="10" rx="2" fill="#E58A8A"/><text x="184.1" y="98.5" fill="#EFE9DA" font-size="12">0.64</text></g><text x="0" y="119" fill="#B7B4C6" font-size="12">dense, committed</text><g><title>dense, committed: 0.82 (recall eval v1, offline, synthetic)</title><rect x="0" y="124" width="229.0" height="10" rx="2" fill="#B7B4C6"/><text x="235.0" y="133.5" fill="#EFE9DA" font-size="12">0.82</text></g><text x="0" y="154" fill="#B7B4C6" font-size="12">hybrid, committed</text><g><title>hybrid, committed: 0.82 (recall eval v1, offline, synthetic)</title><rect x="0" y="159" width="229.0" height="10" rx="2" fill="#B7B4C6"/><text x="235.0" y="168.5" fill="#EFE9DA" font-size="12">0.82</text></g></g></svg></div><div class="bars"><h3>success@1, all 121 queries <span class="cite">higher is better</span></h3><svg viewBox="0 0 340 140" role="img" aria-label="success@1, all 121 queries: BM25 (S2) 0.79, BM25 + labels in the query text 0.72, BM25 + term list (d6) 0.79, hybrid, committed 0.79"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">BM25 (S2)</text><g><title>BM25 (S2): 0.79 (recall eval v1, offline, synthetic)</title><rect x="0" y="19" width="219.8" height="10" rx="2" fill="#6B6F8A"/><text x="225.8" y="28.5" fill="#EFE9DA" font-size="12">0.79</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">BM25 + labels in the query text</text><g><title>BM25 + labels in the query text: 0.72 (recall eval v1, offline, synthetic)</title><rect x="0" y="54" width="201.3" height="10" rx="2" fill="#E58A8A"/><text x="207.3" y="63.5" fill="#EFE9DA" font-size="12">0.72</text></g><text x="0" y="84" fill="#B7B4C6" font-size="12">BM25 + term list (d6)</text><g><title>BM25 + term list (d6): 0.79 (recall eval v1, offline, synthetic)</title><rect x="0" y="89" width="219.8" height="10" rx="2" fill="#9FC6E6"/><text x="225.8" y="98.5" fill="#EFE9DA" font-size="12">0.79</text></g><text x="0" y="119" fill="#B7B4C6" font-size="12">hybrid, committed</text><g><title>hybrid, committed: 0.79 (recall eval v1, offline, synthetic)</title><rect x="0" y="124" width="219.8" height="10" rx="2" fill="#B7B4C6"/><text x="225.8" y="133.5" fill="#EFE9DA" font-size="12">0.79</text></g></g></svg></div>
+
+    <div class="legend"><span><i style="background:#6B6F8A"></i>today's methods</span><span><i style="background:#9FC6E6"></i>with the term list (ADR-0051 d6)</span><span><i style="background:#E58A8A"></i>measured and rejected</span><span><i style="background:#B7B4C6"></i>committed embedding runs</span></div>
+  </div>
+  <table class="t" style="margin-top:14px">
+    <thead><tr><th>Change</th><th>Δ nDCG@10 (95% CI)</th><th>Better / worse queries</th><th>Decision</th></tr></thead>
+    <tbody>
+      <tr><td data-l="Change">BM25 + term list</td><td data-l="Δ nDCG@10" class="mono">+0.032 (+0.003, +0.061)</td><td data-l="Queries ±" class="mono">30 / 11</td><td data-l="Decision">d6, behind ADR-0049's gate</td></tr>
+      <tr><td data-l="Change">BM25 + labels in the query</td><td data-l="Δ nDCG@10" class="mono">−0.010 (−0.045, +0.024)</td><td data-l="Queries ±" class="mono">26 / 44</td><td data-l="Decision">rejected</td></tr>
+      <tr><td data-l="Change">term list, tags with no judgement</td><td data-l="Δ nDCG@10" class="mono">+0.012 (−0.017, +0.040)</td><td data-l="Queries ±" class="mono">24 / 18</td><td data-l="Decision">the server offers, never attaches (d4)</td></tr>
+      <tr><td data-l="Change">term list, noisy tags</td><td data-l="Δ nDCG@10" class="mono">−0.106 (−0.147, −0.064)</td><td data-l="Queries ±" class="mono">20 / 55</td><td data-l="Decision">terms are reviewed (d3, d14)</td></tr>
+      <tr><td data-l="Change">hybrid against BM25 + term list</td><td data-l="Δ nDCG@10" class="mono">+0.003 (−0.028, +0.033)</td><td data-l="Queries ±" class="mono">31 / 27</td><td data-l="Decision">a tie on this set</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="build">
+  <p class="label">ADR-0051 d13</p>
+  <h2>The build, in increments</h2>
+  <ol class="stages">
+    <li class="st go"><span class="sn">O1</span><div><b>Terms with labels:</b> facets as vocabularies, preferred and alternative labels, <code>terms_for</code>, seeds and SKOS import.<p class="g">gate: the seed round-trips the eval vocabulary · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">O2</span><div><b><code>about</code> at write:</b> links proposed with the memory, ratified with it; new-term proposals; the reviewer's view.<p class="g">after ADR-0046's claim edges and ADR-0050's fields · gate: the R1–R4 tests in both stores · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">O3</span><div><b>Recall by term:</b> the <code>term</code> retriever, <code>bm25-term</code>, facet filters, the matched label.<p class="g">after ADR-0049's port · gate: reproduce +0.03 nDCG@10 in CI; default only on eval v2 (FR-95)</p></div></li>
+    <li class="st wait"><span class="sn">O4</span><div><b>Doctor lines:</b> orphan facets, waiting terms, broad labels, adoption, the retired-link backlog.<p class="g">each planted and caught in a test</p></div></li>
+    <li class="st no"><span class="sn">—</span><div><b>Still parked:</b> ontology crews, classifiers, curators rejecting links, releases and the <code>is_a</code> closure (ADR-0027, ADR-0021).<p class="g">reopened by FR-97's measurement</p></div></li>
+  </ol>
+  <div class="fig" style="margin-top:16px">
+    <p class="label" style="margin:0 0 8px">What holds at every increment</p>
+    <p style="margin:0;color:var(--ink-dim);font-size:15px">No model on the server reads a memory to tag it. The author proposes terms, someone else approves them with the memory, and no verdict adds or removes one. A term ranks a memory only through a link its author wrote. Counts and links are shown only to keys that may read both ends. Three MCP tools stay three.</p>
+  </div>
+</section>
+</main>
+<footer><div class="wrap">Open Memory Lab · design mockups for proposed ADR-0051 · 2026-11-04 · eval numbers offline and synthetic; fields, pages and identifiers illustrative</div></footer>
+</body>
+</html>

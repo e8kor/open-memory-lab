@@ -1,0 +1,2251 @@
+{
+ "curated": {
+  "m001": [
+   "topic:deployment",
+   "cmp:api",
+   "proc:incident-response"
+  ],
+  "m002": [
+   "cmp:cluster",
+   "tech:kubernetes"
+  ],
+  "m003": [
+   "cmp:cluster"
+  ],
+  "m004": [
+   "tech:helm",
+   "tech:kubernetes",
+   "topic:deployment"
+  ],
+  "m005": [
+   "tech:helm",
+   "topic:naming"
+  ],
+  "m006": [
+   "topic:rollback",
+   "tech:helm"
+  ],
+  "m007": [
+   "topic:deployment",
+   "proc:change-management"
+  ],
+  "m008": [
+   "topic:deployment",
+   "proc:change-management"
+  ],
+  "m009": [
+   "cmp:worker",
+   "cmp:pdf-rendering",
+   "topic:deployment"
+  ],
+  "m010": [
+   "cmp:ingress",
+   "tech:cert-manager",
+   "topic:encryption"
+  ],
+  "m011": [
+   "tech:cert-manager",
+   "topic:encryption",
+   "proc:incident-response"
+  ],
+  "m012": [
+   "tech:docker",
+   "topic:naming"
+  ],
+  "m013": [
+   "cmp:api",
+   "topic:scaling"
+  ],
+  "m014": [
+   "cmp:database",
+   "proc:change-management"
+  ],
+  "m015": [
+   "tech:argo-cd",
+   "proc:decision-records"
+  ],
+  "m016": [
+   "tech:argo-cd",
+   "cmp:cluster",
+   "topic:deployment"
+  ],
+  "m017": [
+   "tech:argo-cd",
+   "topic:scaling"
+  ],
+  "m018": [
+   "cmp:cluster",
+   "cmp:pdf-rendering"
+  ],
+  "m019": [
+   "cmp:pdf-rendering",
+   "topic:performance"
+  ],
+  "m020": [
+   "topic:secrets",
+   "tech:external-secrets"
+  ],
+  "m021": [
+   "topic:secrets",
+   "tech:external-secrets",
+   "tech:kubernetes"
+  ],
+  "m022": [
+   "cmp:marketing-site",
+   "topic:deployment"
+  ],
+  "m023": [
+   "topic:schema-migration",
+   "topic:deployment"
+  ],
+  "m024": [
+   "cmp:api",
+   "topic:performance"
+  ],
+  "m025": [
+   "cmp:database",
+   "tech:postgresql"
+  ],
+  "m026": [
+   "tech:postgresql",
+   "topic:dependencies"
+  ],
+  "m027": [
+   "tech:postgresql",
+   "topic:performance"
+  ],
+  "m028": [
+   "tech:postgresql",
+   "topic:dependencies",
+   "topic:performance"
+  ],
+  "m029": [
+   "cmp:database",
+   "topic:naming"
+  ],
+  "m030": [
+   "cmp:database",
+   "proc:decision-records"
+  ],
+  "m031": [
+   "topic:schema-migration",
+   "topic:performance"
+  ],
+  "m032": [
+   "topic:schema-migration"
+  ],
+  "m033": [
+   "cmp:database",
+   "topic:invoicing"
+  ],
+  "m034": [
+   "topic:data-retention",
+   "cmp:database"
+  ],
+  "m035": [
+   "tech:pgbouncer"
+  ],
+  "m036": [
+   "tech:pgbouncer"
+  ],
+  "m037": [
+   "tech:postgresql",
+   "topic:performance"
+  ],
+  "m038": [
+   "cmp:database"
+  ],
+  "m039": [
+   "topic:backup-recovery",
+   "tech:postgresql"
+  ],
+  "m040": [
+   "cmp:database",
+   "topic:performance"
+  ],
+  "m041": [
+   "topic:schema-migration",
+   "topic:naming"
+  ],
+  "m042": [
+   "topic:tax",
+   "cmp:database"
+  ],
+  "m043": [
+   "topic:performance",
+   "cmp:database"
+  ],
+  "m044": [
+   "tech:postgresql"
+  ],
+  "m045": [
+   "topic:authorization",
+   "cmp:database"
+  ],
+  "m046": [
+   "topic:authorization",
+   "cmp:database"
+  ],
+  "m047": [
+   "cmp:database",
+   "proc:decision-records"
+  ],
+  "m048": [
+   "topic:backup-recovery"
+  ],
+  "m049": [
+   "topic:backup-recovery"
+  ],
+  "m050": [
+   "topic:api-conventions"
+  ],
+  "m051": [
+   "topic:api-conventions"
+  ],
+  "m052": [
+   "topic:api-conventions",
+   "topic:performance"
+  ],
+  "m053": [
+   "topic:api-conventions"
+  ],
+  "m054": [
+   "topic:idempotency",
+   "cmp:api"
+  ],
+  "m055": [
+   "topic:idempotency"
+  ],
+  "m056": [
+   "topic:naming",
+   "cmp:api"
+  ],
+  "m057": [
+   "topic:rate-limiting"
+  ],
+  "m058": [
+   "topic:rate-limiting"
+  ],
+  "m059": [
+   "topic:webhooks",
+   "topic:security"
+  ],
+  "m060": [
+   "topic:webhooks"
+  ],
+  "m061": [
+   "topic:webhooks"
+  ],
+  "m062": [
+   "topic:code-generation",
+   "cmp:api"
+  ],
+  "m063": [
+   "topic:money",
+   "topic:api-conventions"
+  ],
+  "m064": [
+   "topic:money"
+  ],
+  "m065": [
+   "topic:api-conventions",
+   "topic:localization"
+  ],
+  "m066": [
+   "cmp:api",
+   "tech:kotlin",
+   "tech:ktor"
+  ],
+  "m067": [
+   "cmp:api",
+   "topic:performance"
+  ],
+  "m068": [
+   "cmp:api",
+   "tech:kotlin"
+  ],
+  "m069": [
+   "cmp:api",
+   "cmp:ingress"
+  ],
+  "m070": [
+   "topic:authentication",
+   "tech:auth0"
+  ],
+  "m071": [
+   "topic:secrets",
+   "topic:authentication"
+  ],
+  "m072": [
+   "topic:authentication",
+   "tech:auth0",
+   "cmp:console"
+  ],
+  "m073": [
+   "topic:authorization"
+  ],
+  "m074": [
+   "topic:authorization"
+  ],
+  "m075": [
+   "topic:authentication",
+   "topic:security",
+   "proc:decision-records"
+  ],
+  "m076": [
+   "topic:security",
+   "topic:authentication"
+  ],
+  "m077": [
+   "tech:auth0",
+   "topic:rate-limiting"
+  ],
+  "m078": [
+   "topic:authentication"
+  ],
+  "m079": [
+   "topic:secrets",
+   "topic:logging"
+  ],
+  "m080": [
+   "cmp:service-mesh",
+   "topic:encryption"
+  ],
+  "m081": [
+   "cmp:service-mesh",
+   "topic:encryption",
+   "cmp:database"
+  ],
+  "m082": [
+   "topic:secrets",
+   "topic:authentication"
+  ],
+  "m083": [
+   "topic:authentication",
+   "cmp:worker",
+   "proc:incident-response"
+  ],
+  "m084": [
+   "topic:encryption",
+   "topic:personal-data"
+  ],
+  "m085": [
+   "topic:personal-data",
+   "topic:encryption"
+  ],
+  "m086": [
+   "topic:security"
+  ],
+  "m087": [
+   "topic:authentication",
+   "tech:auth0"
+  ],
+  "m088": [
+   "cmp:console",
+   "tech:react"
+  ],
+  "m089": [
+   "tech:react",
+   "topic:naming"
+  ],
+  "m090": [
+   "tech:tanstack-query",
+   "cmp:console"
+  ],
+  "m091": [
+   "tech:tanstack-query",
+   "topic:performance"
+  ],
+  "m092": [
+   "cmp:console"
+  ],
+  "m093": [
+   "cmp:console",
+   "topic:performance"
+  ],
+  "m094": [
+   "topic:money",
+   "cmp:console",
+   "topic:localization"
+  ],
+  "m095": [
+   "topic:localization",
+   "cmp:console"
+  ],
+  "m096": [
+   "topic:localization",
+   "cmp:console"
+  ],
+  "m097": [
+   "tech:playwright",
+   "topic:testing"
+  ],
+  "m098": [
+   "tech:playwright",
+   "topic:flaky-tests"
+  ],
+  "m099": [
+   "tech:sentry",
+   "cmp:console"
+  ],
+  "m100": [
+   "topic:feature-flags",
+   "cmp:console"
+  ],
+  "m101": [
+   "cmp:console",
+   "topic:code-generation"
+  ],
+  "m102": [
+   "topic:code-generation",
+   "cmp:console"
+  ],
+  "m103": [
+   "tech:github-actions",
+   "cmp:ci"
+  ],
+  "m104": [
+   "tech:gradle",
+   "tech:kotlin"
+  ],
+  "m105": [
+   "tech:gradle",
+   "cmp:ci",
+   "topic:performance"
+  ],
+  "m106": [
+   "proc:code-review"
+  ],
+  "m107": [
+   "proc:git-workflow"
+  ],
+  "m108": [
+   "tech:docker",
+   "cmp:ci"
+  ],
+  "m109": [
+   "topic:testing",
+   "cmp:ci",
+   "tech:docker"
+  ],
+  "m110": [
+   "topic:flaky-tests"
+  ],
+  "m111": [
+   "topic:flaky-tests"
+  ],
+  "m112": [
+   "topic:dependencies"
+  ],
+  "m113": [
+   "topic:dependencies",
+   "tech:ktor",
+   "tech:kotlin"
+  ],
+  "m114": [
+   "tech:kotlin",
+   "topic:dependencies"
+  ],
+  "m115": [
+   "cmp:ci"
+  ],
+  "m116": [
+   "proc:git-workflow",
+   "cmp:ci"
+  ],
+  "m117": [
+   "cmp:ci",
+   "tech:docker"
+  ],
+  "m118": [
+   "tech:github-actions",
+   "cmp:ci"
+  ],
+  "m119": [
+   "cmp:ci",
+   "topic:performance"
+  ],
+  "m120": [
+   "cmp:console",
+   "topic:dependencies"
+  ],
+  "m121": [
+   "proc:git-workflow"
+  ],
+  "m122": [
+   "tech:github-actions",
+   "topic:security"
+  ],
+  "m123": [
+   "cmp:analytics",
+   "tech:bigquery",
+   "tech:datastream"
+  ],
+  "m124": [
+   "tech:dbt",
+   "cmp:analytics"
+  ],
+  "m125": [
+   "tech:dbt",
+   "cmp:analytics"
+  ],
+  "m126": [
+   "tech:datastream",
+   "tech:dbt",
+   "topic:money"
+  ],
+  "m127": [
+   "tech:dbt",
+   "topic:naming"
+  ],
+  "m128": [
+   "tech:dbt",
+   "cmp:analytics"
+  ],
+  "m129": [
+   "tech:dbt",
+   "topic:idempotency"
+  ],
+  "m130": [
+   "tech:bigquery",
+   "topic:cost"
+  ],
+  "m131": [
+   "cmp:analytics"
+  ],
+  "m132": [
+   "cmp:analytics",
+   "tech:bigquery",
+   "proc:decision-records"
+  ],
+  "m133": [
+   "cmp:analytics",
+   "topic:personal-data"
+  ],
+  "m134": [
+   "tech:airflow",
+   "cmp:analytics"
+  ],
+  "m135": [
+   "tech:airflow",
+   "tech:datastream"
+  ],
+  "m136": [
+   "tech:datastream",
+   "topic:schema-migration"
+  ],
+  "m137": [
+   "topic:data-retention",
+   "tech:bigquery"
+  ],
+  "m138": [
+   "tech:dbt",
+   "topic:performance"
+  ],
+  "m139": [
+   "topic:personal-data",
+   "cmp:analytics"
+  ],
+  "m140": [
+   "cmp:analytics"
+  ],
+  "m141": [
+   "topic:invoicing",
+   "topic:naming"
+  ],
+  "m142": [
+   "topic:invoicing"
+  ],
+  "m143": [
+   "topic:invoicing"
+  ],
+  "m144": [
+   "topic:tax",
+   "topic:money"
+  ],
+  "m145": [
+   "topic:tax",
+   "topic:money"
+  ],
+  "m146": [
+   "topic:tax",
+   "topic:invoicing"
+  ],
+  "m147": [
+   "topic:tax"
+  ],
+  "m148": [
+   "topic:payments",
+   "tech:stripe"
+  ],
+  "m149": [
+   "topic:payments"
+  ],
+  "m150": [
+   "topic:dunning"
+  ],
+  "m151": [
+   "topic:dunning"
+  ],
+  "m152": [
+   "topic:subscriptions"
+  ],
+  "m153": [
+   "topic:subscriptions",
+   "tech:stripe"
+  ],
+  "m154": [
+   "tech:stripe",
+   "topic:naming"
+  ],
+  "m155": [
+   "tech:stripe",
+   "topic:webhooks"
+  ],
+  "m156": [
+   "tech:stripe",
+   "topic:webhooks"
+  ],
+  "m157": [
+   "topic:e-invoicing"
+  ],
+  "m158": [
+   "topic:e-invoicing",
+   "proc:planning"
+  ],
+  "m159": [
+   "tech:prometheus",
+   "tech:grafana",
+   "topic:monitoring"
+  ],
+  "m160": [
+   "topic:logging"
+  ],
+  "m161": [
+   "topic:logging"
+  ],
+  "m162": [
+   "tech:opentelemetry",
+   "topic:tracing"
+  ],
+  "m163": [
+   "topic:alerting"
+  ],
+  "m164": [
+   "topic:monitoring",
+   "topic:performance"
+  ],
+  "m165": [
+   "topic:alerting",
+   "topic:rate-limiting"
+  ],
+  "m166": [
+   "proc:on-call",
+   "tech:pagerduty"
+  ],
+  "m167": [
+   "topic:alerting",
+   "proc:on-call"
+  ],
+  "m168": [
+   "topic:alerting",
+   "cmp:pdf-rendering"
+  ],
+  "m169": [
+   "tech:prometheus",
+   "topic:monitoring"
+  ],
+  "m170": [
+   "topic:monitoring"
+  ],
+  "m171": [
+   "tech:prometheus",
+   "topic:monitoring"
+  ],
+  "m172": [
+   "tech:prometheus",
+   "topic:cost"
+  ],
+  "m173": [
+   "proc:incident-response",
+   "topic:deployment",
+   "topic:schema-migration"
+  ],
+  "m174": [
+   "proc:incident-response",
+   "topic:secrets",
+   "topic:authentication"
+  ],
+  "m175": [
+   "topic:authentication",
+   "topic:secrets"
+  ],
+  "m176": [
+   "proc:incident-response",
+   "topic:secrets",
+   "tech:external-secrets"
+  ],
+  "m177": [
+   "proc:incident-response"
+  ],
+  "m178": [
+   "proc:incident-response",
+   "topic:schema-migration",
+   "topic:performance"
+  ],
+  "m179": [
+   "proc:incident-response"
+  ],
+  "m180": [
+   "proc:incident-response"
+  ],
+  "m181": [
+   "proc:incident-response",
+   "topic:payments",
+   "topic:idempotency"
+  ],
+  "m182": [
+   "topic:idempotency",
+   "topic:payments",
+   "tech:stripe"
+  ],
+  "m183": [
+   "topic:payments",
+   "tech:stripe"
+  ],
+  "m184": [
+   "proc:incident-response",
+   "cmp:marketing-site"
+  ],
+  "m185": [
+   "proc:change-management",
+   "cmp:database"
+  ],
+  "m186": [
+   "proc:change-management",
+   "topic:deployment"
+  ],
+  "m187": [
+   "topic:dependencies",
+   "proc:code-review"
+  ],
+  "m188": [
+   "topic:code-generation"
+  ],
+  "m189": [
+   "cmp:pdf-rendering",
+   "topic:personal-data",
+   "topic:security"
+  ],
+  "m190": [
+   "proc:decision-records"
+  ],
+  "m191": [
+   "proc:code-review"
+  ],
+  "m192": [
+   "proc:planning"
+  ],
+  "m193": [
+   "proc:git-workflow",
+   "topic:naming"
+  ],
+  "m194": [
+   "proc:code-review"
+  ],
+  "m195": [
+   "topic:money"
+  ],
+  "m196": [
+   "proc:decision-records"
+  ],
+  "m197": [
+   "topic:tax"
+  ],
+  "m198": [
+   "cmp:pdf-rendering"
+  ],
+  "m199": [
+   "cmp:pdf-rendering",
+   "topic:dependencies"
+  ],
+  "m200": [
+   "cmp:pdf-rendering",
+   "cmp:worker"
+  ]
+ },
+ "lexical": {
+  "m001": [
+   "topic:deployment",
+   "cmp:api",
+   "proc:incident-response"
+  ],
+  "m002": [
+   "cmp:cluster",
+   "topic:naming",
+   "tech:kubernetes"
+  ],
+  "m003": [
+   "cmp:cluster"
+  ],
+  "m004": [
+   "topic:deployment",
+   "tech:helm",
+   "cmp:api"
+  ],
+  "m005": [
+   "tech:helm",
+   "topic:naming",
+   "cmp:worker"
+  ],
+  "m006": [
+   "topic:rollback",
+   "tech:docker",
+   "tech:helm"
+  ],
+  "m007": [
+   "topic:deployment"
+  ],
+  "m008": [
+   "topic:deployment",
+   "proc:change-management"
+  ],
+  "m009": [
+   "cmp:pdf-rendering",
+   "topic:invoicing",
+   "cmp:worker"
+  ],
+  "m010": [
+   "topic:encryption",
+   "cmp:ingress",
+   "tech:cert-manager"
+  ],
+  "m011": [
+   "tech:cert-manager"
+  ],
+  "m012": [
+   "tech:docker",
+   "proc:git-workflow",
+   "topic:tracing"
+  ],
+  "m013": [
+   "topic:deployment",
+   "topic:scaling",
+   "cmp:api"
+  ],
+  "m014": [
+   "cmp:database",
+   "tech:kubernetes"
+  ],
+  "m015": [
+   "tech:argo-cd",
+   "proc:code-review",
+   "proc:on-call"
+  ],
+  "m016": [
+   "topic:deployment",
+   "tech:argo-cd",
+   "cmp:cluster"
+  ],
+  "m017": [
+   "topic:deployment",
+   "topic:scaling",
+   "tech:argo-cd"
+  ],
+  "m018": [
+   "cmp:pdf-rendering",
+   "cmp:cluster"
+  ],
+  "m019": [
+   "cmp:pdf-rendering",
+   "topic:invoicing",
+   "topic:performance"
+  ],
+  "m020": [
+   "topic:secrets",
+   "tech:external-secrets",
+   "topic:encryption"
+  ],
+  "m021": [
+   "topic:deployment",
+   "tech:kubernetes",
+   "topic:secrets"
+  ],
+  "m022": [
+   "cmp:marketing-site"
+  ],
+  "m023": [
+   "topic:deployment",
+   "topic:schema-migration",
+   "topic:naming"
+  ],
+  "m024": [
+   "topic:invoicing",
+   "tech:kubernetes",
+   "cmp:pdf-rendering"
+  ],
+  "m025": [
+   "tech:postgresql",
+   "cmp:database",
+   "proc:on-call"
+  ],
+  "m026": [
+   "topic:dependencies",
+   "cmp:database",
+   "tech:postgresql"
+  ],
+  "m027": [
+   "topic:dependencies",
+   "tech:postgresql",
+   "topic:performance"
+  ],
+  "m028": [
+   "topic:dependencies",
+   "tech:postgresql",
+   "topic:subscriptions"
+  ],
+  "m029": [
+   "cmp:database"
+  ],
+  "m030": [
+   "proc:on-call"
+  ],
+  "m031": [
+   "topic:invoicing"
+  ],
+  "m032": [
+   "topic:schema-migration"
+  ],
+  "m033": [
+   "topic:invoicing"
+  ],
+  "m034": [
+   "topic:invoicing",
+   "topic:data-retention"
+  ],
+  "m035": [
+   "tech:pgbouncer",
+   "cmp:database"
+  ],
+  "m036": [
+   "topic:localization",
+   "topic:authentication",
+   "tech:pgbouncer"
+  ],
+  "m037": [
+   "topic:performance"
+  ],
+  "m038": [],
+  "m039": [
+   "topic:backup-recovery",
+   "tech:postgresql",
+   "topic:data-retention"
+  ],
+  "m040": [
+   "proc:on-call",
+   "topic:scaling"
+  ],
+  "m041": [
+   "topic:schema-migration",
+   "topic:naming",
+   "cmp:database"
+  ],
+  "m042": [
+   "topic:invoicing",
+   "topic:tax"
+  ],
+  "m043": [
+   "topic:invoicing",
+   "topic:alerting",
+   "topic:payments"
+  ],
+  "m044": [],
+  "m045": [
+   "topic:authorization",
+   "topic:security"
+  ],
+  "m046": [],
+  "m047": [
+   "cmp:database"
+  ],
+  "m048": [
+   "topic:backup-recovery",
+   "cmp:database"
+  ],
+  "m049": [
+   "topic:backup-recovery",
+   "tech:postgresql"
+  ],
+  "m050": [
+   "cmp:api",
+   "topic:api-conventions"
+  ],
+  "m051": [
+   "topic:invoicing",
+   "cmp:api",
+   "topic:api-conventions"
+  ],
+  "m052": [
+   "topic:invoicing",
+   "topic:alerting",
+   "topic:api-conventions"
+  ],
+  "m053": [
+   "topic:alerting",
+   "topic:api-conventions"
+  ],
+  "m054": [
+   "topic:idempotency",
+   "topic:invoicing"
+  ],
+  "m055": [
+   "topic:idempotency"
+  ],
+  "m056": [
+   "topic:invoicing",
+   "topic:naming",
+   "topic:payments"
+  ],
+  "m057": [
+   "topic:rate-limiting",
+   "topic:idempotency",
+   "topic:secrets"
+  ],
+  "m058": [
+   "topic:invoicing",
+   "topic:webhooks",
+   "topic:rate-limiting"
+  ],
+  "m059": [
+   "topic:webhooks",
+   "cmp:api",
+   "topic:secrets"
+  ],
+  "m060": [
+   "topic:webhooks"
+  ],
+  "m061": [
+   "cmp:api",
+   "topic:idempotency",
+   "topic:webhooks"
+  ],
+  "m062": [],
+  "m063": [
+   "topic:money",
+   "cmp:api"
+  ],
+  "m064": [
+   "topic:money"
+  ],
+  "m065": [
+   "topic:localization",
+   "cmp:api"
+  ],
+  "m066": [
+   "cmp:api",
+   "tech:kotlin",
+   "tech:ktor"
+  ],
+  "m067": [
+   "topic:invoicing",
+   "topic:performance"
+  ],
+  "m068": [],
+  "m069": [
+   "cmp:ingress",
+   "tech:ktor"
+  ],
+  "m070": [
+   "tech:auth0",
+   "topic:authentication"
+  ],
+  "m071": [
+   "topic:secrets",
+   "cmp:api",
+   "topic:naming"
+  ],
+  "m072": [
+   "topic:authentication",
+   "cmp:console",
+   "tech:auth0"
+  ],
+  "m073": [
+   "topic:authorization"
+  ],
+  "m074": [
+   "topic:authorization",
+   "topic:cost"
+  ],
+  "m075": [
+   "topic:authentication",
+   "topic:security",
+   "proc:decision-records"
+  ],
+  "m076": [
+   "topic:testing",
+   "topic:authentication",
+   "topic:security"
+  ],
+  "m077": [
+   "topic:rate-limiting",
+   "cmp:api",
+   "tech:auth0"
+  ],
+  "m078": [
+   "topic:authentication",
+   "topic:authorization"
+  ],
+  "m079": [
+   "topic:secrets",
+   "topic:logging",
+   "topic:authentication"
+  ],
+  "m080": [
+   "cmp:service-mesh",
+   "cmp:cluster",
+   "topic:authentication"
+  ],
+  "m081": [
+   "cmp:database",
+   "topic:encryption",
+   "cmp:service-mesh"
+  ],
+  "m082": [
+   "cmp:api",
+   "proc:on-call"
+  ],
+  "m083": [
+   "cmp:worker",
+   "topic:webhooks",
+   "topic:authorization"
+  ],
+  "m084": [
+   "topic:encryption",
+   "topic:personal-data"
+  ],
+  "m085": [
+   "topic:encryption",
+   "topic:personal-data",
+   "proc:planning"
+  ],
+  "m086": [
+   "topic:security",
+   "proc:incident-response"
+  ],
+  "m087": [
+   "topic:authentication",
+   "topic:subscriptions",
+   "proc:planning"
+  ],
+  "m088": [
+   "topic:deployment",
+   "cmp:console",
+   "topic:alerting"
+  ],
+  "m089": [
+   "tech:react",
+   "topic:naming"
+  ],
+  "m090": [
+   "tech:tanstack-query",
+   "cmp:api"
+  ],
+  "m091": [
+   "cmp:api",
+   "cmp:console",
+   "tech:tanstack-query"
+  ],
+  "m092": [
+   "cmp:console"
+  ],
+  "m093": [
+   "cmp:console"
+  ],
+  "m094": [
+   "topic:money",
+   "cmp:console"
+  ],
+  "m095": [
+   "topic:localization",
+   "topic:deployment"
+  ],
+  "m096": [
+   "topic:localization",
+   "cmp:console"
+  ],
+  "m097": [
+   "topic:testing",
+   "proc:git-workflow",
+   "tech:playwright"
+  ],
+  "m098": [
+   "topic:invoicing",
+   "topic:testing",
+   "topic:flaky-tests"
+  ],
+  "m099": [
+   "cmp:console",
+   "tech:sentry"
+  ],
+  "m100": [
+   "topic:feature-flags",
+   "cmp:console"
+  ],
+  "m101": [
+   "cmp:api"
+  ],
+  "m102": [
+   "cmp:api"
+  ],
+  "m103": [
+   "tech:github-actions",
+   "cmp:ci",
+   "proc:git-workflow"
+  ],
+  "m104": [
+   "cmp:api",
+   "cmp:ci",
+   "tech:gradle"
+  ],
+  "m105": [
+   "cmp:ci",
+   "tech:gradle",
+   "topic:api-conventions"
+  ],
+  "m106": [
+   "proc:code-review",
+   "cmp:api",
+   "cmp:console"
+  ],
+  "m107": [
+   "proc:git-workflow",
+   "topic:invoicing",
+   "cmp:api"
+  ],
+  "m108": [
+   "tech:docker"
+  ],
+  "m109": [
+   "topic:testing",
+   "topic:dependencies",
+   "tech:docker"
+  ],
+  "m110": [
+   "topic:flaky-tests",
+   "topic:testing"
+  ],
+  "m111": [
+   "topic:flaky-tests",
+   "topic:testing",
+   "topic:idempotency"
+  ],
+  "m112": [
+   "topic:dependencies",
+   "proc:code-review"
+  ],
+  "m113": [
+   "tech:kotlin",
+   "tech:ktor",
+   "topic:dependencies"
+  ],
+  "m114": [
+   "tech:kotlin",
+   "topic:subscriptions",
+   "proc:planning"
+  ],
+  "m115": [
+   "cmp:ci",
+   "tech:kotlin"
+  ],
+  "m116": [
+   "cmp:ci",
+   "tech:docker",
+   "topic:deployment"
+  ],
+  "m117": [
+   "tech:docker",
+   "topic:deployment"
+  ],
+  "m118": [
+   "tech:github-actions",
+   "tech:gradle"
+  ],
+  "m119": [
+   "cmp:ci",
+   "cmp:console"
+  ],
+  "m120": [
+   "topic:dependencies",
+   "cmp:cluster",
+   "cmp:console"
+  ],
+  "m121": [
+   "proc:git-workflow",
+   "proc:code-review"
+  ],
+  "m122": [
+   "proc:code-review",
+   "tech:github-actions"
+  ],
+  "m123": [
+   "cmp:analytics",
+   "topic:invoicing",
+   "topic:payments"
+  ],
+  "m124": [
+   "tech:dbt",
+   "cmp:analytics"
+  ],
+  "m125": [
+   "tech:grafana",
+   "topic:monitoring",
+   "tech:dbt"
+  ],
+  "m126": [
+   "tech:dbt",
+   "tech:bigquery",
+   "tech:datastream"
+  ],
+  "m127": [
+   "tech:dbt",
+   "topic:naming"
+  ],
+  "m128": [
+   "tech:helm"
+  ],
+  "m129": [
+   "topic:subscriptions",
+   "topic:dependencies",
+   "proc:planning"
+  ],
+  "m130": [
+   "topic:invoicing",
+   "topic:payments",
+   "cmp:analytics"
+  ],
+  "m131": [
+   "topic:invoicing"
+  ],
+  "m132": [
+   "cmp:analytics",
+   "cmp:database",
+   "proc:decision-records"
+  ],
+  "m133": [
+   "cmp:analytics",
+   "cmp:console"
+  ],
+  "m134": [
+   "tech:airflow"
+  ],
+  "m135": [
+   "tech:airflow",
+   "tech:datastream",
+   "topic:schema-migration"
+  ],
+  "m136": [
+   "proc:planning",
+   "tech:datastream",
+   "topic:schema-migration"
+  ],
+  "m137": [
+   "topic:data-retention",
+   "tech:bigquery"
+  ],
+  "m138": [
+   "proc:git-workflow",
+   "tech:dbt"
+  ],
+  "m139": [
+   "topic:personal-data"
+  ],
+  "m140": [
+   "cmp:analytics"
+  ],
+  "m141": [
+   "topic:invoicing",
+   "proc:incident-response"
+  ],
+  "m142": [
+   "topic:invoicing"
+  ],
+  "m143": [
+   "topic:invoicing"
+  ],
+  "m144": [
+   "topic:money",
+   "topic:tax"
+  ],
+  "m145": [
+   "topic:invoicing",
+   "topic:money",
+   "proc:decision-records"
+  ],
+  "m146": [
+   "topic:invoicing",
+   "topic:tax",
+   "topic:payments"
+  ],
+  "m147": [
+   "topic:invoicing",
+   "topic:tax"
+  ],
+  "m148": [
+   "topic:payments",
+   "tech:stripe"
+  ],
+  "m149": [
+   "topic:payments",
+   "topic:invoicing"
+  ],
+  "m150": [
+   "topic:dunning"
+  ],
+  "m151": [
+   "topic:dunning"
+  ],
+  "m152": [
+   "topic:subscriptions",
+   "proc:planning",
+   "topic:cost"
+  ],
+  "m153": [
+   "topic:subscriptions",
+   "topic:invoicing",
+   "cmp:api"
+  ],
+  "m154": [
+   "tech:stripe",
+   "topic:naming"
+  ],
+  "m155": [
+   "tech:stripe",
+   "topic:secrets",
+   "topic:webhooks"
+  ],
+  "m156": [
+   "topic:invoicing",
+   "topic:authentication",
+   "tech:stripe"
+  ],
+  "m157": [
+   "topic:e-invoicing",
+   "topic:invoicing"
+  ],
+  "m158": [
+   "topic:e-invoicing",
+   "proc:planning"
+  ],
+  "m159": [
+   "tech:grafana",
+   "tech:prometheus",
+   "topic:monitoring"
+  ],
+  "m160": [
+   "topic:logging",
+   "topic:deployment"
+  ],
+  "m161": [
+   "topic:logging",
+   "cmp:ci"
+  ],
+  "m162": [
+   "topic:tracing",
+   "tech:opentelemetry"
+  ],
+  "m163": [
+   "topic:alerting",
+   "topic:payments",
+   "topic:performance"
+  ],
+  "m164": [
+   "topic:performance",
+   "cmp:api",
+   "topic:monitoring"
+  ],
+  "m165": [
+   "topic:alerting",
+   "proc:incident-response",
+   "tech:grafana"
+  ],
+  "m166": [
+   "proc:on-call",
+   "tech:pagerduty"
+  ],
+  "m167": [
+   "proc:on-call",
+   "topic:alerting",
+   "proc:git-workflow"
+  ],
+  "m168": [
+   "topic:alerting",
+   "cmp:pdf-rendering",
+   "topic:subscriptions"
+  ],
+  "m169": [
+   "tech:grafana",
+   "tech:kubernetes",
+   "tech:prometheus"
+  ],
+  "m170": [
+   "cmp:api",
+   "topic:monitoring"
+  ],
+  "m171": [
+   "topic:logging",
+   "topic:monitoring",
+   "proc:change-management"
+  ],
+  "m172": [
+   "topic:invoicing",
+   "topic:monitoring",
+   "tech:prometheus"
+  ],
+  "m173": [
+   "proc:incident-response",
+   "tech:docker",
+   "topic:deployment"
+  ],
+  "m174": [
+   "cmp:worker",
+   "proc:incident-response",
+   "topic:webhooks"
+  ],
+  "m175": [
+   "proc:incident-response"
+  ],
+  "m176": [
+   "topic:invoicing",
+   "cmp:worker",
+   "proc:incident-response"
+  ],
+  "m177": [
+   "proc:incident-response",
+   "proc:on-call"
+  ],
+  "m178": [
+   "topic:schema-migration"
+  ],
+  "m179": [
+   "proc:incident-response",
+   "topic:alerting"
+  ],
+  "m180": [
+   "proc:incident-response",
+   "topic:money"
+  ],
+  "m181": [
+   "topic:idempotency",
+   "topic:payments",
+   "cmp:worker"
+  ],
+  "m182": [
+   "topic:idempotency",
+   "topic:payments",
+   "topic:invoicing"
+  ],
+  "m183": [
+   "topic:payments",
+   "proc:code-review",
+   "tech:stripe"
+  ],
+  "m184": [
+   "proc:incident-response",
+   "cmp:marketing-site"
+  ],
+  "m185": [
+   "topic:authentication",
+   "proc:change-management",
+   "tech:postgresql"
+  ],
+  "m186": [
+   "topic:deployment",
+   "proc:change-management"
+  ],
+  "m187": [
+   "topic:dependencies",
+   "proc:code-review",
+   "cmp:api"
+  ],
+  "m188": [
+   "topic:code-generation",
+   "cmp:api"
+  ],
+  "m189": [
+   "topic:invoicing",
+   "cmp:pdf-rendering"
+  ],
+  "m190": [
+   "proc:decision-records"
+  ],
+  "m191": [
+   "proc:code-review"
+  ],
+  "m192": [
+   "proc:planning",
+   "topic:subscriptions"
+  ],
+  "m193": [
+   "proc:git-workflow",
+   "topic:idempotency",
+   "topic:naming"
+  ],
+  "m194": [
+   "topic:cost",
+   "proc:code-review",
+   "cmp:api"
+  ],
+  "m195": [
+   "topic:money"
+  ],
+  "m196": [
+   "topic:invoicing",
+   "tech:kotlin",
+   "topic:performance"
+  ],
+  "m197": [
+   "topic:tax",
+   "tech:kotlin",
+   "topic:cost"
+  ],
+  "m198": [
+   "cmp:pdf-rendering"
+  ],
+  "m199": [
+   "topic:dependencies",
+   "topic:invoicing",
+   "topic:alerting"
+  ],
+  "m200": [
+   "cmp:pdf-rendering",
+   "topic:invoicing",
+   "cmp:worker"
+  ]
+ },
+ "noisy": {
+  "m001": [
+   "cmp:ingress",
+   "tech:argo-cd"
+  ],
+  "m002": [
+   "cmp:cluster",
+   "cmp:marketing-site"
+  ],
+  "m003": [
+   "cmp:cluster"
+  ],
+  "m004": [
+   "tech:helm"
+  ],
+  "m005": [
+   "topic:schema-migration"
+  ],
+  "m006": [],
+  "m007": [
+   "proc:change-management",
+   "topic:deployment"
+  ],
+  "m008": [
+   "tech:gradle",
+   "topic:deployment"
+  ],
+  "m009": [
+   "cmp:pdf-rendering"
+  ],
+  "m010": [
+   "tech:datastream"
+  ],
+  "m011": [
+   "topic:encryption"
+  ],
+  "m012": [
+   "topic:naming"
+  ],
+  "m013": [
+   "cmp:api",
+   "topic:scaling"
+  ],
+  "m014": [
+   "tech:react",
+   "topic:personal-data"
+  ],
+  "m015": [
+   "tech:kotlin",
+   "topic:flaky-tests"
+  ],
+  "m016": [
+   "cmp:cluster",
+   "tech:argo-cd"
+  ],
+  "m017": [
+   "tech:argo-cd",
+   "topic:scaling"
+  ],
+  "m018": [
+   "cmp:cluster",
+   "cmp:pdf-rendering"
+  ],
+  "m019": [
+   "topic:performance"
+  ],
+  "m020": [
+   "tech:tanstack-query"
+  ],
+  "m021": [
+   "cmp:database",
+   "tech:kubernetes"
+  ],
+  "m022": [
+   "topic:deployment"
+  ],
+  "m023": [
+   "topic:deployment",
+   "topic:schema-migration"
+  ],
+  "m024": [
+   "topic:alerting",
+   "topic:performance"
+  ],
+  "m025": [
+   "cmp:database",
+   "proc:change-management"
+  ],
+  "m026": [
+   "cmp:pdf-rendering",
+   "tech:postgresql"
+  ],
+  "m027": [
+   "topic:performance"
+  ],
+  "m028": [
+   "tech:postgresql",
+   "topic:dependencies",
+   "topic:performance"
+  ],
+  "m029": [
+   "topic:alerting"
+  ],
+  "m030": [
+   "tech:bigquery"
+  ],
+  "m031": [
+   "tech:github-actions",
+   "topic:schema-migration"
+  ],
+  "m032": [
+   "topic:schema-migration"
+  ],
+  "m033": [],
+  "m034": [
+   "topic:money"
+  ],
+  "m035": [
+   "topic:rollback"
+  ],
+  "m036": [],
+  "m037": [
+   "topic:rollback"
+  ],
+  "m038": [],
+  "m039": [
+   "tech:postgresql",
+   "topic:api-conventions"
+  ],
+  "m040": [
+   "tech:grafana"
+  ],
+  "m041": [],
+  "m042": [
+   "topic:subscriptions"
+  ],
+  "m043": [],
+  "m044": [],
+  "m045": [
+   "cmp:database",
+   "topic:authorization"
+  ],
+  "m046": [
+   "cmp:database",
+   "proc:on-call"
+  ],
+  "m047": [
+   "cmp:database",
+   "proc:decision-records"
+  ],
+  "m048": [
+   "topic:backup-recovery"
+  ],
+  "m049": [],
+  "m050": [
+   "topic:api-conventions"
+  ],
+  "m051": [
+   "topic:api-conventions"
+  ],
+  "m052": [
+   "topic:api-conventions",
+   "topic:performance"
+  ],
+  "m053": [
+   "topic:data-retention"
+  ],
+  "m054": [
+   "cmp:api",
+   "topic:localization"
+  ],
+  "m055": [],
+  "m056": [],
+  "m057": [],
+  "m058": [
+   "cmp:ingress"
+  ],
+  "m059": [
+   "topic:security"
+  ],
+  "m060": [
+   "topic:webhooks"
+  ],
+  "m061": [
+   "topic:webhooks"
+  ],
+  "m062": [
+   "topic:code-generation"
+  ],
+  "m063": [
+   "tech:ktor"
+  ],
+  "m064": [
+   "topic:money"
+  ],
+  "m065": [
+   "proc:git-workflow",
+   "topic:api-conventions"
+  ],
+  "m066": [
+   "cmp:api",
+   "tech:kotlin",
+   "topic:localization"
+  ],
+  "m067": [
+   "tech:airflow"
+  ],
+  "m068": [
+   "tech:auth0",
+   "tech:kubernetes"
+  ],
+  "m069": [
+   "cmp:api"
+  ],
+  "m070": [
+   "topic:authentication",
+   "topic:rate-limiting"
+  ],
+  "m071": [
+   "topic:authentication",
+   "topic:secrets"
+  ],
+  "m072": [
+   "tech:auth0"
+  ],
+  "m073": [
+   "topic:authorization"
+  ],
+  "m074": [
+   "topic:authorization"
+  ],
+  "m075": [
+   "proc:decision-records",
+   "tech:gradle",
+   "topic:authentication"
+  ],
+  "m076": [
+   "tech:gradle",
+   "topic:security"
+  ],
+  "m077": [
+   "tech:auth0",
+   "topic:rate-limiting"
+  ],
+  "m078": [
+   "topic:authentication"
+  ],
+  "m079": [],
+  "m080": [
+   "tech:grafana"
+  ],
+  "m081": [
+   "cmp:cluster",
+   "cmp:database",
+   "topic:encryption"
+  ],
+  "m082": [
+   "tech:dbt",
+   "topic:authentication"
+  ],
+  "m083": [
+   "proc:incident-response",
+   "topic:alerting",
+   "topic:authentication"
+  ],
+  "m084": [
+   "tech:gradle"
+  ],
+  "m085": [
+   "tech:tanstack-query"
+  ],
+  "m086": [
+   "topic:security"
+  ],
+  "m087": [
+   "tech:auth0",
+   "topic:authentication"
+  ],
+  "m088": [
+   "tech:react",
+   "topic:alerting"
+  ],
+  "m089": [
+   "topic:naming"
+  ],
+  "m090": [
+   "cmp:console",
+   "tech:tanstack-query"
+  ],
+  "m091": [
+   "tech:cert-manager",
+   "tech:tanstack-query"
+  ],
+  "m092": [
+   "tech:stripe"
+  ],
+  "m093": [
+   "topic:performance"
+  ],
+  "m094": [
+   "cmp:worker",
+   "topic:localization",
+   "topic:money"
+  ],
+  "m095": [],
+  "m096": [
+   "cmp:console"
+  ],
+  "m097": [
+   "tech:playwright"
+  ],
+  "m098": [
+   "tech:playwright",
+   "topic:flaky-tests"
+  ],
+  "m099": [
+   "tech:sentry",
+   "topic:rollback"
+  ],
+  "m100": [
+   "topic:feature-flags"
+  ],
+  "m101": [
+   "cmp:console",
+   "topic:code-generation"
+  ],
+  "m102": [
+   "cmp:console"
+  ],
+  "m103": [
+   "cmp:ci"
+  ],
+  "m104": [
+   "tech:kotlin"
+  ],
+  "m105": [
+   "topic:performance"
+  ],
+  "m106": [
+   "proc:code-review"
+  ],
+  "m107": [
+   "topic:rate-limiting"
+  ],
+  "m108": [
+   "proc:on-call"
+  ],
+  "m109": [
+   "cmp:ci",
+   "tech:docker",
+   "topic:testing"
+  ],
+  "m110": [
+   "topic:flaky-tests"
+  ],
+  "m111": [
+   "topic:flaky-tests"
+  ],
+  "m112": [
+   "topic:dependencies"
+  ],
+  "m113": [
+   "topic:dependencies"
+  ],
+  "m114": [
+   "tech:kotlin",
+   "topic:dependencies"
+  ],
+  "m115": [
+   "cmp:ci"
+  ],
+  "m116": [
+   "cmp:ci",
+   "proc:git-workflow"
+  ],
+  "m117": [],
+  "m118": [
+   "tech:github-actions"
+  ],
+  "m119": [
+   "topic:performance"
+  ],
+  "m120": [
+   "cmp:console",
+   "proc:decision-records"
+  ],
+  "m121": [
+   "proc:git-workflow"
+  ],
+  "m122": [],
+  "m123": [
+   "cmp:cluster"
+  ],
+  "m124": [
+   "cmp:analytics",
+   "tech:dbt"
+  ],
+  "m125": [
+   "cmp:analytics",
+   "topic:tracing"
+  ],
+  "m126": [
+   "tech:datastream"
+  ],
+  "m127": [
+   "tech:dbt",
+   "topic:naming"
+  ],
+  "m128": [
+   "tech:dbt"
+  ],
+  "m129": [
+   "tech:dbt",
+   "topic:idempotency"
+  ],
+  "m130": [
+   "tech:bigquery",
+   "topic:cost"
+  ],
+  "m131": [
+   "cmp:analytics"
+  ],
+  "m132": [
+   "topic:deployment"
+  ],
+  "m133": [
+   "cmp:service-mesh",
+   "topic:personal-data"
+  ],
+  "m134": [
+   "cmp:analytics",
+   "tech:github-actions"
+  ],
+  "m135": [
+   "tech:airflow",
+   "tech:datastream"
+  ],
+  "m136": [
+   "topic:schema-migration"
+  ],
+  "m137": [
+   "topic:data-retention"
+  ],
+  "m138": [
+   "tech:dbt",
+   "topic:performance"
+  ],
+  "m139": [
+   "cmp:analytics"
+  ],
+  "m140": [
+   "topic:logging"
+  ],
+  "m141": [
+   "topic:naming"
+  ],
+  "m142": [],
+  "m143": [
+   "topic:invoicing"
+  ],
+  "m144": [
+   "topic:deployment",
+   "topic:tax"
+  ],
+  "m145": [
+   "topic:authentication"
+  ],
+  "m146": [
+   "topic:invoicing"
+  ],
+  "m147": [
+   "cmp:ci"
+  ],
+  "m148": [
+   "tech:stripe",
+   "topic:payments"
+  ],
+  "m149": [
+   "topic:payments"
+  ],
+  "m150": [],
+  "m151": [
+   "topic:dunning"
+  ],
+  "m152": [
+   "topic:subscriptions"
+  ],
+  "m153": [
+   "topic:subscriptions"
+  ],
+  "m154": [],
+  "m155": [
+   "tech:stripe"
+  ],
+  "m156": [
+   "tech:kubernetes"
+  ],
+  "m157": [
+   "topic:personal-data"
+  ],
+  "m158": [
+   "proc:planning",
+   "topic:e-invoicing"
+  ],
+  "m159": [
+   "tech:prometheus"
+  ],
+  "m160": [
+   "topic:logging"
+  ],
+  "m161": [
+   "cmp:service-mesh"
+  ],
+  "m162": [],
+  "m163": [],
+  "m164": [
+   "topic:performance"
+  ],
+  "m165": [],
+  "m166": [],
+  "m167": [
+   "tech:opentelemetry",
+   "topic:alerting"
+  ],
+  "m168": [
+   "topic:alerting"
+  ],
+  "m169": [
+   "tech:prometheus",
+   "topic:monitoring"
+  ],
+  "m170": [
+   "topic:monitoring"
+  ],
+  "m171": [],
+  "m172": [
+   "tech:prometheus",
+   "topic:cost"
+  ],
+  "m173": [
+   "proc:incident-response",
+   "tech:cert-manager"
+  ],
+  "m174": [
+   "topic:authentication",
+   "topic:secrets"
+  ],
+  "m175": [],
+  "m176": [
+   "proc:incident-response",
+   "tech:external-secrets",
+   "topic:secrets"
+  ],
+  "m177": [],
+  "m178": [
+   "topic:e-invoicing",
+   "topic:performance",
+   "topic:schema-migration"
+  ],
+  "m179": [
+   "proc:incident-response"
+  ],
+  "m180": [
+   "proc:incident-response"
+  ],
+  "m181": [
+   "proc:planning",
+   "tech:github-actions",
+   "topic:payments"
+  ],
+  "m182": [
+   "tech:stripe",
+   "topic:alerting",
+   "topic:payments"
+  ],
+  "m183": [
+   "tech:stripe"
+  ],
+  "m184": [
+   "cmp:marketing-site",
+   "proc:incident-response"
+  ],
+  "m185": [
+   "cmp:database"
+  ],
+  "m186": [
+   "proc:change-management",
+   "topic:deployment"
+  ],
+  "m187": [],
+  "m188": [],
+  "m189": [
+   "tech:auth0"
+  ],
+  "m190": [
+   "tech:stripe"
+  ],
+  "m191": [
+   "proc:code-review"
+  ],
+  "m192": [
+   "proc:planning"
+  ],
+  "m193": [
+   "topic:naming"
+  ],
+  "m194": [
+   "topic:api-conventions"
+  ],
+  "m195": [],
+  "m196": [
+   "cmp:worker"
+  ],
+  "m197": [
+   "topic:monitoring"
+  ],
+  "m198": [
+   "cmp:pdf-rendering"
+  ],
+  "m199": [
+   "topic:dependencies"
+  ],
+  "m200": [
+   "cmp:worker"
+  ]
+ }
+}
