@@ -26,7 +26,8 @@ SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "resu
 OUT = ROOT / "docs" / "api" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
-SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank"]
+SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank",
+          "sparse", "bm25-sparse"]
 SUITE_TITLES = {
     "recall-synthetic": "Synthetic recall set",
     "beir-scifact": "BEIR SciFact",

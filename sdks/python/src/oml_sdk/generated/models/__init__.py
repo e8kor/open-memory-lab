@@ -129,6 +129,7 @@ from .ready_status import ReadyStatus
 from .recall_budget import RecallBudget
 from .recall_budget_counter import RecallBudgetCounter
 from .recall_matched import RecallMatched
+from .recall_matched_tokens_item import RecallMatchedTokensItem
 from .recall_matched_via_item import RecallMatchedViaItem
 from .recall_request import RecallRequest
 from .recall_request_kinds_item import RecallRequestKindsItem
@@ -316,6 +317,7 @@ __all__ = (
     "RecallBudget",
     "RecallBudgetCounter",
     "RecallMatched",
+    "RecallMatchedTokensItem",
     "RecallMatchedViaItem",
     "RecallRequest",
     "RecallRequestKindsItem",
