@@ -1062,8 +1062,9 @@ fn ratify_ratifies_only_pending_edges_the_source_states() {
         ratify: true,
         ..opts()
     };
-    // The proposer does not ratify its own proposal.
-    run(&fake, &src, &ratify);
+    // The proposer does not ratify its own proposal: it is not sent.
+    let own = run(&fake, &src, &ratify);
+    assert_eq!(own.exit, 0, "no ratification was sent and refused: {}", own.json);
     assert!(fake.edges.borrow().iter().all(|e| e.state == "pending"));
     fake.as_key("k-second");
     let report = run(&fake, &src, &ratify);
