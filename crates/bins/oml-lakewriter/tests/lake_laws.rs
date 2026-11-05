@@ -230,6 +230,7 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
             derives_from: if i % 3 == 2 { vec![ids[0]] } else { Vec::new() },
             severity: None,
             rule: None,
+            anchor: None,
         };
         let id = app
             .submit_memory(&writer.value, &req)
