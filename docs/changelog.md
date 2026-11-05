@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design and 0.5.5-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design and 0.5.6-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.5-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.6-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,10 +27,75 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Unreleased
+## 0.5.6-design
 
-Entries kept apart until the release that carries them, newest first. `info.version` stays
-`0.5.5-design` until that release; the recall answer below adds members, it removes none.
+Opened for release v0.5.6, which carries this revision: [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) and
+[ADR-0053](adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md), both accepted with the release. `info.version` moved to `0.5.6-design` once,
+at the release: the recall answer's `search` gained `access`, `pruned`, `rerank`,
+`rerank_reason`, `floor` and `below_floor`, each hit's `matched` gained `rerank` and
+`rank_before` and `matched.via` the value `bm25_postings`, the pipeline names gained
+`bm25-postings` and `bm25-rerank`, and `GET /v2/search` gained `postings`. Members were added and
+none removed. The entries below were kept apart under "Unreleased" until this release, newest
+first.
+
+### 2026-11-05 — Release v0.5.6: recall reads an index, with an optional local reranker
+
+What changes for someone using OML:
+
+- **Search is faster at scale.** Recall now reads an index instead of every memory a key can read.
+  With 99,721 memories readable, a recall over the whole tree answered in 25.5 ms at the 95th
+  percentile where v0.5.5's `bm25` took 485 ms, and it ranks the same: on BEIR SciFact, NFCorpus
+  and LoCoMo its nDCG@10, R@20 and R@100 equal `bm25`'s ([benchmarks](api/benchmarks/index.md),
+  [scale](api/benchmarks/scale.md)). This search, `bm25-postings`, is the new default; `bm25`
+  stays served and can still be named by a request or set as an organisation's default. When a
+  query word is so common that reading it would pass the search's budget, the answer names it in
+  `search.pruned`; it still counts in every hit the other words find.
+- **An optional local reranker, `bm25-rerank`.** It reorders `bm25`'s best candidates with a
+  small cross-encoder, `ms-marco-MiniLM-L6-v2` (Apache-2.0), on the server's own CPU, so no query
+  or memory leaves the server. On OML's recall set it lifts success@1 from `bm25`'s 0.835 to
+  0.893, at 128 ms median per recall against `bm25`'s 16 ms
+  ([recall set](api/benchmarks/recall-synthetic.md)). It is off unless an
+  operator turns it on:
+  1. Place the model's three files (`config.json`, `tokenizer.json`, `model.safetensors`) in
+     `search.rerank.model_dir`, by default `<state>/models/ms-marco-MiniLM-L6-v2`:
+     `scripts/fetch_rerank_model.sh <dir>` downloads them and checks each file's pinned SHA-256,
+     or set `search.rerank.fetch = true` to let the server fetch them at start. With neither,
+     the server never reaches the network for a model.
+  2. Add `bm25-rerank` to `search.enabled`; a request, or an organisation's default, then names
+     it. The server refuses to start, naming the file, when the model is missing or its digest
+     differs.
+
+  `search.rerank.depth` (10), `max_concurrent` (2), `timeout_ms` (1000), `threads` (2) and
+  `max_tokens` (256) bound its cost; a recall that cannot get a slot in time serves `bm25`'s order
+  and says `search.rerank: "skipped"` with the reason ([configuration](operations/configuration.md)).
+- **A relevance floor, off by default.** `search.rerank.floor`, a relevance between 0 and 1,
+  withholds reranked hits below it, so a recall can answer "nothing relevant": the answer has no
+  hit and `search.below_floor` counts what was withheld. It stays off because, on the recall set,
+  a floor that empties a third of the unanswerable queries also empties 3% of the answerable ones.
+- **`oml doctor` checks both.** With an admin key it warns when an organisation's postings are
+  missing, behind, or their counts drift, and names the repair; with `OML_METRICS_URL` set it
+  warns when the slower scan answered more than 5% of `bm25-postings`'s recalls since the server
+  started. Where the reranker is loaded it prints `rerank <model>, depth <n>, floor <f|off>`,
+  and warns when reranks were skipped as busy or late, or failed, since the server started.
+- **The upgrade builds the index once.** Migration 0021 fills the postings of every existing
+  memory when the new server first starts, holding writes while it runs, about 0.4 s per 1,000
+  memories; reads continue. The postings and their counts take about 7 times the space of the
+  memories' text.
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.6; every reader page fetches the
+installer at `v0.5.6`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.6-design`. ADR-0052 and ADR-0053 are accepted, introduced in
+v0.5.6; ADR-0049 stays as it was. The pages that marked them unreleased or proposed now read
+"since v0.5.6".
+
+### 2026-11-05 — Reranking, the relevance floor and bm25-postings merged (implementation)
+
+*2026-11-05 ·* [ADR-0053](adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md). The opt-in `bm25-rerank` pipeline and the relevance floor,
+built on `feat/rerank`, merged beside `bm25-postings`, which stays the default. A pipeline that
+reranks `bm25-postings`'s list is left open in ADR-0053. Pages: [retrieval](architecture/retrieval.md),
+[HTTP API](api/http-api.md), [configuration](operations/configuration.md), `openapi.yaml` and
+`mcp-tools.json`, both SDKs regenerated, the benchmark pages; roadmap FR-88 and FR-89.
 
 ### 2026-11-05 — Text search reads integer postings (implementation)
 

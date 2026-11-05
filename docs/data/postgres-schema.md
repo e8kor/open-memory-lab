@@ -1361,9 +1361,8 @@ deployment's.
 
 ### search postings (ADR-0052)
 
-*Unreleased: migration 0021 on `feat/token-postings`
-([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md),
-proposed).*
+*Introduced in v0.5.6, built in `migrations/0021_search_postings.sql`
+([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)).*
 
 Under row security no text operator reaches an index (`@@`, `%`, `ts_rank` are not leakproof), but
 integer and `uuid` equality are, so 0021 keeps each version's words a second time as integer

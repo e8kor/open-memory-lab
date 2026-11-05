@@ -7,7 +7,7 @@ answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role sp
 
 # ADR-0034 — The lead migrates as an owner role and serves as a role that owns nothing; `_sqlx_migrations` is the one table without row-level security
 
-**Status:** accepted design · 2026-11-03
+**Status:** accepted design · 2026-11-03 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
 
 **Release:** partly in v0.3.1; the rest not scheduled ([releases](../product/releases.md#decisions))
 
