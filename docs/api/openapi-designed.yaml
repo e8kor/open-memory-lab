@@ -1487,6 +1487,27 @@ components:
       pattern: '^[A-Za-z][A-Za-z0-9_-]*:[^\s:]+$'
       description: 'PREFIX:localname over the tenant''s journalled prefix registry; permanent once minted (first promotion).'
 
+    Anchor:
+      type: object
+      additionalProperties: false
+      description: >-
+        The origin the author declares (ADR-0057 d1-d3): signed in the submission event, immutable
+        per version, shown to the reviewer, never fetched by the server, and clear metadata that
+        crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and
+        hasher together or neither. Any other shape is request.validation naming the field; a scan
+        finding in repo, uri, path or fragment is submission.scan_veto.
+      oneOf:
+        - required: [repo, rev, path]
+        - required: [uri]
+      properties:
+        repo: { type: string, maxLength: 200, pattern: '^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*){0,7}$', description: 'The repository, scheme and credentials dropped (github.com/e8kor/open-memory-lab); no segment is . or .. .' }
+        uri: { type: string, format: uri, maxLength: 2048, pattern: '^https://[^@#\s]+$', description: 'A page outside a repository; no user information, no fragment.' }
+        rev: { type: string, minLength: 1, maxLength: 128, description: 'With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace.' }
+        path: { type: string, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
+        fragment: { type: string, minLength: 1, maxLength: 256, pattern: '^[^\s#\x00-\x1f]+$', description: 'A heading slug or an ADR decision handle (d3); absent, the whole file or page.' }
+        hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: 'Digest of the fragment''s text, or the file''s, under hasher.' }
+        hasher: { type: string, enum: [oml-md/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7); ADR-0047 d4 adds oml-span/1.' }
+
     VocabSuggestion:
       type: object
       required: [curie, label, term_status]
@@ -1751,6 +1772,7 @@ components:
 x-oml-designed-fields:
   submitMemory:
     request:
+      anchor: { $ref: '#/components/schemas/Anchor', description: 'Optional on every kind (ADR-0057 d1).' }
       attachments:
         type: array
         maxItems: 64
@@ -1784,6 +1806,7 @@ x-oml-designed-fields:
         description: 'kind=term_mapping only — required then. Structural payload fields (ADR-0021 d6): the scanner''s vocab.mapping_exactMatch routing and the mappings read surface depend on them, so they never ride erasable body bytes.'
   supersedeMemory:
     request:
+      anchor: { $ref: '#/components/schemas/Anchor', description: 'The successor''s own; omitted, it has none, since nothing is inherited from the target (ADR-0057 d2).' }
       attachments: { type: array, maxItems: 64, items: { $ref: 'openapi.yaml#/components/schemas/Digest' }, description: 'Omitted, the successor has no attachments; nothing is inherited from the target.' }
       simulation_id: { type: [string, 'null'], description: 'Required when the target or derives_from touches a simulation row (submission.simulation_id_required otherwise); the key must be in the audience. A tainted successor shadows the tip for its simulation audience only.' }
       simulated_time: { type: [string, 'null'], format: date-time, description: "Declared data, never backdating — the journal keeps the real timestamp." }
@@ -1812,6 +1835,8 @@ x-oml-designed-fields:
         description: 'Required when term_status is deprecated: exactly one replaced_by, or one-or-more consider — the successor rides the deprecating submission atomically; one serve and one verdict cover both (ADR-0021 d3).'
   recallMemories:
     request:
+      anchor_repo: { type: string, maxLength: 200, description: 'Hits whose anchor names this repo; unanchored rows are left out. A predicate before the cut, so the recall never under-returns (ADR-0057 d4).' }
+      anchor_path_prefix: { type: string, description: 'Hits whose anchor path starts with these bytes, at most 1,024 (ADR-0057 d4).' }
       terms:
         type: array
         minItems: 1
@@ -1826,6 +1851,10 @@ x-oml-designed-fields:
           the release pinned by the vocabulary that owns the expanded prefix (per-release
           closure lookup). Steering order and k are untouched; expansion changes the filter,
           never the ranking. Refused with request.validation where unbuilt.
+  listMemories:
+    request:
+      anchor_repo: { type: string, maxLength: 200, description: 'Rows whose anchor names this repo, with own or without it (ADR-0057 d4).' }
+      anchor_path_prefix: { type: string, description: 'Rows whose anchor path starts with these bytes, at most 1,024 (ADR-0057 d4).' }
   createWorkarea:
     request:
       prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record.' }

@@ -50,6 +50,7 @@ Nothing in this section is released. Each row is the plan of 2026-11-03 as revis
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
+| **v0.5.8** | planned | Every memory may say where it came from: a repository, the commit read, the file and the part of it, and a fingerprint of that part's text, all shown to the reviewer and kept with the memory. Recall and the listing find memories by repository and folder. A command, `oml sync`, reads a repository's markdown documents at a commit, one memory per decision of a decision record or per section of any other document, writes what is new, replaces what changed and proposes retiring what was removed, in batches one person reviews at a time, and shows its plan before it writes; it proposes the links between decision records that amend one another, for a person to confirm. A memory whose source moved is marked as such once a sync or a CI check has compared it with the newer document, and `oml sync --check` says which memories a commit made stale. OML's own decision records are the first load. Not in it: anything that reads code. | [ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) (proposed); [ADR-0047](../adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md)'s answers, in part |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
@@ -57,7 +58,7 @@ Proposed records live on branches and draft pull requests until they are accepte
 ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
 ([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
-([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0047 (branch `design/code-map-r2`). The number ADR-0032 is not used by any record.
+([#19](https://github.com/e8kor/open-memory-lab/pull/19)), ADR-0047 ([#59](https://github.com/e8kor/open-memory-lab/pull/59)), ADR-0057 (branch `design/source-anchors-r1`). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
@@ -132,6 +133,8 @@ many memories in one request. A web console beyond the two pages of ADR-0045 is 
 | Recall quality measured: recall events, feedback on a read, the replay and the dashboard | introduced in v0.5.7 |
 | Bulk review on the admin page and in the CLI | introduced in v0.5.7 |
 | Demotion on the admin page | planned for v0.6.0 |
+| A memory's source anchor, recall and listing by origin, and the stale mark | planned for v0.5.8 |
+| `oml sync` for markdown documents, and links between decision records | planned for v0.5.8 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
 | Deliverables and files on any memory | parked |
@@ -194,6 +197,7 @@ which part is still decided, not built.
 | [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) search pipelines | proposed | Introduced in v0.5.5 (increment 1, with ADR-0048's first three stages), while the record is still proposed; later increments not assigned. |
 | [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) search from an index under row security | accepted | Introduced in v0.5.6: `bm25-postings`, the default; the learned sparse kind, `sparse` and `bm25-sparse` (d13–d17), introduced in v0.5.7, opt-in. |
 | [ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md) reranking and the relevance floor | accepted | Introduced in v0.5.6: `bm25-rerank`, opt-in, and the relevance floor, off by default. |
+| [ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) source anchors and `oml sync` | proposed | Planned for v0.5.8. |
 | [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) recall and remember quality, and usage as a ranking signal | accepted in part | The measurement half (d1–d6, d11–d13) introduced in v0.5.7: the quality metrics and dashboard, `recall_events` and `recall_outcomes`, the opt-in query text, the inferred labels and the `feedback` member, and the replay; the ranking half (d7–d10) proposed, not assigned, pending its open question 6. |
 | [ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) bulk review | accepted | Introduced in v0.5.7: bulk review on the admin page and in the CLI, and `same_user` on a claim's approval. |
 | [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | accepted | Introduced in v0.5.0: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |
