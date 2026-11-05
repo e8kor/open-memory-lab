@@ -1,7 +1,7 @@
 <!--
 id: operations/lake
 tier: engineering
-status: proposed with ADR-0060
+status: accepted with ADR-0060
 answers: how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics
 -->
 
@@ -29,6 +29,17 @@ The role in `OML_LAKE_DATABASE_URL` must be neither the owner nor the serving ro
 be a superuser or bypass row security; the writer refuses one that is. One writer runs at a
 time: a second waits for the first's lease. Losing the KEK file makes every sealed body in the
 lake unreadable, as erase does.
+
+The KEK file must be owner-only (mode 600); `run` and `drain-once` refuse to start on one that
+group or others can read. Rotate it with the writer stopped
+(ADR-0060 d19):
+
+```sh
+oml-lakewriter keygen --rotate --kek-file /etc/oml/lake.kek   # takes the lease, re-wraps, retires the old KEK
+```
+
+If it stops part way the file keeps both versions; run it again. Back up the new file with the
+database before restarting the writer.
 
 ## What it holds
 
@@ -86,7 +97,7 @@ Spark reads the same paths with `spark.read.format("delta").load(path)`.
 
 `oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one
 fails: `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`,
-`lake.heartbeat`, `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
+`lake.heartbeat`, `lake.kek` (pass `--kek-file`; permissions, and a warning past 90 days), `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
 The metrics listener serves the `oml_lake_*` families ADR-0060 d16 lists.
 
 ## Erasure

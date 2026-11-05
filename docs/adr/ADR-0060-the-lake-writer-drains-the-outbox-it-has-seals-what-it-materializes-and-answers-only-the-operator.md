@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator
 tier: engineering
-status: proposed · 2026-11-05
-answers: how ADR-0003's lake writer is built against the code as it stands; which parts of ADR-0003 and its pages were stale and what replaces them; the binary and crate split; the outbox input; exactly-once and the stable prefix; the lease; how bodies are sealed and erased before ADR-0005's capture-time keys exist; recall telemetry and benchmark results in the lake; the tables; the operator's queries; maintenance; the Postgres role; dead letters; storage; doctor lines and metrics; the one C library; the laws and their tests
+status: accepted · 2026-11-05
+answers: how ADR-0003's lake writer is built against the code as it stands; which parts of ADR-0003 and its pages were stale and what replaces them; the binary and crate split; the outbox input; exactly-once and the stable prefix; the lease; how bodies are sealed and erased before ADR-0005's capture-time keys exist; recall telemetry and benchmark results in the lake; the tables; the operator's queries; maintenance; the Postgres role; dead letters; storage; doctor lines and metrics; the one C library; who holds the KEK and how it rotates; the laws and their tests
 -->
 
 # ADR-0060 — The lake writer drains the outbox it has, seals what it materializes, and answers only the operator
 
-**Status:** proposed · 2026-11-05 · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
+**Status:** accepted · 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
 
-**Release:** proposed for v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** accepted for v0.6.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0003 (d3, d4, d6), ADR-0005 (d1, d2), ADR-0006 (d1)
 
@@ -89,8 +89,9 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
   `wrapped_dek` NULL and `destroyed_at`, then MERGEs the row to `erased` with no body. Every
   older table version still holding the ciphertext opens under no key from that moment;
   VACUUM removes it within the erasure bound. The cost, stated: the writer holds the KEK and
-  can unwrap, where ADR-0005 d1 gives it an encrypt-only grant; when capture-time keys are
-  built, the writer copies the capture ciphertext and drops the KEK. Amends ADR-0005 d1, d2.
+  can unwrap, where ADR-0005 d1 gives it an encrypt-only grant; d19 accepts that and bounds
+  it. When capture-time keys are built, the writer copies the capture ciphertext and drops the
+  KEK. Amends ADR-0005 d1, d2.
 
 - **d7 — Telemetry enters as daily counts only.** `telemetry.recall_daily` holds, per tenant,
   day, pipeline and access path: recalls, hits, empty recalls, how many events kept text, and
@@ -141,16 +142,37 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
 
 - **d16 — Doctor lines and metrics.** `oml-lakewriter doctor` prints `lake.writer` (no lease
   holder: the writer is down), `lake.lag` (rows past the frontier), `lake.lag_seconds`,
-  `lake.heartbeat`, `lake.commits` (failed ticks and the last error class), `lake.schema`
+  `lake.heartbeat`, `lake.kek` (file permissions, age past 90 days, a rotation left unfinished), `lake.commits` (failed ticks and the last error class), `lake.schema`
   (drift per table), `lake.dead_letter` and `lake.maintenance`. The metrics listener serves
   `oml_lake_frontier_seq`, `_horizon_seq`, `_lag_rows`, `_lag_seconds`, `_batches`, `_rows`
   and `_commit_failures` by table, `_dead_letters`, `_maintenance_runs`, `_maintenance_files`
   and `_batch_millis`; no label names a tenant.
 
-- **d17 — One C library, confined.** deltalake-core 1.1.3 enables reqwest's rustls with aws-lc,
-  a C library, and offers no ring choice. It enters `oml-lakewriter` alone; d1's law keeps it
-  out of the lead and the CLI. The revisit trigger: a delta-rs release that lets the caller pick
-  the rustls provider. Amends ADR-0006 d1 for this binary only.
+- **d17 — One C library, confined to `oml-lakewriter`; an ADR-0006 exception decided by the
+  operator, 2026-11-05.** deltalake-core 1.1.3 enables reqwest's rustls with aws-lc, a C
+  library, and offers no ring choice. ADR-0006 d1 (pure Rust) stands for the server and the
+  CLI; this binary is the one exception. The server and CLI do not link it:
+
+  ```text
+  $ cargo tree -p oml-server-lead -i aws-lc-sys
+  error: package ID specification `aws-lc-sys` did not match any packages
+  $ cargo tree -p oml-cli -i aws-lc-sys
+  error: package ID specification `aws-lc-sys` did not match any packages
+  $ cargo tree -p oml-lakewriter -i aws-lc-sys
+  aws-lc-sys v0.47.0
+  └── aws-lc-rs v1.19.0
+      ├── rustls v0.23.46
+      │   ├── hyper-rustls v0.27.10 …
+  ```
+
+  Cargo reports "did not match any packages" when the crate is not in that package's
+  dependency graph: the server and the CLI contain none of it. d1's law
+  `no_serving_or_client_binary_depends_on_a_lake_crate` keeps it so. The revisit trigger: a
+  delta-rs release that lets the caller pick the rustls provider, or a ring-backed build of
+  the lake adapter. Amends ADR-0006 d1 for this binary only. `deny.toml` carries the
+  matching entries (the licences of four transitive crates, and the two quick-xml advisories
+  reached only through object_store's cloud clients, which the writer does not use because
+  d15 keeps storage local), each commented as operator-approved 2026-11-05.
 
 - **d18 — The laws.** In `crates/bins/oml-lakewriter/tests/lake_laws.rs`, against a throwaway
   cluster: no serving or client binary depends on a lake crate; a drained lake holds every
@@ -158,7 +180,25 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
   the lease and two writers past it write no row twice; an erased body opens in no lake version,
   its text is in no lake file and VACUUM removes its ciphertext; each tenant prefix holds only
   its own rows; a crash between tables, or with an uncommitted data file, replays to the same
-  lake; recall counts reach the lake without query text for 30 days; bench results load once.
+  lake; recall counts reach the lake without query text for 30 days; bench results load once; a rotated KEK keeps every live body readable and an erased body
+  unreadable; a KEK file that group or others can read stops the writer before it connects.
+
+- **d19 — The writer holds the lake KEK; the file is owner-only and rotates. Decided by the
+  operator, 2026-11-05; amends ADR-0005 d1.** ADR-0005 d1 gives the lake an encrypt-only
+  grant. Until capture-time keys exist the writer must unwrap data keys to seal, so it holds
+  the KEK. The bounds: (a) the KEK file is owner-only, and `run` and `drain-once` refuse to
+  start on a file that group or others can read, naming the mode; (b) the file holds KEK
+  versions, newest last, and a data key names the version that wrapped it in
+  `artifact_keys.kek_id`; (c) `oml-lakewriter keygen --rotate --kek-file F` takes the lease
+  (so no writer runs), adds a version, re-wraps every live data key under it in a
+  compare-and-set that never resurrects a destroyed key, checks that no live key is wrapped
+  by an older version, and only then rewrites the file with the new version alone; a
+  rotation that stops part way leaves every version in the file and is finished by running
+  it again; (d) `doctor` prints `lake.kek`: `fail` for a file that is too open or unreadable,
+  `warn` past 90 days (the file's modification time, which a rotation resets) or for an
+  unfinished rotation. Erase is unchanged: it destroys the data key, not the KEK. A KEK
+  leaked while Postgres rows survive opens bodies still present in the lake; rotation limits
+  that window and does not close it.
 
 ## Consequences
 
