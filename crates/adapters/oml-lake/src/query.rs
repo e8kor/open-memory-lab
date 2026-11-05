@@ -1,4 +1,4 @@
-//! The operator's named lake queries (ADR-0058 d11): how the system is
+//! The operator's named lake queries (ADR-0060 d11): how the system is
 //! used, answered from the lake by DataFusion inside `oml-lakewriter`, under
 //! the lake's own file permissions. No server route reaches them and no
 //! client reads the lake (ADR-0013 d1); the same SQL runs in DuckDB or Spark

@@ -132,8 +132,9 @@ On that one key the agent:
    approval;
 5. learns whether a different identity approved them by listing its own work with `state`,
    after which every key that reads the workarea recalls them;
-6. revises or retires a memory with `oml_write` and `replaces`, which is held and approved
-   like any write while recall keeps serving the version it replaces.
+6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
+   which is held and approved like any write while recall keeps serving the version it
+   replaces.
 
 The arguments choose the mode, and an argument outside it is refused with
 `request.validation` naming it. Recall takes `max_tokens` to bound its answer: the steering
@@ -162,7 +163,7 @@ conversation. See the
 your `PATH`. One line installs it for you alone and checks the download:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.7/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.8/scripts/install/install.sh | sh
 ```
 
 v0.4.0 is the first release to carry the installer. Windows, the inspect-first form and the

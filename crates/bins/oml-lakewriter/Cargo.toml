@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The lake writer (ADR-0003, ADR-0006 d1, ADR-0058): one process that drains the Postgres outbox into the Delta lake under its own Postgres role, holds the single-writer lease, runs the lake's maintenance, serves its metrics and doctor lines, and answers the operator's named lake queries. No server route and no client reads the lake."
+description = "The lake writer (ADR-0003, ADR-0006 d1, ADR-0060): one process that drains the Postgres outbox into the Delta lake under its own Postgres role, holds the single-writer lease, runs the lake's maintenance, serves its metrics and doctor lines, and answers the operator's named lake queries. No server route and no client reads the lake."
 
 [[bin]]
 name = "oml-lakewriter"

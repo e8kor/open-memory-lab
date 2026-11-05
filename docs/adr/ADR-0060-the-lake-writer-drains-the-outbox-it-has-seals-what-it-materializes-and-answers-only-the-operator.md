@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0058-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator
+id: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator
 tier: engineering
 status: proposed · 2026-11-05
 answers: how ADR-0003's lake writer is built against the code as it stands; which parts of ADR-0003 and its pages were stale and what replaces them; the binary and crate split; the outbox input; exactly-once and the stable prefix; the lease; how bodies are sealed and erased before ADR-0005's capture-time keys exist; recall telemetry and benchmark results in the lake; the tables; the operator's queries; maintenance; the Postgres role; dead letters; storage; doctor lines and metrics; the one C library; the laws and their tests
 -->
 
-# ADR-0058 — The lake writer drains the outbox it has, seals what it materializes, and answers only the operator
+# ADR-0060 — The lake writer drains the outbox it has, seals what it materializes, and answers only the operator
 
 **Status:** proposed · 2026-11-05 · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
 

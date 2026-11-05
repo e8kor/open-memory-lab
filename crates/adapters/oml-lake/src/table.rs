@@ -1,5 +1,5 @@
 //! The lake's tables, column by column (docs/data/delta-tables.md as
-//! instantiated by ADR-0058), and the generic row-to-Arrow bridge every
+//! instantiated by ADR-0060), and the generic row-to-Arrow bridge every
 //! table writes through.
 
 use std::sync::Arc;
@@ -209,7 +209,7 @@ pub const BRONZE_EVENTS: Spec = Spec {
 };
 
 /// `silver.claims`: one row per materialized claim version, the body sealed
-/// under the version's own data key (delta-tables.md; ADR-0058 d2, d6).
+/// under the version's own data key (delta-tables.md; ADR-0060 d2, d6).
 pub const SILVER_CLAIMS: Spec = Spec {
     name: "silver.claims",
     path: "silver/claims",
@@ -242,7 +242,7 @@ pub const SILVER_CLAIMS: Spec = Spec {
 };
 
 /// `gold.lineage`: ratified edges and the materialized versions' own
-/// derives-from and supersedes links (delta-tables.md; ADR-0058 d9).
+/// derives-from and supersedes links (delta-tables.md; ADR-0060 d9).
 pub const GOLD_LINEAGE: Spec = Spec {
     name: "gold.lineage",
     path: "gold/lineage",
@@ -264,7 +264,7 @@ pub const GOLD_LINEAGE: Spec = Spec {
 };
 
 /// `telemetry.recall_daily`: daily recall aggregates, no query text, no
-/// version ids, the last 30 days only (ADR-0054 d2, d3, d4; ADR-0058 d7).
+/// version ids, the last 30 days only (ADR-0054 d2, d3, d4; ADR-0060 d7).
 pub const RECALL_DAILY: Spec = Spec {
     name: "telemetry.recall_daily",
     path: "telemetry/recall_daily",
@@ -291,7 +291,7 @@ pub const RECALL_DAILY: Spec = Spec {
 
 /// `bench.results`: every number of every `oml-bench/1` file loaded, one
 /// row per metric and category; provider data, not a tenant's
-/// (ADR-0058 d8).
+/// (ADR-0060 d8).
 pub const BENCH_RESULTS: Spec = Spec {
     name: "bench.results",
     path: "bench/results",
@@ -320,7 +320,7 @@ pub const BENCH_RESULTS: Spec = Spec {
 };
 
 /// `lake.batches`: one row per drained batch, its application transaction
-/// version the global frontier (ADR-0058 d3).
+/// version the global frontier (ADR-0060 d3).
 pub const LAKE_BATCHES: Spec = Spec {
     name: "lake.batches",
     path: "lake/batches",

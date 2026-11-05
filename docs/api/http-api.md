@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.5.7-design`), from which moment the covenant — and this section's definition of
+(currently `0.5.8-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -525,6 +525,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v1/memories` | reader; `own=true` admits any tenant role, own rows only | served |
 | `GET /v1/memories/{artifact_id}` | reader; the calling key fetches its own rows in any state | served |
 | `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement | served |
+| `POST /v1/memories/{artifact_id}/source-check` | the version's author key, or dreamer on its workarea; a promoted, anchored served tip only | served |
 | `GET /v1/guardrails` | reader on the scope node; the set under the key's reader access and `guardrail_scope` ([Guardrails](#guardrails-get-v1guardrails)) | served |
 | `POST /v1/attachments/uploads` | writer | designed |
 | `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) | designed |
@@ -978,6 +979,15 @@ R2 keeps every proposer off the review. The target must be the current served ti
 `submission.tip_conflict` with `details.current_tip` when the caller can read it; a held version
 cannot be superseded ([RS-17](../product/roadmap.md)).
 
+*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):*
+`expected_version` is required: the claim's latest version the caller can read, as it last read
+it: the greatest `version` among the claim's promoted versions (where the caller reads the
+workarea) and the versions its own keys wrote, the tip's own when there is none. Another
+author's held version never counts. Any other answers `409 submission.version_conflict` with
+`details.current_version`, after the target is known readable and before the tip check, and
+nothing is captured. A rejected or demoted version does not count. The successor declares its own
+`anchor` or has none ([Source anchors](#source-anchors)).
+
 The tip moves only at ratification, by compare-and-set;
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)
 owns the tip, version-ordinal, competing-successor, kind-change, retirement and retired-claim
@@ -998,12 +1008,48 @@ over: an omitted `kind` makes the successor take the target's, and an omitted `a
 **A guardrail successor** re-sends its `severity`, and its `rule` if it keeps one; a retirement
 sends neither ([Guardrails](#guardrails-get-v1guardrails)).
 
-**Retirement.** The same call with `retirement: true` proposes retiring the claim, open to the
+**Retirement.** The same call with `retirement: true`, and the `expected_version` every
+supersession names, proposes retiring the claim, open to the
 same keys as any supersession ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
 d11). `body` is required and states why; it is scanned, normalized, bounded and digested like
 any body, and it is what the reviewer judges. Its refusals are [errors](errors.md)'
 `request.validation` and `workarea.frozen` rows; what a retired claim serves is declared on
 [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
+
+### Source anchors
+
+*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d1–d5, d18, d21)*
+
+**The anchor.** Submit and supersede take an optional `anchor`, the origin the author declares:
+`{repo, rev, path, fragment?, hash?, hasher?}` for a file in a git repository, or
+`{uri, rev?, fragment?, hash?, hasher?}` for a page outside one. It is signed in the submission
+event, immutable per version, never inherited by a successor, never fetched by the server, shown
+to the reviewer, and kept as clear metadata that erasure does not remove. A malformed anchor is
+`request.validation` naming the field (`/anchor/repo`, `/anchor/path`, …); the scan runs over
+`repo`, `uri`, `path` and `fragment`, and a finding is `submission.scan_veto`. A `fragment` is a
+heading slug, an ADR decision handle `dN` or a line span `L<n>` / `L<n>-L<m>`; `page=<n>` is
+reserved and refused. Every memory item carries `anchor` (or `null`), `stale` and
+`source_checked`.
+
+**Filters.** Recall and `GET /v1/memories` take `anchor_repo` (equal to the anchor's `repo`) and
+`anchor_path_prefix` (a byte prefix of its `path`), combined by AND with every other filter; either
+leaves out unanchored rows. Both run inside each retriever's candidate statement under row
+security, before scoring and the cut: a narrow filter reads the readable anchored ids by the
+anchor index and scores only them, a broad one joins the indexed columns; the repository is an
+equality and the prefix a range on leakproof operators. The statistics a score uses are the
+unfiltered ones, so a filtered recall is the unfiltered list filtered then cut.
+
+**Source check — `POST /v1/memories/{artifact_id}/source-check`.** `{rev, result, hash?, path?,
+fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed`; `path` (and
+`fragment`) only with `moved`, where `path` is required. Admits a promoted, anchored served tip
+(else `request.validation`, `details.field` `/artifact_id`), from the version's author key or a
+dreamer on its workarea (a writer that can read it and did not author it is `403
+access.author_only`; a key that cannot read it, `access.not_found`). Journals `source.checked`;
+changes no text and no anchor. A `moved` check's `path` and `fragment` are scanned as an anchor
+is, and a finding is `submission.scan_veto` naming `/path` or `/fragment`. `200 {artifact_id,
+stale, source_checked, journal_seq}`. `stale`
+is `changed` or `removed` from the latest check of the served version, else `null`; it is never
+derived from a held version. `Idempotency-Key` required.
 
 ### Guardrails — `GET /v1/guardrails`
 

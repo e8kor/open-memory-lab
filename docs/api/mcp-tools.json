@@ -4,7 +4,7 @@
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
     "designed_annex": "mcp-tools.designed.json",
-    "design_spec_version": "0.5.7-design",
+    "design_spec_version": "0.5.8-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
       "oml_read": "ADR-0039 d4 and ADR-0013 d1, d2, ADR-0025 d9: the lineage mode's lineage and depth are designed (mcp-tools.designed.json) and refused with request.validation naming the field until the lineage read is routed. mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log; the build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet.",
@@ -56,6 +56,42 @@
             },
             "description": "Artifact ids this claim derives from, each readable by the key; non-empty, a submission is journalled learn. With replaces the target is included implicitly."
           },
+          "anchor": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited.",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "uri": {
+                "type": "string",
+                "maxLength": 2048
+              },
+              "rev": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "path": {
+                "type": "string"
+              },
+              "fragment": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "hash": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "hasher": {
+                "type": "string",
+                "enum": [
+                  "oml-md/1"
+                ]
+              }
+            }
+          },
           "workarea": {
             "type": "string",
             "description": "The workarea, by node id or name. Without replaces, the workarea written in, omitted the key's default. With replaces it must be the target's workarea."
@@ -63,6 +99,11 @@
           "replaces": {
             "type": "string",
             "description": "The artifact id of the claim's current served tip to supersede (submission.tip_conflict otherwise). A target of a vocabulary kind (term, term_mapping, vocab_release) is refused; supersede it on the HTTP API."
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "With replaces, required: the claim's latest version as you last read it (the version field of the tip you are replacing, or of your own newer held version). If the claim has moved on, the write is refused with submission.version_conflict and details.current_version; read it again before retrying."
           },
           "retirement": {
             "type": "boolean",
@@ -121,6 +162,15 @@
               ]
             },
             "description": "Recall: the hit kinds served; an empty array is refused, so only an absent kinds means no filter. Steering is never a hit."
+          },
+          "anchor_repo": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Recall and listing: only claims whose anchor names this repository (github.com/owner/name); unanchored claims are left out. Refused in get mode."
+          },
+          "anchor_path_prefix": {
+            "type": "string",
+            "description": "Recall and listing: only claims whose anchor path starts with this prefix, such as docs/adr/ or src/store.rs; unanchored claims are left out. Refused in get mode."
           },
           "include_unreviewed": {
             "type": "boolean",

@@ -1,5 +1,5 @@
 //! What the lake writer reads from Postgres, and the two tables it writes
-//! there (ADR-0058 d4, d6, d13, d14). Every tenant read runs in a
+//! there (ADR-0060 d4, d6, d13, d14). Every tenant read runs in a
 //! transaction that sets `oml.tenant_id`, under the same row security the
 //! lead runs under: the writer's role sees one tenant at a time
 //! (delta-tables.md: "the lake-writer already iterates per tenant under an
@@ -10,13 +10,13 @@ use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions};
 use sqlx::{Connection as _, Postgres, Row as _, Transaction};
 use uuid::Uuid;
 
-/// The session advisory lock that is the writer's lease (ADR-0058 d5):
+/// The session advisory lock that is the writer's lease (ADR-0060 d5):
 /// "oml_lake" in ASCII.
 pub const LEASE_KEY: i64 = 0x6f6d_6c5f_6c61_6b65;
 
 /// How long the horizon waits for the transactions that may still hold an
 /// outbox seq at or below the sequence's value before it gives up for this
-/// tick (ADR-0058 d4).
+/// tick (ADR-0060 d4).
 const HORIZON_WAIT_POLLS: u32 = 100;
 
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +24,7 @@ pub enum SourceError {
     #[error("postgres: {0}")]
     Pg(#[from] sqlx::Error),
     /// The writer's login is a superuser or bypasses row security, so row
-    /// security would not hold it to one tenant (ADR-0058 d13).
+    /// security would not hold it to one tenant (ADR-0060 d13).
     #[error(
         "the lake writer's role {0} is a superuser or bypasses row security; give it a role of its own"
     )]
@@ -131,7 +131,7 @@ impl Source {
     }
 
     /// Grants the writer's role what its statements use, through the owner
-    /// URL, then closes it (ADR-0058 d13, after ADR-0034 d4): SELECT on the
+    /// URL, then closes it (ADR-0060 d13, after ADR-0034 d4): SELECT on the
     /// tables it reads and the outbox sequence, and SELECT, INSERT, UPDATE
     /// on the two tables it writes. GRANT is idempotent, so every start
     /// runs it.
@@ -195,7 +195,7 @@ impl Source {
     }
 
     /// The outbox's stable prefix: the greatest seq at or below which no
-    /// transaction can still commit a row (ADR-0003 d4, ADR-0058 d4). It
+    /// transaction can still commit a row (ADR-0003 d4, ADR-0060 d4). It
     /// reads the sequence's value, then the transactions holding the
     /// outbox's insert lock, which every transaction that drew a seq at or
     /// below that value took before drawing it; once those have ended, the
@@ -450,7 +450,7 @@ impl Source {
 
     /// Destroys the version's key: `wrapped_dek` NULL and `destroyed_at`
     /// set, whether or not a key existed, so no later materialization can
-    /// key it again (ADR-0005 d2, ADR-0058 d6).
+    /// key it again (ADR-0005 d2, ADR-0060 d6).
     ///
     /// # Errors
     /// The statement fails.
@@ -524,7 +524,7 @@ impl Source {
 
     /// The tenant's daily recall aggregates over the 30 days Postgres keeps
     /// (ADR-0054 d2): counts only, never a query's text, digest or the
-    /// versions it served (ADR-0058 d7).
+    /// versions it served (ADR-0060 d7).
     ///
     /// # Errors
     /// The query fails.
@@ -620,7 +620,7 @@ impl Source {
 }
 
 /// The single-writer lease: a session advisory lock held on a connection
-/// of its own for as long as the writer runs (ADR-0058 d5). Losing the
+/// of its own for as long as the writer runs (ADR-0060 d5). Losing the
 /// connection loses the lease; the Delta transaction version stays the
 /// fence that holds when two writers overlap (ADR-0016 d3).
 pub struct Lease {

@@ -1,11 +1,11 @@
-//! `oml-lake` — the Delta lake adapter (ADR-0003, ADR-0006 d2, ADR-0058).
+//! `oml-lake` — the Delta lake adapter (ADR-0003, ADR-0006 d2, ADR-0060).
 //!
 //! The lake is derived and never the authority: Postgres commits, the
 //! outbox carries, and this crate writes what one writer drains into
 //! per-tenant Delta tables (delta-tables.md "Per-tenant prefix layout").
 //! Every commit carries the application transaction `oml-lakewriter` at the
 //! batch's end seq; a table applies only rows past its own last version, so
-//! a replayed or re-cut batch writes nothing twice (ADR-0058 d3). It reads
+//! a replayed or re-cut batch writes nothing twice (ADR-0060 d3). It reads
 //! no Postgres and holds no policy: what to write is the writer's.
 //!
 //! No client reads the lake (ADR-0013 d1): the only reader in the tree is
@@ -43,7 +43,7 @@ pub const ERASURE_BOUND: &str = "interval 7 days";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LakeError {
-    /// The lake URL names a scheme this build cannot write (ADR-0058 d15).
+    /// The lake URL names a scheme this build cannot write (ADR-0060 d15).
     #[error("lake.url scheme {0:?} is not supported by this build; use a file path or file:// URL")]
     Scheme(String),
     #[error("lake path: {0}")]
@@ -65,7 +65,7 @@ pub enum Prefix {
     Provider,
 }
 
-/// The lake root: a directory on the local disk (ADR-0058 d15).
+/// The lake root: a directory on the local disk (ADR-0060 d15).
 #[derive(Debug, Clone)]
 pub struct Lake {
     root: PathBuf,
@@ -283,7 +283,7 @@ impl Lake {
     }
 
     /// Replaces the whole table with `rows`: the snapshot tables, whose
-    /// source of truth is recomputed whole each time (ADR-0058 d7).
+    /// source of truth is recomputed whole each time (ADR-0060 d7).
     ///
     /// # Errors
     /// The rows do not fit the table or the commit fails.
@@ -329,7 +329,7 @@ impl Lake {
 
     /// The columns of an existing table that differ from its spec, by name;
     /// empty when the table matches or does not exist (the doctor's schema
-    /// drift line, ADR-0058 d16).
+    /// drift line, ADR-0060 d16).
     ///
     /// # Errors
     /// The log cannot be read.
@@ -359,7 +359,7 @@ impl Lake {
 
     /// One maintenance pass over one table: bin-pack OPTIMIZE, a checkpoint,
     /// VACUUM of files unreferenced for longer than `retention`, and expired
-    /// log cleanup (delta-tables.md maintenance; ADR-0006 d3; ADR-0058 d12).
+    /// log cleanup (delta-tables.md maintenance; ADR-0006 d3; ADR-0060 d12).
     ///
     /// # Errors
     /// Any step fails; the steps before it stand.

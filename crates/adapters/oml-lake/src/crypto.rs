@@ -1,4 +1,4 @@
-//! Body sealing for the lake (ADR-0005 d1, ADR-0058 d6): each materialized
+//! Body sealing for the lake (ADR-0005 d1, ADR-0060 d6): each materialized
 //! claim version gets its own 256-bit data key; the body is sealed under it
 //! with ChaCha20-Poly1305, and the data key is wrapped by the lake's
 //! key-encryption key (KEK). Erase destroys the wrapped data key in

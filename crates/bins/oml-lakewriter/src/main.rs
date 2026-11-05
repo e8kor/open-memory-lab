@@ -1,4 +1,4 @@
-//! `oml-lakewriter` — the lake writer's commands (ADR-0058): `run` drains
+//! `oml-lakewriter` — the lake writer's commands (ADR-0060): `run` drains
 //! the outbox under the single-writer lease and maintains the lake;
 //! `doctor` prints the lake's health lines; `query` runs a named operator
 //! query over the lake files; `load-bench` loads `oml-bench/1` results;
@@ -347,7 +347,7 @@ async fn serve_metrics(listener: tokio::net::TcpListener, registry: Arc<Registry
     }
 }
 
-/// The doctor's lines (ADR-0058 d16): `ok`, `warn` or `fail`, a check name
+/// The doctor's lines (ADR-0060 d16): `ok`, `warn` or `fail`, a check name
 /// and a sentence; exit 1 when any line fails.
 async fn doctor(
     lake: &Lake,

@@ -83,6 +83,8 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
   "ciphertext_digest": "sha256:…",
   "attachments": ["sha256:…", "sha256:…"],
   "derives_from": ["artifact_id…"],
+  "anchor": {"repo": "github.com/e8kor/open-memory-lab", "rev": "ca61c9e…", "path": "docs/adr/ADR-0001-the-constitution.md",
+             "fragment": "d1", "hash": "sha256:…", "hasher": "oml-md/1"},
   "provenance": "agent",
   "simulation_id": null,
   "replaces": null,
@@ -99,6 +101,10 @@ proposal to retire the claim
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10, d11). `body_bytes` is the
 UTF-8 octet length of the NFC-normalized body — the clear integer the recall budget counts
 ([retrieval](../architecture/retrieval.md#token-budgets)).
+`anchor` is the origin the author declared, by value, or `null`: signed with the version and
+immutable, never inherited by a successor, and clear metadata that erasure does not remove
+([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+d1, d2; since v0.5.8). `submission.learn` carries it the same way.
 
 ### submission.learn
 
@@ -123,6 +129,23 @@ one. A derived conclusion without nameable lineage is submitted as `remember` wi
 [ADR-0001](../adr/ADR-0001-the-constitution.md) still bounds what the required field proves: the
 service cannot verify that a declared lineage is complete or true, so the lineage closure is only
 as good as what writers declare.
+
+### source.checked
+
+```json
+{
+  "artifact_id": "…", "workarea_id": "…",
+  "rev": "4b7e0c1a…", "result": "changed", "hash": "sha256:…",
+  "path": null, "fragment": null
+}
+```
+
+*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d5, d18).*
+A statement, by the version's author key or a dreamer on its workarea, that a promoted version's
+anchored span was compared with its source at `rev`: `result` is `fresh`, `equivalent`, `moved`,
+`changed` or `removed`, and `path` and `fragment` name where a `moved` span went. It changes no
+text and no anchor and moves nothing through review; the latest one is folded onto the version's
+row, and a served item's `stale` is computed from it alone. The events tail does not serve it.
 
 ### submission.attach
 

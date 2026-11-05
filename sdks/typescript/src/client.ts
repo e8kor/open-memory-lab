@@ -49,6 +49,10 @@ export interface WriteInput {
   workarea?: SubmitRequest["workarea"];
   /** The served tip this write supersedes. */
   replaces?: string;
+  /** With `replaces`, required: the claim's latest version as last read (ADR-0057 d19). */
+  expected_version?: SupersedeRequest["expected_version"];
+  /** The origin the author declares (ADR-0057 d1). */
+  anchor?: SubmitRequest["anchor"];
   retirement?: SupersedeRequest["retirement"];
   reason?: SupersedeRequest["reason"];
 }
@@ -113,6 +117,8 @@ const READ_RECALL: readonly string[] = [
   "max_tokens",
   "search",
   "match",
+  "anchor_repo",
+  "anchor_path_prefix",
 ];
 const READ_LISTING: readonly string[] = [
   "own",
@@ -124,6 +130,8 @@ const READ_LISTING: readonly string[] = [
   "until",
   "limit",
   "cursor",
+  "anchor_repo",
+  "anchor_path_prefix",
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -253,11 +261,12 @@ export class OmlClient {
    * the field before anything is sent. Only the fields given are sent.
    */
   async write(input: WriteInput, options: WriteOptions = {}): Promise<Written<SubmitAccepted>> {
-    const { text, replaces, claim_key, retirement, reason, ...shared } = input;
+    const { text, replaces, claim_key, retirement, reason, expected_version, ...shared } = input;
     if (replaces === undefined) {
       for (const [field, value] of [
         ["retirement", retirement],
         ["reason", reason],
+        ["expected_version", expected_version],
       ] as const) {
         if (value !== undefined) {
           throw invalid(
@@ -278,8 +287,15 @@ export class OmlClient {
     if (claim_key !== undefined) {
       throw invalid("claim_key", "claim_key is refused with replaces: the new version takes its target's claim_key");
     }
+    if (expected_version === undefined) {
+      throw invalid(
+        "expected_version",
+        "expected_version is required with replaces: the claim's latest version as you last read it, so a supersession never replaces a version it did not see",
+      );
+    }
     const body: SupersedeRequest = {
       body: text,
+      expected_version,
       ...shared,
       ...(retirement !== undefined ? { retirement } : {}),
       ...(reason !== undefined ? { reason } : {}),

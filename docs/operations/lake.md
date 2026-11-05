@@ -1,7 +1,7 @@
 <!--
 id: operations/lake
 tier: engineering
-status: proposed with ADR-0058
+status: proposed with ADR-0060
 answers: how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics
 -->
 
@@ -9,7 +9,7 @@ answers: how to run the lake writer, where the lake lives, what each table holds
 
 The lake writer, `oml-lakewriter`, copies what Postgres commits into Delta tables for analysis
 ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md),
-[ADR-0058](../adr/ADR-0058-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md)).
+[ADR-0060](../adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md)).
 No client reads the lake: recall, search and get are served from Postgres
 ([ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md)). The lake answers the operator's
 questions about how the system is used.
@@ -87,7 +87,7 @@ Spark reads the same paths with `spark.read.format("delta").load(path)`.
 `oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one
 fails: `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`,
 `lake.heartbeat`, `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
-The metrics listener serves the `oml_lake_*` families ADR-0058 d16 lists.
+The metrics listener serves the `oml_lake_*` families ADR-0060 d16 lists.
 
 ## Erasure
 

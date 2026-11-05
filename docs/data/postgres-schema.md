@@ -1156,11 +1156,11 @@ CREATE TABLE artifact_keys (
 );
 ```
 
-As built by migration 0026 (ADR-0058 d6), the lake writer creates the row when it first
+As built by migration 0026 (ADR-0060 d6), the lake writer creates the row when it first
 materializes a version, with `created_at` and the check that `wrapped_dek` is NULL exactly
 when `destroyed_at` is set, and on `lifecycle.erase` nulls the key. Its sibling,
 `lake_dead_letter (tenant_id, outbox_seq, lake_table, reason, at, repaired_at)`, records an
-outbox row a lake table skipped (ADR-0058 d14). Both have row security and no serving-role
+outbox row a lake table skipped (ADR-0060 d14). Both have row security and no serving-role
 grant.
 
 The erase transaction journals the erase event, sets `wrapped_dek` to NULL and `destroyed_at`, and
@@ -1766,6 +1766,27 @@ against 0.17 ms at 45,000 held
 ([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 d9).
 
+
+### Source anchors and source checks (0025)
+
+```sql
+ALTER TABLE memories ADD COLUMN anchor_repo text, … anchor_hasher text,
+                     ADD COLUMN source_check_rev text, … source_check_at text;
+CREATE INDEX memories_anchor ON memories (tenant_id, anchor_repo, anchor_path text_pattern_ops)
+    WHERE anchor_repo IS NOT NULL;
+```
+
+Seven nullable `anchor_*` columns hold a version's anchor as its submission event signed it:
+written at capture, never updated, and kept by erasure as clear metadata. Six `source_check_*`
+columns hold the version's latest `source.checked`, set only on a promoted row; `stale` is read
+from them alone, so a served version is never marked from a held one. Checks keep the shape: one
+of `anchor_repo` and `anchor_uri`, a path exactly with a repository, `anchor_hash` with
+`anchor_hasher`, a closed set of results, and a moved path only on `moved`. The origin filters
+read the partial index under the same row security as every read of `memories`: the listing
+names them in its statement; a filtered recall reads its lists whole and keeps the admitted rows
+in order before the cut, so it never under-returns
+([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+d1–d5, d18; FR-115 measures what reading the lists whole costs).
 ## Migrations
 
 The schema reaches a database only as **sqlx migrations**: plain-SQL files under `migrations/`,

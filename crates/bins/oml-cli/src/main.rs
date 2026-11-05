@@ -165,6 +165,13 @@ enum Command {
     /// Tail the journal's events within the key's reader access, digests
     /// only (GET /v2/events; ADR-0039 d10).
     Events(EventsArgs),
+    /// Keep a workarea in step with a repository's committed documents:
+    /// extract claims at one commit, diff them against the workarea and
+    /// write, check or link them (ADR-0057 d6-d11, d14).
+    Sync(SyncArgs),
+    /// Print the anchor of a committed file or of one part of it, at
+    /// --rev, as one JSON object for oml write --anchor (ADR-0057 d13).
+    Anchor(AnchorArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
@@ -721,6 +728,101 @@ struct CrewsUpdateArgs {
 }
 
 #[derive(Args)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one flag per mode of ADR-0057's contract sketch"
+)]
+struct SyncArgs {
+    /// A file or directory inside a git clone, read at --rev.
+    source: String,
+    /// The workarea to keep in step, by id or name; with --pr the parent of
+    /// the draft's `<workarea>-pr-<n>`.
+    #[arg(long)]
+    workarea: String,
+    /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
+    /// headings otherwise (ADR-0057 d7, d21).
+    #[arg(long)]
+    adapter: Option<String>,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The anchor's repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Print the plan and send nothing.
+    #[arg(long, conflicts_with_all = ["check", "edges"])]
+    dry_run: bool,
+    /// Report each anchored claim and edge against --rev; write no memory.
+    #[arg(long)]
+    check: bool,
+    /// With --check, record the source checks (ADR-0057 d5).
+    #[arg(long, requires = "check")]
+    record: bool,
+    /// The most memories one run writes, so one run is one bulk verdict
+    /// (ADR-0055 d3); the next run continues.
+    #[arg(long, visible_alias = "batch", default_value_t = oml_cli::sync::run::MAX_WRITES)]
+    max_writes: usize,
+    /// Supersede a tip with no anchor in this repository as changed.
+    #[arg(long)]
+    adopt: bool,
+    /// Propose retiring every claim this key wrote in the workarea under the
+    /// source, as when a draft's pull request closes (ADR-0057 d14).
+    #[arg(long, requires = "pr", conflicts_with_all = ["check", "edges"])]
+    retire_all: bool,
+    /// Propose the stated edges between promoted tips (a dreamer key).
+    #[arg(long, conflicts_with = "check")]
+    edges: bool,
+    /// With --edges, ratify the pending edges the source states that another
+    /// key proposed.
+    #[arg(long, requires = "edges")]
+    ratify: bool,
+    /// Allow the maintainer's public server, whose admins read every memory
+    /// and where an anchor and text are never erased (ADR-0057 d6).
+    #[arg(long)]
+    allow_public_server: bool,
+    /// Write a source equal to an older promoted version as changed, a
+    /// deliberate revert (ADR-0057 d20).
+    #[arg(long)]
+    allow_rollback: bool,
+    /// Allow --adapter to name another adapter than the one the workarea's
+    /// claims of this source were written by; the old adapter's claims are
+    /// then retired (ADR-0057 d7).
+    #[arg(long, requires = "adapter")]
+    change_adapter: bool,
+    /// Drafts: load the records pull request <n> adds or changes between
+    /// --base and --rev into `<workarea>-pr-<n>` (ADR-0057 d14).
+    #[arg(long)]
+    pr: Option<u64>,
+    /// A glob of paths left out of the source, repeatable (`docs/adr/**`):
+    /// never read, compared or retired. The set is recorded for the source
+    /// on this clone.
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Allow an exclude set other than the recorded one.
+    #[arg(long)]
+    change_exclude: bool,
+    /// With --pr, the branch the pull request targets.
+    #[arg(long, default_value = "origin/main", requires = "pr")]
+    base: String,
+}
+
+#[derive(Args)]
+struct AnchorArgs {
+    /// A path inside a git clone, with an optional #fragment: a decision
+    /// handle, a heading's slug, or a line span L<n> or L<n>-L<m>.
+    target: String,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// How the file is split into fragments: adr, headings or lines.
+    #[arg(long)]
+    adapter: Option<String>,
+}
+
+#[derive(Args)]
 struct WriteArgs {
     /// The claim text.
     text: String,
@@ -751,8 +853,18 @@ struct WriteArgs {
     workarea: Option<String>,
     /// The promoted tip this write replaces, by artifact id: a new version
     /// of its claim, held like any write.
-    #[arg(long)]
+    #[arg(long, requires = "expected_version")]
     replaces: Option<String>,
+    /// With --replaces, required: the claim's latest version as you last
+    /// read it; the server refuses the write with
+    /// submission.version_conflict if the claim moved on (ADR-0057 d19).
+    #[arg(long = "expected-version", requires = "replaces")]
+    expected_version: Option<u32>,
+    /// Where the claim came from, one JSON object or @file holding one:
+    /// {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …}
+    /// (ADR-0057 d1).
+    #[arg(long, value_parser = parse_anchor_arg)]
+    anchor: Option<serde_json::Value>,
     /// Propose retiring the --replaces claim; the text says why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
@@ -819,6 +931,14 @@ struct ReadArgs {
     /// The next_cursor of the listing's previous page.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     cursor: Option<String>,
+    /// Recall or list only memories anchored in this repository, such as
+    /// github.com/owner/name (ADR-0057 d4).
+    #[arg(long = "anchor-repo", conflicts_with = "artifact_id")]
+    anchor_repo: Option<String>,
+    /// Recall or list only memories whose anchor path starts with this
+    /// prefix, such as docs/adr/ (ADR-0057 d4).
+    #[arg(long = "anchor-path-prefix", conflicts_with = "artifact_id")]
+    anchor_path_prefix: Option<String>,
 }
 
 #[derive(Args)]
@@ -1556,6 +1676,27 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Guardrails { command } => run_guardrails(cli, &stored, command),
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Sync(args) => run_sync(cli, &stored, args),
+        Command::Anchor(args) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+            let adapter = args
+                .adapter
+                .as_deref()
+                .map(oml_cli::sync::adapter::Kind::parse)
+                .transpose()
+                .map_err(CliError::Local)?;
+            let anchor = oml_cli::sync::anchor::anchor(
+                &cwd,
+                &args.target,
+                &args.rev,
+                args.repo.as_deref(),
+                adapter,
+            )
+            .map_err(CliError::Local)?;
+            print_json(&anchor);
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Quickstart(args) => run_quickstart(args),
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
@@ -1700,6 +1841,77 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// oml sync (ADR-0057)
+// ---------------------------------------------------------------------------
+
+/// `oml sync`: refuses the public server unless allowed, reads the source
+/// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
+fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    let client = resolve(cli, stored)?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+    if source::is_public_server(client.server()) {
+        if !args.allow_public_server {
+            return Err(CliError::local(format!(
+                "{} is the maintainer's public server: its admins read every memory, and a \
+                 written anchor and text are never erased; pass --allow-public-server to sync \
+                 to it (ADR-0057 d6)",
+                client.server()
+            )));
+        }
+        eprintln!(
+            "warn: syncing to the public server {}: its admins read every memory, and a written \
+             anchor and text are never erased",
+            client.server()
+        );
+        if let Ok(git) = source::Git::at(&cwd) {
+            let _ = git.set_config(source::ALLOW_PUBLIC_CONFIG, "true");
+        }
+    }
+    let opts = run::Options {
+        source: args.source.clone(),
+        workarea: args.workarea.clone(),
+        adapter: args
+            .adapter
+            .as_deref()
+            .map(Kind::parse)
+            .transpose()
+            .map_err(CliError::Local)?,
+        rev: args.rev.clone(),
+        repo: args.repo.clone(),
+        dry_run: args.dry_run,
+        check: args.check,
+        record: args.record,
+        json: cli.json,
+        max_writes: args.max_writes,
+        adopt: args.adopt,
+        retire_all: args.retire_all,
+        edges: args.edges,
+        ratify: args.ratify,
+        allow_rollback: args.allow_rollback,
+        change_adapter: args.change_adapter,
+        exclude: args.exclude.clone(),
+        change_exclude: args.change_exclude,
+        pr: args.pr,
+        base: args.base.clone(),
+    };
+    let loaded = run::load(&cwd, &opts).map_err(CliError::Local)?;
+    for warning in &loaded.warnings {
+        eprintln!("{warning}");
+    }
+    let api = HttpApi { client };
+    let report = run::execute(&api, &loaded, &opts, &mut std::io::stdout())?;
+    if !opts.dry_run && !opts.check && !opts.edges && report.exit == 0 {
+        run::record_exclude(&loaded, &opts).map_err(CliError::Local)?;
+    }
+    if cli.json {
+        print_json(&report.json);
+    }
+    Ok(ExitCode::from(report.exit))
+}
+
+// ---------------------------------------------------------------------------
 // oml write, oml read, oml events, oml review (ADR-0039 d10)
 // ---------------------------------------------------------------------------
 
@@ -1711,11 +1923,13 @@ struct Write<'a> {
     derives_from: &'a [String],
     workarea: Option<&'a str>,
     replaces: Option<&'a str>,
+    expected_version: Option<u32>,
     retirement: bool,
     reason: Option<&'a str>,
     idempotency_key: Option<&'a str>,
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
+    anchor: Option<&'a serde_json::Value>,
 }
 
 impl<'a> Write<'a> {
@@ -1727,12 +1941,31 @@ impl<'a> Write<'a> {
             derives_from: &args.derives_from,
             workarea: args.workarea.as_deref(),
             replaces: args.replaces.as_deref(),
+            expected_version: args.expected_version,
             retirement: args.retirement,
             reason: args.reason.as_deref(),
             idempotency_key: args.idempotency_key.as_deref(),
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
+            anchor: args.anchor.as_ref(),
         }
+    }
+}
+
+/// `--anchor`: one JSON object, inline or `@file`; whether it is a
+/// well-formed anchor is the server's grammar to decide (ADR-0057 d3).
+fn parse_anchor_arg(text: &str) -> Result<serde_json::Value, String> {
+    let source = match text.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read the anchor file {path}: {e}"))?,
+        None => text.to_owned(),
+    };
+    match serde_json::from_str::<serde_json::Value>(&source) {
+        Ok(value @ serde_json::Value::Object(_)) => Ok(value),
+        Ok(_) => Err(
+            "an anchor is one JSON object, such as {\"repo\":…,\"rev\":…,\"path\":…}".to_owned(),
+        ),
+        Err(e) => Err(format!("an anchor is one JSON object: {e}")),
     }
 }
 
@@ -1769,6 +2002,12 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(rule) = write.rule {
         body["rule"] = rule.clone();
+    }
+    if let Some(anchor) = write.anchor {
+        body["anchor"] = anchor.clone();
+    }
+    if let Some(expected) = write.expected_version {
+        body["expected_version"] = json!(expected);
     }
     if !write.derives_from.is_empty() {
         body["derives_from"] = json!(write.derives_from);
@@ -1840,6 +2079,12 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         if let Some(mode) = &args.match_mode {
             body["match"] = json!(mode);
         }
+        if let Some(repo) = &args.anchor_repo {
+            body["anchor_repo"] = json!(repo);
+        }
+        if let Some(prefix) = &args.anchor_path_prefix {
+            body["anchor_path_prefix"] = json!(prefix);
+        }
         let read = CallOpts {
             auth: true,
             idempotency: false, // read-shaped POST (http-api.md idempotency)
@@ -1856,6 +2101,8 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             ("until", args.until.as_ref()),
             ("limit", limit.as_ref()),
             ("cursor", args.cursor.as_ref()),
+            ("anchor_repo", args.anchor_repo.as_ref()),
+            ("anchor_path_prefix", args.anchor_path_prefix.as_ref()),
         ] {
             if let Some(value) = value {
                 params.push((name, value.clone()));
@@ -2189,6 +2436,7 @@ fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError
             field(item, "principal")
         );
         println!("  claim_key {}", field(item, "claim_key"));
+        println!("  source    {}", anchor_line(&item["anchor"]));
         println!(
             "  body      | {}",
             field(item, "text").replace('\n', "\n            | ")
@@ -2259,10 +2507,34 @@ fn run_review_list(
                     ""
                 }
             );
+            println!("    source {}", anchor_line(&item["anchor"]));
             println!("    | {}", field(item, "text").replace('\n', "\n    | "));
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
+/// commit's first 12 digits, the path and the fragment, or the page; `none`
+/// for an unanchored version.
+fn anchor_line(anchor: &Value) -> String {
+    if !anchor.is_object() {
+        return "none".to_owned();
+    }
+    let fragment = anchor["fragment"]
+        .as_str()
+        .map_or_else(String::new, |f| format!("#{f}"));
+    match anchor["repo"].as_str() {
+        Some(repo) => {
+            let rev = anchor["rev"].as_str().unwrap_or("");
+            format!(
+                "{repo} @ {} {}{fragment}",
+                &rev[..rev.len().min(12)],
+                anchor["path"].as_str().unwrap_or("")
+            )
+        }
+        None => format!("{}{fragment}", anchor["uri"].as_str().unwrap_or("")),
+    }
 }
 
 /// The ids `--ids` names: a file of one per line, `-` for standard input,
@@ -2749,6 +3021,7 @@ fn run_admin(
             println!("    principal   : {}", field(&read, "principal"));
             println!("    user        : {}", field(&read, "user"));
             println!("    derives from: {}", read["derives_from"]);
+            println!("    source      : {}", anchor_line(&read["anchor"]));
             println!("    replaces    : {}", field(&read, "replaces"));
             for v in read["verdicts"].as_array().into_iter().flatten() {
                 println!(
@@ -3806,6 +4079,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut default_node: Option<Value> = None;
+    let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
@@ -3833,6 +4107,21 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                // The claim edges there waiting for a second key, one page
+                // (ADR-0057 d17; ADR-0046 d4).
+                waiting_edges = client
+                    .get(&format!(
+                        "/v2/edges?kind=claim&workarea_id={segment}&limit=200"
+                    ))
+                    .ok()
+                    .map(|(_, page)| {
+                        page["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|e| e["state"] == "pending")
+                            .count()
+                    });
             }
             head_seq = client
                 .get("/v2/events?after_seq=0&limit=1")
@@ -3868,6 +4157,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    // The sync failures of ADR-0057 d17 that the clone alone answers; the
+    // stale count and the waiting edges are the sources lines'.
+    let sync = oml_cli::sync::doctor::lines(
+        source.as_ref().and_then(|s| s.url.map(String::as_str)),
+        &std::env::current_dir().unwrap_or_default(),
+    );
+    let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    let sources = sources_doctor(
+        server_version(ready.as_ref()).as_deref(),
+        default_node.as_ref(),
+        waiting_edges,
+    );
+    let sources_warn = sources.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -3886,6 +4188,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || sync_warn
+        || sources_warn
     {
         "warn"
     } else {
@@ -3927,7 +4231,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "web": web,
             "search": search,
             "review": review,
+            "sync": sync,
             "telemetry": telemetry,
+            "sources": sources,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -4032,6 +4338,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &sync {
+            println!("sync        : {line}");
+        }
+        for line in &sources {
+            println!("sources     : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
@@ -4489,6 +4801,58 @@ fn web_doctor(
         }
     }
     lines
+}
+
+/// Source anchors (ADR-0057 d17): a server before v0.5.8, which accepts no
+/// anchor; the served versions of the key's default workarea that read
+/// stale, as the server counts them; and the claim edges there waiting for
+/// a second key.
+fn sources_doctor(
+    server: Option<&str>,
+    default_node: Option<&Value>,
+    waiting_edges: Option<usize>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    // A client of the same build as the server never warns: the check is
+    // for a client that sends anchors to an older server.
+    if let Some(version) = server
+        && before_anchors(version)
+        && !before_anchors(env!("CARGO_PKG_VERSION"))
+    {
+        lines.push(format!(
+            "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor, the anchor filters and oml sync are refused; upgrade the server"
+        ));
+    }
+    if let Some(node) = default_node
+        && let Some(stale) = node["stale_versions"].as_u64()
+    {
+        let path = node["path"].as_str().unwrap_or("the default workarea");
+        if stale > 0 {
+            lines.push(format!(
+                "warn sources_stale: {stale} served version(s) in {path} read stale: their source changed or went away since they were reviewed, until a successor is reviewed"
+            ));
+        } else {
+            lines.push(format!("no served version in {path} reads stale"));
+        }
+    }
+    if let Some(waiting) = waiting_edges
+        && waiting > 0
+    {
+        lines.push(format!(
+            "{waiting} claim edge(s) in the default workarea wait for a second key to ratify them"
+        ));
+    }
+    lines
+}
+
+/// Whether a server version is before 0.5.8, the first to accept anchors.
+fn before_anchors(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let parts: Vec<u64> = core.split('.').filter_map(|p| p.parse().ok()).collect();
+    match parts.as_slice() {
+        [major, minor, patch, ..] => (*major, *minor, *patch) < (0, 5, 8),
+        _ => false,
+    }
 }
 
 /// The server's version, as `/readyz` names its build, ready or not

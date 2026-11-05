@@ -3800,7 +3800,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "ed25519-dalek",
  "oml-domain",
@@ -3813,7 +3813,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "axum",
  "clap",
@@ -3832,6 +3832,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "toml",
+ "unicode-normalization",
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
@@ -3839,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "oml-domain"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -3854,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "oml-fetch"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3864,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "oml-guardrail"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "hex",
  "proptest",
@@ -3876,7 +3877,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lake"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "chrono",
  "deltalake",
@@ -3893,7 +3894,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lakewriter"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "chrono",
  "clap",
@@ -3916,7 +3917,7 @@ dependencies = [
 
 [[package]]
 name = "oml-pg"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "hex",
  "oml-app",
@@ -3930,7 +3931,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3940,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "oml-rerank"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -3959,7 +3960,7 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -3991,7 +3992,7 @@ dependencies = [
 
 [[package]]
 name = "oml-transport-http"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "axum",
  "getrandom 0.2.17",

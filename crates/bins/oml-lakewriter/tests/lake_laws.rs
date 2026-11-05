@@ -1,4 +1,4 @@
-//! The lake writer's laws (ADR-0003, ADR-0058 d18), against a throwaway
+//! The lake writer's laws (ADR-0003, ADR-0060 d18), against a throwaway
 //! PostgreSQL cluster at `DATABASE_URL` (a superuser, as the oml-pg suite
 //! takes) and a lake under the target's temp directory:
 //!
@@ -59,7 +59,7 @@ fn url(db: &str, role: &str) -> String {
 }
 
 /// A database migrated through its owner, with a serving role and a lake
-/// role of its own granted by the writer's own grant step (ADR-0058 d13).
+/// role of its own granted by the writer's own grant step (ADR-0060 d13).
 struct World {
     db: String,
     store: PgStore,

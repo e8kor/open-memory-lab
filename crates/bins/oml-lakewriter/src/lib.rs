@@ -1,8 +1,8 @@
 //! `oml-lakewriter` — the one process that drains the Postgres outbox into
-//! the Delta lake (ADR-0003 d2, ADR-0006 d1, ADR-0058).
+//! the Delta lake (ADR-0003 d2, ADR-0006 d1, ADR-0060).
 //!
 //! A batch is cut from the outbox's stable prefix, past the global frontier
-//! the `lake.batches` table's transaction version records (ADR-0058 d3, d4).
+//! the `lake.batches` table's transaction version records (ADR-0060 d3, d4).
 //! For each tenant, each table applies only the rows past its own
 //! transaction version and commits with the batch's end as its new one, so
 //! a crash between tables, a replay, or a second writer that slipped past
@@ -54,7 +54,7 @@ impl WriterError {
     }
 }
 
-/// The metrics a writer serves on its own listener (ADR-0058 d16), with
+/// The metrics a writer serves on its own listener (ADR-0060 d16), with
 /// closed label sets: a table name or a maintenance job, never a tenant.
 #[derive(Debug, Default)]
 pub struct Metrics {
@@ -334,7 +334,7 @@ impl Writer {
         *drained.rows.entry(BRONZE_EVENTS.name).or_default() += n;
 
         // silver.claims and gold.lineage: the versions and edges the
-        // events name, as Postgres holds them now (ADR-0058 d2).
+        // events name, as Postgres holds them now (ADR-0060 d2).
         let silver_at = self.lake.applied(p, &SILVER_CLAIMS).await?;
         let lineage_at = self.lake.applied(p, &GOLD_LINEAGE).await?;
         let mut claims: BTreeMap<String, Vec<V>> = BTreeMap::new();
@@ -560,7 +560,7 @@ impl Writer {
 
     /// Rewrites every tenant's `telemetry.recall_daily` from the 30 days
     /// Postgres keeps: a day older than that leaves the lake's current
-    /// version as it leaves Postgres (ADR-0054 d2, ADR-0058 d7).
+    /// version as it leaves Postgres (ADR-0054 d2, ADR-0060 d7).
     ///
     /// # Errors
     /// A read or a commit fails.
@@ -603,7 +603,7 @@ impl Writer {
         Ok(total)
     }
 
-    /// One maintenance pass over every table (ADR-0006 d3, ADR-0058 d12).
+    /// One maintenance pass over every table (ADR-0006 d3, ADR-0060 d12).
     ///
     /// # Errors
     /// The lake cannot be listed; a table's own failure is counted and the
@@ -724,7 +724,7 @@ fn days_since_epoch(d: chrono::NaiveDate) -> i32 {
 }
 
 /// Loads every `oml-bench/1` JSON file under `paths` into `bench.results`,
-/// one row per number, idempotent by the file's digest (ADR-0058 d8).
+/// one row per number, idempotent by the file's digest (ADR-0060 d8).
 /// Files of another schema are skipped. Returns (files loaded, rows).
 ///
 /// # Errors
@@ -841,7 +841,7 @@ fn collect_json(p: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::
 
 /// The status the writer leaves for the doctor, at
 /// `<lake>/_provider/lake/status.json`: times, seqs, counts and error
-/// classes only, never a URL or a credential (ADR-0058 d15, d16).
+/// classes only, never a URL or a credential (ADR-0060 d15, d16).
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     pub pid: u32,
