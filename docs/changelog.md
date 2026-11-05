@@ -27,6 +27,28 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased
+
+### 2026-11-05 — Source anchors and the expected version (ADR-0057, ADR-0049 d13)
+
+What changes for someone using OML: a memory can say where it came from (a repository, the
+commit read, the file and the part of it, and a fingerprint of that part), recall and the listing
+can be narrowed to a repository or a folder, a hit says when its source changed since it was
+reviewed, and replacing a memory names the version you read, so two sessions never both replace
+the same one.
+
+- `info.version` is `0.5.8-design`. `SubmitRequest` and `SupersedeRequest` gain `anchor`;
+  `SupersedeRequest` gains a required `expected_version`; `RecallRequest` and `GET /v1/memories`
+  gain `anchor_repo` and `anchor_path_prefix`; `MemorySummary` gains `anchor`, `stale` and
+  `source_checked`; `POST /v1/memories/{artifact_id}/source-check` is added; the error enum
+  gains `submission.version_conflict`. A supersession without `expected_version` is now refused:
+  the one change that breaks a v0.5.7 caller.
+- `oml_write` gains `anchor` and `expected_version`, `oml_read` gains `anchor_repo` and
+  `anchor_path_prefix`; the catalog stays three tools.
+- The event catalog gains `source.checked`, and `submission.remember` and `submission.learn`
+  carry `anchor`. Migration 0025 adds the anchor and source-check columns and `memories_anchor`.
+- The core caps each retriever's list at its depth before fusion (ADR-0049 d13).
+
 ## 0.5.7-design
 
 Opened for release v0.5.7, which carries this revision: [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13 to d17, the measurement

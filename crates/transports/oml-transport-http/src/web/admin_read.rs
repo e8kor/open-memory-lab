@@ -64,6 +64,12 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "principal": m.memory.author_principal,
         "user": m.author_user.as_ref().map(|n| n.as_str()),
         "created_at": m.memory.created_at.as_str(),
+        // The reviewer judges the anchor beside the text (ADR-0057 d2).
+        "anchor": m
+            .memory
+            .anchor
+            .as_deref()
+            .map_or(Value::Null, oml_app::domain::anchor::Anchor::to_json),
     });
     if full && let Some(obj) = out.as_object_mut() {
         obj.insert(

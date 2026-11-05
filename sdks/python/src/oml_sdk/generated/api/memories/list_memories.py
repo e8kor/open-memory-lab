@@ -19,6 +19,8 @@ def _get_kwargs(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    anchor_repo: str | Unset = UNSET,
+    anchor_path_prefix: str | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -61,6 +63,10 @@ def _get_kwargs(
     params["kind"] = json_kind
 
     params["own"] = own
+
+    params["anchor_repo"] = anchor_repo
+
+    params["anchor_path_prefix"] = anchor_path_prefix
 
     json_since: str | Unset = UNSET
     if not isinstance(since, Unset):
@@ -125,6 +131,8 @@ def sync_detailed(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    anchor_repo: str | Unset = UNSET,
+    anchor_path_prefix: str | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -158,6 +166,11 @@ def sync_detailed(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
+            (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
+            whose anchor names it; unanchored rows are left out (d4).
+        anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
+            bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -180,6 +193,8 @@ def sync_detailed(
         state=state,
         kind=kind,
         own=own,
+        anchor_repo=anchor_repo,
+        anchor_path_prefix=anchor_path_prefix,
         since=since,
         until=until,
         limit=limit,
@@ -204,6 +219,8 @@ def sync(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    anchor_repo: str | Unset = UNSET,
+    anchor_path_prefix: str | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -237,6 +254,11 @@ def sync(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
+            (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
+            whose anchor names it; unanchored rows are left out (d4).
+        anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
+            bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -260,6 +282,8 @@ def sync(
         state=state,
         kind=kind,
         own=own,
+        anchor_repo=anchor_repo,
+        anchor_path_prefix=anchor_path_prefix,
         since=since,
         until=until,
         limit=limit,
@@ -278,6 +302,8 @@ async def asyncio_detailed(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    anchor_repo: str | Unset = UNSET,
+    anchor_path_prefix: str | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -311,6 +337,11 @@ async def asyncio_detailed(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
+            (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
+            whose anchor names it; unanchored rows are left out (d4).
+        anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
+            bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -333,6 +364,8 @@ async def asyncio_detailed(
         state=state,
         kind=kind,
         own=own,
+        anchor_repo=anchor_repo,
+        anchor_path_prefix=anchor_path_prefix,
         since=since,
         until=until,
         limit=limit,
@@ -355,6 +388,8 @@ async def asyncio(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    anchor_repo: str | Unset = UNSET,
+    anchor_path_prefix: str | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
@@ -388,6 +423,11 @@ async def asyncio(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
+            (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
+            whose anchor names it; unanchored rows are left out (d4).
+        anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8
+            bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
@@ -412,6 +452,8 @@ async def asyncio(
             state=state,
             kind=kind,
             own=own,
+            anchor_repo=anchor_repo,
+            anchor_path_prefix=anchor_path_prefix,
             since=since,
             until=until,
             limit=limit,

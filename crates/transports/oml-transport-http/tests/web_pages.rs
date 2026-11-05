@@ -1305,6 +1305,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
         .submit_memory(
             value,
             &oml_app::types::SubmitRequest {
+                anchor: None,
                 idempotency_key: format!("k-{body}"),
                 claim_key: None,
                 verb: Some(oml_app::types::SubmitVerb::Remember),
@@ -1892,6 +1893,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         .recall(
             rig.boot.admin_key.value.as_str(),
             &oml_app::types::RecallRequest {
+                anchor: oml_app::types::AnchorFilter::default(),
                 query: "zebra".to_owned(),
                 k: 5,
                 workarea: None,
@@ -1937,6 +1939,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
         .submit_memory(
             value,
             &oml_app::types::SubmitRequest {
+                anchor: None,
                 idempotency_key: format!("g-{body}"),
                 claim_key: None,
                 verb: None,
@@ -2078,6 +2081,7 @@ async fn the_admin_page_supersedes_and_retires_no_guardrail() {
         let mut fields = vec![
             ("action", "supersede"),
             ("memory", target.as_str()),
+            ("expected_version", "1"),
             ("text", "Run the tests sometimes."),
         ];
         fields.extend(retirement);

@@ -11,11 +11,14 @@ from ..models.memory_summary_kind import MemorySummaryKind
 from ..models.memory_summary_provenance import MemorySummaryProvenance
 from ..models.memory_summary_severity import MemorySummarySeverity
 from ..models.memory_summary_state import MemorySummaryState
+from ..models.stale import Stale
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+    from ..models.source_checked import SourceChecked
 
 
 T = TypeVar("T", bound="MemorySummary")
@@ -50,6 +53,11 @@ class MemorySummary:
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
+        anchor (Anchor | None): The version's anchor, as its author declared it, or null (ADR-0057 d1, d2).
+        stale (None | Stale): changed or removed from the served version's latest source check; null otherwise, and
+            always null on a held version (ADR-0057 d5).
+        source_checked (None | SourceChecked): The version's latest source check, or null; always null on a held version
+            (ADR-0057 d5).
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
@@ -85,6 +93,9 @@ class MemorySummary:
     held_expires_at: datetime.datetime | None
     created_at: datetime.datetime
     promoted_at: datetime.datetime | None
+    anchor: Anchor | None
+    stale: None | Stale
+    source_checked: None | SourceChecked
     retirement: bool = False
     severity: MemorySummarySeverity | Unset = UNSET
     rule: Any | Unset = UNSET
@@ -101,7 +112,9 @@ class MemorySummary:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.anchor import Anchor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.source_checked import SourceChecked
 
         artifact_id = self.artifact_id
 
@@ -144,6 +157,24 @@ class MemorySummary:
             promoted_at = self.promoted_at.isoformat()
         else:
             promoted_at = self.promoted_at
+
+        anchor: dict[str, Any] | None
+        if isinstance(self.anchor, Anchor):
+            anchor = self.anchor.to_dict()
+        else:
+            anchor = self.anchor
+
+        stale: None | str
+        if isinstance(self.stale, Stale):
+            stale = self.stale.value
+        else:
+            stale = self.stale
+
+        source_checked: dict[str, Any] | None
+        if isinstance(self.source_checked, SourceChecked):
+            source_checked = self.source_checked.to_dict()
+        else:
+            source_checked = self.source_checked
 
         severity: str | Unset = UNSET
         if not isinstance(self.severity, Unset):
@@ -214,6 +245,9 @@ class MemorySummary:
                 "held_expires_at": held_expires_at,
                 "created_at": created_at,
                 "promoted_at": promoted_at,
+                "anchor": anchor,
+                "stale": stale,
+                "source_checked": source_checked,
             }
         )
         if severity is not UNSET:
@@ -245,8 +279,10 @@ class MemorySummary:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.source_checked import SourceChecked
 
         d = dict(src_dict)
         artifact_id = d.pop("artifact_id")
@@ -325,6 +361,51 @@ class MemorySummary:
             return cast(datetime.datetime | None, data)
 
         promoted_at = _parse_promoted_at(d.pop("promoted_at"))
+
+        def _parse_anchor(data: object) -> Anchor | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                anchor_type_0 = Anchor.from_dict(data)
+
+                return anchor_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Anchor | None, data)
+
+        anchor = _parse_anchor(d.pop("anchor"))
+
+        def _parse_stale(data: object) -> None | Stale:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                stale_type_0 = Stale(data)
+
+                return stale_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Stale, data)
+
+        stale = _parse_stale(d.pop("stale"))
+
+        def _parse_source_checked(data: object) -> None | SourceChecked:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                source_checked_type_0 = SourceChecked.from_dict(data)
+
+                return source_checked_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | SourceChecked, data)
+
+        source_checked = _parse_source_checked(d.pop("source_checked"))
 
         _severity = d.pop("severity", UNSET)
         severity: MemorySummarySeverity | Unset
@@ -410,6 +491,9 @@ class MemorySummary:
             held_expires_at=held_expires_at,
             created_at=created_at,
             promoted_at=promoted_at,
+            anchor=anchor,
+            stale=stale,
+            source_checked=source_checked,
             severity=severity,
             rule=rule,
             load_warning=load_warning,

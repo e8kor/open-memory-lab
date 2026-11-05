@@ -15,8 +15,8 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen}
 use oml_app::ports::JournalStore;
 use oml_app::search::{MatchMode, Pipeline, RetrieverKind, SearchConfig};
 use oml_app::types::{
-    AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, RecallRequest, RecallResult,
-    SubmitRequest, SupersedeRequest, Verdict,
+    AnchorFilter, AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, RecallRequest,
+    RecallResult, SubmitRequest, SupersedeRequest, Verdict,
 };
 use uuid::Uuid;
 
@@ -148,6 +148,7 @@ fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> Su
         rule: None,
         valid_from: from.map(str::to_owned),
         valid_until: until.map(str::to_owned),
+        anchor: None,
     }
 }
 
@@ -164,6 +165,7 @@ fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
         match_mode: MatchMode::Any,
         include_expired: false,
         now: None,
+        anchor: AnchorFilter::default(),
     }
 }
 
@@ -479,6 +481,8 @@ async fn valid_time_is_refused_on_steering_and_on_a_retirement() {
         reason: None,
         workarea: None,
         refuse_vocabulary_target: false,
+        anchor: None,
+        expected_version: 1,
         severity: None,
         rule: None,
         valid_from: None,
@@ -504,6 +508,8 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         reason: Some("ended".to_owned()),
         workarea: None,
         refuse_vocabulary_target: false,
+        anchor: None,
+        expected_version: 1,
         severity: None,
         rule: None,
         valid_from: None,
@@ -599,6 +605,8 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
         reason: None,
         workarea: None,
         refuse_vocabulary_target: false,
+        anchor: None,
+        expected_version: 1,
         severity: None,
         rule: None,
         valid_from: Some("2026-06-01".to_owned()),

@@ -157,11 +157,16 @@ struct WriteArgs {
     derives_from: Option<Vec<String>>,
     workarea: Option<String>,
     replaces: Option<String>,
+    /// With `replaces`, required: the claim's latest version as last read
+    /// (ADR-0057 d19).
+    expected_version: Option<Value>,
     retirement: Option<bool>,
     reason: Option<String>,
     /// When the memory holds (proposed ADR-0058 d2, d9).
     valid_from: Option<String>,
     valid_until: Option<String>,
+    /// The origin the author declares (ADR-0057 d1).
+    anchor: Option<Value>,
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
@@ -199,11 +204,14 @@ struct ReadArgs {
     /// Recall's expired opt-in and its now (proposed ADR-0058 d3, d5).
     include_expired: Option<bool>,
     now: Option<String>,
+    /// The origin filters, in recall and listing modes (ADR-0057 d4).
+    anchor_repo: Option<String>,
+    anchor_path_prefix: Option<String>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
 const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 10] = [
+const READ_RECALL: [&str; 12] = [
     "query",
     "workarea",
     "k",
@@ -214,8 +222,12 @@ const READ_RECALL: [&str; 10] = [
     "match",
     "include_expired",
     "now",
+    "anchor_repo",
+    "anchor_path_prefix",
 ];
-const READ_LISTING: [&str; 9] = [
+const READ_LISTING: [&str; 11] = [
+    "anchor_repo",
+    "anchor_path_prefix",
     "own",
     "workarea",
     "claim_key",
@@ -550,6 +562,8 @@ where
                 ("reason", args.reason.map(Value::from)),
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
+                ("expected_version", args.expected_version),
+                ("anchor", args.anchor),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -569,6 +583,7 @@ where
             for (field, sent) in [
                 ("retirement", args.retirement.is_some()),
                 ("reason", args.reason.is_some()),
+                ("expected_version", args.expected_version.is_some()),
             ] {
                 if sent {
                     return Err(field_refusal(
@@ -586,6 +601,7 @@ where
                 ("derives_from", args.derives_from.map(Value::from)),
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
+                ("anchor", args.anchor),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -671,6 +687,8 @@ where
             ("match", args.match_mode.is_some()),
             ("include_expired", args.include_expired.is_some()),
             ("now", args.now.is_some()),
+            ("anchor_repo", args.anchor_repo.is_some()),
+            ("anchor_path_prefix", args.anchor_path_prefix.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -721,6 +739,11 @@ where
                 ("match", args.match_mode.map(Value::from)),
                 ("include_expired", args.include_expired.map(Value::from)),
                 ("now", args.now.map(Value::from)),
+                ("anchor_repo", args.anchor_repo.map(Value::from)),
+                (
+                    "anchor_path_prefix",
+                    args.anchor_path_prefix.map(Value::from),
+                ),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -749,6 +772,8 @@ where
                 ("until", args.until),
                 ("limit", args.limit.map(|l| l.to_string())),
                 ("cursor", args.cursor),
+                ("anchor_repo", args.anchor_repo),
+                ("anchor_path_prefix", args.anchor_path_prefix),
             ] {
                 if let Some(value) = value {
                     params.push((name.to_owned(), value));
@@ -873,6 +898,9 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("promoted_at", "promoted_at"),
         ("valid_from", "valid_from"),
         ("valid_until", "valid_until"),
+        ("anchor", "anchor"),
+        ("stale", "stale"),
+        ("source_checked", "source_checked"),
     ]
     .into_iter()
     .map(|(from, to)| (to.to_owned(), m[from].clone()))

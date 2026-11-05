@@ -305,6 +305,25 @@ success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685
 (0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
 two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; FR-118).
 
+**Capped before fusion.** *Since v0.5.8 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13):*
+the depth the core reads each list to (`k` alone, at least 50 for reciprocal rank, at least 100
+for a convex combination, at least the rerank depth) is a cap the core enforces before fusion,
+whatever an adapter returns, so no retriever contributes more candidates than another.
+
+**Filtered by origin, marked by the source.** *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d4, d5):*
+`anchor_repo` and `anchor_path_prefix` are a predicate of each retriever's candidate statement,
+combined by AND with every other filter; either leaves out unanchored rows. The PostgreSQL store
+first reads the readable anchored ids by the anchor index, up to `ANCHOR_FIRST_MAX` (2,000): within
+it, a list scores only those ids' postings or rows (anchor-first); above it, the statement joins
+the filter on the indexed columns (postings-first). The repository is an equality and the prefix
+the range `[prefix, upper)` on `text_pattern_ops`' leakproof `~>=~` and `~<~`, so the index
+serves the serving role under row security. Corpus statistics and document frequencies stay the
+unfiltered ones, so a filtered list is the unfiltered list filtered then cut; FR-115 records the
+latency. Every served item carries its
+`anchor`, and `stale` (`changed` or `removed`) from its latest source check: checks are recorded
+only on promoted served tips, so a mark never derives from a held version and tells no reader
+that one exists (R3).
+
 ## The recall-ordering contract: steering rows first, unranked
 
 *Available since v0.2.0 · [releases](../product/releases.md)*

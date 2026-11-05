@@ -186,6 +186,7 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 /// idempotency key, so distinct submissions never collide (ADR-0025 d18).
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
+        anchor: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -209,6 +210,7 @@ fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
 
 fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
+        anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
         workarea: None,
@@ -227,6 +229,8 @@ fn recall_req(query: &str) -> RecallRequest {
 /// no kind sent, no retirement, no ancestor beyond the target.
 fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
+        anchor: None,
+        expected_version: 1,
         idempotency_key: idem.to_owned(),
         target_id: target,
         body: body.to_owned(),
@@ -240,6 +244,14 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+    }
+}
+
+/// `req` naming `version` as the claim's latest (ADR-0057 d19).
+fn at_version(req: SupersedeRequest, version: u32) -> SupersedeRequest {
+    SupersedeRequest {
+        expected_version: version,
+        ..req
     }
 }
 
@@ -729,13 +741,14 @@ async fn supersede_is_author_only_and_tip_only() {
     assert!(matches!(err, AppError::NotFound), "{err:?}");
 
     // Held successors of one tip coexist, each at its own ordinal, and
-    // none blocks another (ADR-0025 d10).
+    // none blocks another (ADR-0025 d10), once each names the claim's
+    // latest version (ADR-0057 d19).
     let v2 = app
         .supersede(&writer.value, &revise("v2"))
         .await
         .expect("supersede");
     let v3 = app
-        .supersede(&writer.value, &revise("v3"))
+        .supersede(&writer.value, &at_version(revise("v3"), 2))
         .await
         .expect("a second held successor of the same tip");
     assert_eq!(
@@ -3415,7 +3428,10 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
         .await
         .expect("ratify");
     let err = app
-        .supersede(&writer.value, &supersede_req("sup-2", first, "v3"))
+        .supersede(
+            &writer.value,
+            &at_version(supersede_req("sup-2", first, "v3"), 2),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -3446,6 +3462,8 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     app.post_verdict(&approver.value, edit, Verdict::Approve, None)
         .await
         .expect("ratify the edit");
+    // The version check counts only versions it can read, so it names the
+    // one it read and meets the tip check (ADR-0057 d19).
     let err = app
         .supersede(&blind.value, &supersede_req("sup-b", blind_first, "v3"))
         .await
@@ -3567,7 +3585,10 @@ async fn superseding_a_retirement_version_returns_the_claim_to_recall() {
     let revived = app
         .supersede(
             &writer.value,
-            &supersede_req("sup-1", retirement, "the canary drains again"),
+            &at_version(
+                supersede_req("sup-1", retirement, "the canary drains again"),
+                2,
+            ),
         )
         .await
         .expect("supersede the retirement version")
@@ -3657,7 +3678,15 @@ async fn a_successor_kind_changes_only_within_its_class() {
         ("s-4", memory, MemoryKind::DerivedFact, true),
     ] {
         let err = app
-            .supersede(&writer.value, &with_kind(idem, target, kind, retirement))
+            .supersede(
+                &writer.value,
+                &SupersedeRequest {
+                    // The memory's held steering successor is its latest
+                    // version (ADR-0057 d19).
+                    expected_version: if target == memory { 2 } else { 1 },
+                    ..with_kind(idem, target, kind, retirement)
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::KindChangeRefused { .. }), "{err:?}");
@@ -5709,6 +5738,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
         app.list_memories(
             admin,
             &ListRequest {
+                anchor: oml_app::types::AnchorFilter::default(),
                 own: false,
                 workarea: Some(by_name("crew")),
                 state: None,

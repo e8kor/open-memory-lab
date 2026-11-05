@@ -79,9 +79,29 @@ export interface paths {
         put?: never;
         /**
          * Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest version the caller can read (its promoted versions where the caller reads the workarea, and the versions its own keys wrote; never another author's held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
          */
         post: operations["supersedeMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/{artifact_id}/source-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057 d5, d18).
+         * @description Requires: the version's author key (writer), or a dreamer with dreamer effective access on its workarea; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version's new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span's new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workarea.
+         */
+        post: operations["sourceCheckMemory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1009,6 +1029,8 @@ export interface components {
             user?: string | null;
             /** Format: date-time */
             created_at: string;
+            /** @description The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2). */
+            anchor?: components["schemas"]["Anchor"] | null;
         };
         /** @description An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page. */
         WebEmail: {
@@ -1041,7 +1063,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1085,6 +1107,7 @@ export interface components {
             workarea?: components["schemas"]["WorkareaRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
+            anchor?: components["schemas"]["Anchor"];
         };
         SubmitAccepted: {
             artifact_id: string;
@@ -1172,6 +1195,12 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             promoted_at: string | null;
+            /** @description The version's anchor, as its author declared it, or null (ADR-0057 d1, d2). */
+            anchor: components["schemas"]["Anchor"] | null;
+            /** @description changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5). */
+            stale: components["schemas"]["Stale"] | null;
+            /** @description The version's latest source check, or null; always null on a held version (ADR-0057 d5). */
+            source_checked: components["schemas"]["SourceChecked"] | null;
             /** @description When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0058 d2). */
             valid_from?: string | null;
             /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0058 d2, d4). */
@@ -1201,6 +1230,8 @@ export interface components {
              * @default true
              */
             include_text?: boolean;
+            anchor_repo?: components["schemas"]["AnchorRepo"];
+            anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             /**
              * @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they count against k and max_tokens. Rules: docs/architecture/retrieval.md.
              * @default false
@@ -1465,6 +1496,9 @@ export interface components {
         SupersedeRequest: {
             /** @description Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired. */
             body: string;
+            /** @description The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19). */
+            expected_version: number;
+            anchor?: components["schemas"]["Anchor"];
             /** @description When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7). */
             workarea?: components["schemas"]["WorkareaRef"];
             /**
@@ -1486,6 +1520,65 @@ export interface components {
             valid_from?: components["schemas"]["ValidEnd"];
             /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0058 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
+        };
+        /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
+        Anchor: {
+            repo?: components["schemas"]["AnchorRepo"];
+            /** @description A page outside a repository: an absolute https URL with no user information and no fragment. */
+            uri?: string;
+            /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace. */
+            rev?: string;
+            /** @description With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character. */
+            path?: string;
+            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). */
+            fragment?: string;
+            /** @description Digest of the fragment's text, or the file's, under hasher. */
+            hash?: string;
+            /**
+             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).
+             * @enum {string}
+             */
+            hasher?: "oml-md/1";
+        };
+        /** @description A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out (d4). */
+        AnchorRepo: string;
+        /** @description A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4). */
+        AnchorPathPrefix: string;
+        /**
+         * @description The served version's latest source check when it is changed or removed. Computed from the source alone, never from a held successor (ADR-0057 d5).
+         * @enum {string}
+         */
+        Stale: "changed" | "removed";
+        SourceChecked: {
+            /** @description The commit or page version the span was compared at. */
+            rev: string;
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            result: "fresh" | "equivalent" | "moved" | "changed" | "removed";
+            /** @description Where a moved check found the span (ADR-0057 d18); null for any other result. */
+            moved_to: {
+                path: string;
+                fragment: string | null;
+            } | null;
+        };
+        SourceCheckRequest: {
+            /** @description The anchor's rev grammar: with a repo anchor, 40 or 64 lower-case hex digits. */
+            rev: string;
+            /** @enum {string} */
+            result: "fresh" | "equivalent" | "moved" | "changed" | "removed";
+            /** @description The span's hash at rev under the anchor's hasher; refused on an anchor without one. */
+            hash?: string;
+            /** @description For moved alone, required: the span's new path, under the anchor path grammar. */
+            path?: string;
+            /** @description For moved alone: the span's new fragment, under the fragment grammar. */
+            fragment?: string;
+        };
+        SourceCheckResult: {
+            artifact_id: string;
+            stale: components["schemas"]["Stale"] | null;
+            source_checked: components["schemas"]["SourceChecked"];
+            journal_seq: number;
         };
         /** @description A named crew record — recorded, not operated; OML never contacts the external manager (docs/architecture/workareas.md, Crews; ADR-0026 d8). */
         Crew: {
@@ -1533,6 +1626,8 @@ export interface components {
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkareaView: components["schemas"]["Workarea"] & {
+            /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea. */
+            stale_versions: number;
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;
@@ -2283,6 +2378,10 @@ export interface operations {
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
+                /** @description Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo. */
+                anchor_repo?: components["schemas"]["AnchorRepo"];
+                /** @description Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4). */
+                anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
                 since?: string;
                 until?: string;
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
@@ -2648,6 +2747,60 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    sourceCheckMemory: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                artifact_id: components["parameters"]["ArtifactId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description The check is journalled; the version's stale as it now reads. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "artifact_id": "0193a8f2-7c41-7d2e-9b1a-3c5e7f9a1b2d",
+                     *       "stale": "changed",
+                     *       "source_checked": {
+                     *         "rev": "4b7e0c1a9d22f3e8a1c6b5d4e3f2a1b0c9d8e7f6",
+                     *         "at": "2026-11-05T18:00:00Z",
+                     *         "result": "changed",
+                     *         "moved_to": null
+                     *       },
+                     *       "journal_seq": 4301
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SourceCheckResult"];
+                };
+            };
+            403: components["responses"]["Error"];
+            404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };

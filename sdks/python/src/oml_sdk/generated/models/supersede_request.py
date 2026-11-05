@@ -10,6 +10,7 @@ from ..models.supersede_request_kind import SupersedeRequestKind
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
 
 
@@ -25,6 +26,14 @@ class SupersedeRequest:
         Attributes:
             body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
                 larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
+            expected_version (int): The claim's latest version the caller can read, as it last read it: its promoted
+                versions where it reads the workarea and its own keys' versions; never another author's held version. Any other
+                is 409 submission.version_conflict, details.current_version (ADR-0057 d19).
+            anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+                immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
+                shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
+                Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
+                or fragment is submission.scan_veto.
             workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
                 any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
                 bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
@@ -53,6 +62,8 @@ class SupersedeRequest:
     """
 
     body: str
+    expected_version: int
+    anchor: Anchor | Unset = UNSET
     workarea: str | Unset = UNSET
     retirement: bool | Unset = False
     kind: SupersedeRequestKind | Unset = UNSET
@@ -65,6 +76,12 @@ class SupersedeRequest:
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
+
+        expected_version = self.expected_version
+
+        anchor: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anchor, Unset):
+            anchor = self.anchor.to_dict()
 
         workarea: str | Unset
         if isinstance(self.workarea, Unset):
@@ -101,8 +118,11 @@ class SupersedeRequest:
         field_dict.update(
             {
                 "body": body,
+                "expected_version": expected_version,
             }
         )
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
         if workarea is not UNSET:
             field_dict["workarea"] = workarea
         if retirement is not UNSET:
@@ -126,10 +146,20 @@ class SupersedeRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
 
         d = dict(src_dict)
         body = d.pop("body")
+
+        expected_version = d.pop("expected_version")
+
+        _anchor = d.pop("anchor", UNSET)
+        anchor: Anchor | Unset
+        if isinstance(_anchor, Unset):
+            anchor = UNSET
+        else:
+            anchor = Anchor.from_dict(_anchor)
 
         def _parse_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
@@ -171,6 +201,8 @@ class SupersedeRequest:
 
         supersede_request = cls(
             body=body,
+            expected_version=expected_version,
+            anchor=anchor,
             workarea=workarea,
             retirement=retirement,
             kind=kind,

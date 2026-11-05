@@ -30,6 +30,7 @@ use oml_domain::access::{
     TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_issuance, effective_access,
     effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
 };
+use oml_domain::anchor::{self as anchor_grammar, Anchor, SourceCheckBody};
 use oml_domain::brief::{brief_cut, brief_order};
 use oml_domain::budget::{budget_tokens, cut};
 use oml_domain::claim_edges::{
@@ -87,11 +88,12 @@ use crate::types::{
     ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
     OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
     RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    RerankOutcome, ServedGuardrail, ServedMemory, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
-    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
-    WorkareaRecord, WorkareaStatusView,
+    RerankOutcome, ServedGuardrail, ServedMemory, SourceCheck, SourceCheckReceipt,
+    SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
+    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
+    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
+    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
+    WorkareaStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
@@ -101,7 +103,8 @@ use crate::types::{
 use crate::search::{
     Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
     OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_READ, apply_floor,
-    apply_recency, fuse, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
+    apply_recency, fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms,
+    rerank_order,
 };
 use oml_domain::valid_time::{
     ValidEnd, ValidTime, Window, fixed_width, parse_now, parse_window, recency_factor,
@@ -457,7 +460,24 @@ fn submit_request_digest(
             }
         }
     }
+    let doc = with_anchor(doc, req.anchor.as_ref());
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// A request digest's document with the anchor when sent, and unchanged
+/// otherwise, so an unanchored request digests as it did before anchors
+/// (ADR-0057 d2).
+fn with_anchor(mut doc: Value, anchor: Option<&Anchor>) -> Value {
+    if let (Some(anchor), Some(members)) = (anchor, doc.as_object_mut()) {
+        members.insert("anchor".to_owned(), anchor.to_json());
+    }
+    doc
+}
+
+/// The submission payload's `anchor`: the object as declared, or `null`
+/// (ADR-0057 d2; event-catalog.md).
+fn anchor_payload(anchor: Option<&Anchor>) -> Value {
+    anchor.map_or(Value::Null, Anchor::to_json)
 }
 
 /// A request digest's document with a guardrail's `severity` and `rule`
@@ -597,11 +617,13 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
             "retirement": req.retirement,
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "reason": req.reason,
+            "expected_version": req.expected_version,
         },
     });
     let mut doc = doc;
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
+        *body = with_anchor(body.take(), req.anchor.as_ref());
         if let Some(members) = body.as_object_mut() {
             for (name, value) in [
                 ("valid_from", &req.valid_from),
@@ -2846,7 +2868,13 @@ where
         } else {
             self.brief(&caller, node).await?
         };
+        let stale_versions = if structure {
+            0
+        } else {
+            self.journal.stale_count(tenant_id, node).await?
+        };
         Ok(WorkareaInfo {
+            stale_versions,
             path: derived_path(&ancestry),
             policy: review_policy(),
             pending_transitions,
@@ -3883,6 +3911,7 @@ where
             claim_key: req.claim_key.clone(),
             since: req.since.clone(),
             until: req.until.clone(),
+            anchor: req.anchor.clone(),
         };
         // One row past the page says whether another page exists.
         let mut rows = self
@@ -4027,6 +4056,7 @@ where
             req.kind,
             false,
         )?;
+        self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -4095,6 +4125,8 @@ where
             created_at: self.clock.now(),
             guardrail,
             valid,
+            anchor: req.anchor.clone().map(Box::new),
+            source_check: None,
         };
 
         // The catalog payload of submission.remember: digest-only, body
@@ -4113,6 +4145,7 @@ where
             "ciphertext_digest": Value::Null,
             "attachments": [],
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "anchor": anchor_payload(req.anchor.as_ref()),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": Value::Null,
@@ -4973,6 +5006,7 @@ where
             // An ended version is outside the scope unless asked for: a
             // visibility rule, never a weight (proposed ADR-0058 d3).
             expired_at: (!req.include_expired).then_some(now_us),
+            anchor: req.anchor.clone(),
         };
         let pipeline = self
             .pipeline_for(key.tenant_id, req.search.as_deref())
@@ -5570,12 +5604,15 @@ where
                     .await?;
                 lists.push((kind, list));
             }
+            let terms = query_terms(&lists);
+            let access = pipeline_access(&lists);
+            let pruned = pruned_words(&lists);
             let run = PipelineRun {
-                fused: fuse(&lists, pipeline.fusion()),
-                terms: query_terms(&lists),
+                fused: fuse_capped(lists, pipeline.fusion(), depth),
+                terms,
                 fallback: attempt > 0,
-                access: pipeline_access(&lists),
-                pruned: pruned_words(&lists),
+                access,
+                pruned,
             };
             if !run.fused.is_empty() {
                 return Ok(run);
@@ -5622,6 +5659,206 @@ where
         } else {
             Err(AppError::NotFound)
         }
+    }
+
+    /// The scan over an anchor's `repo`, `uri`, `path` and `fragment`
+    /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
+    /// finding of the deterministic scanner, hold or veto alike, refuses the
+    /// write naming the field, since a written anchor is never erased.
+    fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
+        let Some(anchor) = anchor else {
+            return Ok(());
+        };
+        self.scan_fields(tenant_id, &anchor.scanned(), "/anchor/path")
+    }
+
+    /// The anchor scan over `fields`: the one named `path_field` vetoed when
+    /// its file name has a secret's shape, and every field by the
+    /// deterministic scanner, a hold counting as a veto (ADR-0057 d2).
+    fn scan_fields(
+        &self,
+        tenant_id: Uuid,
+        fields: &[(&'static str, &str)],
+        path_field: &str,
+    ) -> Result<(), AppError> {
+        for &(field, value) in fields {
+            if field == path_field && anchor_grammar::secret_shaped(value) {
+                return Err(AppError::AnchorScanVeto {
+                    field,
+                    finding: "anchor.secret_path".to_owned(),
+                });
+            }
+            match self.scanner.scan(&AdmissionEnvelope {
+                tenant_id,
+                kind: "anchor",
+                body: value,
+            }) {
+                ScanOutcome::Pass => {}
+                ScanOutcome::Hold(finding) | ScanOutcome::Veto(finding) => {
+                    return Err(AppError::AnchorScanVeto { field, finding });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a source check on a promoted, anchored served tip (ADR-0057
+    /// d5, d18): from its author key (writer), or a dreamer with dreamer
+    /// access on its workarea; a writer that can read it and did not author
+    /// it is `access.author_only`, and a key that cannot read it is told
+    /// nothing. A held, unanchored or superseded version is
+    /// `request.validation` naming `/artifact_id`. Journals `source.checked`
+    /// and folds it onto the row as the version's latest check, in one
+    /// commit with the idempotency record; nothing moves through review and
+    /// no text or anchor changes.
+    pub async fn source_check(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &SourceCheckRequest,
+    ) -> Result<(SourceCheckReceipt, bool), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        let admissible = admissible_grant_roles(key.role);
+        let dreamer = admissible.contains(&Role::Dreamer);
+        if !dreamer && !admissible.contains(&Role::Writer) {
+            return Err(AppError::VerbCeiling {
+                role: key.role,
+                verb: "source_check",
+            });
+        }
+        let scope = IdempotencyScope {
+            tenant_id: key.tenant_id,
+            key_id: key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: req.idempotency_key.clone(),
+        };
+        let request_digest = sha256_digest_string(&canonical_bytes(&json!({
+            "method": "POST",
+            "route": "/v1/memories/{artifact_id}/source-check",
+            "path_params": { "artifact_id": req.memory_id.to_string() },
+            "body": {
+                "rev": req.rev,
+                "result": req.result.as_str(),
+                "hash": req.hash,
+                "path": req.path,
+                "fragment": req.fragment,
+            },
+        }))?);
+        if let Some(record) = self.journal.idempotency_get(&scope).await? {
+            if record.request_digest != request_digest {
+                return Err(AppError::IdempotencyDigestMismatch);
+            }
+            let receipt: SourceCheckReceipt = serde_json::from_value(record.response)
+                .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+            return Ok((receipt, true));
+        }
+        let prev = self.head_event(key.tenant_id).await?;
+        let target = self
+            .journal
+            .memory(key.tenant_id, req.memory_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !self.readable(&caller, &target).await? {
+            return Err(AppError::NotFound);
+        }
+        if dreamer {
+            self.require_access(&caller, target.workarea_id, Role::Dreamer, "source_check")
+                .await?;
+        } else {
+            if target.author_key_id != key.key_id {
+                return Err(AppError::AuthorOnly);
+            }
+            self.require_access(&caller, target.workarea_id, Role::Writer, "source_check")
+                .await?;
+        }
+        let invalid = |reason: &str| AppError::SourceCheckInvalid {
+            field: "/artifact_id".to_owned(),
+            reason: reason.to_owned(),
+        };
+        if target.status != MemoryStatus::Promoted || !target.is_tip {
+            return Err(invalid(
+                "a source check names a promoted served tip, never a held or superseded version",
+            ));
+        }
+        let Some(anchor) = target.anchor.as_deref() else {
+            return Err(invalid("the version has no anchor to check"));
+        };
+        let body = SourceCheckBody::check(
+            anchor,
+            &req.rev,
+            req.result,
+            req.hash.as_deref(),
+            req.path.as_deref(),
+            req.fragment.as_deref(),
+        )
+        .map_err(|e| AppError::SourceCheckInvalid {
+            field: e.field,
+            reason: e.reason,
+        })?;
+        // Where a span moved is kept for good and served to every reader,
+        // so it is scanned as an anchor is (ADR-0057 d2, d18).
+        if let Some((path, fragment)) = &body.moved_to {
+            let mut fields: Vec<(&'static str, &str)> = vec![("/path", path.as_str())];
+            if let Some(fragment) = fragment {
+                fields.push(("/fragment", fragment.as_str()));
+            }
+            self.scan_fields(key.tenant_id, &fields, "/path")?;
+        }
+        let at = self.clock.now();
+        let (moved_path, moved_fragment) = body
+            .moved_to
+            .clone()
+            .map_or((None, None), |(p, f)| (Some(p), f));
+        let payload = json!({
+            "artifact_id": target.memory_id.to_string(),
+            "workarea_id": target.workarea_id.to_string(),
+            "rev": body.rev,
+            "result": body.result.as_str(),
+            "hash": body.hash,
+            "path": moved_path,
+            "fragment": moved_fragment,
+        });
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::SOURCE_CHECKED,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
+        let receipt = SourceCheckReceipt {
+            memory_id: target.memory_id,
+            rev: body.rev.clone(),
+            result: body.result.as_str().to_owned(),
+            moved_path,
+            moved_fragment,
+            at: at.as_str().to_owned(),
+            journal_seq: event.envelope.seq,
+        };
+        let idempotency = Some(IdempotencyPut {
+            scope,
+            record: IdempotencyRecord {
+                request_digest,
+                response: serde_json::to_value(&receipt)
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?,
+            },
+        });
+        self.commit(
+            event,
+            MetadataFold::SourceChecked {
+                memory_id: target.memory_id,
+                check: SourceCheck {
+                    rev: body.rev,
+                    result: body.result,
+                    hash: body.hash,
+                    moved_to: body.moved_to,
+                    at,
+                },
+            },
+            idempotency,
+        )
+        .await?;
+        Ok((receipt, false))
     }
 
     /// Propose a successor of the target's claim, held like any write: the
@@ -5728,6 +5965,43 @@ where
                 workarea: sent.clone(),
             });
         }
+        // The claim's latest version the caller may read (promoted, or held
+        // by its own keys), read after the head: a capture that commits in
+        // between moves the head and the retry reads it again. Anything but
+        // the version the caller names is refused before the tip check,
+        // nothing captured; another author's held version never changes the
+        // answer (ADR-0057 d19; R3).
+        let claim_state = self
+            .journal
+            .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
+            .await?;
+        let reads_promoted = self
+            .require_access(&caller, target.workarea_id, Role::Reader, "supersede")
+            .await
+            .is_ok();
+        let latest = self
+            .journal
+            .claim_latest_readable(
+                key.tenant_id,
+                target.workarea_id,
+                &target.claim_key,
+                &caller.own_key_ids(),
+                reads_promoted,
+            )
+            .await?
+            .unwrap_or(target.version);
+        if req.expected_version != latest {
+            // An attempt under the same key that committed since the lookup
+            // above made the claim move on: its record answers this one, as
+            // it answers any replay (http-api.md idempotency).
+            if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
+                return Ok(SupersedeOutcome {
+                    receipt,
+                    replayed: true,
+                });
+            }
+            return Err(AppError::VersionConflict { current: latest });
+        }
         if target.status != MemoryStatus::Promoted || !target.is_tip {
             return Err(AppError::TipConflict {
                 current_tip: self
@@ -5771,6 +6045,7 @@ where
             kind,
             req.retirement,
         )?;
+        self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
@@ -5809,10 +6084,7 @@ where
         // version of the claim_key in the workarea, whatever its state; a
         // capture that commits in between moves the head, and the retry
         // reads both again (ADR-0025 d10, ordinals).
-        let version = self
-            .journal
-            .claim_key_state(key.tenant_id, target.workarea_id, &target.claim_key)
-            .await?
+        let version = claim_state
             .greatest_version
             .unwrap_or(0)
             .checked_add(1)
@@ -5854,6 +6126,8 @@ where
             created_at: self.clock.now(),
             guardrail,
             valid,
+            anchor: req.anchor.clone().map(Box::new),
+            source_check: None,
         };
 
         // The catalog payload of the submission, digest-only, plus what it
@@ -5875,6 +6149,7 @@ where
             "ciphertext_digest": Value::Null,
             "attachments": [],
             "derives_from": derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "anchor": anchor_payload(req.anchor.as_ref()),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": {

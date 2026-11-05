@@ -37,6 +37,9 @@ class WorkareaView:
             path (str): Derived ltree path, the names from universe joined with "."; never the grant target, and never
                 accepted as a reference.
             status (WorkareaStatus):
+            stale_versions (int): The promoted served tips on this node whose latest source check found the source changed
+                or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's
+                default workarea.
             children (list[WorkareaViewChildrenItem]): The readable immediate children, ordered by path_leaf ascending in
                 byte order, then id; a child's path_leaf is its name.
             edges (list[WorkareaViewEdgesItem]): The workarea edges touching the node whose other endpoint the key can read,
@@ -63,6 +66,7 @@ class WorkareaView:
     parent_id: None | str
     path: str
     status: WorkareaStatus
+    stale_versions: int
     children: list[WorkareaViewChildrenItem]
     edges: list[WorkareaViewEdgesItem]
     my_effective_verbs: list[WorkareaViewMyEffectiveVerbsItem]
@@ -88,6 +92,8 @@ class WorkareaView:
         path = self.path
 
         status = self.status.value
+
+        stale_versions = self.stale_versions
 
         children = []
         for children_item_data in self.children:
@@ -138,6 +144,7 @@ class WorkareaView:
                 "parent_id": parent_id,
                 "path": path,
                 "status": status,
+                "stale_versions": stale_versions,
                 "children": children,
                 "edges": edges,
                 "my_effective_verbs": my_effective_verbs,
@@ -180,6 +187,8 @@ class WorkareaView:
         path = d.pop("path")
 
         status = WorkareaStatus(d.pop("status"))
+
+        stale_versions = d.pop("stale_versions")
 
         children = []
         _children = d.pop("children")
@@ -251,6 +260,7 @@ class WorkareaView:
             parent_id=parent_id,
             path=path,
             status=status,
+            stale_versions=stale_versions,
             children=children,
             edges=edges,
             my_effective_verbs=my_effective_verbs,

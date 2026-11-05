@@ -457,6 +457,8 @@ pub fn held_memory(
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
         guardrail: None,
         valid: Default::default(),
+        anchor: None,
+        source_check: None,
     }
 }
 
@@ -932,6 +934,7 @@ pub trait KeywordAllReads: Retriever {
         k: usize,
     ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
         let scope = CandidateScope {
+            anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
             own_held: None,
@@ -966,6 +969,7 @@ pub trait KeywordAllReads: Retriever {
         k: usize,
     ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
         let scope = CandidateScope {
+            anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
@@ -4167,6 +4171,7 @@ fn page_ids(page: &[MemoryRecord]) -> Vec<Uuid> {
 /// A listing filter that narrows nothing beyond its scope.
 fn listing(scope: ListingScope) -> ListingFilter {
     ListingFilter {
+        anchor: oml_app::types::AnchorFilter::default(),
         scope,
         subtree: None,
         state: None,
@@ -4271,6 +4276,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
+            anchor: oml_app::types::AnchorFilter::default(),
             subtree: Some(vec![denied]),
             ..own(Vec::new())
         })
@@ -4280,6 +4286,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
+            anchor: oml_app::types::AnchorFilter::default(),
             state: Some(MemoryStatus::Held),
             ..own(vec![denied])
         })
@@ -4289,6 +4296,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
+            anchor: oml_app::types::AnchorFilter::default(),
             kind: Some(MemoryKind::Steering),
             ..own(Vec::new())
         })
@@ -4298,6 +4306,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
+            anchor: oml_app::types::AnchorFilter::default(),
             claim_key: Some(promoted.claim_key.clone()),
             ..own(Vec::new())
         })
@@ -4360,6 +4369,7 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
     );
     assert!(
         list(ListingFilter {
+            anchor: oml_app::types::AnchorFilter::default(),
             state: Some(MemoryStatus::Held),
             ..tips(vec![wa])
         })
@@ -4423,6 +4433,7 @@ pub async fn a_listing_pages_newest_first_and_resumes_strictly_after_its_positio
     assert_eq!(
         page(
             ListingFilter {
+                anchor: oml_app::types::AnchorFilter::default(),
                 since: Some(at(2)),
                 until: Some(at(3)),
                 ..own.clone()
@@ -9548,6 +9559,7 @@ async fn retriever_fixture<S: JournalStore>(
 
 fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
     CandidateScope {
+        anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
@@ -9656,6 +9668,7 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     );
                 }
                 let empty = CandidateScope {
+                    anchor: oml_app::types::AnchorFilter::default(),
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
                     own_held: None,
@@ -10475,6 +10488,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
             {
                 for k in 1..=12 {
                     let scope = CandidateScope {
+                        anchor: oml_app::types::AnchorFilter::default(),
                         kinds: kinds.clone(),
                         ..scope_of(wa, own_held)
                     };
@@ -11063,6 +11077,7 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
         kinds: HIT_KINDS.to_vec(),
         own_held: None,
         expired_at: None,
+        anchor: oml_app::types::AnchorFilter::default(),
     };
     assert!(leg(empty).await.is_empty(), "an empty scope ranks nothing");
 }

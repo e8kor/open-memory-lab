@@ -132,8 +132,9 @@ On that one key the agent:
    approval;
 5. learns whether a different identity approved them by listing its own work with `state`,
    after which every key that reads the workarea recalls them;
-6. revises or retires a memory with `oml_write` and `replaces`, which is held and approved
-   like any write while recall keeps serving the version it replaces.
+6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
+   which is held and approved like any write while recall keeps serving the version it
+   replaces.
 
 The arguments choose the mode, and an argument outside it is refused with
 `request.validation` naming it. Recall takes `max_tokens` to bound its answer: the steering

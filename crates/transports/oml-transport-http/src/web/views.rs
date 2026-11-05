@@ -449,6 +449,7 @@ where
                         match_mode: oml_app::search::MatchMode::Any,
                         include_expired: false,
                         now: None,
+                        anchor: oml_app::types::AnchorFilter::default(),
                     },
                 )
                 .await
@@ -476,6 +477,7 @@ where
                     until: None,
                     limit: 50,
                     cursor: None,
+                    anchor: oml_app::types::AnchorFilter::default(),
                 },
             )
             .await
@@ -501,6 +503,7 @@ where
                     until: None,
                     limit: 50,
                     cursor: None,
+                    anchor: oml_app::types::AnchorFilter::default(),
                 },
             )
             .await;
@@ -860,18 +863,18 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             input("claim_key_prefix", "claim key prefix", filters[2].1, false),
         );
         let mut rows = String::from(
-            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th></tr>",
+            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th></tr>",
         );
         if page.items.is_empty() {
             rows.push_str(
-                r#"<tr><td colspan="6" class="dim">Nothing waits for you here.</td></tr>"#,
+                r#"<tr><td colspan="7" class="dim">Nothing waits for you here.</td></tr>"#,
             );
         }
         for (i, item) in page.items.iter().enumerate() {
             let m = &item.served.memory;
             let _ = write!(
                 rows,
-                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td></tr>"#,
+                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td></tr>"#,
                 m.memory_id,
                 if all { " checked" } else { "" },
                 short(&m.claim_key),
@@ -879,7 +882,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 short(&m.author_principal),
                 if item.same_user { " (you)" } else { "" },
                 short(item.held_since.as_str()),
-                text(&m.body)
+                text(&m.body),
+                anchor_line(m.anchor.as_deref())
             );
         }
         rows.push_str("</table>");
@@ -1248,8 +1252,11 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 "supersede",
                 csrf,
                 &format!(
-                    "{}{}{}",
+                    "{}{}{}{}",
                     hidden("memory", &read.memory.memory_id.to_string()),
+                    // The version this page rendered: the edit is refused
+                    // if the claim moved on since (ADR-0057 d19).
+                    hidden("expected_version", &read.memory.version.to_string()),
                     textarea("text", "new text", &read.memory.body),
                     select(
                         "retirement",
@@ -1385,6 +1392,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     rule: None,
                     valid_from: None,
                     valid_until: None,
+                    anchor: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1395,8 +1403,17 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 ));
             }
             "supersede" => {
-                fields.only(&["memory", "text", "retirement"])?;
+                fields.only(&["memory", "expected_version", "text", "retirement"])?;
                 let target = fields.id("memory")?;
+                let expected_version = fields
+                    .need("expected_version")?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|v| *v >= 1)
+                    .ok_or_else(|| {
+                        ApiError::validation("expected_version is the version this page rendered")
+                            .with_details(json!({"field": "expected_version"}))
+                    })?;
                 let body = fields.need("text")?.to_owned();
                 let retirement = fields.yes("retirement");
                 let admin = self.caller(session, Capacity::Admin).await?;
@@ -1433,6 +1450,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     rule: None,
                     valid_from: None,
                     valid_until: None,
+                    anchor: None,
+                    expected_version,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await
@@ -1683,6 +1702,27 @@ fn memory_table(items: &[&ServedMemory], base: &str) -> String {
     out
 }
 
+/// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
+/// commit's first 12 digits, the path and the fragment, or the page; a
+/// dash for none.
+fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
+    use oml_app::domain::anchor::Origin;
+    let Some(a) = anchor else {
+        return "—".to_owned();
+    };
+    let fragment = a
+        .fragment
+        .as_deref()
+        .map_or_else(String::new, |f| format!("#{f}"));
+    match &a.origin {
+        Origin::Repo { repo, rev, path } => short(&format!(
+            "{repo} @ {} {path}{fragment}",
+            &rev[..rev.len().min(12)]
+        )),
+        Origin::Uri { uri, .. } => short(&format!("{uri}{fragment}")),
+    }
+}
+
 fn memory_card(m: &ServedMemory) -> String {
     let from = if m.anonymous {
         "the shared area".to_owned()
@@ -1696,13 +1736,14 @@ fn memory_card(m: &ServedMemory) -> String {
     });
     warning
         + &format!(
-            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p></div>"#,
+            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p></div>"#,
             state_tag(memory_state(m)),
             short(m.workarea_path.as_deref().unwrap_or("")),
             m.memory.version,
             text(&m.memory.body),
             short(&m.memory.claim_key),
-            from
+            from,
+            anchor_line(m.memory.anchor.as_deref())
         )
 }
 
@@ -1747,6 +1788,7 @@ fn attribution_card(m: &AdminMemory) -> String {
             m.memory.replaces.map_or("—".to_owned(), |r| ids(&[r])),
         ),
         ("text digest", short(&m.memory.body_digest)),
+        ("source", anchor_line(m.memory.anchor.as_deref())),
     ] {
         let _ = write!(
             out,
