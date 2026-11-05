@@ -1,15 +1,17 @@
 <!--
 id: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound
 tier: engineering
-status: proposed
+status: accepted in part (measurement: d1–d6, d11–d13); proposed (ranking: d7–d10)
 answers: which recall and remember health figures reach Prometheus and Grafana, with which labels and within which series budget; what a recall event records, where it is stored, under which fence, for how long, who reads it, and how its purge squares with no silent deletion; how erasure reaches it; what the event write may cost a recall; which reader actions label a recall's hits as used or unused, how a label finds its event, and what bounds noise and abuse; the explicit feedback member on the existing read, and its use case; how usage ranks a hit, whose usage counts, how its influence is bounded, decayed and kept fair to new memories, how it resists feedback loops and gaming, and why it never reads a verdict; whether a new version inherits its predecessor's usage; how a hit explains its usage; the pipeline that offers it and the evidence that may make it the default; the real-usage eval set and its privacy; what remember-side quality is tracked and for whom; the rejected roads; the cost at 1,000,000 memories and 100 recalls a second; the open questions; the test plan and the doctor lines
 -->
 
 # ADR-0054 — Recall is measured by what readers do next, and only other readers' use moves a rank, within a bound
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted in part · 2026-11-05. The measurement half, d1 to d6 and d11 to d13 as amended
+below, is accepted; the ranking half, d7 to d10, stays proposed until open question 6 is decided.
 
-**Release:** not assigned ([releases](../product/releases.md#decisions))
+**Release:** the measurement half, v0.5.7; the ranking half, not assigned
+([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed): d3 (fusion gains a convex combination beside reciprocal rank),
 d4 (the pipeline table gains `bm25-postings-usage`), d6 (each hit's `matched` gains `usage`, and
@@ -19,6 +21,108 @@ families, under its label rule). ADR-0005 d4 (the erasure inventory gains the te
 ADR-0034 d2, d3 and d11 (new tenant-partitioned tables, the serving role's grants on them, and an
 owner step that rotates their day partitions). ADR-0039 d4 (`oml_read` and the HTTP recall gain
 an optional `feedback` member, and a recall's answer gains `recall_id`; no new tool, by d8).
+
+## The split, and what acceptance amended
+
+*Recorded 2026-11-05 by the operator's decision for v0.5.7.* The record decides two things that
+can be judged apart: what is measured about recall and remember (d1 to d6, d11, d12, and d13's
+measurement laws and doctor lines), and whether usage moves a rank (d7 to d10, and d13's ranking
+laws). The second waits on open question 6, a one-principal tenant, which is not decided. The
+first is accepted, built in v0.5.7, with these amendments; where a decision below says otherwise,
+this section governs.
+
+| Decision | Status |
+|---|---|
+| d1 health metrics, d2 `recall_events` and `recall_outcomes`, d3 query text by opt-in, d4 erasure, d5 inferred labels, d6 the `feedback` member, d11 the real-usage replay, d12 remember-side quality, d13's measurement laws and doctor lines | accepted, built v0.5.7 but for the items marked *not built* below |
+| d7 the usage leg, d8 credits and caps, d9 `bm25-postings-usage` and convex fusion, d10 the evidence gate; `usage_credits`, `usage_state`, `oml_usage_credits_total`, `matched.usage`, `usage_applied`, `interleaved`, `telemetry.experiments`; d13's ranking laws | proposed, pending open question 6 |
+
+**Open questions settled on acceptance.**
+
+1. *A frozen eval set* (question 1): an admin may confirm an eval set that is kept beyond 30 days,
+   opt-in per tenant and journalled. *Not built in v0.5.7*: the confirmed set's table, its
+   retention setting and its erase path are a later step (FR-108); until then d11's set is
+   rolling.
+2. *Partition count* (question 2): **weekly** partitions, not daily. Each tenant's event tables are
+   range-partitioned by ISO week (Monday 00:00 UTC), so a tenant holds about six partitions per
+   event table rather than 31. A weekly partition outlives the 30 days by up to a week, so the
+   bound is kept by the reads and a purge, as d2's fallback already did: every read filters
+   `created_at > now() - 30 days`, the lead deletes rows older than 30 days in batches under the
+   serving role, and a partition whose last instant is more than 30 days past is dropped.
+3. *An offline annotator* (question 3): deferred. No model grades a tenant's queries in v0.5.7.
+4. *Usage with the reranker* (question 4): measured later, with the ranking half.
+5. *The starting constants* (question 5): placeholders, set by d10's replay. The measurement
+   half's own constants (d5's windows, the caps below, the 30 days) are starting values too, and
+   FR-105 measures the windows.
+
+**Amended on acceptance.**
+
+- **d1.** Built families: `oml_recall_answers_total{pipeline, result}`,
+  `oml_recall_duration_seconds{pipeline}` (ADR-0042 d12's 17 bounds),
+  `oml_recall_outcomes_total{label}` (the six labels of d5 and the two feedback labels),
+  `oml_recall_events_total{outcome}` (`written`, `dropped_queue_full`, `dropped_store_error`,
+  `dropped_no_partition`), `oml_recall_labels_dropped_total{reason}` (`rate_limited`,
+  `queue_full`, `store_error`), `oml_telemetry_queue_depth`, `oml_labeller_lag_seconds`,
+  `oml_telemetry_partitions_missing`, `oml_telemetry_purge_overdue`,
+  `oml_memories_unrecalled{promoted_for}`, `oml_remember_duplicates_total{relation}` (`same_text`,
+  `none`), `oml_review_wait_seconds{verdict}` and `oml_web_exchanges_failed_total{provider,
+  reason}`; and `oml_reranks_total` as before. The remember side counts what main can see: an
+  exact duplicate of a served memory's text in the same workarea, and, by verdict, the time from
+  submit to verdict, whose count by `verdict` is the rejection rate; ADR-0050's
+  `oml_remember_similar_total` and `oml_remember_warnings_total` arrive with its similar check.
+  The rejection rate is global: a per-tenant label would put `tenant_id` on a series, which
+  ADR-0042 d12 forbids until FR-7, so the per-key and per-tenant figures are PostgreSQL's.
+  `oml_keys_rejection_share`, `GET /v2/usage/report` and `oml usage report` are *not built*;
+  the admin reads events with `GET /v2/usage/events`. All the families together add at most 300
+  series to a lead, inside the 400 budget. Counts move off `/readyz` with them: the skipped
+  reranks and the failed sign-in exchanges are metrics, never in a probe that answers anyone.
+  The dashboard is committed as `docs/operations/dashboards/oml-quality.json`, beside the
+  observability page; the operator imports it, and the chart's provisioning is *not built*.
+- **d2.** The tables are `recall_events` and `recall_outcomes`, migration 0022, list-partitioned by
+  tenant and each tenant's partition range-partitioned by week; every partition at both levels
+  has `ENABLE` and `FORCE ROW LEVEL SECURITY` and the `tenant_isolation` policy. `usage_applied`
+  and `interleaved` belong to the ranking half and are not created. A recall-level label
+  (`requery`, `no_use`) has no `artifact_id`. **The rotation is the lead's**, not an owner
+  timer's: the lead already opens the owner's URL for a tenant's partition DDL (ADR-0034 d11),
+  and rotating is that DDL, so at start and every hour it creates each tenant's partitions for
+  this week and the next four and drops those past the 30 days, under the owner's connection,
+  opened for the rotation and closed after it; a new tenant's partitions are created with its
+  memories partition. `oml admin telemetry rotate` is therefore not a verb. The serving role
+  holds `SELECT`, `INSERT`, `UPDATE` (for d3's nulling and d4's erase) and `DELETE` (for the
+  purge) on both tables and owns neither.
+- **d3.** The setting is journalled as `telemetry.settings_set` and folded into
+  `tenants.telemetry_query_text_since`, the instant it was turned on, `NULL` when off. The text
+  is kept only for an event created at or after that instant, a rule the insert applies in SQL,
+  so an event queued before the switch never stores its text. Turning it off nulls the text of
+  the tenant's events in the same commit as the fold, not in the background. The routes are
+  `GET /v2/usage/settings` and `POST /v2/usage/settings`, and the CLI verb is `oml usage
+  settings [--query-text on|off]`.
+- **d4.** Erase is not built (ADR-0052 d7), so the rule is built as the function its build calls:
+  `oml_telemetry_erase(tenant, version_ids)` nulls the query text of every event that served an
+  erased version, removes the version from `hit_ids` and `hit_scores`, and deletes its labels,
+  under the tenant's row security. ADR-0005 d4's inventory gains the rows of d4, less the two the
+  ranking half adds.
+- **d5.** The labeller does not read the journal: after a get by id, a write citing
+  `derives_from` or a supersession commits, the lead hands the act to the same bounded queue as
+  the events, and the writer attaches it by SQL to the acting key's most recent event within the
+  window whose `hit_ids` hold the version. `requery` is attached when the next event is
+  written; `no_use` by a pass every minute over events 30 minutes to 24 hours old. A key's
+  inferred labels past 1,000 a UTC day are dropped and counted
+  (`oml_recall_labels_dropped_total{reason="rate_limited"}`), since no credit exists yet to
+  withhold.
+- **d6.** The rate limits: at most 20 ids per `feedback`; a key's explicit labels past 1,000 a UTC
+  day answer `limit.rate`, and the read is not run. A `recall_id` the writer has not yet stored is
+  looked up again after the queue is flushed once, so feedback sent right after its recall is
+  accepted; on a deployment of several replicas, feedback reaching another replica within the
+  writer's second is refused `request.validation`, a limit of the replicas a lead serves today
+  (none).
+- **d11.** The replay is `POST /v2/usage/eval` and `oml usage eval --pipelines a,b`, as decided.
+  It writes no event and no label of its own. The `served-replay` suite of `eval/bench/` and the
+  first committed run are *not built*.
+- **d13.** The measurement laws are built as tests named after them, against PostgreSQL as the
+  serving role, each shown red against a deliberately broken clause before it was kept. Doctor
+  reads the telemetry's health from the metrics listener: events dropped above 1% of recalls,
+  the queue's depth above half its bound, a tenant missing this week's or next week's partition,
+  rows past the 30 days not yet purged, and the labeller's lag above 10 minutes.
 
 ## Context
 
@@ -492,6 +596,9 @@ Estimated, not measured; FR-104 measures each line.
 | **Reciprocal rank fusion for the usage leg** | RRF reads ranks, so a leg with nearly equal values would reorder fully by them, unbounded by any weight; and the offline experiment found it below CC in 30 of 32 cells. |
 
 ## Open questions
+
+Questions 1 to 5 are settled above (*The split, and what acceptance amended*). Question 6
+remains open and holds the ranking half.
 
 1. **A frozen eval set.** d11's set is rolling because text lives 30 days. A set an admin
    confirms, kept longer under a tenant policy, would let runs compare across months; it needs
