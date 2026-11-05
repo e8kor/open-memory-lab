@@ -1,0 +1,26 @@
+[package]
+name = "oml-lake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Delta lake adapter (ADR-0003, ADR-0058): per-tenant bronze, silver, gold and telemetry tables over delta-rs, exactly-once by per-table application transaction versions, bodies sealed under per-version keys, maintenance and the operator's named queries. Holds no policy and reads no Postgres."
+
+[dependencies]
+deltalake.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+ring.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
