@@ -1312,18 +1312,33 @@ pub const SIMILAR_CANDIDATES: &str = "SELECT s.memory_id FROM similar_keys s \
      ORDER BY count(*) DESC, s.memory_id ASC \
      LIMIT $6";
 
-/// The similar keys' health for doctor (ADR-0050 d15, d17): whether the
-/// tenant's partition exists, the versions that should hold keys and hold
-/// none, and the versions whose keys hold a state other than theirs, or
-/// that hold keys and should not. Doctor's cost: every version once.
-const SIMILAR_HEALTH: &str = "WITH v AS ( \
-         SELECT m.id, oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) AS state, \
-                cardinality(oml_similar_words(m.claim)) > 0 AS worded \
-         FROM memories m WHERE m.tenant_id = $1) \
+/// The most versions the similar keys' health reads per call (ADR-0050 d15).
+const SIMILAR_HEALTH_SAMPLE: i64 = 2000;
+
+/// The similar keys' health for doctor (ADR-0050 d15, d17), over a sample:
+/// whether the tenant's partition exists, and, of [`SIMILAR_HEALTH_SAMPLE`]
+/// versions in id order from a random id, wrapping round, the versions that
+/// should hold keys and hold none, and those whose keys hold a state other
+/// than theirs or that hold keys and should not. `$1` is the tenant, `$2`
+/// the partition's name and `$3` the sample's size; the random id it starts
+/// at is drawn in the statement. Repeated reads cover every version; each is bounded by the
+/// primary key's order, so the cost is the sample's, never the tenant's, and
+/// the word split runs on the sample alone. A key whose version is gone
+/// altogether is outside the sample; the delete trigger removes it.
+const SIMILAR_HEALTH: &str = "WITH start AS MATERIALIZED (SELECT gen_random_uuid() AS s), v AS ( \
+         SELECT x.id, x.state, cardinality(oml_similar_words(x.claim)) > 0 AS worded FROM ( \
+           (SELECT 0 AS lap, m.id, m.claim, \
+                   oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
+              FROM memories m WHERE m.tenant_id = $1 AND m.id >= (SELECT s FROM start) ORDER BY m.id LIMIT $3) \
+           UNION ALL \
+           (SELECT 1, m.id, m.claim, \
+                   oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) \
+              FROM memories m WHERE m.tenant_id = $1 AND m.id < (SELECT s FROM start) ORDER BY m.id LIMIT $3)) x \
+         ORDER BY x.lap, x.id LIMIT $3) \
      SELECT to_regclass($2) IS NOT NULL, \
        (SELECT count(*) FROM v WHERE v.state IS NOT NULL AND v.worded AND NOT EXISTS ( \
             SELECT 1 FROM similar_keys s WHERE s.tenant_id = $1 AND s.memory_id = v.id))::int8, \
-       (SELECT count(DISTINCT s.memory_id) FROM similar_keys s LEFT JOIN v ON v.id = s.memory_id \
+       (SELECT count(DISTINCT s.memory_id) FROM similar_keys s JOIN v ON v.id = s.memory_id \
          WHERE s.tenant_id = $1 AND s.state IS DISTINCT FROM v.state)::int8";
 
 /// The Postgres `JournalStore`.
@@ -4386,6 +4401,7 @@ impl Retriever for PgStore {
         let similar: (bool, i64, i64) = sqlx::query_as(SIMILAR_HEALTH)
             .bind(tenant_id)
             .bind(similar_partition(tenant_id))
+            .bind(SIMILAR_HEALTH_SAMPLE)
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;

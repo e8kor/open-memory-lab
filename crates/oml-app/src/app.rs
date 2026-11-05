@@ -3894,6 +3894,41 @@ where
         Ok(MemoryPage { items, next_cursor })
     }
 
+    /// The rows of a stored `similar` list the caller can still read: a
+    /// replay answers what was first answered, less any row since demoted,
+    /// erased or made unreadable by a revoked grant (ADR-0050 d1, R3).
+    async fn still_readable(
+        &self,
+        caller: &Caller,
+        similar: Vec<SimilarItem>,
+    ) -> Result<Vec<SimilarItem>, AppError> {
+        if similar.is_empty() {
+            return Ok(similar);
+        }
+        let ids: Vec<Uuid> = similar.iter().map(|s| s.artifact_id).collect();
+        let rows = self.journal.memories(caller.key.tenant_id, &ids).await?;
+        let mut kept = Vec::with_capacity(similar.len());
+        for item in similar {
+            if let Some(m) = rows.iter().find(|m| m.memory_id == item.artifact_id)
+                && self.readable(caller, m).await?
+            {
+                kept.push(item);
+            }
+        }
+        Ok(kept)
+    }
+
+    async fn replayed_supersede(
+        &self,
+        caller: &Caller,
+        mut receipt: SupersedeReceipt,
+    ) -> Result<SupersedeReceipt, AppError> {
+        receipt.similar = self
+            .still_readable(caller, std::mem::take(&mut receipt.similar))
+            .await?;
+        Ok(receipt)
+    }
+
     /// The similar check (ADR-0050 d1, d17): the rows `caller` may read in
     /// `workarea`'s recall scope — the served tips recall would read there,
     /// `universe`'s included inside a user root, and its own held rows —
@@ -4098,8 +4133,11 @@ where
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
             }
-            let receipt: SubmitReceipt = serde_json::from_value(record.response)
+            let mut receipt: SubmitReceipt = serde_json::from_value(record.response)
                 .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+            receipt.similar = self
+                .still_readable(&caller, std::mem::take(&mut receipt.similar))
+                .await?;
             return Ok(SubmitOutcome {
                 receipt,
                 replayed: true,
@@ -5910,7 +5948,7 @@ where
         let request_digest = supersede_request_digest(req)?;
         if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
             return Ok(SupersedeOutcome {
-                receipt,
+                receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
             });
         }
@@ -5989,7 +6027,7 @@ where
             // it answers any replay (http-api.md idempotency).
             if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
                 return Ok(SupersedeOutcome {
-                    receipt,
+                    receipt: self.replayed_supersede(&caller, receipt).await?,
                     replayed: true,
                 });
             }
@@ -6213,7 +6251,7 @@ where
                 .await?
                 .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
             return Ok(SupersedeOutcome {
-                receipt,
+                receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
             });
         }

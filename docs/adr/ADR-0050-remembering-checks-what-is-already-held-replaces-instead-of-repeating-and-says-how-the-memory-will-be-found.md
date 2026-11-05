@@ -153,7 +153,9 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     supersession refuses with `submission.version_conflict` when the claim has moved since, and
     which revises the writer's own held row under d3. The skill sends `"refuse"` on new claims
     once d16's gate passes (d12). A same-text repeat by the same key keeps answering
-    `submission.claim_key_conflict`, now with `details.existing`, the artifact id of its own row.
+    `submission.claim_key_conflict`, as today. An earlier draft added `details.existing`, the
+    artifact id of its own row; it is not built, the refusal names no row, and the writer finds the
+    row by `claim_key` (r2, 2026-11-06).
 
     Nothing is dropped, merged or linked by the server: R4's "nothing silently deleted" read for
     a write is "nothing silently not written". A writer who keeps a write beside a listed row on
@@ -348,7 +350,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     `review` is read from the workarea's policy object (its `k` and `human_required_classes`
     against this row), never a queue position, which would count other keys' rows. The new
     refusal is `409 submission.similar_exists` (not retryable; `details.similar`); the others are
-    today's, with `details.existing` added to a same-key `submission.claim_key_conflict`. On HTTP
+    today's, a same-key `submission.claim_key_conflict` included. On HTTP
     the submit and supersede bodies take the same fields, `body` keeping its name there
     (ADR-0039 d7).
 
@@ -467,7 +469,8 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 - **d15 — Every new failure has a doctor line.** `oml doctor` (admin) names: the similar check's
   p95 over the last hour above `similar.max_ms`, with the write latency it adds (FR-91); versions
   that should hold similar keys and hold none, or keys whose state differs from their version's
-  (d17), which `oml_similar_keys_refill` repairs; a share
+  (d17), which `oml_similar_keys_refill` repairs, read over 2,000 versions in id order from a
+  random id on each call so the cost is the sample's and repeated calls cover every version; a share
   of the last day's writes refused `submission.similar_exists` and never resent, which is either
   duplicates avoided or a threshold too loose; held rows older than a day with a withdrawn
   sibling still served for review (a stale-promotion fault d3 forbids); workareas whose stale
@@ -554,6 +557,22 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       trigger adds 0.4 ms p50 to a held insert at 10k and 6.2 at 1M; 0026's fill takes 19 minutes
       at 1M with writes waiting, as 0021's does (FR-103). The scale lane's templated texts
       overstate the candidates.
+    - **A generic plan visits more entries than the cost above shows** (review of 2026-11-05,
+      `EXPLAIN ANALYZE` as the serving role under row security on 200,000 synthetic keys). The
+      plan is an index-only scan with no heap fetch, and row security's tenant test is a one-time
+      filter, so the index serves. Under a generic plan, which a prepared statement reaches, the
+      index condition is `key = ANY($2)` alone and the workarea, state and author tests are
+      filters: every entry carrying a key is visited, including entries in workareas the writer
+      cannot read and other keys' held rows. 5,000 unreadable copies of one key took 1.1 ms
+      against 0.06 ms with none, about 0.2 µs an entry, more before VACUUM sets the visibility
+      map. A single hidden row is below an HTTP request's jitter; thousands of copies are not, so
+      a writer who can plant copies in a workarea it can write, which another key cannot read,
+      could learn from the time that a key is common. The same shape makes boilerplate repeated
+      through a tenant cost the number of its copies on every write containing it, with nothing
+      bounding it but the tenant's size: the limit of 32 applies after the visit. Each probe leaves a held row and a
+      journal entry, which bounds how many a writer can send unseen. Not closed: a cap on one key's
+      copies per tenant is decided once the scale lane or real writes (FR-90) show boilerplate
+      at that size.
 
 ## Downsides: argument or opportunity
 

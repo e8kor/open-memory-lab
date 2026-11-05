@@ -397,6 +397,10 @@ reorders results, and steering rows, which precede hits, are never ranked"
   budget). A request sending `timings: true` receives `timings: {stages_ms, total_ms}` in the
   answer, in the order the stages ran, when the deployment sets `search.timings`; otherwise it
   is refused with `request.validation` naming `/timings`, never silently answered without. It is
+  served to any key that may recall when the deployment sets it: a tenant `admin` or `operator`
+  key holds no recall role (`admissible_grant_roles`), so restricting the block to an admin key
+  would remove it from every caller, and the switch stays the operator's alone; a narrower
+  holder is the maintainer's to name. It is
   off by default, and for an operator diagnosing latency, because a stage's time over rows a key
   cannot read (a scan's, a postings read's) says something about how many there are. No stage's
   time enters a ranking. Laws: `a_recall_measures_each_stage_it_ran_in_order`,

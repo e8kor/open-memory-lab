@@ -7986,6 +7986,66 @@ async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
     drop_dbs(&created).await;
 }
 
+/// Doctor's similar-key health names a version with no key and a key in the
+/// wrong state, from the sample it reads, and reads clean again after the
+/// owner's refill (ADR-0050 d15, d17).
+#[tokio::test]
+async fn the_similar_health_names_a_missing_key_and_a_wrong_state_until_a_refill() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(575);
+    rig.seed_chain(&store, 0).await;
+    let (_, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let health = || async {
+        let h = store
+            .postings_health(tenant)
+            .await
+            .expect("health")
+            .expect("PostgreSQL keeps keys");
+        (h.similar_partition, h.similar_unfilled, h.similar_drift)
+    };
+    assert_eq!(health().await, (true, 0, 0));
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM similar_keys WHERE tenant_id = $1 AND memory_id = $2",
+        served,
+    )
+    .await;
+    assert_eq!(
+        health().await,
+        (true, 1, 0),
+        "a served version without keys"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE similar_keys SET state = 0 WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB11),
+    )
+    .await;
+    assert_eq!(health().await, (true, 1, 1), "keys in another state");
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SELECT oml_similar_keys_refill($1)")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("refill");
+    tx.commit().await.expect("commit");
+    assert_eq!(health().await, (true, 0, 0), "a refill repairs both");
+    drop_dbs(&created).await;
+}
+
 /// The `bm25_postings` statement reads the postings by their token index as
 /// the serving role, under row security: integer equality is leakproof, so
 /// the policy leaves the index usable (ADR-0052 Context, d1).
