@@ -27,6 +27,21 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## 0.6.0-design (unreleased)
+
+### 2026-11-05 — the deterministic scan's rule set (ADR-0065, proposed)
+
+- **[ADR-0065](adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-secrets-and-holds-what-a-reviewer-should-judge.md)** replaces the marker scanner with `oml-scan/1`, a compiled-in,
+  versioned rule set in a leaf crate: provider tokens, key-value secrets above an entropy floor,
+  URL credentials and private keys veto; instructions aimed at the reader, bidirectional and
+  invisible Unicode and long base64 runs hold; personal-data rules exist and stay off. One
+  secret-shaped path list serves the anchor scan and `oml sync`. A finding names its class, rule,
+  field and line, never what it matched. `scan.scanner_version` carries the rule set, and the
+  findings metric counts by rule.
+- Pages touched: [admission](architecture/admission.md) (the registry's new classes and the
+  measured pass), [errors](api/errors.md) (`details.finding`'s shape),
+  [workspace plan](engineering/workspace-plan.md) (the second leaf crate).
+
 ## 0.5.8-design
 
 Opened for release v0.5.8, which carries this revision: [ADR-0057](adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in
