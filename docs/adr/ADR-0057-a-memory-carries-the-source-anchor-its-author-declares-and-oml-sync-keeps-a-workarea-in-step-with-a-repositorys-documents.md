@@ -329,20 +329,31 @@ Accepted for build in v0.5.8 on 2026-11-05.
   adds no session injection. Whether anchored hits are used is measured by ADR-0054's usage
   telemetry (planned for v0.5.7) like any hit.
 
-- **d14 — OML's own ADRs are loaded into `oml-design` under the operator's root, reviewed in bulk,
-  and re-synced after every change on `main`.**
-    1. **The workarea.** `oml workareas create e8kor oml-design`, a child of the operator's user
-       root ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
-       `development` like every new workarea.
+- **d14 — OML's own ADRs are loaded into `oml-design` under `oml-knowledge` in the operator's root,
+  reviewed in bulk, and re-synced after every change on `main`.**
+    1. **The workareas.** *Decided by the operator on 2026-11-05.* One parent,
+       `oml-knowledge`, a child of the operator's user root
+       ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)),
+       holds one workarea per source, each `development` like every new workarea: `oml-design`
+       for `docs/adr` with the `adr` adapter; `oml-design-pr-<n>` for a draft pull request's
+       records (item 3), also `adr`; `oml-docs` for `docs` with `--exclude 'docs/adr/**'` and the
+       `headings` adapter; and `oml-code` for the Rust sources with the `rust` adapter, from
+       v0.5.9 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
+       `oml workareas create e8kor oml-knowledge`, then `oml workareas create oml-knowledge
+       oml-design` and the same for `oml-docs`; a draft's `oml-design-pr-<n>` is created under
+       `oml-knowledge` when its pull request is first loaded. Recall at `oml-knowledge` reads all
+       of them. Each workarea answers for one source with one adapter: a run diffs only its
+       adapter's claim-key namespace, keeps the adapter its claims were written by unless
+       `--change-adapter`, and treats `--exclude`d paths as out of the source, never retired.
     2. **The keys.** The operator issues a writer key for the sync, `e8kor-design-sync`, with
-       writer and reader on `oml-design` and its children, to an owner-only file (`--out`). It
+       writer and reader on `oml-knowledge` and its children, to an owner-only file (`--out`). It
        stays the sync key for good, since a writer supersedes only its own tips (d8 `foreign`).
        The 2026-11-05 script never ran, so nothing is adopted. Reviews and
        edges use two dreamer keys `held_by: human` with distinct principals: the reviewer key
        that runs `oml review` and `oml sync --edges`, and a second that runs `--edges --ratify`.
     3. **The source.** `docs/adr` of `github.com/e8kor/open-memory-lab` at a commit of `main`.
        **Drafts** (*decided by the operator on 2026-11-05*) load
-       into a child workarea per draft pull request, `oml-design-pr-<n>`, as ADR-0047 d5 gives a
+       into a workarea per draft pull request under `oml-knowledge`, `oml-design-pr-<n>`, as ADR-0047 d5 gives a
        branch its own workarea: `oml sync docs/adr/ADR-0047-….md --workarea oml-design-pr-59
        --rev origin/design/code-map-r2`, naming only the records the pull request adds or
        changes. A sync of `main` diffs `oml-design` alone (d8), so it never retires a draft's
@@ -353,8 +364,11 @@ Accepted for build in v0.5.8 on 2026-11-05.
        `main`, and a reader at `oml-design` sees both until the draft's retirements are approved.
     4. **The first load.** `oml sync docs/adr --workarea oml-design --adapter adr
        --allow-public-server --dry-run`, then three runs without `--dry-run`. At `ca61c9e` the
-       plan is 523 items (435 decisions, 45 summaries, 43 rejected-alternatives memories) and 117
-       `amends` edges with none unresolved, so three batches of 200, 200 and 123.
+       plan is 523 items (435 decisions, 45 summaries, 43 rejected-alternatives memories) and 133
+       `amends` edges with none unresolved (117 when this record was proposed, a count that read
+       only the first handle of a parenthesis of `;` parts), so three batches of 200, 200 and 123.
+       The documents follow: `oml sync docs --workarea oml-docs --adapter headings --exclude
+       'docs/adr/**' --allow-public-server --dry-run`, then the runs.
     5. **Review.** After each run, `oml review list --workarea oml-design --author-key
        e8kor-design-sync` to read the batch, then the same with `--ids-only`
        piped to `oml review approve --ids -`; each verdict is marked `same_user` (ADR-0055 d7).
@@ -416,7 +430,7 @@ Accepted for build in v0.5.8 on 2026-11-05.
     4. **Edges:** `edges_are_proposed_only_between_promoted_tips_under_a_dreamer_key`,
        `ratify_ratifies_only_pending_edges_the_source_states`,
        `an_unresolved_target_is_reported_and_not_proposed`.
-    5. **The load:** `the_adr_load_at_ca61c9e_plans_523_items_and_117_amends_edges`, against a
+    5. **The load:** `the_adr_load_at_ca61c9e_plans_523_items_and_133_amends_edges`, against a
        fixture of that commit's `docs/adr`.
     6. **The amendments (d18–d22):** `a_renamed_file_is_moved_and_writes_nothing`,
        `a_moved_claim_changed_later_is_superseded_at_its_new_location`,
@@ -557,7 +571,8 @@ oml sync <source> --workarea <workarea>
          [--adapter adr|headings|lines] [--rev <commit>] [--repo <repo>]
          [--dry-run | --check [--record]] [--json] [--max-writes <n>] [--adopt] [--retire-all]
          [--edges [--ratify]] [--allow-public-server] [--allow-rollback]
-oml anchor <path>[#<fragment>] [--rev <commit>] [--repo <repo>]      # prints one Anchor as JSON
+         [--exclude <glob> …] [--change-exclude] [--change-adapter] [--pr <n> [--base <branch>]]
+oml anchor <path>[#<fragment>] [--rev <commit>] [--repo <repo>] [--adapter …]   # prints one Anchor as JSON
 oml write <text> --anchor <json | @file> …                           # beside today's flags
 oml write <text> --replaces <id> --expected-version <n> …            # d19
 oml read --query <q> [--anchor-repo <repo>] [--anchor-path-prefix <prefix>] …
@@ -574,7 +589,7 @@ new       adr-0001-summary     docs/adr/ADR-0001-the-constitution.md
 new       adr-0001-d1          docs/adr/ADR-0001-the-constitution.md#d1
 …
 plan      523 new, 0 changed, 0 removed, 0 unchanged, 0 pending; this run writes 200 (--max-writes 200)
-edges     117 amends, 0 supersedes stated; proposed by --edges once both ends are promoted
+edges     133 amends, 0 supersedes stated; proposed by --edges once both ends are promoted
 ```
 
 After an edit, the same command prints lines such as:
