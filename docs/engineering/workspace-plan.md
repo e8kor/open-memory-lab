@@ -148,7 +148,7 @@ Three facts the graph encodes, restated as sentences because they are load-beari
   re-exports it (proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
   d18 Q10, amending ADR-0006 d6 by that leaf). A second leaf, `oml-scan`, holds the scan's rule
   set and the secret-shaped path list, so `oml sync`'s refusal to read a file and the server's
-  anchor scan apply one list ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-secrets-and-holds-what-a-reviewer-should-judge.md) d4).
+  anchor scan apply one list ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d4).
 
 ## Workspace manifest policy
 

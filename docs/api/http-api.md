@@ -1682,7 +1682,7 @@ email ends its sessions and leaves the user's agent keys working.
 
 ### Rescan
 
-*Since v0.6.0 · [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-secrets-and-holds-what-a-reviewer-should-judge.md) d13*
+*Since v0.6.0 · [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d13*
 
 `GET /v2/admin/rescan?after_seq=&limit=`, admin key role, scans the versions the tenant already
 stores with the server's rule set, body and anchor, as admission does. Each window reads the

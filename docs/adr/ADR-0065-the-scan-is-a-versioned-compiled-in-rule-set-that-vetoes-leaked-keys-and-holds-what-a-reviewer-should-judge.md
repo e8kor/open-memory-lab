@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-secrets-and-holds-what-a-reviewer-should-judge
+id: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge
 tier: engineering
 status: proposed
 answers: what replaces the marker scanner; how the rule set is named, versioned and journalled; which secret, path, injection, Unicode, encoding and personal-data rules it carries and what each does; where gitleaks' patterns come from and under which licence; which fields of a submission are scanned and which are not; what a finding says and what it never says; the time budget and the size bound; what happens to the PoC markers; the findings metric and the doctor line; how false positives are measured and on what; the rejected roads and the open questions
 -->
 
-# ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes secrets and holds what a reviewer should judge
+# ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
 **Status:** proposed · 2026-11-05
 
@@ -54,8 +54,8 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
     |---|---|---|
     | `secret.private_key` | `private-key-block`, `putty-private-key` | veto |
     | `secret.api_token` | `aws-access-key-id`, `github-token`, `github-fine-grained-pat`, `gitlab-token`, `slack-token`, `slack-app-token`, `slack-webhook`, `stripe-key`, `google-api-key`, `openai-key`, `anthropic-key`, `npm-token`, `pypi-token`, `huggingface-token`, `jwt`, `oml-key`, `oml-connection-token`, `authorization-header` | veto |
-    | `secret.credential_pair` | `url-credentials` | veto |
-    | `secret.assignment` | `aws-secret-access-key`, `keyword-assignment` | veto |
+    | `secret.credential_pair` | `url-credentials`, `curl-user` | veto |
+    | `secret.assignment` | `aws-secret-access-key`, `aws-secret-near-id`, `keyword-assignment` | veto |
     | `anchor.secret_path` | the path rule (d4) | veto |
     | `format.scan_bound` | `scan-bound` (d9) | veto |
     | `test.marker` | `marker-veto` (veto), `marker-hold` (hold) (d10) | as named |
@@ -75,7 +75,8 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   an entropy floor.** Provider tokens: AWS access key ids (`AKIA…`, `ASIA…`), GitHub (`ghp_`,
   `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), GitLab (`glpat-`, `glptt-`, `glrt-`, `gldt-`),
   Slack (`xox?-`, `xapp-`, webhook URLs), Stripe (`sk_live_`, `rk_test_`, …), Google API keys
-  (`AIza…`), OpenAI (`sk-proj-`, `sk-svcacct-`, `sk-admin-` and the legacy `T3BlbkFJ` shape),
+  (`AIza…`), OpenAI (`sk-proj-`, `sk-svcacct-`, `sk-admin-`, the `T3BlbkFJ` shape and the
+  legacy `sk-` plus 48 characters),
   Anthropic (`sk-ant-api03-`, `sk-ant-admin01-`, …), npm, PyPI and Hugging Face tokens, JWTs
   (three base64url parts, the first two opening with `eyJ`), private-key blocks (`-----BEGIN …
   PRIVATE KEY-----`, the header alone, and PuTTY key files), and OML's own credentials:
@@ -84,13 +85,22 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   adapted from the rule regexes in gitleaks' default configuration (`config/gitleaks.toml`,
   github.com/gitleaks/gitleaks), MIT licence, Copyright (c) 2019 Zachary Rice. Only the regexes
   were adapted, rewritten for Rust's `regex`, which has no look-around. No gitleaks code is used,
-  and the attribution is repeated in `crates/oml-scan/src/rules.rs`.
+  and the attribution is repeated in `crates/oml-scan/src/rules.rs`. The full MIT notice is
+  `LICENSES/gitleaks-MIT.txt`, which every release archive and the image carry. A provider token
+  needs no word boundary before it, so a token glued to a word (`KEY_ghp_…`, `xoml_…`, a claim
+  key that runs into one) is still found; an AWS key id needs a non-alphanumeric character or
+  the start of the text before it.
 
-    Three rules need a second look before a match counts as a finding:
-    - `keyword-assignment`: a key containing `password`, `passwd`, `pwd`, `secret`, `token`,
-      `api_key`, `access_key`, `private_key`, `client_secret` or `credential`, followed by `=`,
-      `:`, `:=`, `=>` or `is`, then a value of 12 to 256 characters. The value counts only if it
-      has a letter and a digit, reaches a Shannon entropy of 3.0 bits per character (under 20
+    Five rules need a second look before a match counts as a finding:
+    - `keyword-assignment`: a key whose last segments name `password`, `passwd`, `pwd`,
+      `secret`, `token`, `api_key`, `access_key`, `private_key`, `client_secret` or
+      `credential`, where the keyword ends the key or is followed only by `_`, `.` or `-`
+      segments (`DB_PASSWORD`, `client.secret`, `token_value`, never `tokenizer`,
+      `tokens_per_second` or `secretKeyRef`), then `=`, `:`, `:=` or `=>`, then a value of 12 to
+      256 characters. The word `is` is not an operator, so "the token is base64url-encoded"
+      passes. The value counts only if it has a letter and a digit, is not an identifier a person
+      wrote (two or more words of three or more letters in one case between `-`, `_`, `.` or `/`,
+      as in `PROJ-12345-feature-branch` or `postgres-credentials-2024`), reaches a Shannon entropy of 3.0 bits per character (under 20
       characters) or 3.5 (from 20), and is not a stand-in. Stand-ins are `${…}`, `<…>`, `%…%`,
       `*…`, values containing `example`, `your`, `changeme`, `redacted`, `xxx` and the like, a
       digest that names its algorithm (`sha256:…`), a path (`/…`, `~/…`, `./…`, `C:\…`), a URL,
@@ -100,15 +110,23 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
     - `url-credentials`: `scheme://user:password@host`, where the password has at least four
       characters, differs from the user, and is not a stand-in. The compose file's
       `postgres://oml:oml@…` passes; a real password does not.
-    - `authorization-header`: `Authorization: Bearer|Basic|Token …`, with the entropy test above.
+    - `curl-user`: `-u user:password`, as curl takes it, with the password test above.
+    - `authorization-header`: `Authorization: Bearer|Basic|Token …`, the header name quoted or
+      not (`{"Authorization": "Bearer …"}`), with the entropy test above.
+    - `aws-secret-near-id`: where an AWS key id fires, a 40-character base64 value within the
+      next 200 bytes, with the entropy test: the secret half of a pair pasted with no key name.
+      It is counted by hand after the id, not by a pattern.
 
 - **d4 — Secret-shaped paths are one list, applied by the core before the scanner port.** A path
   component named `.env*`, ending in `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
-  `.ppk` or `.kdbx`, starting with `id_` (SSH identities, `id_rsa*` among them), containing
-  `credentials` or `secret`, equal to `.npmrc`, `.pypirc`, `.netrc`, `.pgpass`, `.htpasswd`,
-  `.git-credentials`, `.dockercfg` or `kubeconfig*`, or `config` under `.kube/`, or
+  `.ppk` or `.kdbx`, an SSH identity (`id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, their `_sk`
+  variants and `.pub` halves), containing `credentials` or `secret`, equal to `.npmrc`,
+  `.pypirc`, `.netrc`, `_netrc`, `.pgpass`, `.htpasswd`, `.git-credentials`, `.dockercfg`,
+  `.vault-token` or `kubeconfig*`, or `config` under `.kube/`, or
   `config.json` under `.docker/`. The match is case-insensitive and covers every component, so a
-  directory so named covers every file under it. `oml_scan::secret_path` is the only copy:
+  directory so named covers every file under it. `.env.example`, `.env.sample` and
+  `.env.template` are templates and pass, and `id_generator.rs` is not an identity.
+  `oml_scan::secret_path` is the only copy:
   `oml-domain`'s `secret_shaped`, which vetoes an anchor's path and a moved check's path as
   `anchor.secret_path` (ADR-0057 d2, d18), delegates to it, and so does `oml sync`'s refusal to
   read a file (d6). Until now there were two lists, and they had already drifted: the server
@@ -152,6 +170,9 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
     - **The anchor**: `repo`, `path`, `uri`, `rev` and `fragment`, each value scanned
       (ADR-0057 d2), plus the path rule (d4) on `path`.
     - **A moved check's** path and fragment (ADR-0057 d18).
+    - **A submission's `claim_key` and a verdict's `reason`**, single or bulk. Both reach the
+      journal as plaintext, which is never edited, so a veto finding in either refuses the call
+      and journals nothing. A hold finding passes: no review follows a claim key or a reason.
     - **A chat excerpt** (ADR-0063): it is part of the body, so the body scan covers it, with no
       call of its own.
     - **Decoded JSON and YAML values** (ADR-0056 d6, when that lane lands). `RuleSet::scan` takes
@@ -177,16 +198,24 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   asserts that no eight-character window of any sample secret appears in a reason or in a
   verdict's debug form.
 
-- **d9 — One pass decides which rules fired, and one field is bounded at 1 MiB.** A `RegexSet`
-  over every pattern finds which rules match in one linear pass, and only those rules run again
-  to place their first finding and apply their second look. Word boundaries are ASCII
-  (`(?-u:\b)`): a Unicode boundary makes the matcher leave its DFA for a slower engine on any
-  non-ASCII text, and SciFact scanned about four times slower with one. The set's lazy DFA cache is 16 MiB per
-  scanning thread, so long fields do not thrash it. The budget is under 1 ms for a typical claim,
-  asserted by a test over the recall-eval memories. Release build on the build host, measured:
-  0.9 µs per LoCoMo turn (mean 124 bytes), 18.4 µs per NFCorpus document (1.6 KB),
-  27.8 µs per SciFact document (1.5 KB) and 8.9 µs per LongMemEval turn (988 bytes). A field over 1 MiB is vetoed as `format.scan_bound`
-  rather than scanned in part, because a partial scan would admit unscanned bytes.
+- **d9 — Each rule runs on its own, and one field is bounded at 1 MiB.** Every pattern is its own
+  `regex` (linear time, no backtracking), with the literal prefilter its prefix gives it, and only
+  a rule that matches runs again to place its first finding and apply its second look. One
+  `RegexSet` over every pattern was tried first and dropped: its combined DFA thrashed its cache
+  on dense input and fell back to the slower engine, 5 s on a mebibyte of base64. The base64 rule
+  and the AWS pair rule are counted by hand, one pass each, and the personal-data patterns do not
+  run while they are off. Word boundaries are ASCII (`(?-u:\b)`): a Unicode boundary makes the
+  matcher leave its DFA on any non-ASCII text, and SciFact scanned about four times slower with
+  one. Release build on the build host, measured: 3.9 µs per LoCoMo turn (mean 124 bytes),
+  30.6 µs per NFCorpus document (1.6 KB), 26.3 µs per SciFact document (1.5 KB) and 18.0 µs
+  per LongMemEval turn (988 bytes). A mebibyte, the largest field, takes 13 ms of random base64,
+  9 ms of `password:` assignments, 10 ms of `password_aaaa` words and 12 ms of prose with
+  emails. A test holds each under 50 ms in a release build, and another holds a typical claim
+  under 1 ms. A field over 64 KiB is scanned off the async worker, with `block_in_place`, so a
+  long scan never stalls the requests queued behind it. A field over 1 MiB is vetoed as
+  `format.scan_bound` rather than scanned in part, because a partial scan would admit unscanned
+  bytes. The bound applies after NFC, so a body that NFC grows past it is refused as
+  `format.scan_bound`, not `payload_too_large`.
 
 - **d10 — The PoC markers stay, as test markers.** `[oml:veto]` vetoes and `[oml:hold]` holds,
   under class `test.marker`, so suites and demos can force either outcome without writing a
@@ -198,7 +227,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   `oml_scan_findings_total{class, rule, action}`, every label from the closed set d2 lists
   (ADR-0042 d12's rule for labels). `/readyz` carries `scan: {version, rules, pii}`: the rule
   set, how many rules it loaded and whether the personal-data rules are on, with no count, since
-  the probe answers anyone. `oml doctor` prints `scan: oml-scan/1, 38 rules loaded, personal-data
+  the probe answers anyone. `oml doctor` prints `scan: oml-scan/1, 40 rules loaded, personal-data
   rules off`, warns `scan_ruleset` when the server names no rule set (one before v0.6.0) and
   `scan_rules` when it loaded none, and, where `OML_METRICS_URL` names the metrics listener,
   prints `findings since start: n refused, m held; most: <rule> ×k, …`. The counts are since the
@@ -244,6 +273,16 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   port gains `findings()`, which reports without counting, so a rescan does not inflate the
   admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
   tracked as FR-181.
+
+- **d14 — The veto rules also read the text as copy-paste mangles it.** A token copied from a web
+  page, a chat or an editor arrives with a zero-width space, a joiner or a soft hyphen inside
+  it, a no-break space in a PEM header, or a fullwidth letter from an input method. Where a
+  field holds any of these, the scan builds a second view: U+00AD, U+200B–U+200D, U+2060 and
+  U+FEFF removed, U+00A0 made a space, then NFKC. It runs the rules over that view and keeps
+  its veto findings that the text itself did not already give. Hold findings come from the text
+  as written, so the invisible-character rule still sees the characters the view removed. A
+  pure ASCII field builds no view. Deliberate evasion (homoglyphs, percent or HTML encoding, a
+  token split across lines, base64) is not undone: the scan is for accidents.
 
 ## Consequences
 
