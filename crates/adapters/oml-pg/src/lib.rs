@@ -3913,6 +3913,24 @@ impl Retriever for PgStore {
     ) -> Result<(u64, bool), StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // Turning the state on races a write in flight: its trigger read the
+        // state off, and the step's read, taken before it commits, misses
+        // it, so neither queues it. SHARE on memories waits for every write
+        // in flight and holds new ones until this commits, when their
+        // triggers read the state on; a state already on takes no lock
+        // (ADR-0052 d15).
+        let on: Option<bool> =
+            sqlx::query_scalar("SELECT enabled FROM search_sparse_state WHERE tenant_id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
+        if on != Some(true) {
+            sqlx::query("LOCK TABLE memories IN SHARE MODE")
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+        }
         // On, from now: a state turned on again starts its backfill over.
         let (after,): (Option<Uuid>,) = sqlx::query_as(
             "INSERT INTO search_sparse_state (tenant_id, enabled) VALUES ($1, true) \

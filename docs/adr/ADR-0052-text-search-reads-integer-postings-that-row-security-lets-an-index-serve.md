@@ -416,7 +416,10 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   (`sparse_queue_off`); one serving a sparse pipeline turns each tenant's on in its encoder's first
   pass and backfills the versions written before, `SPARSE_BACKFILL_STEP` (1,000) versions per
   pass, resuming after the last id read, until a step reads fewer than that and `backfilled_at` is
-  set. **One bad claim fails alone**: the encoder answers each text's postings or its own failure, a
+  set. The step that turns a state on first takes `SHARE` on `memories`, so a write in flight,
+  whose trigger read the state off, commits before the step reads and is backfilled, and a write
+  after it reads the state on (amended 2026-11-05, when the served recall eval missed one such
+  version). **One bad claim fails alone**: the encoder answers each text's postings or its own failure, a
   panic included; a call that fails whole is split and each text tried alone; an entry failing
   `SPARSE_MAX_ATTEMPTS` (5) times is **parked** (`parked_at`), a dead letter kept with its reason,
   counted as `oml_sparse_encoded_total{outcome="parked"}` and by doctor's `search_sparse_parked`,
