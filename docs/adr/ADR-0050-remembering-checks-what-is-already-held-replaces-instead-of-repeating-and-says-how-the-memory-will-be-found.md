@@ -546,9 +546,14 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       paraphrases are those a model wrote for version 1: the set measures the check's
       mechanics, not real writes, which remain FR-90's. Its numbers are in the README beside it
       and in the build's measured row in d16.
-    - **The cost.** `bench/scale/similar.py` measures the read and the trigger's write cost at
-      10k, 100k and 1M versions per tenant as the serving role under row security, beside the
-      write it guards, and records them in [the scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md).
+    - **The cost**, measured 2026-11-05 by `bench/scale/similar.py` as the serving role under row
+      security on a busy host ([the scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)):
+      the lookup and the read of the candidates' rows take 0.82 / 1.25 ms p50 / p95 at 10k
+      versions, 0.90 / 1.82 at 100k and 2.95 / 15.7 at 1M, against 128 / 180 for r1's recall at
+      1M; an index-only scan at every scale. The keys take about twice the memories heap; the
+      trigger adds 0.4 ms p50 to a held insert at 10k and 6.2 at 1M; 0026's fill takes 19 minutes
+      at 1M with writes waiting, as 0021's does (FR-103). The scale lane's templated texts
+      overstate the candidates.
 
 ## Downsides: argument or opportunity
 
