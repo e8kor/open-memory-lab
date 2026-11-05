@@ -3850,6 +3850,7 @@ async fn doctor_stub_with(
                         "status": "ready",
                         "checks": { "database": "ok" },
                         "oauth_issuer": issuer,
+                        "scan": { "version": "oml-scan/1", "rules": 40, "pii": false },
                     }),
                     "/v2/whoami" => json!({
                         "key_id": "k1",
