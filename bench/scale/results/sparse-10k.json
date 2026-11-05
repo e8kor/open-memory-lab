@@ -1,0 +1,197 @@
+{
+ "rows": 10000,
+ "seed": 20261105,
+ "date": "2026-11-05",
+ "postgres": "18.6 (Ubuntu 18.6-0ubuntu0.26.04.1)",
+ "host": {
+  "cpus": 8
+ },
+ "load_s": 3.9,
+ "fill_0021_s": 3.42,
+ "fill_0022_s": 0.1,
+ "kind2": {
+  "versions": 9373,
+  "distinct_texts": 9189,
+  "encoded_now": 0,
+  "copy_s": 12.5,
+  "kind2_postings": 972988,
+  "per_version": 103.8
+ },
+ "space": {
+  "postings_heap_mib": 128.1,
+  "term_rows_mib": 4.2,
+  "workarea_rows_mib": 0.0,
+  "memories_heap_mib": 9.7,
+  "search_postings_served_mib": 115.0,
+  "search_postings_memory_mib": 11.6,
+  "postings": 1327849,
+  "postings_by_state": {
+   "0": 199309,
+   "1": 862180,
+   "2": 266360
+  },
+  "term_rows": 28667,
+  "served": 6104
+ },
+ "readable_rows": {
+  "leaf": 473,
+  "project": 1471,
+  "universe": 6104
+ },
+ "query_tokens": {
+  "mean": 7.9,
+  "max": 27
+ },
+ "runs": {
+  "bm25_postings_k10": {
+   "all": {
+    "p50": 2.97,
+    "p95": 7.44
+   },
+   "leaf": {
+    "n": 134,
+    "p50": 2.56,
+    "p95": 6.23
+   },
+   "project": {
+    "n": 139,
+    "p50": 2.99,
+    "p95": 6.65
+   },
+   "universe": {
+    "n": 57,
+    "p50": 4.38,
+    "p95": 10.21
+   },
+   "empty_share": 0.0061,
+   "load_before": [
+    11.15,
+    12.83,
+    10.91
+   ],
+   "load_after": [
+    10.89,
+    12.75,
+    10.89
+   ]
+  },
+  "sparse_k10": {
+   "all": {
+    "p50": 2.05,
+    "p95": 9.37
+   },
+   "leaf": {
+    "n": 134,
+    "p50": 1.74,
+    "p95": 5.23
+   },
+   "project": {
+    "n": 139,
+    "p50": 1.9,
+    "p95": 7.28
+   },
+   "universe": {
+    "n": 57,
+    "p50": 6.46,
+    "p95": 16.94
+   },
+   "empty_share": 0.0061,
+   "load_before": [
+    10.89,
+    12.75,
+    10.89
+   ],
+   "load_after": [
+    10.89,
+    12.75,
+    10.89
+   ]
+  },
+  "bm25_postings_k100": {
+   "all": {
+    "p50": 5.0,
+    "p95": 10.63
+   },
+   "leaf": {
+    "n": 134,
+    "p50": 3.33,
+    "p95": 8.87
+   },
+   "project": {
+    "n": 139,
+    "p50": 4.95,
+    "p95": 8.3
+   },
+   "universe": {
+    "n": 57,
+    "p50": 8.38,
+    "p95": 15.34
+   },
+   "empty_share": 0.0061,
+   "load_before": [
+    10.89,
+    12.75,
+    10.89
+   ],
+   "load_after": [
+    10.66,
+    12.67,
+    10.88
+   ]
+  },
+  "sparse_k100": {
+   "all": {
+    "p50": 2.64,
+    "p95": 10.77
+   },
+   "leaf": {
+    "n": 134,
+    "p50": 2.24,
+    "p95": 5.54
+   },
+   "project": {
+    "n": 139,
+    "p50": 2.46,
+    "p95": 7.54
+   },
+   "universe": {
+    "n": 57,
+    "p50": 7.83,
+    "p95": 17.14
+   },
+   "empty_share": 0.0061,
+   "load_before": [
+    10.66,
+    12.67,
+    10.88
+   ],
+   "load_after": [
+    10.66,
+    12.67,
+    10.88
+   ]
+  },
+  "bm25_sparse_lists": {
+   "all": {
+    "p50": 7.66,
+    "p95": 23.09
+   },
+   "leaf": {
+    "n": 134,
+    "p50": 5.97,
+    "p95": 12.66
+   },
+   "project": {
+    "n": 139,
+    "p50": 7.58,
+    "p95": 15.75
+   },
+   "universe": {
+    "n": 57,
+    "p50": 15.56,
+    "p95": 28.28
+   },
+   "empty_share": 0.003
+  }
+ }
+}

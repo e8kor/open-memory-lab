@@ -92,12 +92,25 @@ def write_kind2(db: str, owner: str, t: uuid.UUID, model_dir: str, threads: int,
     with psycopg.connect(P.dsn(owner, db), autocommit=True) as c:
         c.execute("SELECT set_config('oml.tenant_id', %s, false)", (str(t),))
         t0 = time.perf_counter()
-        with c.cursor().copy(f"COPY {part} (tenant_id, memory_id, workarea_id, token_id, weight, "
-                             "doc_len, kind, memory_kind, state) FROM STDIN") as cp:
-            for mid, wa, mk, state, text in versions:
-                for tok, w, in_text in known[text]:
-                    cp.write_row([t, mid, wa, tok, w, 1 if in_text else 0, 2, mk, state])
-                    n += 1
+        # INSERT, not COPY: COPY FROM is refused under forced row security.
+        batch = []
+
+        def flush():
+            if batch:
+                cols = list(zip(*batch))
+                c.execute(f"INSERT INTO {part} (tenant_id, memory_id, workarea_id, token_id, "
+                          "weight, doc_len, kind, memory_kind, state) SELECT %s, m, w, t, x, d, 2, "
+                          "k, s FROM unnest(%s::uuid[], %s::uuid[], %s::int8[], %s::float4[], "
+                          "%s::int4[], %s::int2[], %s::int2[]) AS u(m, w, t, x, d, k, s)",
+                          (t, *[list(col) for col in cols]))
+                batch.clear()
+        for mid, wa, mk, state, text in versions:
+            for tok, w, in_text in known[text]:
+                batch.append((mid, wa, tok, w, 1 if in_text else 0, mk, state))
+                n += 1
+            if len(batch) >= 50000:
+                flush()
+        flush()
         c.execute("DELETE FROM search_sparse_queue WHERE tenant_id = %s", (t,))
         c.execute(f"VACUUM ANALYZE {part}")
         stats["copy_s"] = round(time.perf_counter() - t0, 1)
