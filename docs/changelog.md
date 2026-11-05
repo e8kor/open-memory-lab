@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design and 0.5.2-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design and 0.5.5-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.2-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.5-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,7 +27,55 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Unreleased — search pipelines (v0.5.5, planned)
+## 0.5.5-design
+
+Opened for release v0.5.5, which carries this revision: search pipelines, increment 1 of
+[ADR-0049](adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md),
+which stays proposed. `info.version` moved to `0.5.5-design` once, at the release: the provider
+ring's recall gained `search` and `match`, its answer `search` and each hit `matched`, and the lab
+ring `GET /v2/search` and `POST /v2/search/default`. The entries below were kept apart under
+"Unreleased" until this release, newest first.
+
+### 2026-11-05 — Release v0.5.5: recall ranks by bm25 from stored lexemes
+
+What changes for someone using OML:
+
+- **Recall is faster.** Each memory's search lexemes are now stored when it is written, so a
+  recall no longer rebuilds them for every row it reads. On BEIR SciFact, 5,183 memories,
+  `bm25`'s median recall fell from 3,703 ms to 83 ms, more than 40 times faster
+  ([BEIR SciFact](api/benchmarks/beir-scifact.md#earlier-runs)).
+- **`bm25` is the default search.** A recall matches any of its words, ranks rarer words higher,
+  counts another form of a word, and says which words each hit matched. On the published suites
+  `bm25` scored nDCG@10 0.685 on BEIR SciFact (Anserini's published BM25: 0.665), 0.321 on BEIR
+  NFCorpus (published: 0.325), 0.503 on LoCoMo and 0.876 on OML's own recall set, ahead of every
+  other pipeline on each ([benchmarks](api/benchmarks/index.md)). `bm25-trigram`, which also
+  finds a misspelt word, stays available by name or as a tenant's default, at many times the
+  latency. A recall that relied on every word being required gets more results; `match: "all"`
+  asks for every word again.
+- **`did_you_mean` reads a maintained vocabulary.** Each workarea's words are kept up to date as
+  memories are written, and a suggestion is offered only when a recall finds fewer than three
+  hits.
+- **Benchmark reports are published** in the documentation, under
+  [API › Benchmarks](api/benchmarks/index.md), generated from the measured results and checked
+  in CI: quality and latency for each pipeline on each suite, with the date, commit and host of
+  each run.
+- **The upgrade rewrites memories once.** Migration 0020 stores the lexemes of every existing
+  memory version and builds the vocabulary when the new server first starts, so that first start
+  takes longer on a large database; nothing anyone reads changes, and later starts are as before
+  ([search table](data/postgres-schema.md#search-adr-0049)).
+- **Known limit: recall cost still grows with the rows a key can read.** Row security keeps any
+  text index from serving a recall, so each recall reads the stored lexemes of every readable
+  row: on SciFact ×10, 51,830 memories, `bm25`'s median recall is 604 ms
+  ([latency at 50k rows](api/benchmarks/beir-scifact-x10.md)). ADR-0052 is the next step.
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.5; every reader page fetches the
+installer at `v0.5.5`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents move to `0.5.5-design`. The pages that marked search pipelines "planned for
+v0.5.5" now read "since v0.5.5"; ADR-0049 stays proposed, released while the record is proposed,
+as ADR-0033 was in v0.3.0.
+
+### 2026-11-04 — Search pipelines built (implementation)
 
 *2026-11-04 ·* [ADR-0049](adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) *(proposed).* Recall ranks through a named search
 pipeline behind a `Retriever` port; the deployment enables pipelines (`search.enabled`,

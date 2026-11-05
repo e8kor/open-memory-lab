@@ -9,7 +9,7 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 **Status:** proposed · 2026-11-04
 
-**Release:** planned for v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); later
+**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); later
 increments not assigned ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0048 (proposed, on branch `feat/code-map`): ADR-0048 stays the record of *what*

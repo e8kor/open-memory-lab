@@ -403,7 +403,7 @@ naming it in `details.field`:
   that fits, and `budget` reports the cut. `include_unreviewed: true`
   (default `false`) adds the key's own held rows that match, flagged
   `state: "held"`; it is the one flag for unreviewed rows (d4).
-- **recall's search** *(planned for v0.5.5, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
+- **recall's search** *(since v0.5.5, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
   `search` names the pipeline (`keyword-all`, `keyword-any`, `bm25`,
   `bm25-trigram`) among those the server serves; omitted, the
   organisation's default runs, `bm25` as shipped. Any word may match: an

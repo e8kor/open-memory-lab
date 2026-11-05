@@ -4,7 +4,7 @@
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
     "designed_annex": "mcp-tools.designed.json",
-    "design_spec_version": "0.5.2-design",
+    "design_spec_version": "0.5.5-design",
     "output_shapes": "This file declares inputSchemas only. Tool OUTPUT shapes are deliberately prose-normative in mcp-plugin.md until the implementation pins structured output schemas.",
     "pending_design": {
       "oml_read": "ADR-0039 d4 and ADR-0013 d1, d2, ADR-0025 d9: the lineage mode's lineage and depth are designed (mcp-tools.designed.json) and refused with request.validation naming the field until the lineage read is routed. mcp-plugin.md decides hybrid FTS + vector as the only search mode and logs every recall to the read log; the build serves full-text search alone (vector search waits on RS-1) and computes the ids served and the query_digest on every recall, which no read log records yet.",
