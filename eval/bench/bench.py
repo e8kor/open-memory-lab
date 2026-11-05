@@ -133,7 +133,7 @@ def cmd_load(a):
         body = {"body": d.text, "claim_key": claim_key(a.dataset, d.id), "kind": "memory",
                 "workarea": workarea(a.dataset, d.group)}
         # The date the dataset states, declared as the memory's valid_from
-        # (proposed ADR-0058 d10); BENCH_NO_VALID_TIME=1 loads without it.
+        # (proposed ADR-0059 d10); BENCH_NO_VALID_TIME=1 loads without it.
         if d.valid_from and not os.environ.get("BENCH_NO_VALID_TIME"):
             body["valid_from"] = d.valid_from
         status, resp = retrying(writer, "POST", "/v1/memories", body)
@@ -264,7 +264,7 @@ def cmd_run(a):
                 "rerank_reason": search.get("rerank_reason"),
                 "rerank_scores": [(h.get("matched") or {}).get("rerank") for h in hits],
                 "below_floor": search.get("below_floor"),
-                # The date window read from the question (proposed ADR-0058
+                # The date window read from the question (proposed ADR-0059
                 # d6), so its reach can be counted per category.
                 "window": search.get("window"),
             }

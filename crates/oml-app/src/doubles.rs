@@ -1787,7 +1787,7 @@ impl Retriever for MemStore {
     /// `keyword-any` alone (ADR-0049 d7).
     fn retrievers(&self) -> Vec<RetrieverKind> {
         // The `time` leg is a predicate over declared bounds, served with
-        // PostgreSQL's semantics (proposed ADR-0058 d7).
+        // PostgreSQL's semantics (proposed ADR-0059 d7).
         if self.bm25_as_any_word {
             vec![
                 RetrieverKind::KeywordAll,
@@ -1834,7 +1834,7 @@ impl Retriever for MemStore {
                 return false;
             }
             // An ended version is outside the scope unless asked for
-            // (proposed ADR-0058 d3); keyword-all's v0.5.0 statement keeps
+            // (proposed ADR-0059 d3); keyword-all's v0.5.0 statement keeps
             // no such cut on PostgreSQL, and the core re-checks either way.
             if kind != RetrieverKind::KeywordAll
                 && scope.expired_at.is_some_and(|now| m.valid.expired_at(now))
@@ -1858,7 +1858,7 @@ impl Retriever for MemStore {
                 return Ok(Retrieved::default());
             };
             // Inside the window scores 1; an earlier start scores by its
-            // distance to the window's start (proposed ADR-0058 d7).
+            // distance to the window's start (proposed ADR-0059 d7).
             let start = window.from_us;
             let mut candidates: Vec<Candidate> = state
                 .memories

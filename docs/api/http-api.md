@@ -822,7 +822,7 @@ recall is not run; past 1,000 feedback members from one key in a UTC day, refuse
 1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
 
-*Proposed ([ADR-0058](../adr/ADR-0058-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)), built on draft branch `feat/valid-time`:* a memory may
+*Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)), built on draft branch `feat/valid-time`:* a memory may
 declare `valid_from` and `valid_until` on submit and supersede, each `YYYY`, `YYYY-MM`,
 `YYYY-MM-DD` or an RFC 3339 date-time with an offset; a period end names the whole period, so
 `valid_from: "2015", valid_until: "2015"` holds through 2015. Only `memory` and `derived_fact`

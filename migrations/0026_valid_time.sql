@@ -1,4 +1,4 @@
--- Valid time on memories (proposed ADR-0058 d2, d3, d7, d11).
+-- Valid time on memories (proposed ADR-0059 d2, d3, d7, d11).
 --
 -- A version may declare when it holds: valid_from and valid_until, each the
 -- signed text the author sent (a period such as 2015 or 2015-03, a day, or
@@ -23,7 +23,7 @@ ALTER TABLE memories
         AND (valid_from_us IS NULL OR valid_until_us IS NULL
              OR valid_from_us < valid_until_us));
 
--- The time leg's window probe (ADR-0058 d7) and the expiry probe of
+-- The time leg's window probe (ADR-0059 d7) and the expiry probe of
 -- bm25-postings (d3): each holds only the rows that declare that end.
 CREATE INDEX memories_valid_from ON memories (tenant_id, valid_from_us)
     WHERE valid_from_us IS NOT NULL;

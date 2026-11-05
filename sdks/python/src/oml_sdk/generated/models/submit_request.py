@@ -42,9 +42,9 @@ class SubmitRequest:
             kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
                 Default: SubmitRequestKind.MEMORY.
             valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
-                fractional digits (proposed ADR-0058 d2).
+                fractional digits (proposed ADR-0059 d2).
             valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
-                fractional digits (proposed ADR-0058 d2).
+                fractional digits (proposed ADR-0059 d2).
             severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
                 orders the set first; required on kind guardrail except a retirement, refused on every other kind
                 (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).

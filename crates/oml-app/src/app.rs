@@ -549,7 +549,7 @@ fn guardrail_payload(
 }
 
 /// A version's valid time as sent, parsed and checked against its kind
-/// (proposed ADR-0058 d2): `request.validation` naming the field for an end
+/// (proposed ADR-0059 d2): `request.validation` naming the field for an end
 /// in no accepted form, an empty interval, or valid time on a kind or a
 /// retirement that takes none.
 fn valid_time(
@@ -566,7 +566,7 @@ fn valid_time(
 }
 
 /// The end a ratified supersession gives the version it replaces (proposed
-/// ADR-0058 d4): the successor's declared start, as an instant, when the
+/// ADR-0059 d4): the successor's declared start, as an instant, when the
 /// successor declares one that falls after the replaced version's start and
 /// before its own end; `None` otherwise, so an undeclared start ends
 /// nothing and nothing is inferred.
@@ -587,7 +587,7 @@ fn replaced_end(replaced: &MemoryRecord, successor: &MemoryRecord) -> Option<Val
 
 /// The submission payload's and the request digest's valid-time members:
 /// each end's normalized form, only when declared, so a version that
-/// declares none signs and digests as it did before (proposed ADR-0058 d2).
+/// declares none signs and digests as it did before (proposed ADR-0059 d2).
 fn with_valid_time(doc: &mut Value, valid: &ValidTime) {
     if let Some(members) = doc.as_object_mut() {
         if let Some(from) = &valid.from {
@@ -859,7 +859,7 @@ fn recall_query_digest(
             MatchMode::All => "all",
         },
     });
-    // The two members of proposed ADR-0058 d3 and d5, only when sent, so a
+    // The two members of proposed ADR-0059 d3 and d5, only when sent, so a
     // recall that sends neither digests as it did before.
     let mut doc = doc;
     if let Some(members) = doc.as_object_mut() {
@@ -4748,7 +4748,7 @@ where
                 };
                 // The end this ratification gives the replaced version,
                 // signed in its event, only when it gives one (proposed
-                // ADR-0058 d4).
+                // ADR-0059 d4).
                 let mut payload = payload;
                 if let MetadataFold::TipSuperseded {
                     replaced_valid_until: Some(end),
@@ -4934,7 +4934,7 @@ where
         // d9).
         let query = nfc(&req.query);
         // One now for the recall: the expiry cut and the query's relative
-        // dates (proposed ADR-0058 d5); then the window the
+        // dates (proposed ADR-0059 d5); then the window the
         // query names, by rule (d6).
         let now_us = match req.now.as_deref() {
             Some(sent) => parse_now(sent).ok_or(AppError::NowUnparsable)?,
@@ -5001,7 +5001,7 @@ where
                 nodes: readable.clone(),
             }),
             // An ended version is outside the scope unless asked for: a
-            // visibility rule, never a weight (proposed ADR-0058 d3).
+            // visibility rule, never a weight (proposed ADR-0059 d3).
             expired_at: (!req.include_expired).then_some(now_us),
             anchor: req.anchor.clone(),
         };
@@ -5518,7 +5518,7 @@ where
             for &kind in pipeline.retrievers() {
                 // The time leg reads only when the query names a window, and
                 // then its own depth; the core orders it by the text list
-                // and caps it (proposed ADR-0058 d7).
+                // and caps it (proposed ADR-0059 d7).
                 if kind == RetrieverKind::Time {
                     let list = match window {
                         None => crate::search::Retrieved::default(),
@@ -5998,7 +5998,7 @@ where
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
         // The successor's own valid time: it inherits none (proposed
-        // ADR-0058 d2, d4).
+        // ADR-0059 d2, d4).
         let valid = valid_time(
             req.valid_from.as_deref(),
             req.valid_until.as_deref(),

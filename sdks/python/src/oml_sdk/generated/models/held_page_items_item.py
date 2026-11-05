@@ -77,9 +77,9 @@ class HeldPageItemsItem:
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
         valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
-            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0058 d2).
+            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
-            it at; null when open (proposed ADR-0058 d2, d4).
+            it at; null when open (proposed ADR-0059 d2, d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false.
     """

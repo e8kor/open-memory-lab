@@ -162,7 +162,7 @@ struct WriteArgs {
     expected_version: Option<Value>,
     retirement: Option<bool>,
     reason: Option<String>,
-    /// When the memory holds (proposed ADR-0058 d2, d9).
+    /// When the memory holds (proposed ADR-0059 d2, d9).
     valid_from: Option<String>,
     valid_until: Option<String>,
     /// The origin the author declares (ADR-0057 d1).
@@ -201,7 +201,7 @@ struct ReadArgs {
     match_mode: Option<String>,
     /// Feedback on the key's last recall, in any mode (ADR-0054 d6).
     feedback: Option<Value>,
-    /// Recall's expired opt-in and its now (proposed ADR-0058 d3, d5).
+    /// Recall's expired opt-in and its now (proposed ADR-0059 d3, d5).
     include_expired: Option<bool>,
     now: Option<String>,
     /// The origin filters, in recall and listing modes (ADR-0057 d4).

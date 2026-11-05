@@ -709,7 +709,7 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 /// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
 /// fence beneath it (ADR-0034 d11). A version whose valid time ended at or
 /// before the transaction's `oml.expired_at` is outside it ([`NOT_EXPIRED`];
-/// proposed ADR-0058 d3).
+/// proposed ADR-0059 d3).
 const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8)) \
        AND m.kind = ANY($3::text[]) \
@@ -718,7 +718,7 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
              AND m.workarea_id = ANY($5::uuid[])))";
 
 /// The expiry cut every search statement but `keyword-all`'s applies
-/// (proposed ADR-0058 d3): a row of `m` whose `valid_until_us` is at or
+/// (proposed ADR-0059 d3): a row of `m` whose `valid_until_us` is at or
 /// before the transaction-local `oml.expired_at`, which the retriever sets
 /// to the request's now, or leaves empty under `include_expired`. An
 /// `int8` comparison, leakproof, so it costs no index under row security.
@@ -726,12 +726,12 @@ pub const NOT_EXPIRED: &str = "(m.valid_until_us IS NULL OR m.valid_until_us > C
 
 /// The versions of the tenant `$1` whose valid time ended at or before the
 /// transaction's `oml.expired_at`, by the `memories_valid_until` index; the
-/// postings statements leave them out (proposed ADR-0058 d3).
+/// postings statements leave them out (proposed ADR-0059 d3).
 const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= \
            COALESCE(NULLIF(current_setting('oml.expired_at', true), '')::int8, (-9223372036854775807)::int8))";
 
-/// The `time` statement (proposed ADR-0058 d7): the scope's rows whose
+/// The `time` statement (proposed ADR-0059 d7): the scope's rows whose
 /// declared valid time overlaps the window [`$6`, `$7`), either side open
 /// when null; a row with no `valid_from` never matches. A row that starts
 /// inside the window scores 1, one that started before it `1 / (1 + days
@@ -1765,7 +1765,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
 }
 
 /// A row's declared valid time: each end's signed text and its bound
-/// (proposed ADR-0058 d2).
+/// (proposed ADR-0059 d2).
 fn valid_from_row(row: &PgRow) -> Result<ValidTime, StoreError> {
     let end = |text: &str, micros: &str| -> Result<Option<ValidEnd>, StoreError> {
         let text: Option<String> = row.try_get(text).map_err(backend)?;
@@ -2240,7 +2240,7 @@ async fn insert_memory(
     insert.execute(&mut **tx).await.map_err(backend)?;
     // Declared valid time in the same transaction, only when declared, so a
     // schema before 0026 still takes every row that declares none (proposed
-    // ADR-0058 d11).
+    // ADR-0059 d11).
     if !m.valid.is_open() {
         sqlx::query(
             "UPDATE memories SET valid_from = $3, valid_until = $4, valid_from_us = $5, \
@@ -2339,7 +2339,7 @@ async fn supersede_tip(
     at: &EventTime,
 ) -> Result<(), StoreError> {
     // The ratification's end for the replaced version, when it gives one
-    // (proposed ADR-0058 d4); null leaves the end as it was.
+    // (proposed ADR-0059 d4); null leaves the end as it was.
     let flipped = sqlx::query(
         "UPDATE memories t SET is_tip = false FROM memories s \
          WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'held' \
@@ -4202,7 +4202,7 @@ impl Retriever for PgStore {
             .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // The expiry cut every statement but keyword-all's reads (proposed
-        // ADR-0058 d3): the request's now, or empty under include_expired.
+        // ADR-0059 d3): the request's now, or empty under include_expired.
         sqlx::query("SELECT set_config('oml.expired_at', $1, true)")
             .bind(scope.expired_at.map(|t| t.to_string()).unwrap_or_default())
             .execute(&mut *tx)
@@ -4254,7 +4254,7 @@ impl Retriever for PgStore {
             }
             RetrieverKind::Trigram if all => Vec::new(),
             // The window's rows, by leakproof int8 comparisons; no window,
-            // no list (proposed ADR-0058 d7).
+            // no list (proposed ADR-0059 d7).
             RetrieverKind::Time => match query.window {
                 None => Vec::new(),
                 Some(window) => sqlx::query(&time_sql())

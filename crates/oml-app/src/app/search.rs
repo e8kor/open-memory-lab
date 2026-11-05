@@ -27,7 +27,7 @@ pub struct SearchSettings {
     /// doctor (ADR-0052 d12); `None` otherwise.
     pub postings: Option<PostingsHealth>,
     /// The tenant's valid time, read where the deployment serves a time
-    /// pipeline, for doctor (proposed ADR-0058 d12); `None` otherwise.
+    /// pipeline, for doctor (proposed ADR-0059 d12); `None` otherwise.
     pub valid_time: Option<crate::search::ValidTimeCounts>,
 }
 

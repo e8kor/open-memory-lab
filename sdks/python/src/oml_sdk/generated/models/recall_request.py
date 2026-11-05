@@ -52,7 +52,7 @@ class RecallRequest:
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
                 bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time,
-                bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0058 d7). A
+                bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0059 d7). A
                 name the deployment does not serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
@@ -62,9 +62,9 @@ class RecallRequest:
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
             include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
-                default; get and the listings always serve them (proposed ADR-0058 d3). Default: False.
+                default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
             now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
-                digits (proposed ADR-0058 d2).
+                digits (proposed ADR-0059 d2).
     """
 
     query: str

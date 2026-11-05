@@ -76,7 +76,7 @@ class Client:
 
     def recall(self, query, k, max_tokens, workarea, search=None, match=None, now=None):
         args = {"query": query, "k": k, "max_tokens": max_tokens}
-        # The recall's now (proposed ADR-0058 d5): a benchmark asks at the
+        # The recall's now (proposed ADR-0059 d5): a benchmark asks at the
         # time its question was asked.
         if now:
             args["now"] = now

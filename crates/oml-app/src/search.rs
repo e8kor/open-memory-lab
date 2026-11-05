@@ -57,7 +57,7 @@ pub enum RetrieverKind {
     /// The rows whose declared valid time overlaps the query's date window,
     /// read by leakproof `int8` comparisons on an index row security lets
     /// serve, nearest start first; empty when the query names no window
-    /// (proposed ADR-0058 d7).
+    /// (proposed ADR-0059 d7).
     Time,
 }
 
@@ -137,11 +137,11 @@ pub const CC_DEPTH: usize = 100;
 pub const CC_BM25_SPARSE: [f32; 2] = [0.3, 0.7];
 
 /// How many rows the `time` retriever reads at most, nearest start first
-/// (proposed ADR-0058 d7).
+/// (proposed ADR-0059 d7).
 pub const TIME_READ: usize = 200;
 
 /// How deep the `time` list enters fusion once the core has ordered it by
-/// the text list: the cap (proposed ADR-0058 d7).
+/// the text list: the cap (proposed ADR-0059 d7).
 pub const TIME_DEPTH: usize = FUSION_DEPTH;
 
 /// A recall serving fewer hits than this, or than its `k` when `k` is
@@ -177,7 +177,7 @@ pub enum Pipeline {
     /// combination, 0.3 and 0.7 (ADR-0052 d13, d16).
     Bm25Sparse,
     /// `bm25-postings-time`: `bm25-postings` and the `time` leg fused by
-    /// reciprocal rank (proposed ADR-0058 d7).
+    /// reciprocal rank (proposed ADR-0059 d7).
     Bm25PostingsTime,
 }
 
@@ -545,7 +545,7 @@ pub struct CandidateScope {
     pub own_held: Option<OwnHeldScope>,
     /// The request's now in microseconds: a version whose valid time ended
     /// at or before it is outside the scope; `None` under
-    /// `include_expired` (proposed ADR-0058 d3).
+    /// `include_expired` (proposed ADR-0059 d3).
     pub expired_at: Option<i64>,
     /// The origin filters, a predicate of the scope itself, before any
     /// ranking or cut, so a filtered recall never under-returns (ADR-0057
@@ -586,7 +586,7 @@ pub struct PostingsHealth {
     pub sparse_enabled: bool,
 }
 
-/// The tenant's valid time for doctor (proposed ADR-0058 d12): its served
+/// The tenant's valid time for doctor (proposed ADR-0059 d12): its served
 /// versions that declare a start, and those whose end has passed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValidTimeCounts {
@@ -605,7 +605,7 @@ pub struct RetrievalQuery<'a> {
     /// pipeline that reads them; empty otherwise (ADR-0052 d16).
     pub sparse: &'a [SparseTerm],
     /// The query's date window, which the `time` retriever reads; `None`
-    /// when the query names none (proposed ADR-0058 d6, d7).
+    /// when the query names none (proposed ADR-0059 d6, d7).
     pub window: Option<&'a Window>,
 }
 
@@ -828,7 +828,7 @@ pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
 /// Keeps the `time` list's rows the text list holds, orders them by the
 /// leg's score (the rows the window holds first, then those that began
 /// before it, nearest first), then by the text list's rank, and cuts it at
-/// [`TIME_DEPTH`] (proposed ADR-0058 d7): the leg lifts a row the words
+/// [`TIME_DEPTH`] (proposed ADR-0059 d7): the leg lifts a row the words
 /// found and never adds one they did not. Pure: it reads the two lists and
 /// nothing else.
 #[must_use]
@@ -869,7 +869,7 @@ pub fn order_time_list(time: Retrieved, text: &Retrieved) -> Retrieved {
 #[must_use]
 pub fn pipeline_access(lists: &[(RetrieverKind, Retrieved)]) -> Access {
     // The `time` leg reads its own index and says nothing of how the words
-    // were read (proposed ADR-0058 d7).
+    // were read (proposed ADR-0059 d7).
     let text: Vec<_> = lists
         .iter()
         .filter(|(kind, _)| *kind != RetrieverKind::Time)

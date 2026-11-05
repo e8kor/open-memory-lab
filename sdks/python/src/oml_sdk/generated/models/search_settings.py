@@ -29,7 +29,7 @@ class SearchSettings:
             /v2/search/default.
         valid_time (SearchSettingsValidTime | Unset): Where the deployment serves a time pipeline: the tenant's served
             memories that declare valid_from, and those whose valid_until has passed, which recall hides by default
-            (proposed ADR-0058 d12).
+            (proposed ADR-0059 d12).
     """
 
     enabled: list[str]

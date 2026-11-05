@@ -10957,7 +10957,7 @@ fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> Memory
 /// row, an own held row when no own keys are named; a row with no
 /// `valid_from` never matches a window; an empty scope ranks nothing; and
 /// its order is the rows that start inside the window first, then those
-/// that started before it, nearest first, ties by id (proposed ADR-0058 d7).
+/// that started before it, nearest first, ties by id (proposed ADR-0059 d7).
 pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(431);
     rig.seed_chain(store, 0).await;
@@ -11086,7 +11086,7 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
 /// A version whose valid time ended at or before the scope's `expired_at`
 /// is outside every retriever's scope but `keyword_all`'s, whose v0.5.0
 /// statement the core re-checks after; with no `expired_at` it is served
-/// like any other (proposed ADR-0058 d3).
+/// like any other (proposed ADR-0059 d3).
 pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(432);
     rig.seed_chain(store, 0).await;

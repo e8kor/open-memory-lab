@@ -395,7 +395,7 @@ naming it in `details.field`:
 | `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match`, `include_expired`, `now` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
 | `listing` | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `{mode, items, next_cursor}` | `GET /v1/memories` |
 
-- *Proposed ([ADR-0058](../adr/ADR-0058-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)):*
+- *Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)):*
   `oml_write` takes `valid_from` and `valid_until`, when the claim holds, each a period
   (`2015`, `2015-03`, `2015-03-14`) or an instant; every claim item carries both. Recall
   hides a claim whose `valid_until` has passed unless `include_expired` is true, reads at

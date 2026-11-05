@@ -33,7 +33,7 @@ fn settings_json(settings: &SearchSettings) -> Value {
         "effective": settings.effective.as_str(),
     });
     // The tenant's valid time doctor reads where a time pipeline is served
-    // (proposed ADR-0058 d12).
+    // (proposed ADR-0059 d12).
     if let (Some(v), Some(obj)) = (&settings.valid_time, body.as_object_mut()) {
         obj.insert(
             "valid_time".to_owned(),

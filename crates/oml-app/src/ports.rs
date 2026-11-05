@@ -324,7 +324,7 @@ pub enum MetadataFold {
         replaced: Uuid,
         /// The end the ratification gives the replaced version: the
         /// successor's declared start, when it begins inside the replaced
-        /// version's interval; `None` changes no end (proposed ADR-0058 d4).
+        /// version's interval; `None` changes no end (proposed ADR-0059 d4).
         replaced_valid_until: Option<Box<oml_domain::valid_time::ValidEnd>>,
     },
     /// `web.email_allowed`: the entry's row, with no pinned subject. The
@@ -602,7 +602,7 @@ pub trait Retriever: Send + Sync {
     }
 
     /// The tenant's served versions that declare valid time, and those
-    /// ended at or before `now_us`, for doctor (proposed ADR-0058 d12);
+    /// ended at or before `now_us`, for doctor (proposed ADR-0059 d12);
     /// `None` from an adapter that keeps none.
     fn valid_time_counts(
         &self,

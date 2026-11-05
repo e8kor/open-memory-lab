@@ -1042,7 +1042,7 @@ pub struct MemoryRecord {
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
     /// When the version says it holds, declared by its author and signed;
-    /// open on both sides when it declares none (proposed ADR-0058 d2).
+    /// open on both sides when it declares none (proposed ADR-0059 d2).
     /// Boxed: most rows declare none, and every fold carries the record.
     pub valid: Box<ValidTime>,
     /// The version's anchor as its author declared it, signed in its
@@ -1356,7 +1356,7 @@ pub struct SubmitRequest {
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
     /// `valid_from` and `valid_until` as sent; parsed and checked against
-    /// the kind by the capture (proposed ADR-0058 d2).
+    /// the kind by the capture (proposed ADR-0059 d2).
     pub valid_from: Option<String>,
     pub valid_until: Option<String>,
     /// The origin the author declares, grammar-checked by the transport
@@ -1531,11 +1531,11 @@ pub struct RecallRequest {
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
     /// `include_expired`: serve versions whose valid time has ended, hidden
-    /// by default (proposed ADR-0058 d3).
+    /// by default (proposed ADR-0059 d3).
     pub include_expired: bool,
     /// `now`, as sent: the instant the expiry, the query's relative dates
     /// are read at; `None` is the lead's clock
-    /// (proposed ADR-0058 d5).
+    /// (proposed ADR-0059 d5).
     pub now: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
@@ -1663,7 +1663,7 @@ pub struct RecallResult {
     /// (`search.pruned`; ADR-0052 d6, d11).
     pub pruned: Vec<String>,
     /// The date window the query named, read by rule `oml-when/1`
-    /// (`search.window`; proposed ADR-0058 d6).
+    /// (`search.window`; proposed ADR-0059 d6).
     pub window: Option<Window>,
 }
 
@@ -2017,7 +2017,7 @@ pub struct SupersedeRequest {
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
     /// The successor's own valid time as sent; it inherits none (proposed
-    /// ADR-0058 d2, d4).
+    /// ADR-0059 d2, d4).
     pub valid_from: Option<String>,
     pub valid_until: Option<String>,
     /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
@@ -2489,13 +2489,13 @@ pub enum AppError {
     )]
     GuardrailFieldRefused { field: &'static str },
     /// A valid end in no accepted form, an empty interval, or valid time on
-    /// a kind or a retirement that takes none (proposed ADR-0058 d2,
+    /// a kind or a retirement that takes none (proposed ADR-0059 d2,
     /// request.validation).
-    #[error("{0} (proposed ADR-0058 d2, request.validation)")]
+    #[error("{0} (proposed ADR-0059 d2, request.validation)")]
     ValidTime(ValidTimeError),
-    /// `now` in no accepted form (proposed ADR-0058 d5, request.validation).
+    /// `now` in no accepted form (proposed ADR-0059 d5, request.validation).
     #[error(
-        "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0058 d5, request.validation)"
+        "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0059 d5, request.validation)"
     )]
     NowUnparsable,
     #[error(

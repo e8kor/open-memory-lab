@@ -4485,7 +4485,7 @@ impl Scrape {
 /// of its recalls since the lead started; and, read by an admin key from
 /// `GET /v2/search`, one warning per fault in the tenant's postings, each
 /// naming the repair, or one line saying they are complete.
-/// The time pipelines' doctor line (proposed ADR-0058 d12): where one is
+/// The time pipelines' doctor line (proposed ADR-0059 d12): where one is
 /// enabled, how many served memories declare valid time and how many have
 /// ended, read by an admin key from `GET /v2/search`; a warning when none
 /// declares any, since the `time` list is then always empty.
@@ -4507,7 +4507,7 @@ fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> 
     );
     if declared == 0 {
         return vec![format!(
-            "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0058 d12)",
+            "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0059 d12)",
             timed.join(", ")
         )];
     }

@@ -23,7 +23,7 @@ class RecallMatched:
         terms (list[str]): The query words the row holds, as the pipeline reads words.
         of (int): How many words the query had.
         via (list[RecallMatchedViaItem]): The retrievers whose lists held the row; time when its valid time overlaps the
-            window the query named (proposed ADR-0058 d7).
+            window the query named (proposed ADR-0059 d7).
         rerank (float | None | Unset): The reranker's relevance of the row to the query, when a reranking pipeline
             scored it; the hit's score is then this relevance (ADR-0053 d7).
         rank_before (int | None | Unset): The row's rank in the first stage's list, from 1, when the reranker scored it

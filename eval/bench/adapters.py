@@ -38,7 +38,7 @@ class Doc:
     group: str = ""
     # When the memory begins to hold, as the dataset states it as metadata
     # (a session's date), declared by the loader as the memory's valid_from;
-    # never read out of the text (proposed ADR-0058 d10).
+    # never read out of the text (proposed ADR-0059 d10).
     valid_from: str = None
 
 
@@ -49,7 +49,7 @@ class Query:
     group: str = ""
     category: str = "all"
     # The instant the question is asked at, sent as recall's now (proposed
-    # ADR-0058 d5); None asks at the server's clock.
+    # ADR-0059 d5); None asks at the server's clock.
     now: str = None
 
 
@@ -237,7 +237,7 @@ class Locomo:
                     did = f"{group}.{t['dia_id']}"
                     ids.add(did)
                     # The session's date is the turn's valid_from: what was
-                    # said holds from then on (proposed ADR-0058 d10).
+                    # said holds from then on (proposed ADR-0059 d10).
                     docs.append(Doc(did, text, group, valid_from=day))
                 n += 1
             # The questions are asked the day after the last session.

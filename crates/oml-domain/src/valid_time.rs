@@ -1,8 +1,8 @@
 //! Valid time, the query's date window and expiry — pure
-//! functions over values the app has already read (proposed ADR-0058; it
+//! functions over values the app has already read (proposed ADR-0059; it
 //! narrows proposed ADR-0036 d2).
 //!
-//! - **Valid time** (ADR-0058 d2): a version's optional ends `valid_from`
+//! - **Valid time** (ADR-0059 d2): a version's optional ends `valid_from`
 //!   and `valid_until`, each a period (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) or an
 //!   RFC 3339 instant with an offset. A period end names the whole period:
 //!   `valid_from` is its first instant, `valid_until` the instant after its
@@ -14,13 +14,13 @@
 
 use crate::model::MemoryKind;
 
-/// The date parser's rule id (ADR-0058 d6).
+/// The date parser's rule id (ADR-0059 d6).
 pub const WHEN_RULE: &str = "oml-when/1";
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 /// Why a valid end is refused; each is `request.validation` naming the
-/// field (ADR-0058 d2).
+/// field (ADR-0059 d2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ValidTimeError {
     /// Not `YYYY`, `YYYY-MM`, `YYYY-MM-DD` or an RFC 3339 `date-time` with
@@ -79,7 +79,7 @@ impl ValidEnd {
     }
 }
 
-/// A version's valid time: two optional ends (ADR-0058 d2). `Default` is
+/// A version's valid time: two optional ends (ADR-0059 d2). `Default` is
 /// open on both sides, every version that declares none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ValidTime {
@@ -135,7 +135,7 @@ impl ValidTime {
     }
 
     /// Refuses valid time on a kind that takes none, or on a retirement
-    /// (ADR-0058 d2): only `memory` and `derived_fact` take it.
+    /// (ADR-0059 d2): only `memory` and `derived_fact` take it.
     ///
     /// # Errors
     ///
@@ -165,14 +165,14 @@ impl ValidTime {
     }
 
     /// Whether the version has ended at `now_us`: its end at or before now
-    /// (ADR-0058 d3).
+    /// (ADR-0059 d3).
     #[must_use]
     pub fn expired_at(&self, now_us: i64) -> bool {
         self.until.as_ref().is_some_and(|u| u.micros <= now_us)
     }
 
     /// Whether a declared start exists and the interval overlaps `window`
-    /// (ADR-0058 d7): a row with no start never matches.
+    /// (ADR-0059 d7): a row with no start never matches.
     #[must_use]
     pub fn overlaps(&self, window: &Window) -> bool {
         let Some(from) = &self.from else {
@@ -320,7 +320,7 @@ fn parse_instant_tail(b: &[u8], days: i64) -> Option<i64> {
     (first..=last).contains(&micros).then_some(micros)
 }
 
-/// The request's now as `now` names it (ADR-0058 d5): a period's first
+/// The request's now as `now` names it (ADR-0059 d5): a period's first
 /// instant, or the instant.
 #[must_use]
 pub fn parse_now(s: &str) -> Option<i64> {
@@ -378,7 +378,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
-/// The date window a query names (ADR-0058 d6): half-open, either side
+/// The date window a query names (ADR-0059 d6): half-open, either side
 /// open, with the words it was read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
@@ -430,7 +430,7 @@ const WEEKDAYS: [&str; 7] = [
     "sunday",
 ];
 
-/// The words that make a bare month name a date (ADR-0058 d6).
+/// The words that make a bare month name a date (ADR-0059 d6).
 const MONTH_CUES: [&str; 12] = [
     "in", "during", "since", "until", "till", "before", "after", "of", "last", "this", "early",
     "late",
@@ -557,7 +557,7 @@ fn words(query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Reads the date window `query` names, anchored to `now_us` (ADR-0058
+/// Reads the date window `query` names, anchored to `now_us` (ADR-0059
 /// d6, rule [`WHEN_RULE`]): the first expression from the left, the longer
 /// forms first; `None` when the query names no date.
 #[must_use]
@@ -622,7 +622,7 @@ fn range_at(w: &[String], i: usize, today: i64) -> Option<Range> {
 /// `cued`: a bare month name counts (it follows a cue word).
 #[allow(
     clippy::too_many_lines,
-    reason = "one arm per row of ADR-0058 d6's table"
+    reason = "one arm per row of ADR-0059 d6's table"
 )]
 fn expression_at(w: &[String], i: usize, today: i64, cued: bool) -> Option<(Span, usize)> {
     let word = w.get(i)?.as_str();

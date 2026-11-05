@@ -844,7 +844,7 @@ where
                 "below_floor": result.below_floor,
                 "access": result.access.as_str(),
                 "pruned": result.pruned,
-                // The date window the query named (proposed ADR-0058 d6).
+                // The date window the query named (proposed ADR-0059 d6).
                 "window": result.window.as_ref().map(|w| json!({
                     "from": w.from_us.map(fixed_width),
                     "until": w.until_us.map(fixed_width),
@@ -2450,7 +2450,7 @@ struct SubmitBody {
     #[serde(default)]
     rule: Option<Value>,
     /// When the memory holds, each end a period or an instant (proposed
-    /// ADR-0058 d2).
+    /// ADR-0059 d2).
     #[serde(default)]
     valid_from: Option<String>,
     #[serde(default)]
@@ -2487,9 +2487,9 @@ struct RecallBody {
     /// What the key's last recall served that helped, and what did not;
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
-    /// Serve versions whose valid time has ended (proposed ADR-0058 d3).
+    /// Serve versions whose valid time has ended (proposed ADR-0059 d3).
     include_expired: Option<bool>,
-    /// The recall's now: a period or an instant (proposed ADR-0058 d5).
+    /// The recall's now: a period or an instant (proposed ADR-0059 d5).
     now: Option<String>,
     /// The origin filters (ADR-0057 d4).
     anchor_repo: Option<String>,
@@ -2553,7 +2553,7 @@ struct SupersedeBody {
     #[serde(default)]
     rule: Option<Value>,
     /// The successor's own valid time; it inherits none (proposed
-    /// ADR-0058 d2).
+    /// ADR-0059 d2).
     #[serde(default)]
     valid_from: Option<String>,
     #[serde(default)]
@@ -3669,7 +3669,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
-        // When the version says it holds, as signed (proposed ADR-0058 d2).
+        // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
         "valid_until": m.valid.until.as_ref().map(ValidEnd::as_str),
         // The author's declared origin, and the served version's latest

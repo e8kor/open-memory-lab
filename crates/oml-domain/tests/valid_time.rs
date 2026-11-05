@@ -1,4 +1,4 @@
-//! Valid time and the date window (proposed ADR-0058 d2, d3, d6, d7).
+//! Valid time and the date window (proposed ADR-0059 d2, d3, d6, d7).
 
 use oml_domain::model::MemoryKind;
 use oml_domain::valid_time::{
@@ -166,7 +166,7 @@ fn a_row_with_no_valid_from_never_matches_a_window() {
     );
 }
 
-/// ADR-0058 d6's table, now Thursday 2026-11-05 at 15:00Z: the query, then
+/// ADR-0059 d6's table, now Thursday 2026-11-05 at 15:00Z: the query, then
 /// the window's from and until as ISO days (`-` for an open side), then the
 /// phrase read.
 const CASES: &[(&str, &str, &str, &str)] = &[

@@ -2581,7 +2581,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
             // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
-            // on every existing row (proposed ADR-0058 d11).
+            // on every existing row (proposed ADR-0059 d11).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
