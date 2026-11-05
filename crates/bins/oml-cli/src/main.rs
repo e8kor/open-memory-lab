@@ -4420,12 +4420,12 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("terms_checked")
         ));
     }
-    // The similar check's keys (ADR-0050 d15, d17); a server before 0025
+    // The similar check's keys (ADR-0050 d15, d17); a server before 0026
     // sends none of these fields, and none is read as a fault.
     let similar_refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_similar_keys_refill('<tenant id>') rebuilds them (postgres-schema.md, similar keys)";
     if h["similar_partition"] == Value::Bool(false) {
         lines.push(
-            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0025 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
+            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0026 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
         );
     }
     if n("similar_unfilled") > 0 || n("similar_drift") > 0 {

@@ -1,4 +1,4 @@
--- 0025_similar_keys — the near-copy check's integer keys, which row security
+-- 0026_similar_keys — the near-copy check's integer keys, which row security
 -- lets an index serve, kept with each version's state by a trigger, and the
 -- fill of the rows already written (ADR-0050 d1, d17).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file
@@ -229,7 +229,7 @@ CREATE TRIGGER memories_similar_keys
 
 ------------------------------------------------------------------------------
 -- oml_similar_keys_refill — one tenant's keys rebuilt from its versions'
--- claims; 0025 runs it for every tenant, the owner for one when doctor names
+-- claims; 0026 runs it for every tenant, the owner for one when doctor names
 -- a fault (d15), with oml.tenant_id set to that tenant, under the tenant's
 -- chain lock, as oml_search_postings_refill. Owner only.
 ------------------------------------------------------------------------------

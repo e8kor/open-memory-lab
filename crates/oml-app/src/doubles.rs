@@ -1848,7 +1848,7 @@ impl Retriever for MemStore {
         Ok(Vec::new())
     }
 
-    /// The near-copy check's candidates, keyed as migration 0025 keys them
+    /// The near-copy check's candidates, keyed as migration 0026 keys them
     /// (ADR-0050 d17): each version's keys computed from its text on the
     /// read, under the same scope predicates as [`Self::retrieve`].
     async fn similar_candidates(

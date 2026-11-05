@@ -698,6 +698,18 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 }
 ```
 
+*Since v0.5.9 ([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17):* every submission and supersession is checked, after
+every other check and before capture, against the rows its key may read in the workarea's recall
+scope: the served tips recall would read there and the key's own held rows, never another key's
+held row. The answer's `similar` lists up to three, each with `relation` `same_text` (the same
+words in the same order, case and punctuation aside) or `near_copy` (word sets at Jaccard 0.9 or
+more, both texts of 10 distinct words or more), `jaccard`, `version`, `state` and `own`. The check
+uses integer keys and an exact verification, no model and no recall. `on_similar: refuse` turns a
+non-empty list into `409 submission.similar_exists` with `details.similar`: nothing journalled,
+no idempotency record claimed, so the same `Idempotency-Key` may be resent with `hold`, the
+default. A replay serves `similar` as first answered. A supersession never lists its own claim,
+and a retirement is not checked. To replace a listed row instead, supersede it.
+
 ### Recall — `POST /v1/memories/recall`
 
 *Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` since v0.5.5 · [releases](../product/releases.md)*
@@ -820,6 +832,12 @@ recall did not serve it, an id named twice, or a member of another shape is
 recall is not run; past 1,000 feedback members from one key in a UTC day, refused or not, or
 1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
+
+*Since v0.5.9 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13):* a body sending `timings: true` receives
+`timings: {stages_ms, total_ms}`, each stage's milliseconds in the order they ran (`scope`,
+`retrieve_<retriever>` per list, `fuse`, `rerank`, `suggest`, `hydrate`, `cut`), where the
+deployment sets `search.timings`; elsewhere it is `request.validation` naming `/timings`. Every
+recall records the same stages in `oml_recall_stage_duration_seconds` either way.
 
 ### Recall telemetry
 

@@ -593,7 +593,7 @@ fn similar_partition_ddl(tenant_id: Uuid) -> Vec<String> {
 /// Creates and fills the `similar_keys` partition of every tenant whose
 /// memories partition exists and whose similar keys partition does not, as
 /// [`ensure_postings_partitions`] does for postings: a lead built before
-/// 0025 creates a tenant without it, and that tenant's writes fail until it
+/// 0026 creates a tenant without it, and that tenant's writes fail until it
 /// exists (ADR-0050 d17). Returns the tenants repaired.
 async fn ensure_similar_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = owner.begin().await?;
@@ -1432,7 +1432,7 @@ impl PgStore {
         ensure_postings_partitions(owner)
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
-        // A tenant a lead before 0025 created has no similar keys
+        // A tenant a lead before 0026 created has no similar keys
         // partition, and its writes fail until it does (ADR-0050 d17).
         ensure_similar_partitions(owner)
             .await

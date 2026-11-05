@@ -11,8 +11,9 @@ answers: what a write does about a memory OML already holds, and whether it refu
 near-copy match read from integer keys, with no recall and no model, specified in d17; its nine
 questions answered at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05))
 
-**Release:** W1–W3 proposed for v0.5.3, beside ADR-0048's S1–S3; W4–W7 not assigned, each gated
-on the remember eval ([releases](../product/releases.md#decisions))
+**Release:** W3's write side (d1, d17) built on `feat/remember-dedup` and proposed for v0.5.9;
+W1, W2 and W3's reviewer side not assigned; W4–W7 not assigned, each gated on the remember eval
+([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0012 (d5: what a serve carries beside the item, and the reject verdict), ADR-0025 (d10: a held
 version may be superseded by its author; d11: a retirement of one's own never-promoted version
@@ -489,6 +490,13 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     | d6 | false warnings ≤ 0.10 on accepted memories; planted problems caught ≥ 0.80 |
     | d8 | within-batch duplicates hinted at d1's recall |
 
+    **Measured, 2026-11-05, on the labelled set's version 1** (`eval/remember/near-duplicates/`):
+    same-text recall 1.00 (240 of 240); near-copy recall 0.86 (613 of 714: a prefix or a dropped
+    stopword always, a one-letter typo in 139 of 240, since a replaced word keeps 0.9 only in a
+    text of 19 distinct words or more); a changed number 88 of 137; paraphrases 1 of 8; 952 rows
+    named and none wrong (precision 1.00); no short text and no new fact named. The field's gate
+    passes; the skill's `refuse` waits on version 2.
+
     Version 2 takes its writes from consented sessions of the maintainer's own crews, where held
     writes, the reviewers' `duplicate_of` verdicts and the session that wrote each give labelled
     duplicate and update pairs no model chose; its paraphrases are written by someone who did
@@ -514,7 +522,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       Jaccard 0.9 shares a band with probability 1 − (1 − 0.9⁶)¹⁰ = 0.9995, at 0.85 with 0.991,
       at 0.5 with 0.15. The verification reads at most 32 candidates, those sharing the most
       bands first, then by artifact id.
-    - **Storage.** Migration 0025's `similar_keys`: one row per version and key, carrying the
+    - **Storage.** Migration 0026's `similar_keys`: one row per version and key, carrying the
       tenant, workarea, authoring key, memory id, band (0 for `same_text`, 1–10) and state (0 held,
       1 a served tip), list-partitioned by tenant as `search_postings` is, fenced, with no
       statistics on the parent; one index, `(key, workarea_id) INCLUDE (state, author_key_id,
@@ -523,7 +531,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       keys from `oml_similar_keys(claim)`, an immutable SQL function the core computes equally
       (a law holds the two equal), and follows the version's state: written held, served at
       promotion, deleted when the version is replaced, demoted, rejected or erased, so the table
-      holds only what d1 may name. 0025 fills every existing version; `oml_similar_keys_refill`
+      holds only what d1 may name. 0026 fills every existing version; `oml_similar_keys_refill`
       rebuilds one tenant's keys when the doctor names a fault (d15).
     - **The read.** One statement: the new text's keys, the scope's workareas, state 1, or state 0
       with the writing key as author; the core then reads the candidates' rows, admits each by
@@ -580,7 +588,7 @@ stay three.
   `stale`, `review_by`, `expired`); admission (advisory findings, `withdrawn`); audit and lineage
   (revision of a held version; the released key); retrieval (`stale`, `expired`, the new
   filters); the schema and the event catalog (`revises`, `duplicate_of`, the new columns);
-  the schema (0025's `similar_keys`); configuration (`similar.max_ms`, `freshness.review_days`,
+  the schema (0026's `similar_keys`); configuration (`similar.max_ms`, `freshness.review_days`,
   `freshness.stale_warn_share`, `write.max_batch`, `capture.max_per_session`); the `oml-memory`
   skill (d12); the user page's memories view (state, stale and review-by markers, withdrawn
   rows); and each amended record's Status line.
@@ -600,7 +608,7 @@ first slice, W3's write side, exercises.
 | 5 | A default `review_by` on the public server? | a. none; b. 90 days, as Copilot; c. per kind | a: none; workareas opt in | no: W5 |
 | 6 | Does reading reset freshness? | a. never; b. on use | a: never | no: W5 |
 | 7 | Batch semantics? | a. independent items; b. all or nothing | a: independent items | no: W6 |
-| 8 | Release? | a. W1–W3 in v0.5.3 with ADR-0048 S1–S3; b. W1 alone first | a's grouping, W1 to W3 together; v0.5.3 shipped without them, and since r2 W3 no longer waits on S1, so its write side is built first; the release is the maintainer's to assign | yes |
+| 8 | Release? | a. W1–W3 in v0.5.3 with ADR-0048 S1–S3; b. W1 alone first | a's grouping, W1 to W3 together; v0.5.3 shipped without them, and since r2 W3 no longer waits on S1, so its write side is built first, proposed for v0.5.9 and assigned by the maintainer | yes |
 | 9 | Should `on_similar` look beyond the target workarea's recall scope, at the key's other workareas? | a. no; b. yes | a: the target workarea's recall scope only | yes |
 
 ## Rejected alternatives
