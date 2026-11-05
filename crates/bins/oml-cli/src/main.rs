@@ -165,6 +165,10 @@ enum Command {
     /// Tail the journal's events within the key's reader access, digests
     /// only (GET /v2/events; ADR-0039 d10).
     Events(EventsArgs),
+    /// Keep a workarea in step with a repository's committed documents:
+    /// extract claims at one commit, diff them against the workarea and
+    /// write, check or link them (ADR-0057 d6-d11, d14).
+    Sync(SyncArgs),
     /// The review ceremony.
     Review {
         #[command(subcommand)]
@@ -718,6 +722,72 @@ struct CrewsUpdateArgs {
     charter_uri: Option<String>,
     #[arg(long)]
     external_manager: Option<String>,
+}
+
+#[derive(Args)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one flag per mode of ADR-0057's contract sketch"
+)]
+struct SyncArgs {
+    /// A file or directory inside a git clone, read at --rev.
+    source: String,
+    /// The workarea to keep in step, by id or name; with --pr the parent of
+    /// the draft's `<workarea>-pr-<n>`.
+    #[arg(long)]
+    workarea: String,
+    /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
+    /// headings otherwise (ADR-0057 d7, d21).
+    #[arg(long)]
+    adapter: Option<String>,
+    /// The commit read; never the working tree.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// The anchor's repository name; omitted, derived from `origin`.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Print the plan and send nothing.
+    #[arg(long, conflicts_with_all = ["check", "edges"])]
+    dry_run: bool,
+    /// Report each anchored claim and edge against --rev; write no memory.
+    #[arg(long)]
+    check: bool,
+    /// With --check, record the source checks (ADR-0057 d5).
+    #[arg(long, requires = "check")]
+    record: bool,
+    /// The most memories one run writes, so one run is one bulk verdict
+    /// (ADR-0055 d3); the next run continues.
+    #[arg(long, visible_alias = "batch", default_value_t = oml_cli::sync::run::MAX_WRITES)]
+    max_writes: usize,
+    /// Supersede a tip with no anchor in this repository as changed.
+    #[arg(long)]
+    adopt: bool,
+    /// Propose retiring every claim this key wrote in the workarea under the
+    /// source, as when a draft's pull request closes (ADR-0057 d14).
+    #[arg(long, conflicts_with_all = ["check", "edges"])]
+    retire_all: bool,
+    /// Propose the stated edges between promoted tips (a dreamer key).
+    #[arg(long, conflicts_with = "check")]
+    edges: bool,
+    /// With --edges, ratify the pending edges the source states that another
+    /// key proposed.
+    #[arg(long, requires = "edges")]
+    ratify: bool,
+    /// Allow the maintainer's public server, whose admins read every memory
+    /// and where an anchor and text are never erased (ADR-0057 d6).
+    #[arg(long)]
+    allow_public_server: bool,
+    /// Write a source equal to an older promoted version as changed, a
+    /// deliberate revert (ADR-0057 d20).
+    #[arg(long)]
+    allow_rollback: bool,
+    /// Drafts: load the records pull request <n> adds or changes between
+    /// --base and --rev into `<workarea>-pr-<n>` (ADR-0057 d14).
+    #[arg(long)]
+    pr: Option<u64>,
+    /// With --pr, the branch the pull request targets.
+    #[arg(long, default_value = "origin/main", requires = "pr")]
+    base: String,
 }
 
 #[derive(Args)]
@@ -1556,6 +1626,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Guardrails { command } => run_guardrails(cli, &stored, command),
         Command::Login { target } => run_login(cli, target),
         Command::Doctor => run_doctor(cli, &stored),
+        Command::Sync(args) => run_sync(cli, &stored, args),
         Command::Quickstart(args) => run_quickstart(args),
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
@@ -1697,6 +1768,71 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
             None => json!({ "workarea": node, "role": role }),
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// oml sync (ADR-0057)
+// ---------------------------------------------------------------------------
+
+/// `oml sync`: refuses the public server unless allowed, reads the source
+/// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
+fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    let client = resolve(cli, stored)?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+    if source::is_public_server(client.server()) {
+        if !args.allow_public_server {
+            return Err(CliError::local(format!(
+                "{} is the maintainer's public server: its admins read every memory, and a \
+                 written anchor and text are never erased; pass --allow-public-server to sync \
+                 to it (ADR-0057 d6)",
+                client.server()
+            )));
+        }
+        eprintln!(
+            "warn: syncing to the public server {}: its admins read every memory, and a written \
+             anchor and text are never erased",
+            client.server()
+        );
+        if let Ok(git) = source::Git::at(&cwd) {
+            let _ = git.set_config(source::ALLOW_PUBLIC_CONFIG, "true");
+        }
+    }
+    let opts = run::Options {
+        source: args.source.clone(),
+        workarea: args.workarea.clone(),
+        adapter: args
+            .adapter
+            .as_deref()
+            .map(Kind::parse)
+            .transpose()
+            .map_err(CliError::Local)?,
+        rev: args.rev.clone(),
+        repo: args.repo.clone(),
+        dry_run: args.dry_run,
+        check: args.check,
+        record: args.record,
+        json: cli.json,
+        max_writes: args.max_writes,
+        adopt: args.adopt,
+        retire_all: args.retire_all,
+        edges: args.edges,
+        ratify: args.ratify,
+        allow_rollback: args.allow_rollback,
+        pr: args.pr,
+        base: args.base.clone(),
+    };
+    let loaded = run::load(&cwd, &opts).map_err(CliError::Local)?;
+    for warning in &loaded.warnings {
+        eprintln!("{warning}");
+    }
+    let api = HttpApi { client };
+    let report = run::execute(&api, &loaded, &opts, &mut std::io::stdout())?;
+    if cli.json {
+        print_json(&report.json);
+    }
+    Ok(ExitCode::from(report.exit))
 }
 
 // ---------------------------------------------------------------------------
@@ -3807,6 +3943,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut default_node: Option<Value> = None;
     let mut search_settings: Option<Value> = None;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut sync: Option<Vec<String>> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -3852,6 +3990,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
             }
+            // The sync failures of ADR-0057 d17, on the default workarea.
+            let default_id = match &me {
+                Some(Ok(v)) => v["default_workarea"]["id"].as_str().map(ToOwned::to_owned),
+                _ => None,
+            };
+            sync = Some(oml_cli::sync::doctor::lines(
+                Some(url),
+                Some(&client),
+                default_id.as_deref(),
+                &cwd,
+            ));
         }
     }
     // Every count of the lead's traffic is the metrics listener's alone
@@ -3868,6 +4017,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    let sync = sync.unwrap_or_else(|| {
+        oml_cli::sync::doctor::lines(
+            source.as_ref().and_then(|s| s.url.map(String::as_str)),
+            None,
+            None,
+            &cwd,
+        )
+    });
+    let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -3886,6 +4044,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || sync_warn
     {
         "warn"
     } else {
@@ -3927,6 +4086,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "web": web,
             "search": search,
             "review": review,
+            "sync": sync,
             "telemetry": telemetry,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
@@ -4032,6 +4192,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &sync {
+            println!("sync        : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
