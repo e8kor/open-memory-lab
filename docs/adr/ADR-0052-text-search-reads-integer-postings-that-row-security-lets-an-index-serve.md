@@ -71,10 +71,14 @@ d11). Decided, not built.
     | `memory_id` | `uuid` | the version (`memories.id`) the posting derives from |
     | `workarea_id` | `uuid` | that version's workarea, copied at write; a version never changes workarea |
     | `kind` | `smallint` | `1` term frequency of a `oml_search_vector` lexeme (d3); `2` a `doc-v3-distill` weight (d3) |
+    | `memory_kind` | `smallint` | `1` `memory`, `2` `derived_fact`, copied at write; a request's `kinds` narrows the scope, so the counts of d5 are kept per memory kind too (amended 2026-11-05) |
     | `token_id` | `bigint` | d2 |
     | `weight` | `real` | kind 1: the lexeme's term frequency; kind 2: the encoder's weight |
-    | `doc_len` | `smallint` | kind 1: the version's `search_len`, BM25's row length; kind 2: `0` |
+    | `doc_len` | `integer` | kind 1: the version's `search_len`, BM25's row length; kind 2: `0`. `integer`, not `smallint`: nothing bounds a claim's lexemes below 32,767 (amended 2026-11-05) |
     | `state` | `smallint` | `0` held, `1` served (a promoted tip that is no retirement version), `2` off |
+
+    Only versions of the hit kinds (`memory`, `derived_fact`) get postings, as only they are
+    recalled (ADR-0025 d8); a steering or guardrail row, and a retirement version, get none.
 
     Two indexes per partition: `(kind, token_id)`, the access path every query takes, and
     `(memory_id)`, for the state flips, the erase and d6's rescoring. `fillfactor` 90, so a state flip,
@@ -132,8 +136,9 @@ d11). Decided, not built.
 - **d5 — The statistics are the readable rows', kept per workarea and summed at query time.** Two
   tables, maintained by the same trigger in the write's transaction and fenced like
   `search_vocabulary` (row security, `SET STATISTICS 0` per FR-45's rule): `search_term_rows
-  (tenant_id, workarea_id, kind, token_id, rows)`, the served versions in that workarea holding the
-  token, and `search_workarea_rows (tenant_id, workarea_id, kind, rows, total_len)`. A recall sums them
+  (tenant_id, workarea_id, kind, memory_kind, token_id, rows)`, the served versions in that workarea
+  holding the token, and `search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows,
+  total_len)`; a recall sums them over the memory kinds of its scope as well as its nodes. A recall sums them
   over the promoted nodes of its scope, and, when `include_unreviewed` asked, adds the own held rows'
   counts read from their postings and versions (few, by the `memories_author` index). The sum equals
   the count under the policy, as the scale lane measured for 157–163 terms per scale; a tenant-wide
@@ -196,7 +201,7 @@ d11). Decided, not built.
   tables and the trigger, then fills kind 1 postings and counts for every existing version under each
   tenant's context, as 0020 fills `search_vocabulary`, reading the stored vectors and no text. It holds
   the trigger's lock on `memories` for its fill, so writes wait for it; the fill time at 100,000 and
-  1,000,000 rows is measured before the release that carries 0021 (FR-100), with a batched fill as the fallback if it is too long (open question 4). Kind
+  1,000,000 rows is measured before the release that carries 0021 (FR-100); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, FR-103). Kind
   2 is filled by the encoder after start, oldest first. `bm25-postings` enters the build disabled
   (ADR-0049 d10); `sparse` and `bm25-sparse` are refused at start while the backlog is above zero.
 
@@ -274,7 +279,8 @@ d11). Decided, not built.
 - **Roadmap rows** opened: FR-100 (the postings at 100,000 and 1,000,000 rows measured, not
   extrapolated: latency by scope, the prune constants, the `scan` share, space per kind, the fill
   time), FR-101 (the encoder's CPU per write and the kind 2 backfill rate), FR-102 (the count rows
-  under concurrent promotions in one workarea). Numbered after FR-99, which `feat/ontology-metadata`
+  under concurrent promotions in one workarea), FR-103 (a batched, resumable fill before any tenant
+  reaches 1,000,000 rows; added 2026-11-05). Numbered after FR-99, which `feat/ontology-metadata`
   holds.
 - **Costs**: a second copy of every version's words, larger than the table it indexes (d10); a
   trigger and counts on every write and state change (d5, d8); a migration whose fill holds writes
@@ -291,7 +297,8 @@ d11). Decided, not built.
 |---|---|
 | **A `SECURITY DEFINER` search function** | It moves the fence from the policy to one function's code: it would run as a role that row security does not filter, pin the tenant from `oml.tenant_id` and take the readable workareas from its caller, so one defect in it, or one injection that reaches it, reads every tenant. ADR-0034 d5 refuses a definer function in `public` at start (`definer_function`) for that reason, and the lane named the same risk. Its latency would be the no-policy column. |
 | **Marking `ts_match_vq` and the trigram operators `LEAKPROOF`** (ADR-0034 d13) | Only a superuser can, which adds a step outside the migrations to every install and is unavailable on most managed PostgreSQL. It does not make BM25 fast either: with `ts_match_vq` so marked, the `bm25` statement's p50 went from 615 to 442 ms at 51,830 rows (ADR-0049 d12 item 5), because common words still make most rows candidates. |
-| **A search engine per tenant (Tantivy, OpenSearch), fed from the outbox** | A second store of every tenant's words outside row security, which ADR-0013 d1 rejects for reads; the readable-workarea filter and readable statistics would be re-implemented inside it; a promoted row would be invisible until the feed caught up; the erase inventory gains a store with its own snapshots. The `Retriever` port keeps it open if postings in PostgreSQL stop scaling (open question 5). |
+| **A search engine per tenant (Tantivy), fed from the outbox** | A second store of every tenant's words outside row security, which ADR-0013 d1 rejects for reads; the readable-workarea filter and readable statistics would be re-implemented inside it; a promoted row would be invisible until the feed caught up; the erase inventory gains a store with its own snapshots. The `Retriever` port keeps it open if postings in PostgreSQL stop scaling (open question 5). |
+| **OpenSearch, rejected for now (settled 2026-11-05)** | Today it would hold every tenant's words outside row security for a need nothing has shown: postings in PostgreSQL meet the 50 ms bound to the scale this record measures, and no deployment asks for a hosted scale-out. **Revisit** when a tenant nears 300,000 readable rows (where d10 expects the pruned postings to cross 50 ms) or a hosted deployment needs search to scale out beyond one PostgreSQL. **Conditions on any revisit**, each a requirement, not a preference: OpenSearch only proposes candidates, and PostgreSQL re-checks each under row security before it is ranked or served (the core's re-check of ADR-0049 d2 stays the fence); one index per tenant, never a shared index filtered by a tenant field; only legs that need no corpus statistic, so learned sparse with fixed model weights and vectors, never OpenSearch's BM25, whose document frequencies are the index's and so count rows the key cannot read (d5); fed from the outbox, with the feed's lag shown on `/readyz` and by doctor, and a row promoted but not yet indexed still found by the PostgreSQL legs; and its indexes and snapshots entered in ADR-0005 d4's erasure inventory, an erase deleting the version's documents in the erase's own flow. |
 | **The status quo: the stored-lexeme scan** | Linear in the readable rows: 1,400 ms p95 for the cheapest every-word form and ≥ 5,000 ms for BM25 at 1,000,000 rows, 677 ms for BM25 at 100,000. It stays as the fallback (d6). |
 | **A per-tenant dictionary with `int4` ids from a per-tenant sequence** | Four bytes less per posting, but a write must look up or insert each new word, two writers of one new word wait on each other, the dictionary holds the tenant's words as plaintext, which erase must then prune when a word's last posting goes, and each tenant needs a sequence beside its partition. A hash needs none of it (d2). |
 | **A global dictionary** | One table of every tenant's words, which no tenant policy can fence, and whose ids, assigned in order, tell a tenant when other tenants first wrote a word. |
@@ -301,28 +308,31 @@ d11). Decided, not built.
 | **pgvector `sparsevec` with an HNSW index** | Its `ORDER BY` uses the index under the policy, as dense HNSW does, but the index takes at most 1,000 non-zero elements, ranks approximately, needs `relaxed_order` to keep recall under narrow scopes (the lane: recall@10 0.09 at a 1% share without it), and cannot express BM25 with readable-scoped statistics. |
 | **Denormalising nothing: join `memories` for every posting's scope and state** | One index lookup per posting read, where the measured case filtered on columns of the posting itself; the copied `workarea_id` never changes, and the `state` flip is a heap-only update. |
 
-## Open questions
+## Open questions, settled 2026-11-05
 
-1. **`workarea_id` in the access index.** `(kind, token_id, workarea_id)` would let a leaf scope read
-   only its own postings, at a larger index; the measured case filtered it from the heap. Decided on
-   FR-100's narrow-scope numbers.
-2. **The prune constants and the `scan` share.** `FREQUENT_SHARE`, `POSTING_BUDGET` and the doctor's
-   bound on the `scan` share have no values yet; FR-100 sets them, against the 0.005 nDCG@10 bound of
-   d9.
-3. **Off postings.** Superseded, demoted and retired versions keep their postings, which costs space
-   and index size with every version. Whether a compaction drops kind 1 postings of off versions
-   (cheap to rebuild from the stored vector) while keeping kind 2's (an encoder pass each) is open.
-4. **A fill too long for one migration.** If FR-100's fill time at 1,000,000 rows is too long to hold
-   writes, the fill moves to a batched, resumable step the lead runs after migrating, and the pipeline
-   stays refused until it completes.
-5. **Past about 300,000 readable rows.** The pruned case crosses 50 ms near 300,000 (extrapolated). The
-   next step is impact-ordered postings with a cap per term, or block-max evaluation, in SQL or in a
-   retriever over its own store; which one is decided on FR-100.
-6. **Kind 2's model.** Where the 67M-parameter model comes from at install (shipped in the image or
-   fetched and checked), the weight floor, `SPARSE_MAX_TOKENS`, and whether its English vocabulary
-   serves a tenant writing in other languages.
-7. **Own held rows at scale.** d5 counts a key's own held rows at query time; a key holding many
-   thousand held rows (a bulk import awaiting review, FR-87) makes that count a scan of its held rows.
+The operator settled each question on 2026-11-05. Where the answer is a measurement, the build lane
+(`feat/token-postings`) takes it and records the value here in the same change as the code.
+
+1. **`workarea_id` in the access index** — decided by measurement in the build lane: the leaf,
+   project and universe p95 at 100,000 rows with `(kind, token_id)` and with `(kind, token_id,
+   workarea_id)`, and the index sizes, on the same data.
+2. **The prune constants and the `scan` share** — calibrated from the scale lane's data
+   (`bench/scale/`) and the external sets in the build lane, and the values written into d6
+   with the run that set them.
+3. **Off postings** — deferred. Superseded, demoted and retired versions keep their postings
+   (d7); no compaction is built. Reopen on FR-100's space figures.
+4. **A fill too long for one migration** — 0021's fill, which holds writes while it runs, is
+   enough for now; its time at 10,000 and 100,000 rows is measured in the build lane. A batched, resumable fill that the
+   lead runs after migrating, with `bm25-postings` refused until it completes, is required before
+   any tenant reaches 1,000,000 rows: FR-103.
+5. **Past about 300,000 readable rows** — deferred until a tenant nears 300,000 readable rows;
+   then impact-ordered postings, block-max evaluation, or the OpenSearch road under the conditions in
+   the rejected alternatives, decided on FR-100's numbers at that size.
+6. **Kind 2's model** — deferred to the learned-sparse offline experiment, a separate lane, which
+   reports where the model comes from, the weight floor, `SPARSE_MAX_TOKENS` and its reach beyond
+   English before any kind 2 code is built.
+7. **Own held rows at scale** — measured in the build lane: the recall p95 for a key holding 1,000
+   and 10,000 own held rows with `include_unreviewed`, beside the same recall without it.
 
 ## Test plan
 
