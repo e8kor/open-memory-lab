@@ -546,7 +546,7 @@ fn entry_line(e: &Entry) -> String {
 fn summary_line(s: &Value, opts: &Options) -> String {
     format!(
         "plan      {} new, {} changed, {} removed, {} unchanged, {} pending, {} moved; \
-         {} rollback, {} diverged, {} foreign, {} conflict, {} refused; this run writes {} \
+         {} rollback, {} diverged, {} foreign, {} conflict, {} refused; {} {} \
          (--max-writes {})",
         s["new"],
         s["changed"],
@@ -560,10 +560,11 @@ fn summary_line(s: &Value, opts: &Options) -> String {
         s["conflict"],
         s["refused"],
         if opts.dry_run {
-            json!(0)
+            "a run would write"
         } else {
-            s["writes_this_run"].clone()
+            "this run wrote"
         },
+        s["writes_this_run"],
         opts.max_writes
     )
 }

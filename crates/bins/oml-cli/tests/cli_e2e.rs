@@ -6413,6 +6413,9 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
                 principal,
                 "--grant",
                 &format!("{wa}:{role}"),
+                // A person's dreamer reads the tips it links (ADR-0057 d10).
+                "--grant",
+                &format!("{wa}:reader"),
             ],
         )["value"]
             .as_str()
@@ -6527,10 +6530,7 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
         edited["summary"]["changed"], 1,
         "the decision alone, since the summary's span holds only its headline: {log}"
     );
-    let (code, served, log) = lab.json(
-        Some(&reviewer),
-        &["read", "--all", "--workarea", "oml-design"],
-    );
+    let (code, served, log) = lab.json(Some(&sync), &["read", "--all", "--workarea", "oml-design"]);
     assert_eq!(code, 0, "{log}");
     let d2 = served["items"]
         .as_array()
