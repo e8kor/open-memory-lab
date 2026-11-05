@@ -455,7 +455,7 @@ where
                     json!({
                         "model": model,
                         "depth": policy.depth,
-                        "floor": policy.floor,
+                        "floor": policy.floor.map(relevance),
                         "skipped": {
                             "busy": skipped[0],
                             "timeout": skipped[1],
@@ -745,12 +745,14 @@ where
             .map(|hit| {
                 json!({
                     "memory": memory_json(&hit.served, include_text),
-                    "score": hit.score,
+                    // A reranked hit's score is its relevance, printed as set
+                    // (ADR-0053 d7).
+                    "score": if hit.rerank.is_some() { relevance(hit.score) } else { f64::from(hit.score) },
                     "matched": {
                         "terms": hit.matched,
                         "of": result.terms.len(),
                         "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
-                        "rerank": hit.rerank,
+                        "rerank": hit.rerank.map(relevance),
                         "rank_before": hit.rank_before,
                     },
                 })
@@ -769,7 +771,7 @@ where
                 "did_you_mean": result.did_you_mean,
                 "rerank": result.rerank.as_str(),
                 "rerank_reason": result.rerank.reason(),
-                "floor": result.floor,
+                "floor": result.floor.map(relevance),
                 "below_floor": result.below_floor,
             },
         });
@@ -3407,6 +3409,13 @@ pub fn event_json(tailed: &TailedEvent) -> Value {
         "at": e.envelope.at.as_str(),
         "payload": tailed.payload,
     })
+}
+
+/// A relevance or floor, held as `f32`, printed as the decimal it was set
+/// or scored as: six places, where the widening to `f64` would print
+/// `0.004999999888241291` for 0.005 (ADR-0053 d7).
+fn relevance(value: f32) -> f64 {
+    (f64::from(value) * 1e6).round() / 1e6
 }
 
 #[cfg(test)]

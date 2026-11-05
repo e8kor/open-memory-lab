@@ -3728,17 +3728,23 @@ fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<
             "rerank {model}, depth {}, floor {floor}",
             rerank["depth"].as_u64().unwrap_or(0)
         ));
-        let skipped: Vec<String> = ["busy", "timeout", "failed"]
-            .into_iter()
-            .filter_map(|reason| {
-                let n = rerank["skipped"][reason].as_u64().unwrap_or(0);
-                (n > 0).then(|| format!("{n} {reason}"))
-            })
-            .collect();
-        if !skipped.is_empty() {
+        let count = |reason: &str| rerank["skipped"][reason].as_u64().unwrap_or(0);
+        let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
+        if busy + timeout > 0 {
+            let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
+                .into_iter()
+                .filter(|(_, n)| *n > 0)
+                .map(|(reason, n)| format!("{n} {reason}"))
+                .collect();
             lines.push(format!(
-                "warn search_rerank: reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
-                skipped.join(", ")
+                "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
+                busy + timeout,
+                reasons.join(", ")
+            ));
+        }
+        if failed > 0 {
+            lines.push(format!(
+                "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
             ));
         }
     }

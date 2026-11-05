@@ -4471,6 +4471,17 @@ where
                 .collect();
             let scored = reranker.score(query.clone(), passages).await;
             let scored = match scored {
+                // A score that is not a finite relevance in [0, 1] would sort
+                // first or serialise as null: the list is refused whole.
+                Ok(scores)
+                    if scores
+                        .iter()
+                        .any(|s| !s.is_finite() || !(0.0..=1.0).contains(s)) =>
+                {
+                    Err(crate::ports::RerankError::Failed(
+                        "a score is not a finite relevance in [0, 1]".to_owned(),
+                    ))
+                }
                 Ok(scores) if scores.len() == head.len() => Ok(scores),
                 Ok(scores) => Err(crate::ports::RerankError::Failed(format!(
                     "{} scores for {} passages",
@@ -4509,6 +4520,23 @@ where
         };
         let mut below_floor = 0;
         if let Some(floor) = floor {
+            // Only rows the core admits are counted as withheld: the tail
+            // past the depth is hydrated and admitted first (ADR-0053 d6).
+            let unread: Vec<Uuid> = candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .filter(|id| !rows.contains_key(id))
+                .collect();
+            if !unread.is_empty() {
+                rows.extend(
+                    self.journal
+                        .memories(key.tenant_id, &unread)
+                        .await?
+                        .into_iter()
+                        .map(|m| (m.memory_id, m)),
+                );
+            }
+            candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
         // Spellings only for an empty or thin result, fewer hits than
@@ -4516,23 +4544,27 @@ where
         // budget cut, for the
         // words no hit holds, from the vocabulary of the readable nodes
         // alone, under any pipeline but v0.5.0's (ADR-0049 d6, d12).
-        let did_you_mean =
-            if pipeline.suggests() && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k) {
-                let unmatched: Vec<String> = terms
-                    .iter()
-                    .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
-                    .cloned()
-                    .collect();
-                if unmatched.is_empty() {
-                    Vec::new()
-                } else {
-                    self.journal
-                        .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
-                        .await?
-                }
-            } else {
+        // An answer the floor thinned matched its words; its rows were
+        // withheld, so it offers no spellings (ADR-0053 d6).
+        let did_you_mean = if pipeline.suggests()
+            && below_floor == 0
+            && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k)
+        {
+            let unmatched: Vec<String> = terms
+                .iter()
+                .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
+                .cloned()
+                .collect();
+            if unmatched.is_empty() {
                 Vec::new()
-            };
+            } else {
+                self.journal
+                    .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
+                    .await?
+            }
+        } else {
+            Vec::new()
+        };
 
         let steering_counts: Vec<u64> = steering
             .iter()
