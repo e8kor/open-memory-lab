@@ -31,9 +31,10 @@ const ENROLLMENT: &str = "enr_test_fixture_token";
 // Throwaway database + rig (the oml-pg test pattern)
 // ---------------------------------------------------------------------------
 
+/// The throwaway cluster `DATABASE_URL` names; this suite has no default,
+/// so it can never reach a live database on the conventional port.
 fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+    std::env::var("DATABASE_URL").expect("DATABASE_URL names a throwaway cluster")
 }
 
 const PAIR_PASSWORD: &str = "oml_test_pair";
