@@ -103,6 +103,7 @@ fn event_json(e: &StoredEvent) -> Value {
 fn report_json(r: &ReplayReport) -> Value {
     json!({
         "labelled": r.labelled,
+        "capped": r.capped,
         "skipped_revoked": r.skipped_revoked,
         "window_days": r.window_days,
         "pipelines": r.pipelines.iter().map(|p| json!({
@@ -207,9 +208,9 @@ where
                 }
             }
             let token = bearer(&headers)?;
-            let events = st
-                .app
-                .usage_events(&token, before, limit)
+            // The listing is journalled, so a lost head race retries
+            // (ADR-0054 d2, as amended).
+            let events = crate::retry_chain(|| st.app.usage_events(&token, before.clone(), limit))
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             let next_before = (events.len() == limit as usize)
@@ -244,9 +245,7 @@ where
                         .with_details(json!({ "field": "/pipelines" })),
                 );
             }
-            let report = st
-                .app
-                .usage_eval(&token, &req.pipelines)
+            let report = crate::retry_chain(|| st.app.usage_eval(&token, &req.pipelines))
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &report_json(&report)))

@@ -682,6 +682,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         )
         .retryable(),
         AppError::TelemetryOff => ApiError::unavailable("telemetry_off"),
+        AppError::ReplayReranks { name } => ApiError::validation(format!(
+            "the replay runs no reranking pipeline, so it never takes a live recall's reranker slot: {name}"
+        ))
+        .with_details(json!({ "field": "/pipelines" })),
         // Denials attenuate grants, and an admin key carries none
         // (http-api.md keys, grants, denials; ADR-0026 d15).
         AppError::DenialOnAdminKey => ApiError::validation(

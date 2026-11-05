@@ -3954,9 +3954,8 @@ const LABELLER_LAG_WARN_SECONDS: u64 = 600;
 
 /// The recall telemetry's doctor lines, from the metrics listener alone
 /// (ADR-0054 d13, as accepted): events dropped above 1% of recalls, by
-/// reason; the writer's queue above half its bound; a tenant missing this
-/// week's or next week's partition; rows or weeks past the 30 days not yet
-/// purged; the labeller's lag above 10 minutes. Each names its repair.
+/// reason; the writer's queue above half its bound; rows past the 30 days not
+/// yet purged; the labeller's lag above 10 minutes. Each names its repair.
 fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     let Some(scrape) = scrape else {
         return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
@@ -3980,7 +3979,7 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     let lost: u64 = dropped.iter().map(|(_, n)| n).sum();
     if lost * 100 > DROPPED_WARN_PERCENT * (written + lost) && lost > 0 {
         lines.push(format!(
-            "warn telemetry_dropped: {lost} of {} recall events dropped since start ({}); the queue is full under load, or the store refuses: the lead's log and oml_telemetry_partitions_missing say which",
+            "warn telemetry_dropped: {lost} of {} recall events dropped since start ({}); the queue is full under load, or the store refuses; no_partition is a tenant the lead's next start gives its partitions",
             written + lost,
             dropped
                 .iter()
@@ -3995,16 +3994,10 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
             "warn telemetry_backlog: {depth} events wait for the writer (bound 10000); past it they are dropped"
         ));
     }
-    let missing = scrape.sum("oml_telemetry_partitions_missing", &[]);
-    if missing > 0 {
-        lines.push(format!(
-            "warn telemetry_partitions: {missing} tenant(s) miss a partition for this week or the next, so their recalls are not recorded; the lead creates them hourly under postgres.owner_url, or at its next start"
-        ));
-    }
     let overdue = scrape.sum("oml_telemetry_purge_overdue", &[]);
     if overdue > 0 {
         lines.push(format!(
-            "warn telemetry_purge: {overdue} tenant(s) or week(s) hold rows past the 30 days; the lead's minute pass deletes rows and its hourly rotation drops weeks: check its log for telemetry_rotation_failed"
+            "warn telemetry_purge: {overdue} tenant(s) hold recall events past the 30 days and a minute, so the lead's purge is behind or failing; their rows are never read, and the lead's log names the store error"
         ));
     }
     let lag = scrape.sum("oml_labeller_lag_seconds", &[]);
@@ -4289,30 +4282,25 @@ mod tests {
     }
 
     #[test]
-    fn the_telemetry_doctor_names_drops_missing_partitions_an_overdue_purge_and_the_lag() {
+    fn the_telemetry_doctor_names_drops_the_backlog_an_overdue_purge_and_the_lag() {
         let scrape = Scrape(
             "oml_recall_events_total{outcome=\"written\"} 90\n\
              oml_recall_events_total{outcome=\"dropped_no_partition\"} 10\n\
              oml_telemetry_queue_depth 6000\n\
-             oml_telemetry_partitions_missing 1\n\
              oml_telemetry_purge_overdue 2\n\
              oml_labeller_lag_seconds 900.0\n"
                 .to_owned(),
         );
         let lines = telemetry_doctor(Some(&scrape));
-        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert_eq!(lines.len(), 4, "{lines:?}");
         assert!(lines[0].starts_with("warn telemetry_dropped: 10 of 100 recall events dropped since start (10 no_partition)"), "{lines:?}");
         assert!(
             lines[1].starts_with("warn telemetry_backlog: 6000"),
             "{lines:?}"
         );
+        assert!(lines[2].starts_with("warn telemetry_purge: 2"), "{lines:?}");
         assert!(
-            lines[2].starts_with("warn telemetry_partitions: 1 tenant(s)"),
-            "{lines:?}"
-        );
-        assert!(lines[3].starts_with("warn telemetry_purge: 2"), "{lines:?}");
-        assert!(
-            lines[4]
+            lines[3]
                 .starts_with("warn telemetry_labeller: the labeller's last pass ended 900 s ago"),
             "{lines:?}"
         );

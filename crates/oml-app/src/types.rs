@@ -2409,6 +2409,11 @@ pub enum AppError {
     /// replay (`system.unavailable`; ADR-0054 d2).
     #[error("this server records no recall")]
     TelemetryOff,
+    /// A replay naming a reranking pipeline: the replay never takes the
+    /// reranker's slots from live recalls (request.validation, field
+    /// `/pipelines`; ADR-0054 d11, as amended).
+    #[error("the replay runs no reranking pipeline: {name}")]
+    ReplayReranks { name: String },
     #[error(transparent)]
     Store(StoreError),
 }

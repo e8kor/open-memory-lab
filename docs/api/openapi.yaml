@@ -1893,6 +1893,7 @@ paths:
             application/json:
               example:
                 labelled: 212
+                capped: false
                 skipped_revoked: 3
                 window_days: 30
                 pipelines:
@@ -2819,9 +2820,10 @@ components:
       type: object
       additionalProperties: false
       description: The real-usage replay's scores, numbers and counts alone (ADR-0054 d11).
-      required: [labelled, skipped_revoked, window_days, pipelines]
+      required: [labelled, capped, skipped_revoked, window_days, pipelines]
       properties:
         labelled: { type: integer, minimum: 0 }
+        capped: { type: boolean, description: 'The replay stopped short: past 500 labelled recalls the newest 500 ran, or it reached its 60-second deadline.' }
         skipped_revoked: { type: integer, minimum: 0 }
         window_days: { type: integer }
         pipelines:

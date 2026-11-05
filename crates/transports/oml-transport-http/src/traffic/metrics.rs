@@ -140,7 +140,6 @@ struct Quality {
     review_wait: Family<VerdictLabels, Histogram, fn() -> Histogram>,
     queue_depth: Gauge,
     lag: Gauge<f64, AtomicU64>,
-    partitions_missing: Gauge,
     purge_overdue: Gauge,
     unrecalled: Family<AgeLabels, Gauge>,
 }
@@ -157,7 +156,6 @@ impl Quality {
             review_wait: Family::new_with_constructor(review_histogram as fn() -> Histogram),
             queue_depth: Gauge::default(),
             lag: Gauge::default(),
-            partitions_missing: Gauge::default(),
             purge_overdue: Gauge::default(),
             unrecalled: Family::default(),
         };
@@ -207,13 +205,8 @@ impl Quality {
             q.lag.clone(),
         );
         registry.register(
-            "oml_telemetry_partitions_missing",
-            "organisations missing a recall telemetry partition for this week or the next",
-            q.partitions_missing.clone(),
-        );
-        registry.register(
             "oml_telemetry_purge_overdue",
-            "organisations holding recall telemetry rows past the 30 days, plus week partitions past them not dropped",
+            "organisations holding recall telemetry rows past the 30 days and a minute: the purge is behind",
             q.purge_overdue.clone(),
         );
         registry.register(
@@ -476,8 +469,7 @@ impl TelemetryMeter for Metrics {
         self.quality.queue_depth.set(depth);
     }
 
-    fn health(&self, partitions_missing: i64, purge_overdue: i64) {
-        self.quality.partitions_missing.set(partitions_missing);
+    fn health(&self, purge_overdue: i64) {
         self.quality.purge_overdue.set(purge_overdue);
     }
 

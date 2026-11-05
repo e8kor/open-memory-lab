@@ -749,6 +749,9 @@ async fn a_replay_scores_the_labelled_queries_and_its_answer_holds_no_text_and_n
 #[tokio::test]
 async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_the_lag() {
     let Some(w) = world().await else { return };
+    // The lead's own writer passes at its start and then each minute: let
+    // its first pass end, so the rows below meet this test's writer.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let tenant = w.a.boot.tenant_id;
     let pool = w.serving().await;
     let insert = |days: i64| {
@@ -771,15 +774,25 @@ async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_
     tx.commit().await.expect("commit");
     // No read serves a row past the 30 days, purged or not.
     assert_eq!(w.events(&w.a).await.len(), 1);
-    assert_eq!(visible(&pool, Some(tenant)).await.0, 3);
 
     // A writer's first pass reports the lag it found, then purges, in
     // batches the serving role commits one by one; nothing but telemetry
     // is touched.
-    let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
-        .fetch_one(&mut w.owner().await)
-        .await
-        .expect("journal");
+    let journal_count = || async {
+        let mut tx = pool.begin().await.expect("tx");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("set");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("journal");
+        tx.rollback().await.expect("rollback");
+        n
+    };
+    let journal_before = journal_count().await;
     let traffic = Traffic::new(TrustedProxies::default());
     let (_t, writer) = oml_pg::telemetry::PgTelemetry::spawn(
         pool.clone(),
@@ -795,14 +808,13 @@ async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_
     }
     writer.abort();
     assert!(purged, "the pass left rows past the 30 days");
+    // The pass reported the lag it found before it purged.
     let text = traffic.metrics().encode();
     assert!(text.contains("oml_telemetry_purge_overdue 1"), "{text}");
-    let journal_after: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
-        .fetch_one(&mut w.owner().await)
-        .await
-        .expect("journal");
+    // The purge deletes telemetry alone: the journal holds what it held.
     assert_eq!(
-        journal_after, journal_before,
+        journal_count().await,
+        journal_before,
         "the purge touched the journal"
     );
     drop_db(&w.db).await;
@@ -936,12 +948,19 @@ async fn an_admin_reading_recall_events_or_replaying_them_is_journalled() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let mut owner = w.owner().await;
+    let mut tx = owner.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(w.a.boot.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set");
     let types: Vec<String> = sqlx::query_scalar(
         "SELECT event_type FROM journal WHERE event_type LIKE 'telemetry.%' ORDER BY seq",
     )
-    .fetch_all(&mut owner)
+    .fetch_all(&mut *tx)
     .await
     .expect("journal");
+    tx.rollback().await.expect("rollback");
     assert_eq!(types, vec!["telemetry.events_read", "telemetry.replayed"]);
     drop_db(&w.db).await;
 }

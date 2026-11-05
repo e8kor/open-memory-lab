@@ -183,6 +183,9 @@ pub struct App<J, S, C, I, Sc> {
     /// The recall telemetry's writer; `None` where the deployment records
     /// no recall (ADR-0054 d2).
     telemetry: Option<Arc<dyn Telemetry>>,
+    /// Each key's feedback members checked today, by UTC day: the per-key
+    /// cap, held before any lookup (ADR-0054 d6, as amended).
+    feedback_counts: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -999,6 +1002,7 @@ where
             search: SearchConfig::default(),
             reranker: None,
             telemetry: None,
+            feedback_counts: std::sync::Mutex::default(),
         }
     }
 

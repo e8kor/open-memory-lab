@@ -28,6 +28,17 @@ pub const LABEL_WINDOW_SECS: i64 = 24 * 3600;
 /// (ADR-0054 d6, as accepted).
 pub const EXPLICIT_LABELS_PER_DAY: u64 = 1_000;
 
+/// A key's feedback members checked in a UTC day, refused or not, past which
+/// a read carrying one answers `limit.rate` before any lookup (ADR-0054 d6,
+/// as amended on review).
+pub const FEEDBACK_PER_KEY_PER_DAY: u64 = 1_000;
+
+/// The most labelled recalls one replay runs, the newest, and the most
+/// seconds it runs before it answers what it scored (ADR-0054 d11, as
+/// amended on review).
+pub const REPLAY_QUERIES_MAX: usize = 500;
+pub const REPLAY_DEADLINE_SECS: u64 = 60;
+
 /// A key's inferred labels past this many in a UTC day are dropped and
 /// counted (ADR-0054 d5, as accepted).
 pub const INFERRED_LABELS_PER_DAY: u64 = 1_000;
@@ -291,6 +302,9 @@ pub struct ReplayScores {
 pub struct ReplayReport {
     /// The labelled queries in the window.
     pub labelled: u64,
+    /// Whether the replay stopped short: past [`REPLAY_QUERIES_MAX`]
+    /// queries, the newest ran, or at [`REPLAY_DEADLINE_SECS`].
+    pub capped: bool,
     /// Those skipped because their key is revoked or gone.
     pub skipped_revoked: u64,
     pub window_days: i64,

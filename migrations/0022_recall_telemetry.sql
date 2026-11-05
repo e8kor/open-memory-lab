@@ -8,16 +8,15 @@
 -- Telemetry, not claims: no memory's text, no version, no verdict and no
 -- journal event is stored here, nothing is derived from it, and every row is
 -- gone 30 days after its recall (ADR-0054 d2). Both tables are
--- list-partitioned by tenant_id and each tenant's partition is
--- range-partitioned by ISO week of created_at (Monday 00:00 UTC; open
--- question 2, settled). The lead creates each tenant's partitions, for this
--- week and the next four, at start, hourly and with the tenant, under the
--- owner's connection it opens for partition DDL (ADR-0034 d11), and drops a
--- week once its last instant is 30 days past; the serving role deletes rows
--- older than 30 days in the partitions that remain. No DEFAULT partition, so
--- an event whose week has no partition is refused and counted as dropped.
--- Every partition, at both levels, has ENABLE and FORCE ROW LEVEL SECURITY
--- and the tenant_isolation policy (ADR-0034 d11, d13).
+-- list-partitioned by tenant_id alone, as memories is, each partition created
+-- once with its tenant on the owner path ADR-0034 d11 already holds; no owner
+-- DDL runs on a schedule (open question 2, settled on review: tenant-only).
+-- The serving role deletes rows older than 30 days in bounded batches, each
+-- its own transaction, through the (tenant_id, created_at) indexes, and every
+-- read filters the same bound. No DEFAULT partition, so an event of a tenant
+-- with no partition is refused and counted as dropped. Every partition has
+-- ENABLE and FORCE ROW LEVEL SECURITY and the tenant_isolation policy
+-- (ADR-0034 d11, d13).
 --
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
 
@@ -25,8 +24,8 @@
 -- tenants.telemetry_query_text_since — the instant the tenant's admin turned
 -- the query text on, folded from telemetry.settings_set; NULL is off, the
 -- default. An event keeps its query text only when it was created at or
--- after this instant, which the writer's insert applies, so an event queued
--- before the switch never stores its text (ADR-0054 d3).
+-- after this instant. The rule is the database's: the trigger below nulls
+-- any other text, whichever statement writes it (ADR-0054 d3).
 ------------------------------------------------------------------------------
 ALTER TABLE tenants ADD COLUMN telemetry_query_text_since timestamptz(6);
 
@@ -66,12 +65,14 @@ CREATE TABLE recall_events (
 -- The labeller finds a key's most recent event inside a window by this
 -- index; the feedback check and a label's attachment by the primary key.
 CREATE INDEX recall_events_key ON recall_events (tenant_id, key_id, created_at DESC);
+-- The purge and the labeller's no_use pass read a created_at range.
+CREATE INDEX recall_events_created ON recall_events (tenant_id, created_at);
 
 ------------------------------------------------------------------------------
 -- recall_outcomes — what the reader did next, one row per (recall, version,
 -- label): inferred (get, derived, superseded, requery, no_use) or explicit
 -- (feedback_useful, feedback_not_useful). created_at is the event's, so a
--- label lives in its event's week and goes with it; artifact_id is NULL for
+-- label is purged with its event; artifact_id is NULL for
 -- a label of the whole recall, requery and no_use (ADR-0054 d5, d6).
 ------------------------------------------------------------------------------
 CREATE TABLE recall_outcomes (
@@ -91,9 +92,11 @@ CREATE TABLE recall_outcomes (
         (artifact_id IS NULL) = (label IN ('requery', 'no_use')))
 ) PARTITION BY LIST (tenant_id);
 
+CREATE INDEX recall_outcomes_created ON recall_outcomes (tenant_id, created_at);
+
 -- No statistics on the parents, and none on the columns that hold a reader's
--- words or names in any partition: the lead sets the same on each week it
--- creates, so pg_stats holds no tenant's query (FR-45's rule).
+-- words or names in any partition: each tenant's partition is created with
+-- the same, so pg_stats holds no tenant's query (FR-45's rule).
 ALTER TABLE ONLY recall_events
     ALTER COLUMN query_text   SET STATISTICS 0,
     ALTER COLUMN query_digest SET STATISTICS 0,
@@ -115,16 +118,17 @@ CREATE POLICY tenant_isolation ON recall_outcomes
 
 COMMENT ON TABLE recall_events IS
     'One row per recall, telemetry kept 30 days: digest always, query text by opt-in, the '
-    'served versions and scores; partitioned by tenant then ISO week (ADR-0054 d2). '
+    'served versions and scores; partitioned by tenant (ADR-0054 d2). '
     'Owning page: docs/data/postgres-schema.md.';
 COMMENT ON TABLE recall_outcomes IS
-    'What a recall''s reader did next, inferred or sent as feedback, in its event''s week '
+    'What a recall''s reader did next, inferred or sent as feedback '
     '(ADR-0054 d5, d6). Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
 -- oml_telemetry_erase — the rule erase's build calls (ADR-0054 d4; ADR-0005
--- d4): every event that served an erased version loses its query text and
--- the version's id and score, and the version's labels go, under the
+-- d4): every event that served an erased version loses its query text, its
+-- query digest (zeroed: the CHECK wants 32 bytes) and the version's id and
+-- score, and the version's labels go, under the
 -- tenant's row security, which it checks. SECURITY INVOKER; granted to the
 -- serving role, which erases as it writes.
 ------------------------------------------------------------------------------
@@ -138,6 +142,8 @@ BEGIN
     END IF;
     UPDATE recall_events e
        SET query_text = NULL,
+           -- A short query's digest inverts by word list (ADR-0005 d4's row).
+           query_digest = decode(repeat('00', 32), 'hex'),
            hit_ids = ARRAY(SELECT u.id FROM unnest(e.hit_ids, e.hit_scores)
                                 WITH ORDINALITY AS u(id, score, n)
                             WHERE u.id <> ALL (versions) ORDER BY u.n),
@@ -152,6 +158,76 @@ END
 $$;
 
 REVOKE EXECUTE ON FUNCTION oml_telemetry_erase(uuid, uuid[]) FROM PUBLIC;
+
+------------------------------------------------------------------------------
+-- oml_telemetry_query_text_rule — the opt-in, enforced by the database: an
+-- event keeps its query text only when its tenant turned the text on at or
+-- before the event's created_at; any other text, by INSERT or UPDATE, from any
+-- statement of the serving role, is stored NULL (ADR-0054 d3). It reads the
+-- tenant's row FOR SHARE, so an opt-out (an UPDATE of that row) committing
+-- while a writer's batch is open waits for the batch and then nulls its text,
+-- or the batch reads the opt-out once it committed. Owner-owned, SECURITY
+-- INVOKER (ADR-0034 d5); the serving role holds no TRIGGER privilege, so it
+-- cannot drop or disable it.
+------------------------------------------------------------------------------
+CREATE FUNCTION oml_telemetry_query_text_rule() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+DECLARE
+    since timestamptz;
+BEGIN
+    IF NEW.query_text IS NOT NULL THEN
+        SELECT t.telemetry_query_text_since INTO since
+          FROM tenants t WHERE t.id = NEW.tenant_id FOR SHARE;
+        IF since IS NULL OR since > NEW.created_at THEN
+            NEW.query_text := NULL;
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER recall_events_query_text_rule
+    BEFORE INSERT OR UPDATE OF query_text, created_at ON recall_events
+    FOR EACH ROW EXECUTE FUNCTION oml_telemetry_query_text_rule();
+
+------------------------------------------------------------------------------
+-- One partition of each table per existing tenant, fenced before it is
+-- attached, as 0021 builds the postings'; the lead builds a new tenant's
+-- with its memories partition (ADR-0034 d11).
+------------------------------------------------------------------------------
+DO $$
+DECLARE
+    t         uuid;
+    tbl       text;
+    partition text;
+BEGIN
+    PERFORM set_config('oml.startup_check', 'on', true);
+    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
+        FOREACH tbl IN ARRAY ARRAY['recall_events', 'recall_outcomes'] LOOP
+            partition := tbl || '_t_' || replace(t::text, '-', '');
+            EXECUTE format('CREATE TABLE %I (LIKE %I INCLUDING ALL)', partition, tbl);
+            IF tbl = 'recall_events' THEN
+                EXECUTE format('ALTER TABLE %I ALTER COLUMN query_text SET STATISTICS 0, '
+                               'ALTER COLUMN query_digest SET STATISTICS 0, '
+                               'ALTER COLUMN principal SET STATISTICS 0, '
+                               'ALTER COLUMN hit_ids SET STATISTICS 0', partition);
+            ELSE
+                EXECUTE format('ALTER TABLE %I ALTER COLUMN artifact_id SET STATISTICS 0',
+                               partition);
+            END IF;
+            EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', partition);
+            EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', partition);
+            EXECUTE format(
+                'CREATE POLICY tenant_isolation ON %I '
+                'USING (tenant_id = NULLIF(current_setting(''oml.tenant_id'', true), '''')::uuid) '
+                'WITH CHECK (tenant_id = NULLIF(current_setting(''oml.tenant_id'', true), '''')::uuid)',
+                partition);
+            EXECUTE format('ALTER TABLE %I ATTACH PARTITION %I FOR VALUES IN (%L)',
+                           tbl, partition, t);
+        END LOOP;
+    END LOOP;
+    PERFORM set_config('oml.startup_check', '', true);
+END $$;
 
 -- The serving role writes, labels, nulls (d3, d4) and purges (d2) the
 -- events; it owns neither table (ADR-0034 d2, d3).

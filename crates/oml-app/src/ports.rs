@@ -1562,9 +1562,8 @@ pub trait TelemetryMeter: Send + Sync {
     /// The queue's depth now.
     fn queue_depth(&self, depth: i64);
     /// The telemetry's health, refreshed by the labeller's pass: tenants
-    /// missing a partition for this week or the next, and tenants holding
-    /// rows, or week partitions, past the 30 days.
-    fn health(&self, partitions_missing: i64, purge_overdue: i64);
+    /// holding rows past the 30 days and one pass, so the purge is behind.
+    fn health(&self, purge_overdue: i64);
     /// Seconds since the labeller's last completed pass.
     fn lag(&self, seconds: f64);
     /// The served memories no recall of the last 30 days returned, by how

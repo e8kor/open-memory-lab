@@ -5,7 +5,7 @@
 //! writes the queue in batches, at most [`BATCH`] items or every second,
 //! each tenant's items in a transaction of their own under that tenant's
 //! row security, never inside a recall's snapshot. A full queue, a store
-//! error or a week with no partition drops the event and counts it; the
+//! error or a tenant with no partition drops the event and counts it; the
 //! recall's answer is the same. The same task attaches labels by SQL and,
 //! every minute, labels `no_use`, purges what is past the 30 days and
 //! refreshes the health gauges doctor reads.
@@ -49,12 +49,7 @@ const PURGE_BATCH: i64 = 5_000;
 /// How the stored times come back, in the fixed-width signed form.
 const AT: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'";
 
-/// The week partitions the lead keeps ahead of today: this week and four
-/// after it (ADR-0054 open question 2, settled).
-pub const WEEKS_AHEAD: i32 = 4;
-
-/// The two telemetry tables, each list-partitioned by tenant and then by
-/// week.
+/// The two telemetry tables, each list-partitioned by tenant.
 pub const TABLES: [&str; 2] = ["recall_events", "recall_outcomes"];
 
 enum Msg {
@@ -96,6 +91,7 @@ impl PgTelemetry {
             last_pass,
             per_key_today: BTreeMap::new(),
             last_unrecalled: None,
+            no_use_marks: BTreeMap::new(),
         };
         (telemetry, tokio::spawn(writer.run(rx)))
     }
@@ -131,8 +127,10 @@ impl Telemetry for PgTelemetry {
 
     fn flush(&self) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
+            // Never waits for queue room: a full queue means the writer is
+            // behind, and the caller is a read (ADR-0054 d2).
             let (done, wait) = oneshot::channel();
-            if self.queue.send(Msg::Flush(done)).await.is_ok() {
+            if self.queue.try_send(Msg::Flush(done)).is_ok() {
                 let _ = wait.await;
             }
         })
@@ -356,6 +354,8 @@ struct Writer {
     /// counted on (ADR-0054 d5, as accepted).
     per_key_today: BTreeMap<(Uuid, Uuid), (i64, u64)>,
     last_unrecalled: Option<Instant>,
+    /// Each tenant's `no_use` high-water mark: the bound of its last pass.
+    no_use_marks: BTreeMap<Uuid, String>,
 }
 
 impl Writer {
@@ -473,7 +473,7 @@ impl Writer {
         }
         .await;
         result.map_err(|e| match e.as_database_error().and_then(|d| d.code()) {
-            // No partition of the tenant, or of the week, holds the row.
+            // No partition of the tenant holds the row.
             Some(code) if code == "23514" => "dropped_no_partition",
             _ => "dropped_store_error",
         })
@@ -532,10 +532,13 @@ impl Writer {
         }
     }
 
-    /// The labeller's pass, every minute, over every tenant whose
-    /// telemetry partition exists: `no_use` on recalls 30 minutes to 24
-    /// hours old with no positive label, the purge of rows past the 30 days,
-    /// and the health gauges (ADR-0054 d2, d5, d13).
+    /// The labeller's pass, every minute, over every tenant whose telemetry
+    /// partition exists (ADR-0054 d2, d5, d13), each step its own
+    /// transaction: the tenant's lag first (a row past the 30 days and the
+    /// pass's own minute, which means the purge is behind), then `no_use`
+    /// on recalls between this tenant's high-water mark and 30 minutes ago,
+    /// then the purge in batches of [`PURGE_BATCH`] rows, each committed, then
+    /// every 10 minutes the unrecalled count.
     async fn pass(&mut self) {
         let Ok(tenants) = telemetry_tenants(&self.pool).await else {
             return;
@@ -546,120 +549,164 @@ impl Writer {
             .last_unrecalled
             .is_none_or(|t| t.elapsed() >= Duration::from_secs(UNRECALLED_SECONDS));
         for tenant_id in &tenants {
-            let result: Result<(u64, bool, [i64; 4]), sqlx::Error> = async {
-                let mut tx = self.pool.begin().await?;
-                sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-                    .bind(tenant_id.to_string())
-                    .execute(&mut *tx)
-                    .await?;
-                let no_use = sqlx::query(
-                    "INSERT INTO recall_outcomes \
-                         (tenant_id, recall_id, created_at, artifact_id, label, source, at) \
-                     SELECT e.tenant_id, e.recall_id, e.created_at, NULL, 'no_use', 'inferred', \
-                            now() \
-                     FROM recall_events e \
-                     WHERE e.tenant_id = $1 \
-                       AND e.created_at < now() - make_interval(secs => $2) \
-                       AND e.created_at > now() - make_interval(secs => $3) \
-                       AND NOT EXISTS (SELECT 1 FROM recall_outcomes o \
-                            WHERE o.tenant_id = e.tenant_id AND o.recall_id = e.recall_id \
-                              AND o.created_at = e.created_at \
-                              AND o.label IN ('get', 'derived', 'superseded', \
-                                              'feedback_useful', 'no_use')) \
-                     ON CONFLICT DO NOTHING",
-                )
-                .bind(tenant_id)
-                .bind(NO_USE_AFTER_SECS as f64)
-                .bind(LABEL_WINDOW_SECS as f64)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-                for table in TABLES {
-                    loop {
-                        let gone = sqlx::query(&format!(
-                            "DELETE FROM {table} t USING ( \
-                               SELECT tenant_id, recall_id, created_at FROM {table} \
-                                WHERE tenant_id = $1 \
-                                  AND created_at <= now() - make_interval(days => $2) \
-                                LIMIT $3) d \
-                             WHERE t.tenant_id = d.tenant_id AND t.recall_id = d.recall_id \
-                               AND t.created_at = d.created_at"
-                        ))
-                        .bind(tenant_id)
-                        .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
-                        .bind(PURGE_BATCH)
-                        .execute(&mut *tx)
-                        .await?
-                        .rows_affected();
-                        if gone < u64::try_from(PURGE_BATCH).unwrap_or(u64::MAX) {
-                            break;
-                        }
-                    }
-                }
-                let stale: bool = sqlx::query_scalar(
-                    "SELECT EXISTS (SELECT 1 FROM recall_events WHERE tenant_id = $1 \
-                       AND created_at <= now() - make_interval(days => $2))",
-                )
-                .bind(tenant_id)
-                .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
-                .fetch_one(&mut *tx)
-                .await?;
-                let mut ages = [0_i64; 4];
-                if count_unrecalled {
-                    let rows = sqlx::query(
-                        "WITH recalled AS ( \
-                           SELECT DISTINCT unnest(hit_ids) AS id FROM recall_events \
-                            WHERE tenant_id = $1 \
-                              AND created_at > now() - make_interval(days => $2)) \
-                         SELECT CASE \
-                                  WHEN m.promoted_at > now() - interval '7 days' THEN 0 \
-                                  WHEN m.promoted_at > now() - interval '30 days' THEN 1 \
-                                  WHEN m.promoted_at > now() - interval '90 days' THEN 2 \
-                                  ELSE 3 END AS age, count(*) AS n \
-                         FROM memories m \
-                         WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
-                           AND NOT m.retirement AND m.kind IN ('memory', 'derived_fact') \
-                           AND NOT EXISTS (SELECT 1 FROM recalled r WHERE r.id = m.id) \
-                         GROUP BY 1",
-                    )
-                    .bind(tenant_id)
-                    .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
-                    .fetch_all(&mut *tx)
-                    .await?;
-                    for row in rows {
-                        let age: i32 = row.try_get("age")?;
-                        let n: i64 = row.try_get("n")?;
-                        if let Some(slot) = usize::try_from(age).ok().and_then(|a| ages.get_mut(a))
-                        {
-                            *slot += n;
-                        }
-                    }
-                }
-                tx.commit().await?;
-                Ok((no_use, stale, ages))
+            match self.lagging(*tenant_id).await {
+                Ok(true) | Err(_) => overdue += 1,
+                Ok(false) => {}
             }
-            .await;
-            match result {
-                Ok((no_use, stale, ages)) => {
-                    if no_use > 0 {
-                        self.meter.labels(Label::NoUse.as_str(), no_use);
-                    }
-                    overdue += i64::from(stale);
-                    for (sum, n) in unrecalled.iter_mut().zip(ages) {
-                        *sum += n;
-                    }
+            match self.no_use(*tenant_id).await {
+                Ok(n) if n > 0 => self.meter.labels(Label::NoUse.as_str(), n),
+                _ => {}
+            }
+            for table in TABLES {
+                if self.purge(*tenant_id, table).await.is_err() {
+                    break;
                 }
-                Err(_) => overdue += 1,
+            }
+            if count_unrecalled && let Ok(ages) = self.unrecalled(*tenant_id).await {
+                for (sum, n) in unrecalled.iter_mut().zip(ages) {
+                    *sum += n;
+                }
             }
         }
-        let expired = expired_partitions(&self.pool).await.unwrap_or(0);
-        let missing = missing_partitions(&self.pool).await.unwrap_or(0);
-        self.meter.health(missing, overdue + expired);
+        self.meter.health(overdue);
         if count_unrecalled {
             self.meter.unrecalled(unrecalled);
             self.last_unrecalled = Some(Instant::now());
         }
         self.last_pass.store(unix_now(), Ordering::Relaxed);
+    }
+
+    async fn tenant_tx(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Transaction<'static, Postgres>, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
+    }
+
+    /// Whether the tenant holds an event older than the 30 days and one pass:
+    /// the purge is behind, which doctor names.
+    async fn lagging(&self, tenant_id: Uuid) -> Result<bool, sqlx::Error> {
+        let mut tx = self.tenant_tx(tenant_id).await?;
+        let stale: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM recall_events WHERE tenant_id = $1 \
+               AND created_at <= now() - make_interval(days => $2, secs => $3))",
+        )
+        .bind(tenant_id)
+        .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
+        .bind(PASS_SECONDS as f64)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(stale)
+    }
+
+    /// `no_use` on the tenant's recalls created after its high-water mark
+    /// (24 hours back at the first pass) and at least 30 minutes ago with no
+    /// positive label, read by the `(tenant_id, created_at)` index; the mark
+    /// moves to the pass's bound.
+    async fn no_use(&mut self, tenant_id: Uuid) -> Result<u64, sqlx::Error> {
+        let mut tx = self.tenant_tx(tenant_id).await?;
+        let mark = self.no_use_marks.get(&tenant_id).cloned();
+        let row = sqlx::query(&format!(
+            "WITH bound AS (SELECT now() - make_interval(secs => $2) AS upto), \
+             labelled AS ( \
+               INSERT INTO recall_outcomes \
+                   (tenant_id, recall_id, created_at, artifact_id, label, source, at) \
+               SELECT e.tenant_id, e.recall_id, e.created_at, NULL, 'no_use', 'inferred', now() \
+               FROM recall_events e, bound \
+               WHERE e.tenant_id = $1 \
+                 AND e.created_at > COALESCE($4::timestamptz, now() - make_interval(secs => $3)) \
+                 AND e.created_at <= bound.upto \
+                 AND NOT EXISTS (SELECT 1 FROM recall_outcomes o \
+                      WHERE o.tenant_id = e.tenant_id AND o.recall_id = e.recall_id \
+                        AND o.created_at = e.created_at \
+                        AND o.label IN ('get', 'derived', 'superseded', 'feedback_useful')) \
+               ON CONFLICT DO NOTHING RETURNING 1) \
+             SELECT (SELECT count(*) FROM labelled) AS n, \
+                    to_char((SELECT upto FROM bound) AT TIME ZONE 'UTC', {AT}) AS upto"
+        ))
+        .bind(tenant_id)
+        .bind(NO_USE_AFTER_SECS as f64)
+        .bind(LABEL_WINDOW_SECS as f64)
+        .bind(mark)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        let n: i64 = row.try_get("n")?;
+        let upto: String = row.try_get("upto")?;
+        self.no_use_marks.insert(tenant_id, upto);
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// Deletes the tenant's rows of `table` older than the 30 days, at most
+    /// [`PURGE_BATCH`] a transaction, each committed before the next, through
+    /// the `(tenant_id, created_at)` index.
+    async fn purge(&self, tenant_id: Uuid, table: &str) -> Result<u64, sqlx::Error> {
+        let mut total = 0;
+        loop {
+            let mut tx = self.tenant_tx(tenant_id).await?;
+            let gone = sqlx::query(&format!(
+                "DELETE FROM {table} t USING ( \
+                   SELECT tenant_id, recall_id, created_at FROM {table} \
+                    WHERE tenant_id = $1 \
+                      AND created_at <= now() - make_interval(days => $2) \
+                    LIMIT $3) d \
+                 WHERE t.tenant_id = d.tenant_id AND t.recall_id = d.recall_id \
+                   AND t.created_at = d.created_at"
+            ))
+            .bind(tenant_id)
+            .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
+            .bind(PURGE_BATCH)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            tx.commit().await?;
+            total += gone;
+            if gone < u64::try_from(PURGE_BATCH).unwrap_or(u64::MAX) {
+                return Ok(total);
+            }
+        }
+    }
+
+    /// The tenant's served memories no recall of the 30 days returned, by
+    /// how long ago they were promoted.
+    async fn unrecalled(&self, tenant_id: Uuid) -> Result<[i64; 4], sqlx::Error> {
+        let mut tx = self.tenant_tx(tenant_id).await?;
+        let rows = sqlx::query(
+            "WITH recalled AS ( \
+               SELECT DISTINCT unnest(hit_ids) AS id FROM recall_events \
+                WHERE tenant_id = $1 \
+                  AND created_at > now() - make_interval(days => $2)) \
+             SELECT CASE \
+                      WHEN m.promoted_at > now() - interval '7 days' THEN 0 \
+                      WHEN m.promoted_at > now() - interval '30 days' THEN 1 \
+                      WHEN m.promoted_at > now() - interval '90 days' THEN 2 \
+                      ELSE 3 END AS age, count(*) AS n \
+             FROM memories m \
+             WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement AND m.kind IN ('memory', 'derived_fact') \
+               AND NOT EXISTS (SELECT 1 FROM recalled r WHERE r.id = m.id) \
+             GROUP BY 1",
+        )
+        .bind(tenant_id)
+        .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        let mut ages = [0_i64; 4];
+        for row in rows {
+            let age: i32 = row.try_get("age")?;
+            let n: i64 = row.try_get("n")?;
+            if let Some(slot) = usize::try_from(age).ok().and_then(|a| ages.get_mut(a)) {
+                *slot += n;
+            }
+        }
+        Ok(ages)
     }
 }
 
@@ -677,11 +724,7 @@ async fn insert_event(
         "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
              scope_workarea_id, source_workarea_id, pipeline, access, query_digest, \
              query_text, hit_ids, hit_scores) \
-         SELECT $1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, \
-                CASE WHEN t.telemetry_query_text_since IS NOT NULL \
-                      AND $3::timestamptz >= t.telemetry_query_text_since THEN $11 END, \
-                $12, $13 \
-         FROM tenants t WHERE t.id = $1",
+         VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(e.tenant_id)
     .bind(e.recall_id)
@@ -843,49 +886,8 @@ async fn telemetry_tenants(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
         .collect())
 }
 
-/// Tenants (by their memories partition) missing a telemetry partition, or
-/// this week's or next week's.
-async fn missing_partitions(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "WITH t AS ( \
-           SELECT substr(c.relname, 12) AS hex FROM pg_inherits i \
-             JOIN pg_class c ON c.oid = i.inhrelid \
-            WHERE i.inhparent = 'memories'::regclass), \
-         w AS ( \
-           SELECT to_char(date_trunc('week', now() AT TIME ZONE 'UTC') \
-                          + make_interval(days => 7 * g), 'YYYYMMDD') AS d \
-             FROM generate_series(0, 1) g) \
-         SELECT count(*) FROM t WHERE EXISTS ( \
-           SELECT 1 FROM unnest($1::text[]) tbl \
-            WHERE to_regclass(tbl || '_t_' || t.hex) IS NULL \
-               OR EXISTS (SELECT 1 FROM w \
-                           WHERE to_regclass(tbl || '_t_' || t.hex || '_w' || w.d) IS NULL))",
-    )
-    .bind(TABLES.map(str::to_owned).to_vec())
-    .fetch_one(pool)
-    .await
-}
-
-/// The upper bound of a telemetry week partition, read from the catalog.
-const WEEK_UPPER: &str = "substring(pg_get_expr(c.relpartbound, c.oid) \
-     from 'TO \\(''([^'']+)''\\)')::timestamptz";
-
-/// Week partitions whose last instant is more than 30 days past and that
-/// the rotation has not dropped.
-async fn expired_partitions(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(&format!(
-        "SELECT count(*) FROM pg_class c WHERE c.relkind = 'r' AND c.relispartition \
-           AND (c.relname LIKE 'recall\\_events\\_t\\_%\\_w%' \
-             OR c.relname LIKE 'recall\\_outcomes\\_t\\_%\\_w%') \
-           AND {WEEK_UPPER} <= now() - make_interval(days => $1)"
-    ))
-    .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
-    .fetch_one(pool)
-    .await
-}
-
 // ---------------------------------------------------------------------------
-// The partitions: the owner's DDL (ADR-0034 d11; ADR-0054 d2, as accepted)
+// The partitions: the owner's DDL, with the tenant (ADR-0034 d11; ADR-0054 d2)
 // ---------------------------------------------------------------------------
 
 const POLICY: &str = "USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
@@ -895,35 +897,14 @@ fn tenant_partition(table: &str, tenant_id: Uuid) -> String {
     format!("{table}_t_{}", tenant_id.simple())
 }
 
-/// The DDL of `tenant_id`'s two tenant-level telemetry partitions, each
-/// range-partitioned by week and fenced before it is attached.
+/// The DDL of `tenant_id`'s two telemetry partitions, fenced before each is
+/// attached, with no statistics on the columns that hold a reader's words or
+/// names, as 0022 builds every existing tenant's.
 pub(crate) fn tenant_partitions_ddl(tenant_id: Uuid) -> Vec<String> {
     TABLES
         .iter()
         .flat_map(|table| {
             let p = tenant_partition(table, tenant_id);
-            [
-                format!(
-                    "CREATE TABLE {p} (LIKE {table} INCLUDING ALL) PARTITION BY RANGE (created_at)"
-                ),
-                format!("ALTER TABLE {p} ENABLE ROW LEVEL SECURITY"),
-                format!("ALTER TABLE {p} FORCE ROW LEVEL SECURITY"),
-                format!("CREATE POLICY tenant_isolation ON {p} {POLICY}"),
-                format!("ALTER TABLE {table} ATTACH PARTITION {p} FOR VALUES IN ('{tenant_id}')"),
-            ]
-        })
-        .collect()
-}
-
-/// The DDL of the week starting `monday` (`YYYYMMDD`, 00:00 UTC) of
-/// `tenant_id`'s two telemetry tables, with no statistics on the columns
-/// that hold a reader's words or names.
-pub(crate) fn week_partitions_ddl(tenant_id: Uuid, monday: &str, next: &str) -> Vec<String> {
-    TABLES
-        .iter()
-        .flat_map(|table| {
-            let parent = tenant_partition(table, tenant_id);
-            let p = format!("{parent}_w{monday}");
             let stats = if *table == "recall_events" {
                 format!(
                     "ALTER TABLE {p} ALTER COLUMN query_text SET STATISTICS 0, \
@@ -940,84 +921,41 @@ pub(crate) fn week_partitions_ddl(tenant_id: Uuid, monday: &str, next: &str) -> 
                 format!("ALTER TABLE {p} ENABLE ROW LEVEL SECURITY"),
                 format!("ALTER TABLE {p} FORCE ROW LEVEL SECURITY"),
                 format!("CREATE POLICY tenant_isolation ON {p} {POLICY}"),
-                format!(
-                    "ALTER TABLE {parent} ATTACH PARTITION {p} \
-                     FOR VALUES FROM ('{monday} 00:00:00+00') TO ('{next} 00:00:00+00')"
-                ),
+                format!("ALTER TABLE {table} ATTACH PARTITION {p} FOR VALUES IN ('{tenant_id}')"),
             ]
         })
         .collect()
 }
 
-/// What one rotation did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Rotation {
-    pub tenants: u64,
-    pub created: u64,
-    pub dropped: u64,
-}
-
-/// The weeks the rotation keeps ahead, as (monday, next monday), from this
-/// week's, read from the database's clock.
-async fn weeks(owner: &mut PgConnection) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT to_char(w, 'YYYYMMDD'), to_char(w + interval '7 days', 'YYYYMMDD') \
-         FROM (SELECT date_trunc('week', now() AT TIME ZONE 'UTC') \
-                      + make_interval(days => 7 * g) AS w \
-               FROM generate_series(0, $1) g) s ORDER BY w",
-    )
-    .bind(WEEKS_AHEAD)
-    .fetch_all(owner)
-    .await?;
-    Ok(rows)
-}
-
-/// `tenant_id`'s telemetry partitions, every statement in the caller's
-/// owner transaction: the tenant level where missing, then each week ahead
-/// where missing. Returns the week partitions created.
+/// `tenant_id`'s telemetry partitions where missing, every statement in the
+/// caller's owner transaction; whether it created them.
 pub(crate) async fn ensure_tenant(
     owner: &mut PgConnection,
     tenant_id: Uuid,
-) -> Result<u64, sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(tenant_partition("recall_events", tenant_id))
         .fetch_one(&mut *owner)
         .await?;
-    if !exists {
-        for statement in tenant_partitions_ddl(tenant_id) {
-            sqlx::query(&statement)
-                .persistent(false)
-                .execute(&mut *owner)
-                .await?;
-        }
+    if exists {
+        return Ok(false);
     }
-    let mut created = 0;
-    for (monday, next) in weeks(owner).await? {
-        let name = format!("{}_w{monday}", tenant_partition("recall_events", tenant_id));
-        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
-            .bind(&name)
-            .fetch_one(&mut *owner)
+    for statement in tenant_partitions_ddl(tenant_id) {
+        sqlx::query(&statement)
+            .persistent(false)
+            .execute(&mut *owner)
             .await?;
-        if exists {
-            continue;
-        }
-        for statement in week_partitions_ddl(tenant_id, &monday, &next) {
-            sqlx::query(&statement)
-                .persistent(false)
-                .execute(&mut *owner)
-                .await?;
-        }
-        created += 1;
     }
-    Ok(created)
+    Ok(true)
 }
 
-/// The rotation, under `owner`: every tenant's partitions for this week and
-/// the next [`WEEKS_AHEAD`], each tenant in a transaction of its own under
-/// the partition lock timeout, then every week partition whose last instant
-/// is more than 30 days past detached and dropped (ADR-0054 d2, as
-/// accepted).
-pub async fn rotate(owner: &PgPool) -> Result<Rotation, sqlx::Error> {
+/// At the lead's start, after migrating: the telemetry partitions of every
+/// tenant whose memories partition exists and whose telemetry ones do not,
+/// as a lead built before 0022 leaves a tenant it creates; each tenant in an
+/// owner transaction of its own, so one lock timeout stops only that one.
+/// Boot-time DDL alone, as ADR-0034 d4 allows; nothing runs on a schedule.
+/// Returns the tenants repaired.
+pub(crate) async fn ensure_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = owner.begin().await?;
     sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
         .execute(&mut *tx)
@@ -1026,7 +964,7 @@ pub async fn rotate(owner: &PgPool) -> Result<Rotation, sqlx::Error> {
         .fetch_all(&mut *tx)
         .await?;
     tx.commit().await?;
-    let mut rotation = Rotation::default();
+    let mut repaired = 0;
     for tenant_id in tenants {
         let has_memories: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
             .bind(format!("memories_t_{}", tenant_id.simple()))
@@ -1043,39 +981,10 @@ pub async fn rotate(owner: &PgPool) -> Result<Rotation, sqlx::Error> {
         .persistent(false)
         .execute(&mut *tx)
         .await?;
-        rotation.created += ensure_tenant(&mut tx, tenant_id).await?;
+        if ensure_tenant(&mut tx, tenant_id).await? {
+            repaired += 1;
+        }
         tx.commit().await?;
-        rotation.tenants += 1;
     }
-    let expired: Vec<(String, String)> = sqlx::query_as(&format!(
-        "SELECT c.relname::text, p.relname::text FROM pg_inherits i \
-           JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent \
-          WHERE (c.relname LIKE 'recall\\_events\\_t\\_%\\_w%' \
-             OR c.relname LIKE 'recall\\_outcomes\\_t\\_%\\_w%') \
-            AND {WEEK_UPPER} <= now() - make_interval(days => $1)"
-    ))
-    .bind(i32::try_from(RETENTION_DAYS).unwrap_or(30))
-    .fetch_all(owner)
-    .await?;
-    for (child, parent) in expired {
-        let mut tx = owner.begin().await?;
-        sqlx::query(&format!(
-            "SET LOCAL lock_timeout = '{}'",
-            crate::PARTITION_LOCK_TIMEOUT
-        ))
-        .persistent(false)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(&format!("ALTER TABLE {parent} DETACH PARTITION {child}"))
-            .persistent(false)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(&format!("DROP TABLE {child}"))
-            .persistent(false)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        rotation.dropped += 1;
-    }
-    Ok(rotation)
+    Ok(repaired)
 }

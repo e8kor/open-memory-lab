@@ -101,6 +101,12 @@ pub mod event_types {
     /// An admin key turned the tenant's recall query text on or off
     /// (ADR-0054 d3).
     pub const TELEMETRY_SETTINGS_SET: &str = "telemetry.settings_set";
+    /// An admin key read the tenant's recall events: how many, how many
+    /// carried query text, and the page's bounds (ADR-0054 d2, as amended).
+    pub const TELEMETRY_EVENTS_READ: &str = "telemetry.events_read";
+    /// An admin key replayed the tenant's labelled recalls: the pipelines
+    /// and how many ran, never a query (ADR-0054 d11, as amended).
+    pub const TELEMETRY_REPLAYED: &str = "telemetry.replayed";
 }
 
 /// A SHA-256 value. Displayed and journalled as `sha256:` + 64 lowercase hex

@@ -3158,7 +3158,7 @@ fn refuse_simulation(simulation_id: Option<&String>) -> Result<(), ApiError> {
 /// The lead write-path shape from the oml-pg phase: a chain-head conflict is
 /// a typed refusal, and the writer re-reads the head (each `App` call does)
 /// and retries.
-async fn retry_chain<T, Fut, F>(mut call: F) -> Result<T, AppError>
+pub(crate) async fn retry_chain<T, Fut, F>(mut call: F) -> Result<T, AppError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, AppError>>,
