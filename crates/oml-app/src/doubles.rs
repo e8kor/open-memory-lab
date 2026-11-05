@@ -1102,7 +1102,15 @@ fn apply_fold(
         MetadataFold::WorkareaModeSet {
             workarea_id,
             in_progress,
+            held_free,
         } => {
+            if state
+                .memories
+                .values()
+                .any(|m| m.status == MemoryStatus::Held && held_free.contains(&m.workarea_id))
+            {
+                return Err(StoreError::HeldRemaining);
+            }
             let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
                 return Err(StoreError::Backend(format!(
                     "workarea {workarea_id} is not held by this tenant"
@@ -2160,7 +2168,7 @@ impl JournalStore for MemStore {
             ListingScope::Tips { nodes, held } => {
                 nodes.contains(&m.workarea_id)
                     && ((m.status == MemoryStatus::Promoted && m.is_tip)
-                        || (*held
+                        || (held.contains(&m.workarea_id)
                             && m.status == MemoryStatus::Held
                             && !m.retirement
                             && HIT_KINDS.contains(&m.kind)))
@@ -2887,7 +2895,11 @@ impl JournalStore for MemStore {
             state.memories.get(&id).is_some_and(|m| {
                 selection.readable_nodes.contains(&m.workarea_id)
                     && (m.status == MemoryStatus::Promoted
-                        || m.author_key_id == selection.reader_key_id)
+                        || m.author_key_id == selection.reader_key_id
+                        || (m.status == MemoryStatus::Held
+                            && !m.retirement
+                            && HIT_KINDS.contains(&m.kind)
+                            && selection.held_nodes.contains(&m.workarea_id)))
             })
         };
         let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);

@@ -2784,7 +2784,24 @@ async fn apply_fold(
         MetadataFold::WorkareaModeSet {
             workarea_id,
             in_progress,
+            held_free,
         } => {
+            // The commit's zero-held test, in the committing transaction
+            // under the chain lock (ADR-0030 d6).
+            if !held_free.is_empty() {
+                let held: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM memories WHERE tenant_id = $1 \
+                     AND workarea_id = ANY($2::uuid[]) AND status = 'held')",
+                )
+                .bind(tenant_id)
+                .bind(&held_free)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(backend)?;
+                if held {
+                    return Err(StoreError::HeldRemaining);
+                }
+            }
             let updated =
                 sqlx::query("UPDATE workareas SET mode = $3 WHERE tenant_id = $1 AND id = $2")
                     .bind(tenant_id)
@@ -5038,11 +5055,13 @@ impl JournalStore for PgStore {
                 // Inside an in-progress scope the held versions of every
                 // author on the nodes join the tips (ADR-0030 d3).
                 sql.push(" AND ((m.status = 'promoted' AND m.is_tip)");
-                if *held {
+                if !held.is_empty() {
                     sql.push(
                         " OR (m.status = 'held' AND NOT m.retirement \
-                         AND m.kind IN ('memory', 'derived_fact'))",
-                    );
+                         AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
+                    )
+                    .push_bind(held.clone())
+                    .push("::uuid[]))");
                 }
                 sql.push(") AND m.workarea_id = ANY(")
                     .push_bind(nodes.clone())
@@ -6031,7 +6050,14 @@ impl JournalStore for PgStore {
                     "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
                 ))
                 .push_bind(selection.reader_key_id)
-                .push(")");
+                // Inside an in-progress scope, any author's held memory or
+                // derived fact (ADR-0030 d3).
+                .push(format!(
+                    " OR ({row}.status = 'held' AND NOT {row}.retirement \
+                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workarea_id = ANY("
+                ))
+                .push_bind(selection.held_nodes.clone())
+                .push("::uuid[])))");
         }
         if let Some(artifact_id) = selection.artifact_id {
             sql.push(" AND (e.src_artifact_id = ")

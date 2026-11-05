@@ -75,8 +75,11 @@ Questions revision 1 left open are settled below at their recommended answers, e
   workareas people would mark already hold rows.
 
     Setting `in_progress` is refused with `workarea.in_progress_refused` and a `details.reason`
-    when the node is not `development` (`status`), is `universe` (`universe`), or has an ancestor
-    or a descendant already in progress (`nested`): subtrees never nest, so every node has at
+    when the node or any node of its subtree is not `development` (`status`), so no
+    `committed` or `validated` workarea is ever inside one, is `universe` (`universe`), or has an
+    ancestor or a descendant already in progress (`nested`). A node's root is read only through
+    `development` nodes: one that is not, and every node beneath it, is outside every subtree
+    whatever the marks say (defence in depth, review of #79): subtrees never nest, so every node has at
     most one **in-progress root**, its nearest ancestor-or-self in progress. A node is *inside*
     while it has one. Setting `in_progress` on a node already in progress, or `standard` on one
     already standard, is a no-op that journals nothing.
@@ -159,6 +162,8 @@ Questions revision 1 left open are settled below at their recommended answers, e
 
 - **d7 — Nothing crosses the boundary before the commit.** A claim edge (any kind, including
   `brief`) whose two endpoints have different in-progress roots, or one root and none, is refused
+  when proposed and, for one proposed before a mark, when ratified; a brief read leaves out a
+  claim the boundary hides at its node, whenever its edge was made. It is refused
   `workarea.in_progress_refused` with reason `edge_crosses`, answered after both endpoints pass
   readability, so a key that cannot read an endpoint gets `access.not_found` and learns nothing.
   A `derives_from` target inside, named by a write outside, is unreadable at the write's node

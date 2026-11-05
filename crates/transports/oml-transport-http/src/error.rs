@@ -524,6 +524,15 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({ "workarea": workarea_id, "reason": reason.as_str() })),
         // ADR-0030 d6: no count, so a committer learns nothing of rows it
         // cannot read.
+        // The use case maps the store's in-transaction refusal to
+        // HeldRemaining with the root; reaching here unmapped still answers
+        // the code, naming no workarea (ADR-0030 d6).
+        AppError::Store(StoreError::HeldRemaining) => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.held_remaining",
+            "Nothing leaves an in-progress workarea until every memory in it is reviewed.",
+            "the subtree still holds unreviewed memories: review them, then commit".to_owned(),
+        ),
         AppError::HeldRemaining { workarea_id } => ApiError::new(
             StatusCode::CONFLICT,
             "workarea.held_remaining",

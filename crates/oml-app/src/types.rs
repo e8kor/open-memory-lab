@@ -1747,10 +1747,11 @@ pub enum ListingScope {
     /// subtree(scope) ∩ reader effective access as the use-case computes
     /// it; an empty set lists nothing (ADR-0025 d1, d13).
     ///
-    /// With `held`, inside an in-progress scope, the held versions of every
-    /// author on the nodes too, never a retirement version, of kind `memory`
-    /// or `derived_fact` (ADR-0030 d3).
-    Tips { nodes: Vec<Uuid>, held: bool },
+    /// Inside an in-progress scope, the held versions of every author on
+    /// the `held` nodes too, never a retirement version, of kind `memory` or
+    /// `derived_fact`: the served nodes inside the scope's root (ADR-0030
+    /// d3); empty elsewhere.
+    Tips { nodes: Vec<Uuid>, held: Vec<Uuid> },
 }
 
 /// A listing's predicates, re-applied on every page: a cursor carries a
@@ -1840,8 +1841,12 @@ pub struct ClaimEdgeSelection {
     /// Both endpoint versions lie in these workareas, every node where
     /// reader is effective for the key...
     pub readable_nodes: Vec<Uuid>,
-    /// ...and each is promoted or authored by this key.
+    /// ...and each is promoted or authored by this key...
     pub reader_key_id: Uuid,
+    /// ...or held, a memory or derived fact and never a retirement version,
+    /// on one of these nodes: the served nodes inside the read's
+    /// in-progress root (ADR-0030 d3); empty outside one.
+    pub held_nodes: Vec<Uuid>,
 }
 
 /// Where a claim-edge page resumes: the `created_at` and id of the last

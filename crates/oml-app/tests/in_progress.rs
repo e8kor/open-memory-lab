@@ -1005,6 +1005,7 @@ async fn a_committed_node_under_a_mark_forced_through_the_store_keeps_r3() {
         MetadataFold::WorkareaModeSet {
             workarea_id: w.proj,
             in_progress: true,
+            held_free: Vec::new(),
         },
     )
     .await;
@@ -1269,4 +1270,48 @@ async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
         .await;
     let err = w.flag(&w.curator, derived, other).await.unwrap_err();
     assert!(matches!(err, AppError::AuthorInLineage), "{err:?}");
+}
+
+/// d6, in the committing transaction: the store refuses a commit whose
+/// subtree holds a held version, whatever the use case tested before it.
+#[tokio::test]
+async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    w.write(&w.ann, "a1", "the canary drains first", w.proj)
+        .await;
+    let events = w.app_journal().await;
+    let last = events.last().expect("a chain");
+    let draft = EventDraft {
+        tenant_id: w.boot.tenant_id,
+        event_id: Uuid::from_u128(0xF1C5_9999),
+        event_type: event_types::WORKAREA_MODE_SET.to_owned(),
+        principal: "fixture".to_owned(),
+        api_key_id: None,
+        at: last.envelope.at.clone(),
+        payload: json!({ "workarea_id": w.proj.to_string(), "mode": "standard" }),
+    };
+    let envelope = next_envelope(Some(last), draft).expect("a lawful draft");
+    let event = sign(envelope, &SigningKey::from_bytes(&TEST_SEED)).expect("signing");
+    let refused = w
+        .store
+        .commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event_types::WORKAREA_MODE_SET.to_owned(),
+                payload: json!({}),
+            },
+            event,
+            fold: MetadataFold::WorkareaModeSet {
+                workarea_id: w.proj,
+                in_progress: false,
+                held_free: vec![w.proj],
+            },
+            idempotency: None,
+        })
+        .await;
+    assert!(
+        matches!(refused, Err(oml_app::ports::StoreError::HeldRemaining)),
+        "{refused:?}"
+    );
 }

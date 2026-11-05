@@ -39,6 +39,10 @@ use crate::search::{
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// An in-progress commit found a held version on its subtree inside
+    /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
+    #[error("a version in the committed subtree is still held")]
+    HeldRemaining,
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
@@ -190,9 +194,14 @@ pub enum MetadataFold {
     },
     /// `workarea.mode_set`: the node's `mode` is now `in_progress` or
     /// `standard` (ADR-0030 d1); the store refuses a node it does not hold.
+    ///
+    /// `held_free`, on a commit, names the subtree's nodes: the store refuses
+    /// the commit with [`StoreError::HeldRemaining`] when any version on
+    /// them is held, tested in the committing transaction (d6).
     WorkareaModeSet {
         workarea_id: Uuid,
         in_progress: bool,
+        held_free: Vec<Uuid>,
     },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
     /// the tenant itself, takes the name the event assigns, every workarea's

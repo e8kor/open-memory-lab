@@ -75,6 +75,24 @@ pub fn in_progress_root(ancestry: &[(Uuid, bool)]) -> Option<Uuid> {
         .map(|(id, _)| *id)
 }
 
+/// The node's in-progress root under R3's rule that `committed` and
+/// `validated` workareas keep it without exception (d1, d3): walking from
+/// the node up, each entry `(id, marked, development)`, the first marked
+/// node, provided every node from the row's up to and including the mark is
+/// `development`; otherwise `None`.
+#[must_use]
+pub fn in_progress_root_of(ancestry: &[(Uuid, bool, bool)]) -> Option<Uuid> {
+    for &(id, marked, development) in ancestry {
+        if !development {
+            return None;
+        }
+        if marked {
+            return Some(id);
+        }
+    }
+    None
+}
+
 /// The boundary (d2): a row on a node whose root is `node_root` is served to
 /// a read scoped at a node whose root is `scope_root` only if the row's node
 /// has no root, or the scope has the same one.
@@ -130,8 +148,9 @@ impl fmt::Display for InProgressReason {
 
 /// Setting `in_progress` on a node (d1): `ancestry` runs node to `universe`
 /// with each node's mark, `subtree_marked` is whether any strict descendant
-/// is marked, `development` whether the node's status is `development`.
-/// Universe first, then status, then nesting.
+/// is marked, `development` whether the node and every node of its subtree
+/// are `development`, so no `committed` or `validated` node is ever inside
+/// (d3). Universe first, then status, then nesting.
 pub fn check_mark(
     ancestry: &[(Uuid, bool)],
     subtree_marked: bool,
@@ -299,6 +318,48 @@ mod tests {
         assert_eq!(
             check_mark(&[(id(2), false), (id(1), false)], false, true),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn a_crossing_edge_answers_edge_crosses() {
+        assert_eq!(InProgressReason::EdgeCrosses.as_str(), "edge_crosses");
+        assert!(
+            InProgressReason::EdgeCrosses
+                .to_string()
+                .contains("boundary")
+        );
+        assert!(crosses_into(None, Some(id(2))) && !crosses_into(Some(id(2)), None));
+    }
+
+    #[test]
+    fn a_node_that_is_not_development_has_no_root_and_relaxes_nothing() {
+        // node, parent marked; each (id, marked, development).
+        assert_eq!(
+            in_progress_root_of(&[
+                (id(3), false, false),
+                (id(2), true, true),
+                (id(1), false, false)
+            ]),
+            None,
+            "a committed node under a mark"
+        );
+        assert_eq!(
+            in_progress_root_of(&[
+                (id(4), false, true),
+                (id(3), false, false),
+                (id(2), true, true)
+            ]),
+            None,
+            "a development node under a committed one under a mark"
+        );
+        assert_eq!(
+            in_progress_root_of(&[
+                (id(4), false, true),
+                (id(2), true, true),
+                (id(1), false, false)
+            ]),
+            Some(id(2))
         );
     }
 

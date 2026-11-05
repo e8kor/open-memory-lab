@@ -11,9 +11,10 @@
 --
 -- Safe on a live database: a lock is waited for at most 5 s, then the
 -- migration fails and is run again. A column with a constant default is a
--- catalog change since PostgreSQL 11; the checks are added NOT VALID, which
--- takes no scan under the exclusive lock, then validated under SHARE UPDATE
--- EXCLUSIVE, which lets reads and writes run.
+-- catalog change since PostgreSQL 11. The checks are added NOT VALID and
+-- validated in the same transaction, so the ACCESS EXCLUSIVE lock the ALTER
+-- took is held through the validation scan until commit; on workareas and
+-- api_keys, small and unpartitioned, that scan is brief.
 
 SET LOCAL lock_timeout = '5s';
 

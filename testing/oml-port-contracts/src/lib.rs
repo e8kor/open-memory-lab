@@ -4499,7 +4499,12 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
                 .expect("list"),
         )
     };
-    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes, held: false });
+    let tips = |nodes: Vec<Uuid>| {
+        listing(ListingScope::Tips {
+            nodes,
+            held: Vec::new(),
+        })
+    };
 
     assert_eq!(list(tips(vec![wa])).await, vec![tip.memory_id]);
     assert_eq!(
@@ -6185,6 +6190,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     let select = |artifact_id: Option<Uuid>, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: vec![root, side],
         reader_key_id: world.proposer.key_id,
     };
@@ -6318,6 +6324,7 @@ pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or
     let select = |nodes: Vec<Uuid>, reader: Uuid, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id: None,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: nodes,
         reader_key_id: reader,
     };

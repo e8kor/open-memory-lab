@@ -268,6 +268,15 @@ impl Caller {
     }
 }
 
+/// The served node set of a scoped read (ADR-0030 d2), the nodes of it
+/// inside the scope's in-progress root, where every author's held memories
+/// are served (d3), and that root.
+struct ServedNodes {
+    nodes: Vec<Uuid>,
+    inside: Vec<Uuid>,
+    scope_root: Option<Uuid>,
+}
+
 /// Whether a held version may be served unreviewed inside an in-progress
 /// subtree: a memory or derived fact, never a retirement version (ADR-0030
 /// d3).
@@ -1699,15 +1708,21 @@ where
         tenant_id: Uuid,
         node: Uuid,
     ) -> Result<Option<Uuid>, AppError> {
-        let marks: Vec<(Uuid, bool)> = self
+        let marks: Vec<(Uuid, bool, bool)> = self
             .journal
             .workarea_ancestry(tenant_id, node)
             .await?
             .unwrap_or_default()
             .iter()
-            .map(|w| (w.workarea_id, w.in_progress))
+            .map(|w| {
+                (
+                    w.workarea_id,
+                    w.in_progress,
+                    w.status == WorkareaStatus::Development,
+                )
+            })
             .collect();
-        Ok(in_progress::in_progress_root(&marks))
+        Ok(in_progress::in_progress_root_of(&marks))
     }
 
     /// Each node of subtree(`top`) with its in-progress root, parent before
@@ -1720,7 +1735,11 @@ where
         let mut roots = BTreeMap::new();
         let top_root = self.in_progress_root(tenant_id, top).await?;
         for node in self.journal.workarea_subtree(tenant_id, top).await? {
-            let root = if node.in_progress {
+            // A node that is not `development` is never inside, nor is
+            // anything beneath it (ADR-0030 d3).
+            let root = if node.status != WorkareaStatus::Development {
+                None
+            } else if node.in_progress {
                 Some(node.workarea_id)
             } else if node.workarea_id == top {
                 top_root
@@ -1736,22 +1755,30 @@ where
     /// The served node set of a read scoped at `scope` (ADR-0030 d2): the
     /// nodes of subtree(scope) where the caller reads, less every node whose
     /// in-progress root differs from the scope's; with the scope's root.
-    async fn served_nodes(
-        &self,
-        caller: &Caller,
-        scope: Uuid,
-    ) -> Result<(Vec<Uuid>, Option<Uuid>), AppError> {
+    async fn served_nodes(&self, caller: &Caller, scope: Uuid) -> Result<ServedNodes, AppError> {
         let tenant_id = caller.key.tenant_id;
         let nodes = self.nodes_with(caller, scope, Role::Reader).await?;
         let roots = self.subtree_roots(tenant_id, scope).await?;
         let scope_root = roots.get(&scope).copied().flatten();
-        Ok((
-            nodes
-                .into_iter()
-                .filter(|n| !crosses_into(scope_root, roots.get(n).copied().flatten()))
-                .collect(),
+        let mut served = ServedNodes {
+            nodes: Vec::with_capacity(nodes.len()),
+            inside: Vec::new(),
             scope_root,
-        ))
+        };
+        for node in nodes {
+            let root = roots.get(&node).copied().flatten();
+            if crosses_into(scope_root, root) {
+                continue;
+            }
+            // Inside the scope's root, every node of which is development;
+            // a committed or validated node, and anything under one, never
+            // is (d3).
+            if root.is_some() {
+                served.inside.push(node);
+            }
+            served.nodes.push(node);
+        }
+        Ok(served)
     }
 
     /// A curator act on a row or target on `node` (ADR-0030 d9): inside an
@@ -3432,6 +3459,7 @@ where
             .journal
             .workarea_subtree(tenant_id, workarea_id)
             .await?;
+        let mut held_free = Vec::new();
         match mode {
             WorkareaMode::InProgress => {
                 let marks: Vec<(Uuid, bool)> = ancestry
@@ -3441,11 +3469,15 @@ where
                 let below = subtree
                     .iter()
                     .any(|w| w.workarea_id != workarea_id && w.in_progress);
-                in_progress::check_mark(&marks, below, node.status == WorkareaStatus::Development)
-                    .map_err(|reason| AppError::InProgressRefused {
+                let development = subtree
+                    .iter()
+                    .all(|w| w.status == WorkareaStatus::Development);
+                in_progress::check_mark(&marks, below, development).map_err(|reason| {
+                    AppError::InProgressRefused {
                         workarea_id,
                         reason,
-                    })?;
+                    }
+                })?;
             }
             WorkareaMode::Standard => {
                 // The commit: nothing in the subtree may still be held,
@@ -3454,6 +3486,7 @@ where
                 if self.journal.held_count(tenant_id, &nodes).await? > 0 {
                     return Err(AppError::HeldRemaining { workarea_id });
                 }
+                held_free = nodes;
             }
         }
         let event = self.seal(
@@ -3468,15 +3501,23 @@ where
                 "from": current.as_str(),
             }),
         )?;
+        // The commit's zero-held test runs again inside the committing
+        // transaction, so no held row created without a chain event slips
+        // past it (ADR-0030 d6).
         self.commit(
             event,
             MetadataFold::WorkareaModeSet {
                 workarea_id,
                 in_progress: mode == WorkareaMode::InProgress,
+                held_free,
             },
             None,
         )
-        .await?;
+        .await
+        .map_err(|e| match e {
+            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
+            other => other,
+        })?;
         self.observer.mode_set(mode.as_str());
         Ok(WorkareaRecord {
             in_progress: mode == WorkareaMode::InProgress,
@@ -3660,9 +3701,17 @@ where
             else {
                 continue;
             };
+            // A claim inside an in-progress subtree the brief's node is not
+            // inside is left out, whenever its edge was made (ADR-0030 d2).
             if memory.status == MemoryStatus::Promoted
                 && memory.is_tip
                 && self.readable(caller, &memory).await?
+                && !crosses_into(
+                    self.in_progress_root(caller.key.tenant_id, workarea)
+                        .await?,
+                    self.in_progress_root(caller.key.tenant_id, memory.workarea_id)
+                        .await?,
+                )
             {
                 members.push(memory);
             }
@@ -4105,11 +4154,11 @@ where
                 .await?;
             // The served node set, and inside an in-progress scope every
             // author's held rows on it (ADR-0030 d2, d3).
-            let (nodes, scope_root) = self.served_nodes(&caller, scope).await?;
+            let served = self.served_nodes(&caller, scope).await?;
             (
                 ListingScope::Tips {
-                    nodes,
-                    held: scope_root.is_some(),
+                    nodes: served.nodes,
+                    held: served.inside,
                 },
                 None,
             )
@@ -4164,7 +4213,7 @@ where
                 ListingScope::Tips { nodes, held } => {
                     nodes.contains(&m.workarea_id)
                         && ((m.status == MemoryStatus::Promoted && m.is_tip)
-                            || (*held && served_unreviewed(&m)))
+                            || (held.contains(&m.workarea_id) && served_unreviewed(&m)))
                 }
             };
             if admitted {
@@ -5222,7 +5271,11 @@ where
         // is not inside; inside one, `include_unreviewed` defaults to true
         // and admits every author's held rows on the served nodes, all of
         // which lie inside the scope's root (ADR-0030 d2, d3, d4).
-        let (readable, scope_root) = self.served_nodes(caller, scope).await?;
+        let ServedNodes {
+            nodes: readable,
+            inside,
+            scope_root,
+        } = self.served_nodes(caller, scope).await?;
         let include_unreviewed = req.include_unreviewed.unwrap_or(scope_root.is_some());
         let any_author = include_unreviewed && scope_root.is_some();
         // A scope inside a user root also searches `universe`'s own claims
@@ -5250,7 +5303,13 @@ where
             kinds: kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: vec![key.key_id],
-                nodes: readable.clone(),
+                // Every author's held rows on the nodes inside alone; the
+                // key's own on every served node otherwise (ADR-0030 d3).
+                nodes: if any_author {
+                    inside.clone()
+                } else {
+                    readable.clone()
+                },
                 any_author,
             }),
             anchor: req.anchor.clone(),
@@ -5275,8 +5334,10 @@ where
                 MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
                 MemoryStatus::Held => {
                     include_unreviewed
-                        && (m.author_key_id == key.key_id || (any_author && served_unreviewed(m)))
-                        && readable.contains(&m.workarea_id)
+                        && ((m.author_key_id == key.key_id && readable.contains(&m.workarea_id))
+                            || (any_author
+                                && served_unreviewed(m)
+                                && inside.contains(&m.workarea_id)))
                 }
                 _ => false,
             };
@@ -6731,6 +6792,12 @@ where
             .ok_or(AppError::NotFound)?;
         self.require_access(&caller, edge.workarea_id, Role::Dreamer, VERB)
             .await?;
+        // A pending edge across the boundary is not ratified after a mark
+        // (ADR-0030 d7).
+        if let Some(claim) = self.journal.memory(key.tenant_id, edge.artifact_id).await? {
+            self.refuse_crossing_edge(key.tenant_id, claim.workarea_id, edge.workarea_id)
+                .await?;
+        }
         if ratifier_is_proposer(
             edge.proposer_key_id,
             &edge.proposer_principal,
@@ -6859,6 +6926,7 @@ where
             .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
             .transpose()?;
         let position = |e: &BriefEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
+        let scope_root = self.in_progress_root(key.tenant_id, workarea_id).await?;
         let mut served = Vec::new();
         for edge in self.journal.brief_edges(key.tenant_id, workarea_id).await? {
             if let Some(after) = &after
@@ -6869,7 +6937,15 @@ where
             let Some(memory) = self.journal.memory(key.tenant_id, edge.artifact_id).await? else {
                 continue;
             };
-            if self.readable(&caller, &memory).await? {
+            // The boundary at the read's node, whenever the edge was made
+            // (ADR-0030 d2).
+            if self.readable(&caller, &memory).await?
+                && !crosses_into(
+                    scope_root,
+                    self.in_progress_root(key.tenant_id, memory.workarea_id)
+                        .await?,
+                )
+            {
                 served.push(edge);
             }
             if served.len() > limit {
@@ -6975,6 +7051,10 @@ where
                 .await?;
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
+        // A pending edge across the boundary is not ratified after a mark
+        // (ADR-0030 d7).
+        self.refuse_crossing_edge(key.tenant_id, src.workarea_id, dst.workarea_id)
+            .await?;
         // The proposal's label check again: an `oml:replaced_by` or
         // `oml:consider` edge is ratified only inside its deprecation's
         // verdict, and `oml:about` only once classification is built, so a
@@ -7179,19 +7259,26 @@ where
         // A scoped read: at `workarea`, else the key's default workarea, an
         // edge with an endpoint inside an in-progress subtree the scope is
         // not inside is not served (ADR-0030 d2).
-        let readable_nodes = match workarea_id.or(key.default_workarea) {
-            Some(scope) => {
-                let scope_root = self.in_progress_root(tenant_id, scope).await?;
-                let mut kept = Vec::with_capacity(readable_nodes.len());
-                for node in readable_nodes {
-                    if !crosses_into(scope_root, self.in_progress_root(tenant_id, node).await?) {
-                        kept.push(node);
-                    }
-                }
-                kept
-            }
-            None => readable_nodes,
+        // With neither, the scope has no root, so every in-progress subtree
+        // is left out (fail closed). Inside the scope's root, an endpoint
+        // held by any author is served, as recall serves it (d3).
+        let scope_root = match workarea_id.or(key.default_workarea) {
+            Some(scope) => self.in_progress_root(tenant_id, scope).await?,
+            None => None,
         };
+        let mut kept = Vec::with_capacity(readable_nodes.len());
+        let mut held_nodes = Vec::new();
+        for node in readable_nodes {
+            let root = self.in_progress_root(tenant_id, node).await?;
+            if crosses_into(scope_root, root) {
+                continue;
+            }
+            if root.is_some() {
+                held_nodes.push(node);
+            }
+            kept.push(node);
+        }
+        let readable_nodes = kept;
         let within = match workarea_id {
             None => None,
             Some(node) => {
@@ -7214,6 +7301,7 @@ where
         let selection = ClaimEdgeSelection {
             artifact_id: filter.artifact_id,
             within,
+            held_nodes,
             readable_nodes,
             reader_key_id: key.key_id,
         };
