@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{LazyLock, Mutex};
 
-use regex::{Regex, RegexSet, RegexSetBuilder};
+use regex::Regex;
 
 pub use path::secret_path;
 pub use rules::Action;
@@ -36,9 +36,6 @@ pub const MAX_SCAN_BYTES: usize = 1 << 20;
 
 /// More invisible format characters than this in one field is a hold (d5).
 pub const INVISIBLE_LIMIT: usize = 3;
-
-/// The rule set's lazy DFA cache, per thread that scans.
-const DFA_CACHE_BYTES: usize = 16 << 20;
 
 /// Findings named in one reason string; the rest are counted (d8).
 const REASON_FINDINGS: usize = 5;
@@ -114,25 +111,15 @@ pub struct Options {
     pub pii: bool,
 }
 
-struct Compiled {
-    set: RegexSet,
-    one: Vec<Regex>,
-}
-
-static COMPILED: LazyLock<Compiled> = LazyLock::new(|| {
-    let patterns = RULES.iter().map(|r| r.pattern);
-    Compiled {
-        // A lazy DFA cache large enough that a long field never thrashes it
-        // back to the slower engine (d9).
-        set: RegexSetBuilder::new(patterns)
-            .dfa_size_limit(DFA_CACHE_BYTES)
-            .build()
-            .expect("the oml-scan/1 patterns compile"),
-        one: RULES
-            .iter()
-            .map(|r| Regex::new(r.pattern).expect("the oml-scan/1 patterns compile"))
-            .collect(),
-    }
+/// Each rule's own regex. One set over every pattern built a combined
+/// DFA that thrashed its cache on dense input and fell back to the slow
+/// engine: 258 ms on a mebibyte of base64, where the rules one at a time,
+/// each with its own literal prefilter, take about 9 ms (d9).
+static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    RULES
+        .iter()
+        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1 patterns compile"))
+        .collect()
 });
 
 /// Every rule id the set can report, with its class and action: the closed
@@ -140,6 +127,8 @@ static COMPILED: LazyLock<Compiled> = LazyLock::new(|| {
 #[must_use]
 pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     let mut out: Vec<_> = RULES.iter().map(|r| (r.class, r.id, r.action)).collect();
+    out.push(("secret.assignment", "aws-secret-near-id", Action::Veto));
+    out.push(("encoding.base64_blob", "base64-blob", Action::Hold));
     out.push(("unicode.invisible", "invisible-format", Action::Hold));
     out.push(("unicode.invisible", "tag-characters", Action::Hold));
     out.push(("format.scan_bound", "scan-bound", Action::Veto));
@@ -218,13 +207,6 @@ impl RuleSet {
     /// Every finding in one field, in position order. Counts nothing.
     #[must_use]
     pub fn findings(&self, field: &str, text: &str) -> Vec<Finding> {
-        let finding = |rule: &Rule, start: usize| Finding {
-            class: rule.class,
-            rule: rule.id,
-            action: rule.action,
-            field: field.to_owned(),
-            line: line_of(text, start),
-        };
         if text.len() > MAX_SCAN_BYTES {
             return vec![Finding {
                 class: "format.scan_bound",
@@ -234,31 +216,71 @@ impl RuleSet {
                 line: 1,
             }];
         }
-        let compiled = &*COMPILED;
-        let mut out: Vec<(usize, Finding)> = Vec::new();
-        for i in compiled.set.matches(text) {
-            let rule = &RULES[i];
-            if rule.pii && !self.options.pii {
-                continue;
-            }
-            if let Some(start) = first_match(rule, &compiled.one[i], text) {
-                out.push((start, finding(rule, start)));
-            }
-        }
+        let mut out = self.matched(field, text);
         if let Some((start, rule)) = invisible(text) {
             out.push((
                 start,
-                Finding {
-                    class: "unicode.invisible",
-                    rule,
-                    action: Action::Hold,
-                    field: field.to_owned(),
-                    line: line_of(text, start),
-                },
+                code_finding("unicode.invisible", rule, Action::Hold, field, text, start),
             ));
+        }
+        // The veto rules again over the text as copy-paste mangles it:
+        // zero-width characters and soft hyphens gone, a no-break space a
+        // space, compatibility forms folded (NFKC) (d14).
+        if let Some(view) = normalised(text) {
+            for (start, f) in self.matched(field, &view) {
+                if f.action == Action::Veto && !out.iter().any(|(_, g)| g.rule == f.rule) {
+                    out.push((start, f));
+                }
+            }
         }
         out.sort_by_key(|(start, f)| (*start, f.rule));
         out.into_iter().map(|(_, f)| f).collect()
+    }
+
+    /// The pattern and run rules over one text, with each finding's start.
+    fn matched(&self, field: &str, text: &str) -> Vec<(usize, Finding)> {
+        let mut out: Vec<(usize, Finding)> = Vec::new();
+        for (rule, re) in RULES.iter().zip(COMPILED.iter()) {
+            // The personal-data rules do not run while they are off (d6).
+            if rule.pii && !self.options.pii {
+                continue;
+            }
+            if let Some(start) = first_match(rule, re, text) {
+                out.push((
+                    start,
+                    code_finding(rule.class, rule.id, rule.action, field, text, start),
+                ));
+            }
+        }
+        if let Some(start) = base64_run(text) {
+            out.push((
+                start,
+                code_finding(
+                    "encoding.base64_blob",
+                    "base64-blob",
+                    Action::Hold,
+                    field,
+                    text,
+                    start,
+                ),
+            ));
+        }
+        if out.iter().any(|(_, f)| f.rule == "aws-access-key-id")
+            && let Some(start) = aws_secret_near_id(text)
+        {
+            out.push((
+                start,
+                code_finding(
+                    "secret.assignment",
+                    "aws-secret-near-id",
+                    Action::Veto,
+                    field,
+                    text,
+                    start,
+                ),
+            ));
+        }
+        out
     }
 
     /// Findings counted since start, by class, rule and action (d11).
@@ -283,10 +305,6 @@ impl RuleSet {
 fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<usize> {
     match rule.check {
         Check::None => re.find(text).map(|m| m.start()),
-        Check::Blob => re
-            .find_iter(text)
-            .find(|m| blob(m.as_str()))
-            .map(|m| m.start()),
         Check::Entropy => re
             .captures_iter(text)
             .find(|c| c.get(1).is_some_and(|v| generated(v.as_str())))
@@ -303,6 +321,107 @@ fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<usize> {
     }
 }
 
+fn code_finding(
+    class: &'static str,
+    rule: &'static str,
+    action: Action,
+    field: &str,
+    text: &str,
+    start: usize,
+) -> Finding {
+    Finding {
+        class,
+        rule,
+        action,
+        field: field.to_owned(),
+        line: line_of(text, start),
+    }
+}
+
+/// The shortest base64 run the blob rule reads (d5).
+const BLOB_MIN: usize = 400;
+
+/// The first run of 400 or more base64 characters that passes the blob
+/// test, counted by hand: one pass, no regex state (d9).
+fn base64_run(text: &str) -> Option<usize> {
+    let b = text.as_bytes();
+    let is = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'_' | b'-');
+    let mut i = 0;
+    while i < b.len() {
+        if !is(b[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && is(b[i]) {
+            i += 1;
+        }
+        if i - start >= BLOB_MIN && blob(&text[start..i]) {
+            return Some(start);
+        }
+    }
+    None
+}
+
+/// A 40-character base64 value within 200 bytes after an AWS access key
+/// id, with the entropy test: the secret half of a pair pasted with no key
+/// name (d3).
+fn aws_secret_near_id(text: &str) -> Option<usize> {
+    static ID: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}").expect("compiles")
+    });
+    let b = text.as_bytes();
+    let is = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/');
+    for m in ID.find_iter(text) {
+        let end = (m.end() + 200).min(b.len());
+        let mut i = m.end();
+        while i < end {
+            if !is(b[i]) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < b.len() && is(b[i]) {
+                i += 1;
+            }
+            if i - start == 40 && generated(&text[start..i]) {
+                return Some(start);
+            }
+        }
+    }
+    None
+}
+
+/// Characters copy-paste inserts inside a token without changing how it
+/// reads: zero-width spaces and joiners, the word joiner, the byte-order
+/// mark and the soft hyphen (d14).
+fn removable(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'
+    )
+}
+
+/// The text as copy-paste mangles it, undone, or `None` when it is already
+/// that text: removable characters gone, NBSP a space, NFKC (d14).
+fn normalised(text: &str) -> Option<String> {
+    use unicode_normalization::UnicodeNormalization as _;
+    use unicode_normalization::{IsNormalized, is_nfkc_quick};
+    let plain = text.is_ascii()
+        || (!text.chars().any(|c| removable(c) || c == '\u{00A0}')
+            && is_nfkc_quick(text.chars()) == IsNormalized::Yes);
+    if plain {
+        return None;
+    }
+    let view: String = text
+        .chars()
+        .filter(|&c| !removable(c))
+        .map(|c| if c == '\u{00A0}' { ' ' } else { c })
+        .nfkc()
+        .collect();
+    (view != text).then_some(view)
+}
+
 fn line_of(text: &str, start: usize) -> usize {
     text.as_bytes()[..start]
         .iter()
@@ -314,12 +433,24 @@ fn line_of(text: &str, start: usize) -> usize {
 /// Shannon entropy in bits per character.
 #[must_use]
 pub fn shannon(s: &str) -> f64 {
+    let mut ascii = [0_usize; 128];
     let mut freq: BTreeMap<char, usize> = BTreeMap::new();
     let mut n = 0_usize;
     for c in s.chars() {
-        *freq.entry(c).or_default() += 1;
+        if c.is_ascii() {
+            ascii[c as usize] += 1;
+        } else {
+            *freq.entry(c).or_default() += 1;
+        }
         n += 1;
     }
+    freq.extend(
+        ascii
+            .iter()
+            .zip(0_u8..)
+            .filter(|&(&k, _)| k > 0)
+            .map(|(&k, c)| (char::from(c), k)),
+    );
     if n == 0 {
         return 0.0;
     }
@@ -380,6 +511,22 @@ fn generated(v: &str) -> bool {
         || windows_path(v)
         || FILE_SUFFIXES.iter().any(|x| lower.ends_with(x))
     {
+        return false;
+    }
+    // An identifier written by a person: two or more words of three or more
+    // letters in one case between separators (`PROJ-12345-feature-branch`,
+    // `postgres-credentials-2024`), which a generated value does not have.
+    let words = v
+        .split(['-', '_', '.', '/'])
+        .filter(|w| {
+            w.len() >= 3
+                && w.chars().all(|c| c.is_ascii_alphabetic())
+                && (w.chars().all(|c| c.is_ascii_lowercase())
+                    || w.chars().all(|c| c.is_ascii_uppercase())
+                    || w.chars().skip(1).all(|c| c.is_ascii_lowercase()))
+        })
+        .count();
+    if words >= 2 {
         return false;
     }
     let letters = v.chars().any(|c| c.is_ascii_alphabetic());

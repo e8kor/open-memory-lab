@@ -2014,6 +2014,7 @@ version = "0.5.8"
 dependencies = [
  "regex",
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

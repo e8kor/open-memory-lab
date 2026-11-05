@@ -6,7 +6,9 @@
 //! regexes of gitleaks' default configuration (`config/gitleaks.toml`,
 //! <https://github.com/gitleaks/gitleaks>), MIT licence, Copyright (c) 2019
 //! Zachary Rice. Only the regexes are adapted, rewritten for Rust's `regex`
-//! (no look-around); no gitleaks code is used (ADR-0065 d3).
+//! (no look-around); no gitleaks code is used (ADR-0065 d3). The full MIT
+//! notice is `LICENSES/gitleaks-MIT.txt`, shipped in every release archive
+//! and image.
 //!
 //! Word boundaries are ASCII (`(?-u:\b)`): a Unicode boundary makes the
 //! matcher leave its DFA for a slower engine on any non-ASCII text (d9).
@@ -42,9 +44,6 @@ pub(crate) enum Check {
     /// Capture groups 1 and 2 are a user and a password; the password must
     /// not be a placeholder, the user's own name or an environment reference.
     Password,
-    /// The whole match must carry a digit, an upper- and a lower-case letter
-    /// and high entropy: a long base64 run, not a word repeated.
-    Blob,
 }
 
 /// One rule of the set.
@@ -107,7 +106,7 @@ pub(crate) const RULES: &[Rule] = &[
     veto(
         "aws-access-key-id",
         "secret.api_token",
-        r"(?-u:\b)(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}(?-u:\b)",
+        r"(?:^|[^A-Za-z0-9])(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}(?-u:\b)",
     ),
     checked(
         veto(
@@ -121,30 +120,30 @@ pub(crate) const RULES: &[Rule] = &[
     veto(
         "github-token",
         "secret.api_token",
-        r"(?-u:\b)gh[pousr]_[0-9A-Za-z]{36}(?-u:\b)",
+        r"gh[pousr]_[0-9A-Za-z]{36}(?-u:\b)",
     ),
     // gitleaks github-fine-grained-pat
     veto(
         "github-fine-grained-pat",
         "secret.api_token",
-        r"(?-u:\b)github_pat_[0-9A-Za-z_]{82}(?-u:\b)",
+        r"github_pat_[0-9A-Za-z_]{82}(?-u:\b)",
     ),
     // gitleaks gitlab-pat, gitlab-ptt, gitlab-rrt, gitlab-deploy-token
     veto(
         "gitlab-token",
         "secret.api_token",
-        r"(?-u:\b)gl(?:pat|ptt|rt|dt)-[0-9A-Za-z_-]{20,}",
+        r"gl(?:pat|ptt|rt|dt)-[0-9A-Za-z_-]{20,}",
     ),
     // gitleaks slack-bot-token, slack-user-token, slack-app-token
     veto(
         "slack-token",
         "secret.api_token",
-        r"(?-u:\b)xox[abposr]-[0-9]{9,13}-[0-9A-Za-z-]{10,}",
+        r"xox[abposr]-[0-9]{9,13}-[0-9A-Za-z-]{10,}",
     ),
     veto(
         "slack-app-token",
         "secret.api_token",
-        r"(?-u:\b)xapp-[0-9]-[A-Z0-9]{9,}-[0-9]{9,}-[a-z0-9]{32,}",
+        r"xapp-[0-9]-[A-Z0-9]{9,}-[0-9]{9,}-[a-z0-9]{32,}",
     ),
     // gitleaks slack-webhook-url
     veto(
@@ -156,41 +155,41 @@ pub(crate) const RULES: &[Rule] = &[
     veto(
         "stripe-key",
         "secret.api_token",
-        r"(?-u:\b)(?:sk|rk)_(?:test|live|prod)_[0-9A-Za-z]{10,99}(?-u:\b)",
+        r"(?:sk|rk)_(?:test|live|prod)_[0-9A-Za-z]{10,99}(?-u:\b)",
     ),
     // gitleaks gcp-api-key
     veto(
         "google-api-key",
         "secret.api_token",
-        r"(?-u:\b)AIza[0-9A-Za-z_-]{35}",
+        r"AIza[0-9A-Za-z_-]{35}",
     ),
     // gitleaks openai-api-key, both shapes
     veto(
         "openai-key",
         "secret.api_token",
-        r"(?-u:\b)sk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})",
+        r"sk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}|[A-Za-z0-9]{48}(?-u:\b))",
     ),
     // gitleaks anthropic-api-key, anthropic-admin-api-key
     veto(
         "anthropic-key",
         "secret.api_token",
-        r"(?-u:\b)sk-ant-(?:api|admin|oat|ort)[0-9]{2}-[A-Za-z0-9_-]{80,}",
+        r"sk-ant-(?:api|admin|oat|ort)[0-9]{2}-[A-Za-z0-9_-]{80,}",
     ),
     // gitleaks npm-access-token, pypi-upload-token, huggingface-access-token
     veto(
         "npm-token",
         "secret.api_token",
-        r"(?-u:\b)npm_[A-Za-z0-9]{36}(?-u:\b)",
+        r"npm_[A-Za-z0-9]{36}(?-u:\b)",
     ),
     veto(
         "pypi-token",
         "secret.api_token",
-        r"(?-u:\b)pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}",
+        r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}",
     ),
     veto(
         "huggingface-token",
         "secret.api_token",
-        r"(?-u:\b)hf_[A-Za-z]{34}(?-u:\b)",
+        r"hf_[A-Za-z]{34}(?-u:\b)",
     ),
     // gitleaks jwt: three base64url parts, the first two JSON objects
     veto(
@@ -202,18 +201,18 @@ pub(crate) const RULES: &[Rule] = &[
     veto(
         "oml-key",
         "secret.api_token",
-        r"(?-u:\b)oml_[A-Za-z0-9]{43}(?-u:\b)",
+        r"oml_[A-Za-z0-9]{43}(?-u:\b)",
     ),
     veto(
         "oml-connection-token",
         "secret.api_token",
-        r"(?-u:\b)oml_(?:at|rt)_[A-Za-z0-9]{43}(?-u:\b)",
+        r"oml_(?:at|rt)_[A-Za-z0-9]{43}(?-u:\b)",
     ),
     checked(
         veto(
             "authorization-header",
             "secret.api_token",
-            r"(?i)(?-u:\b)authorization\s*:\s*(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{16,}=*)",
+            r#"(?i)authorization["']?\s*:\s*["']?(?:bearer|basic|token)\s+([A-Za-z0-9._~+/-]{16,}=*)"#,
         ),
         Check::Entropy,
     ),
@@ -227,9 +226,17 @@ pub(crate) const RULES: &[Rule] = &[
     ),
     checked(
         veto(
+            "curl-user",
+            "secret.credential_pair",
+            r#"(?:^|\s)-u[ \t]*["']?([^\s:'"]{1,128}):([^\s'"]{1,256})"#,
+        ),
+        Check::Password,
+    ),
+    checked(
+        veto(
             "keyword-assignment",
             "secret.assignment",
-            r#"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|credentials?)[A-Za-z0-9_.-]{0,20}["']?\s*(?:=|:=|:|=>|(?-u:\b)is(?-u:\b))\s*["'`]?([^\s"'`,;<>{}()\[\]|]{12,256})"#,
+            r#"(?i)(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|credentials?)(?:[_.-][A-Za-z0-9]+){0,2}["']?[ \t]*(?:=|:=|:|=>)[ \t]*["'`]?([^\s"'`,;<>{}()\[\]|]{12,256})"#,
         ),
         Check::Entropy,
     ),
@@ -281,14 +288,6 @@ pub(crate) const RULES: &[Rule] = &[
         "bidi-control",
         "unicode.bidi",
         r"[\x{202A}-\x{202E}\x{2066}-\x{2069}]",
-    ),
-    checked(
-        hold(
-            "base64-blob",
-            "encoding.base64_blob",
-            r"[A-Za-z0-9+/_-]{400,}={0,2}",
-        ),
-        Check::Blob,
     ),
     // ---- d6: personal data, off by default --------------------------------
     pii(hold(

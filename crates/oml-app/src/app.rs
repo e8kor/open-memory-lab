@@ -3974,6 +3974,11 @@ where
         // scanner port: a veto journals nothing (proposed ADR-0037 d10).
         let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        // The claim key reaches the journal as plaintext, so a veto in it
+        // refuses as one in the body does (ADR-0065 d7).
+        if let Some(claim_key) = req.claim_key.as_deref() {
+            self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
+        }
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -4405,6 +4410,9 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
+        if let Some(reason) = req.reason.as_deref() {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         let ids_refused = |reason: String| AppError::BulkShape {
             field: "/artifact_ids",
             reason,
@@ -4504,6 +4512,9 @@ where
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        if let Some(reason) = reason {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         // The head first, then every read R2 and the compare-and-set judge:
         // the row's closure, which a claim edge's proposal widens while the
         // row is held, its rivals and its target. A commit landing after the
@@ -5475,6 +5486,20 @@ where
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
     /// write naming the field, since a written anchor is never erased.
+    /// A field the journal keeps as plaintext beside a body, a claim key or
+    /// a verdict's reason: a veto finding refuses, a hold finding passes,
+    /// since no review follows (ADR-0065 d7).
+    fn scan_veto_only(&self, tenant_id: Uuid, kind: &str, text: &str) -> Result<(), AppError> {
+        match self.scanner.scan(&AdmissionEnvelope {
+            tenant_id,
+            kind,
+            body: text,
+        }) {
+            ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(reason)),
+            ScanOutcome::Pass | ScanOutcome::Hold(_) => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());

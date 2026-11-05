@@ -8,6 +8,7 @@ description = "The deterministic content scan (ADR-0065): the oml-scan/1 rule se
 
 [dependencies]
 regex.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

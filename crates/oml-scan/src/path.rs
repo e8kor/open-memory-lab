@@ -24,18 +24,35 @@ const NAMES: &[&str] = &[
     ".htpasswd",
     ".git-credentials",
     ".dockercfg",
+    ".vault-token",
     "kubeconfig",
 ];
+
+/// `.env` templates committed on purpose, with no values.
+const ENV_TEMPLATES: &[&str] = &[".env.example", ".env.sample", ".env.template"];
+
+/// An SSH identity file: `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, a
+/// security-key `_sk` variant, and the `.pub` half.
+fn ssh_identity(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("id_") else {
+        return false;
+    };
+    let rest = rest.strip_suffix(".pub").unwrap_or(rest);
+    let rest = rest.strip_suffix("_sk").unwrap_or(rest);
+    matches!(rest, "rsa" | "dsa" | "ecdsa" | "ed25519")
+}
 
 /// Whether any component of `path` names a secret-carrying file or
 /// directory: `.env*`, key-material suffixes (`*.pem`, `*.key`, `*.p12`,
 /// `*.pfx`, `*.jks`, `*.keystore`, `*.ppk`, `*.kdbx`), SSH identities
-/// (`id_*`), `*credentials*`, `*secret*`, the credential dotfiles
-/// (`.npmrc`, `.pypirc`, `.netrc`, `.pgpass`, `.htpasswd`,
-/// `.git-credentials`, `.dockercfg`), a kubeconfig (`kubeconfig*`, or
+/// (`id_rsa`, `id_ed25519`, … and their `.pub`), `*credentials*`,
+/// `*secret*`, the credential dotfiles (`.npmrc`, `.pypirc`, `.netrc`,
+/// `.pgpass`, `.htpasswd`, `.git-credentials`, `.dockercfg`,
+/// `.vault-token`), a kubeconfig (`kubeconfig*`, or
 /// `config` under `.kube/`) and a Docker client's `config.json` under
 /// `.docker/`. Case-insensitive; a directory so named covers every file
-/// under it.
+/// under it. `.env.example`, `.env.sample` and `.env.template` are
+/// templates and pass.
 #[must_use]
 pub fn secret_path(path: &str) -> bool {
     let parts: Vec<String> = path
@@ -45,9 +62,9 @@ pub fn secret_path(path: &str) -> bool {
         .collect();
     parts.iter().enumerate().any(|(i, name)| {
         let parent = i.checked_sub(1).map(|j| parts[j].as_str());
-        name.starts_with(".env")
+        (name.starts_with(".env") && !ENV_TEMPLATES.contains(&name.as_str()))
             || SUFFIXES.iter().any(|s| name.ends_with(s))
-            || name.starts_with("id_")
+            || ssh_identity(name)
             || name.contains("credentials")
             || name.contains("secret")
             || NAMES.contains(&name.as_str())

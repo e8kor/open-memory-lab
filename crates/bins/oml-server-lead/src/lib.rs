@@ -1076,18 +1076,39 @@ static RULES: std::sync::LazyLock<oml_scan::RuleSet> =
 /// The PoC's `[oml:veto]` and `[oml:hold]` markers stay as rules (d10).
 pub struct RuleScanner;
 
-fn scanned_field(envelope: &AdmissionEnvelope<'_>) -> &'static str {
-    if envelope.kind == "anchor" {
-        "/anchor"
+/// Above this many bytes a scan leaves the async worker: a mebibyte takes
+/// about 13 ms in a release build, and a worker held that long stalls every
+/// request queued on it (ADR-0065 d9).
+pub const BLOCKING_SCAN_BYTES: usize = 64 * 1024;
+
+/// Run a scan of `len` bytes, off the async worker when it is long and the
+/// runtime has other workers to carry the rest (`block_in_place` on a
+/// multi-thread runtime); in place otherwise.
+fn off_the_executor<T>(len: usize, scan: impl FnOnce() -> T) -> T {
+    let multi = tokio::runtime::Handle::try_current()
+        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    if len > BLOCKING_SCAN_BYTES && multi {
+        tokio::task::block_in_place(scan)
     } else {
-        "/body"
+        scan()
+    }
+}
+
+fn scanned_field(envelope: &AdmissionEnvelope<'_>) -> &'static str {
+    match envelope.kind {
+        "anchor" => "/anchor",
+        "claim_key" => "/claim_key",
+        "reason" => "/reason",
+        _ => "/body",
     }
 }
 
 impl Scanner for RuleScanner {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome {
         let field = scanned_field(envelope);
-        let verdict = RULES.scan(&[(field, envelope.body)]);
+        let verdict = off_the_executor(envelope.body.len(), || {
+            RULES.scan(&[(field, envelope.body)])
+        });
         match (&verdict, verdict.reason()) {
             (oml_scan::Verdict::Veto(_), Some(reason)) => ScanOutcome::Veto(reason),
             (oml_scan::Verdict::Hold(_), Some(reason)) => ScanOutcome::Hold(reason),
@@ -1100,16 +1121,17 @@ impl Scanner for RuleScanner {
     }
 
     fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<oml_app::ports::ScanFinding> {
-        RULES
-            .findings(scanned_field(envelope), envelope.body)
-            .into_iter()
-            .map(|f| oml_app::ports::ScanFinding {
-                class: f.class.to_owned(),
-                rule: f.rule.to_owned(),
-                veto: f.action == oml_scan::Action::Veto,
-                at: f.location(),
-            })
-            .collect()
+        off_the_executor(envelope.body.len(), || {
+            RULES.findings(scanned_field(envelope), envelope.body)
+        })
+        .into_iter()
+        .map(|f| oml_app::ports::ScanFinding {
+            class: f.class.to_owned(),
+            rule: f.rule.to_owned(),
+            veto: f.action == oml_scan::Action::Veto,
+            at: f.location(),
+        })
+        .collect()
     }
 
     fn info(&self) -> Option<oml_app::ports::ScannerInfo> {
