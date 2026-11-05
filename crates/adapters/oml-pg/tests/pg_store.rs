@@ -8788,6 +8788,61 @@ async fn a_queue_turned_off_stays_empty_and_one_turned_on_backfills_in_resumable
     drop_dbs(&created).await;
 }
 
+/// Turning a tenant's sparse state on waits for every write in flight: a
+/// write whose trigger read the state off and commits after the backfill's
+/// first read would be queued by neither, and the sparse lists would never
+/// hold it (ADR-0052 d15). The step holds until that write commits, so its
+/// read sees it.
+#[tokio::test]
+async fn turning_the_sparse_state_on_waits_for_writes_in_flight_so_the_backfill_sees_them() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(587);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    // A write in flight: its transaction holds the lock every insert or
+    // update of a memory takes, and has not committed.
+    let mut writer = owner_conn(&store).await;
+    let mut tx = writer.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE memories IN ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .expect("a write's lock");
+    let step = store.sparse_backfill(tenant, 10);
+    tokio::pin!(step);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut step)
+            .await
+            .is_err(),
+        "the first step waits for the write in flight"
+    );
+    tx.commit().await.expect("the write commits");
+    let (_, done) = tokio::time::timeout(std::time::Duration::from_secs(10), step)
+        .await
+        .expect("the step proceeds once the write committed")
+        .expect("step");
+    assert!(done, "one step reads every version");
+    // On already: a later step takes no lock, so writes never wait for it.
+    let mut writer = owner_conn(&store).await;
+    let mut tx = writer.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE memories IN ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .expect("a write's lock");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        store.sparse_backfill(tenant, 10),
+    )
+    .await
+    .expect("a step on a state already on does not wait")
+    .expect("step");
+    tx.commit().await.expect("commit");
+    drop_dbs(&created).await;
+}
+
 /// A version enqueued again after the drain read it is not written with
 /// the claim read before: the guarded take finds a newer entry, writes
 /// nothing, and the next read carries the new claim (ADR-0052 d15; L3 on
