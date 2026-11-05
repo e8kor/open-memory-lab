@@ -2176,13 +2176,6 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         )
         .await
         .expect("the agent supersedes");
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
-    assert!(
-        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
-        "{page}"
-    );
     rig.allow("boss@example.com", "boss", true).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
     act(
@@ -2203,6 +2196,13 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         page.contains(
             "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
         ),
+        "{page}"
+    );
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    assert!(page.contains("the api is at version 4"), "{page}");
+    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
+    assert!(
+        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
         "{page}"
     );
 }

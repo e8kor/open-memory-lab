@@ -1147,6 +1147,10 @@ pub struct VersionRef {
 pub struct ServedMemory {
     pub memory: MemoryRecord,
     pub replaces: Option<VersionRef>,
+    /// On a held successor, the end approving it gives the version it
+    /// replaces, so a reviewer sees it before the verdict; `None` otherwise
+    /// (proposed ADR-0059 d4).
+    pub replaces_valid_until: Option<oml_domain::valid_time::ValidEnd>,
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,

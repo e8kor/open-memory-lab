@@ -3692,6 +3692,12 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             fields.rule.clone().unwrap_or(Value::Null),
         );
     }
+    // On a held successor, the end approving it gives the version it
+    // replaces, shown to a reviewer before the verdict (proposed ADR-0059
+    // d4).
+    if let (Some(end), Some(obj)) = (&served.replaces_valid_until, value.as_object_mut()) {
+        obj.insert("replaces_valid_until".to_owned(), json!(end.as_str()));
+    }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
     }

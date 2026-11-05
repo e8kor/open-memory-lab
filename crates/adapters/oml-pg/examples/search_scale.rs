@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_or(10, |k| usize::try_from(k).unwrap_or(10)),
             sparse: &sparse,
             window: None,
+            within: &[],
         };
         store.retrieve(tenant, kind, &scope, query).await?;
         let started = Instant::now();

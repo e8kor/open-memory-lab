@@ -1205,8 +1205,10 @@ export interface components {
             valid_from?: string | null;
             /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4). */
             valid_until?: string | null;
+            /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
+            replaces_valid_until?: string;
         };
-        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits (proposed ADR-0059 d2). */
+        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2). */
         ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
             /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
@@ -1374,7 +1376,7 @@ export interface components {
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
-            /** @description Where the deployment serves a time pipeline: the tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12). */
+            /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12). */
             valid_time?: {
                 declared: number;
                 expired: number;

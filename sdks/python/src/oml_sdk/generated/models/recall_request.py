@@ -64,7 +64,7 @@ class RecallRequest:
             include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
                 default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
             now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
-                digits (proposed ADR-0059 d2).
+                digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
     """
 
     query: str

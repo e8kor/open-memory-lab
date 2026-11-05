@@ -116,7 +116,7 @@
           },
           "valid_from": {
             "type": "string",
-            "description": "When the claim holds in the world, as its author declares it: YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset; a period names its first instant, so 2015 begins 1 January 2015. Signed with the claim and never changed; a new version states its own. Only memory and derived_fact take it."
+            "description": "When the claim holds in the world, as its author declares it: YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset; a period names its first instant, so 2015 begins 1 January 2015; a period is read in UTC. Signed with the claim and never changed; a new version states its own. Only memory and derived_fact take it."
           },
           "valid_until": {
             "type": "string",
@@ -222,7 +222,7 @@
           },
           "now": {
             "type": "string",
-            "description": "Recall: the instant the recall is read at, YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset; omitted, the server's clock. It decides which claims have expired and anchors the query's relative dates such as last week."
+            "description": "Recall: the instant the recall is read at, YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset; omitted, the server's clock; relative dates are counted in UTC days. It decides which claims have expired and anchors the query's relative dates such as last week."
           },
           "own": {
             "type": "boolean",

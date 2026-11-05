@@ -387,6 +387,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         k,
                         sparse: &[],
                         window: None,
+                        within: &[],
                     },
                 )
                 .await
@@ -7203,6 +7204,7 @@ async fn the_bm25_statement_reads_the_stored_lexemes_and_never_a_rows_claim() {
     .bind("the prices of useInvoiceFilters")
     .bind(10_i64)
     .bind(false)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -7242,6 +7244,7 @@ async fn bm25_list(
                 k: 50,
                 sparse: &[],
                 window: None,
+                within: &[],
             },
         )
         .await
@@ -7892,6 +7895,7 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     .bind(false)
     .bind(1_i64)
     .bind(10_i64)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -8028,6 +8032,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         k: 50,
                         sparse: &[],
                         window: None,
+                        within: &[],
                     },
                 )
                 .await

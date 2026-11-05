@@ -102,10 +102,10 @@ use crate::types::{
 
 use crate::search::{
     Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
-    OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_READ, apply_floor,
+    OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_DEPTH, apply_floor,
     fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
-use oml_domain::valid_time::{ValidEnd, ValidTime, Window, fixed_width, parse_now, parse_window};
+use oml_domain::valid_time::{ValidTime, Window, parse_now, parse_window, ratified_end};
 
 /// One pipeline's answer before the cuts: the fused candidates, the query's
 /// terms, whether `match: all` fell back to any word, how the lists were
@@ -563,26 +563,6 @@ fn valid_time(
         .check_kind(kind, retirement)
         .map_err(AppError::ValidTime)?;
     Ok(valid)
-}
-
-/// The end a ratified supersession gives the version it replaces (proposed
-/// ADR-0059 d4): the successor's declared start, as an instant, when the
-/// successor declares one that falls after the replaced version's start and
-/// before its own end; `None` otherwise, so an undeclared start ends
-/// nothing and nothing is inferred.
-fn replaced_end(replaced: &MemoryRecord, successor: &MemoryRecord) -> Option<ValidEnd> {
-    let start = successor.valid.from.as_ref()?.unix_micros();
-    let after_start = replaced
-        .valid
-        .from
-        .as_ref()
-        .is_none_or(|f| f.unix_micros() < start);
-    let before_end = replaced
-        .valid
-        .until
-        .as_ref()
-        .is_none_or(|u| start < u.unix_micros());
-    (after_start && before_end).then(|| ValidEnd::from_stored(fixed_width(start), start))
 }
 
 /// The submission payload's and the request digest's valid-time members:
@@ -1633,6 +1613,7 @@ where
         }
         memory.derives_from = derives_from;
         let mut replaces = None;
+        let mut replaces_valid_until = None;
         if let Some(id) = memory.replaces
             && let Some(m) = self.journal.memory(tenant_id, id).await?
             && (!anonymous || m.workarea_id == memory.workarea_id)
@@ -1642,6 +1623,11 @@ where
                 artifact_id: id,
                 version: m.version,
             });
+            // What approving a held successor does to the version it
+            // replaces, shown before the verdict (proposed ADR-0059 d4).
+            if memory.status == MemoryStatus::Held {
+                replaces_valid_until = ratified_end(&m.valid, &memory.valid);
+            }
         }
         if anonymous {
             memory.author_principal = String::new();
@@ -1655,6 +1641,7 @@ where
         Ok(ServedMemory {
             memory,
             replaces,
+            replaces_valid_until,
             workarea_path,
             anonymous,
             load_warning,
@@ -4742,7 +4729,8 @@ where
                         MetadataFold::TipSuperseded {
                             successor: memory_id,
                             replaced: target.memory_id,
-                            replaced_valid_until: replaced_end(&target, &memory).map(Box::new),
+                            replaced_valid_until: ratified_end(&target.valid, &memory.valid)
+                                .map(Box::new),
                         },
                     ),
                 };
@@ -5523,6 +5511,16 @@ where
                     let list = match window {
                         None => crate::search::Retrieved::default(),
                         Some(window) => {
+                            // The leg reads only the rows the text list
+                            // found, by id: its cost is that list's, and a
+                            // window holding more rows loses none of them
+                            // (proposed ADR-0059 d7).
+                            let found: Vec<Uuid> = lists
+                                .first()
+                                .map(|(_, text): &(RetrieverKind, crate::search::Retrieved)| {
+                                    text.candidates.iter().map(|c| c.memory_id).collect()
+                                })
+                                .unwrap_or_default();
                             let time = self
                                 .journal
                                 .retrieve(
@@ -5532,9 +5530,10 @@ where
                                     RetrievalQuery {
                                         query,
                                         match_mode: mode,
-                                        k: TIME_READ,
+                                        k: TIME_DEPTH,
                                         sparse: &sparse,
                                         window: Some(window),
+                                        within: &found,
                                     },
                                 )
                                 .await?;
@@ -5559,6 +5558,7 @@ where
                             k: depth,
                             sparse: &sparse,
                             window,
+                            within: &[],
                         },
                     )
                     .await?;

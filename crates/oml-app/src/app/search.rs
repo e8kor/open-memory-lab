@@ -26,8 +26,8 @@ pub struct SearchSettings {
     /// deployment serves `bm25-postings` and the store keeps postings, for
     /// doctor (ADR-0052 d12); `None` otherwise.
     pub postings: Option<PostingsHealth>,
-    /// The tenant's valid time, read where the deployment serves a time
-    /// pipeline, for doctor (proposed ADR-0059 d12); `None` otherwise.
+    /// The tenant's valid time, for doctor (proposed ADR-0059 d12); `None`
+    /// from a store that keeps none.
     pub valid_time: Option<crate::search::ValidTimeCounts>,
 }
 
@@ -50,15 +50,10 @@ where
         if self.search.serves(Pipeline::Bm25Postings) || self.search.needs_sparse() {
             settings.postings = self.journal.postings_health(admin.tenant_id).await?;
         }
-        if self
-            .search
-            .enabled()
-            .iter()
-            .any(|p| p.retrievers().contains(&crate::search::RetrieverKind::Time))
-        {
-            let now = self.clock.now().unix_micros();
-            settings.valid_time = self.journal.valid_time_counts(admin.tenant_id, now).await?;
-        }
+        // Every pipeline hides ended versions, so the counts are read
+        // whatever the deployment serves (proposed ADR-0059 d12).
+        let now = self.clock.now().unix_micros();
+        settings.valid_time = self.journal.valid_time_counts(admin.tenant_id, now).await?;
         Ok(settings)
     }
 

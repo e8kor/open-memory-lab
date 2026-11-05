@@ -2,7 +2,7 @@
 
 use oml_domain::model::MemoryKind;
 use oml_domain::valid_time::{
-    ValidTime, ValidTimeError, Window, fixed_width, parse_now, parse_window,
+    ValidTime, ValidTimeError, Window, fixed_width, parse_now, parse_window, ratified_end,
 };
 
 /// Microseconds at 00:00Z of an ISO day.
@@ -351,4 +351,37 @@ fn the_first_expression_from_the_left_wins() {
     let w = parse_window("in 2019 and then in 2021", now).unwrap();
     assert_eq!(w.from_us, Some(at("2019-01-01")));
     assert_eq!(w.phrase, "2019");
+}
+
+#[test]
+fn a_window_past_the_years_0000_to_9999_is_no_window() {
+    let end = parse_now("9999-12-31").expect("now");
+    assert_eq!(parse_window("next year", end), None);
+    assert!(parse_window("this year", end).is_some());
+}
+
+#[test]
+fn a_ratified_end_is_the_successors_declared_start_inside_the_replaced_interval() {
+    let replaced = ValidTime::parse(Some("2025"), None).unwrap();
+    let successor = ValidTime::parse(Some("2026-06-01"), None).unwrap();
+    let end = ratified_end(&replaced, &successor).expect("an end");
+    assert_eq!(end.as_str(), "2026-06-01T00:00:00.000000Z");
+    assert_eq!(end.unix_micros(), at("2026-06-01"));
+    assert_eq!(
+        ratified_end(&replaced, &ValidTime::default()),
+        None,
+        "no start, no end"
+    );
+    let earlier = ValidTime::parse(Some("2024"), None).unwrap();
+    assert_eq!(
+        ratified_end(&replaced, &earlier),
+        None,
+        "not before its own start"
+    );
+    let bounded = ValidTime::parse(Some("2025"), Some("2026-01")).unwrap();
+    assert_eq!(
+        ratified_end(&bounded, &successor),
+        None,
+        "an earlier end stays"
+    );
 }

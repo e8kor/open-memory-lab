@@ -431,9 +431,9 @@ const WEEKDAYS: [&str; 7] = [
 ];
 
 /// The words that make a bare month name a date (ADR-0059 d6).
-const MONTH_CUES: [&str; 12] = [
+const MONTH_CUES: [&str; 13] = [
     "in", "during", "since", "until", "till", "before", "after", "of", "last", "this", "early",
-    "late",
+    "mid", "late",
 ];
 
 const NUMBER_WORDS: [&str; 13] = [
@@ -566,6 +566,16 @@ pub fn parse_window(query: &str, now_us: i64) -> Option<Window> {
     let today = now_us.div_euclid(MICROS_PER_DAY);
     for i in 0..w.len() {
         if let Some((span_from, span_until, used)) = range_at(&w, i, today) {
+            // A window past the years 0000 to 9999, which an extreme now can
+            // reach, is no window: its instants have no fixed-width form.
+            let (first, last) = (days_from_civil(0, 1, 1), days_from_civil(10_000, 1, 1));
+            if [span_from, span_until]
+                .into_iter()
+                .flatten()
+                .any(|d| d < first || d > last)
+            {
+                return None;
+            }
             return Some(Window {
                 from_us: span_from.map(|d| d * MICROS_PER_DAY),
                 until_us: span_until.map(|d| d * MICROS_PER_DAY),
@@ -584,7 +594,7 @@ fn range_at(w: &[String], i: usize, today: i64) -> Option<Range> {
     match head {
         "between" | "from" => {
             let (a, used_a) = expression_at(w, i + 1, today, true)?;
-            let joiner = w.get(i + 1 + used_a)?.as_str();
+            let joiner = w.get(i + 1 + used_a).map_or("", String::as_str);
             let joins = if head == "between" {
                 joiner == "and"
             } else {
@@ -880,5 +890,22 @@ fn iso_day_or_month(word: &str) -> Option<Span> {
     Some(Span {
         start: p.start.div_euclid(MICROS_PER_DAY),
         end: p.end.div_euclid(MICROS_PER_DAY),
+    })
+}
+
+/// The end a ratified supersession gives the version it replaces (proposed
+/// ADR-0059 d4): the successor's declared start, as an instant, when the
+/// successor declares one that falls after the replaced version's start and
+/// before the replaced version's own end; `None` otherwise, so an undeclared
+/// start ends nothing and nothing is inferred. A reviewer is shown it
+/// before the verdict.
+#[must_use]
+pub fn ratified_end(replaced: &ValidTime, successor: &ValidTime) -> Option<ValidEnd> {
+    let start = successor.from.as_ref()?.micros;
+    let after_start = replaced.from.as_ref().is_none_or(|f| f.micros < start);
+    let before_end = replaced.until.as_ref().is_none_or(|u| start < u.micros);
+    (after_start && before_end).then(|| ValidEnd {
+        text: fixed_width(start),
+        micros: start,
     })
 }

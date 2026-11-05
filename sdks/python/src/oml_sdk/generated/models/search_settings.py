@@ -27,9 +27,8 @@ class SearchSettings:
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
-        valid_time (SearchSettingsValidTime | Unset): Where the deployment serves a time pipeline: the tenant's served
-            memories that declare valid_from, and those whose valid_until has passed, which recall hides by default
-            (proposed ADR-0059 d12).
+        valid_time (SearchSettingsValidTime | Unset): The tenant's served memories that declare valid_from, and those
+            whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).
     """
 
     enabled: list[str]

@@ -829,7 +829,9 @@ declare `valid_from` and `valid_until` on submit and supersede, each `YYYY`, `YY
 take them, and every served memory carries both. Recall hides a version whose `valid_until` is at
 or before the request's `now` (the lead's clock when omitted) unless `include_expired` is true;
 get and the listings serve it. A ratified supersession whose successor declares `valid_from`
-ends the replaced version there, in the ratifying event. `search.window` names the date window
+ends the replaced version there, in the ratifying event; a held successor carries that instant
+as `replaces_valid_until`, so its reviewer sees it before the verdict. Periods and relative
+dates are read in UTC. `search.window` names the date window
 read from the query by rule (`in 2015`, `last week`, `since March 2025`), or `null`; the opt-in
 pipeline `bm25-postings-time` lifts the memories the words found whose valid time overlaps it,
 `matched.via` naming `time`.

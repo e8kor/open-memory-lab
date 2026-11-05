@@ -59,7 +59,9 @@ use. Decided here and built on the same branch; the measurements below are this 
       is the period's first instant and `valid_until` the instant after its last, so
       `valid_from: "2015", valid_until: "2015"` holds for all of 2015 and `valid_until:
       "2026-11-05"` holds through that day. An instant is exact, and an instant `valid_until` is
-      exclusive. The interval is [from, until); an absent end is open; both present need from <
+      exclusive. Every period is read in UTC: `2026-11-05` runs from 00:00 to 24:00 UTC, which
+      is 16:00 on 4 November to 16:00 on 5 November in UTC−8, and an instant with an offset is
+      reduced to UTC. The interval is [from, until); an absent end is open; both present need from <
       until. Anything else is `request.validation` with `details.field` `/valid_from` or
       `/valid_until`. This narrows ADR-0036 d2, which named the end `valid_to` and read a date end
       as that day's midnight; an author saying "until 5 November" means through that day.
@@ -75,8 +77,10 @@ use. Decided here and built on the same branch; the measurements below are this 
       epoch (`valid_from_us`, `valid_until_us`, `int8`), which every filter and index reads (d11).
     - **Declared once, reviewed.** A version's declared ends never change; the one later fact is
       the end a ratified supersession gives it (d4), signed in that ratification. A successor
-      inherits none: it states its own or is open. The served item carries both, so a reviewer judges them with
-      the text, and a verdict approves both together.
+      inherits none: it states its own or is open. The served item carries both, and the review
+      card, the bulk review table and `oml review next` / `oml review list` show them beside the
+      text (`valid from <start>, <until <end> | open>`, or `none declared`), so a reviewer judges
+      them with the text and a verdict approves both together.
 
 - **d3 — A memory whose valid time has ended is hidden from recall by default: a visibility
   rule, never a weight.** A version is *expired* when its `valid_until_us` is at or before the
@@ -89,9 +93,19 @@ use. Decided here and built on the same branch; the measurements below are this 
   nothing (ADR-0036 d2). Steering takes no valid time, so it is never hidden. The one exception
   is `keyword-all`, whose two v0.5.0 statements are kept byte for byte so the eval can compare
   against v0.5.0 (ADR-0049 d7, d9): the core's re-check removes an expired row after its list is
-  cut, so `keyword-all` may serve fewer than `k` when expired rows rank in its top `k`. Cost:
-  every other scan statement gains one `int8` comparison per row, and `bm25-postings` one probe
-  of an index on (`tenant_id`, `valid_until_us`) that holds only rows with an end.
+  cut, so `keyword-all` may serve fewer than `k` when expired rows rank in its top `k`; that
+  re-check is `keyword-all`'s one fence, and a law fails when it is removed. The now is a bound
+  `int8` parameter in every statement (the least `int8` under `include_expired`), never a
+  session setting: a column compared with a parameter is leakproof, so under row security the
+  ended versions are read by the index on (`tenant_id`, `valid_until_us`), an index condition
+  (Measurements), where `current_setting` in the comparison kept it a heap filter over every
+  dated row of the tenant. Cost: every other scan statement gains one `int8` comparison per row.
+    - **Statistics.** An expired version counts in no statistic, in either `bm25` pipeline, as
+      it counts in no list: `bm25`'s scan computes its row count, mean length and document
+      frequencies over the scope, which leaves it out, and `bm25-postings` takes the ended
+      versions on the readable nodes out of its per-workarea counts by id. So the two pipelines
+      rank alike whatever has expired, and with `include_expired` both count them again. A
+      ranking that an invisible row moved would make visibility a weight.
 
 - **d4 — A fact ends by a reviewed supersession, never by the server alone.** Two ways, both
   reviewed. The author supersedes the claim with a successor that declares `valid_from`: once a
@@ -104,13 +118,22 @@ use. Decided here and built on the same branch; the measurements below are this 
   successor that declares no start ends nothing, since no end is inferred, guessed from the text,
   or computed from anything but the declared start the verdict approved. The replaced version's
   own submission stays as it was signed; its later end is a fact of the ratifying event, signed
-  there. Nothing is deleted (R4). Detecting that two memories contradict each other is not
-  built. This composes with ADR-0057's `expected_version` on a supersession (draft PR #69): the
+  there. The row holds the end in force: after a ratification its `valid_until` is the ratified
+  instant, and the end the author declared, if any, stays only in the submission event; a reader
+  tells them apart by the version's history, not by the row. The reviewer of a successor is shown
+  the end approving it gives (`replaces_valid_until` on the served item, and "approving ends
+  version <n> at <instant>" on the card, the table and the CLI), so no end is approved unseen.
+  Recall serves tips only, so a successor whose `valid_from` is later than now is served at once
+  and the version it replaces stops being served at the ratification: valid time schedules no
+  hand-over, and an author who wants the old fact served until a date keeps the successor held
+  or declares no start. Nothing is deleted (R4). Detecting that two memories contradict each
+  other is not built. This composes with ADR-0057's `expected_version` on a supersession (draft PR #69): the
   version a supersession names is the one the ratification ends.
 
 - **d5 — A recall has one now, the server's clock unless the request names it.** `now`, a date
   or an instant as d2 parses it (a period reads as its first instant), anchors two things: the
-  expiry cut (d3) and the relative dates the parser reads (d6). Absent,
+  expiry cut (d3) and the relative dates the parser reads (d6), whose days are UTC days: a now of
+  `2026-11-05T23:30-05:00` is 6 November in UTC, so "today" is 6 November. Absent,
   it is the lead's clock at the request. It widens nothing a key could not already read: an
   earlier now shows rows that ended since, which `include_expired` already serves, and a later
   one hides more. A replay or a simulation names its now, as ADR-0011 d7 sends its fictional
@@ -125,7 +148,7 @@ use. Decided here and built on the same branch; the measurements below are this 
     | ISO day, month | `2026-03-14`, `2026-03` | that day; that month |
     | year, 1900 to 2100 | `2015`, `in 2015` | the year |
     | month name, with a day or a year or both | `March 2025`, `March 14, 2025`, `14 March 2025` | that month or day |
-    | month name alone after `in`, `during`, `since`, `until`, `before`, `after`, `of`, `last`, `this`, `early`, `mid`, `late` | `in March` | the latest March that has begun: 2026-03 |
+    | month name alone after `in`, `during`, `since`, `until`, `till`, `before`, `after`, `of`, `last`, `this`, `early`, `mid`, `late`, or after `from` or `between` | `in March`, `mid March`, `a note from May` | the latest March that has begun: 2026-03 (`early`, `mid` and `late` read the whole month) |
     | quarter, with or without a year | `Q1 2027`, `Q3` | that quarter; the latest begun Q3 |
     | `today`, `yesterday`, `tomorrow` | | that day |
     | `this` / `last` / `next` `week` (Monday first), `weekend`, `month`, `quarter`, `year` | `last week` | 2026-10-26 to 2026-11-02 |
@@ -140,21 +163,26 @@ use. Decided here and built on the same branch; the measurements below are this 
     and "march" as verbs are not dates. The answer's `search` gains `window`: `{from, until,
     phrase}` in the instant form, an open side `null`, or `null` when no expression was read, so
     an agent sees what recall understood. The query text is searched unchanged: the date words
-    stay words. One window per query; a second expression is ignored, a named limit. The rule
+    stay words. One window per query; a second expression is ignored, a named limit. A window
+    that would reach outside the years 0000 to 9999, as an extreme `now` can make it, is no
+    window (`search.window` is `null`), so every instant it shows has the fixed-width form. The rule
     lives in `oml-domain` with its table as tests, so a change to it is a change to this record.
 
 - **d7 — A date window is a retriever leg, `time`, served under row security, fused by
   reciprocal rank and capped: pipeline `bm25-postings-time`.**
-    - **The leg.** `time` reads the scope's rows (ADR-0049 d2, d3 above) whose declared interval
-      overlaps the window: `valid_from_us < until` and (`valid_until_us` is null or `> from`). A
+    - **The leg.** `time` reads, of the rows the text list found (their ids, at most the 50 or
+      `k` the text list was read to), those in the scope (ADR-0049 d2, d3 above) whose declared
+      interval overlaps the window: `valid_from_us < until` and (`valid_until_us` is null or `> from`). A
       row with no `valid_from` never matches, since an open start would match every window.
       Every predicate is an `int8` comparison, leakproof on PostgreSQL 18
       (`pg_proc.proleakproof` for `int8lt`, `int8gt`, `int8le`, `int8ge`, checked 2026-11-05),
       so the index on (`tenant_id`, `valid_from_us`) serves the serving role under row security
       ([ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
-      d1's reason for integers). It reads at most 200 rows: those that start inside the window
-      first, equal among themselves, then those that started before it, nearest first; ties by
-      id.
+      d1's reason for integers). Bounded by the text list's ids, the read is a primary-key probe
+      of at most that list, whatever the window holds: a wide window ("since 2015") costs no
+      more than a narrow one, and no row the words found is lost to a read cap. Its order: the
+      rows that start inside the window first, equal among themselves, then those that started
+      before it, nearest first; ties by id, so equal input gives equal output.
     - **Its order, in the core.** The core keeps the leg's rows that the text list holds, read
       50 deep, orders them by the leg's own score (inside the window first, then earlier
       starts, nearest first) and then by the text list's rank, and cuts the list at 50, the
@@ -198,19 +226,26 @@ use. Decided here and built on the same branch; the measurements below are this 
   benchmark loaders declare the dates their datasets state as metadata (a LoCoMo session's
   date, a LongMemEval session's date).
 
-- **d11 — Migration 0026 adds the columns, a check and two partial indexes.** `memories` gains
-  `valid_from text`, `valid_until text`, `valid_from_us int8` and `valid_until_us int8`, with a
-  check that `valid_from_us < valid_until_us` when both are set, an index on (`tenant_id`,
-  `valid_from_us`) where it is set, and one on (`tenant_id`, `valid_until_us`) where it is set.
-  An existing row is open on both sides, so the migration rewrites nothing. 0025 is ADR-0057's,
-  on its branch; if another number lands first this one is renumbered at merge.
+- **d11 — Migration 0026 adds the columns, a check and two partial indexes, safely on a live
+  database.** `memories` gains `valid_from text`, `valid_until text`, `valid_from_us int8` and
+  `valid_until_us int8`, with a check that `valid_from_us < valid_until_us` when both are set,
+  an index on (`tenant_id`, `valid_from_us`) where it is set, and one on (`tenant_id`,
+  `valid_until_us`) where it is set. An existing row is open on both sides, so the migration
+  rewrites nothing. It follows 0025's shape: a lock is waited for 5 s at most, then the
+  migration fails and is run again; the check is added `NOT VALID` and validated under SHARE
+  UPDATE EXCLUSIVE; each index is created `ON ONLY` the parent and each partition's is built on
+  its own and attached, so no write waits on more than one partition at a time. A tenant
+  partition created later inherits both indexes. If another migration takes 0026 first, the
+  merge lane renumbers this one.
 
-- **d12 — Doctor names a time pipeline that has nothing to read.** `GET /v2/search` answers
-  `valid_time: {declared, expired}`, the tenant's served versions that declare a `valid_from`
-  and those whose end has passed. `oml doctor` prints
-  `time: <declared> memories declare valid time; <expired> ended and hidden from recall` when a
-  time pipeline is enabled, and warns when one is enabled and no served memory declares valid
-  time, since its `time` list is then always empty and it answers as `bm25-postings` does.
+- **d12 — Doctor names what expiry hides and a time pipeline that has nothing to read.**
+  `GET /v2/search` answers `valid_time: {declared, expired}`, the tenant's served versions that
+  declare a `valid_from` and those whose end has passed, under every pipeline, since the expiry
+  rule binds the default too. `oml doctor` prints
+  `time: <declared> memories declare valid time; <expired> ended and hidden from recall unless
+  include_expired` whenever either count is above zero, and warns when a time pipeline is
+  enabled and no served memory declares valid time, since its `time` list is then always empty
+  and it answers as `bm25-postings` does.
 
 - **d13 — Laws.** Each is a test named after its sentence, red before the code:
   `an_expired_memory_is_hidden_from_recall_unless_asked`, under row security on PostgreSQL and
@@ -222,8 +257,16 @@ use. Decided here and built on the same branch; the measurements below are this 
   `a_successor_inherits_no_valid_time`;
   `a_ratified_supersession_ends_the_replaced_version_where_the_successor_begins` (and a held one
   ends nothing); `no_ranking_input_reads_promoted_at_or_a_verdict` (two rows differing only in `promoted_at` and
-  their verdicts rank equal under every time pipeline); and the signed payload carries the ends
-  only when sent.
+  their verdicts rank equal under every pipeline); the signed payload carries the ends only
+  when sent; and, from the review of 2026-11-05:
+  `a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table`;
+  `migration_0026_is_live_safe_and_leaves_every_partitions_indexes_attached`;
+  `a_ratified_end_is_written_with_the_tip_move_or_not_at_all` (both stores);
+  `the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_security`;
+  `an_expired_memory_is_hidden_from_recall_unless_asked` over `keyword-all` too, which fails when
+  the core's re-check is removed;
+  `the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds`; and
+  `bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired`.
 
 ## Measurements
 
@@ -263,6 +306,17 @@ with the first ordering of d7; the `-time` rows with the ordering d7 decides. Th
 orderings of the leg measured 0.494 (rows no word matched admitted, ordered by text rank) and
 0.494 (words' rows only, ordered by text rank) on the LoCoMo headline, and 0.614 on LongMemEval.
 
+The expiry cut's plan (d3), `EXPLAIN` of `bm25-postings` as the serving role under row
+security on the five-row fixture of
+`the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_security`: with the now
+read from `current_setting`, the probe of `memories_valid_until` had only `tenant_id` as its
+index condition and `valid_until_us <= COALESCE(current_setting(…))` as a heap filter (statement
+cost 37.59); with the now bound as `int8`, `valid_until_us <= $15` is part of the index
+condition (cost 37.58). The estimate barely moves on five rows; what changes is the read: the
+filter form reads every row of the tenant that declares an end, which the review measured at
+39,910 rows read to find 90 on a 200,000-row partition, and the index condition reads the ended
+rows alone.
+
 What it decides: the recency pipeline is removed (d8), and neither time pipeline passed ADR-0049 d9's gate against `bm25-postings`, which
 stays the default. On LoCoMo the leg moves the temporal category by +0.002 nDCG@10 and costs
 single-hop 0.014; on LongMemEval it costs 0.014. LoCoMo's temporal questions mostly ask when
@@ -284,10 +338,9 @@ loaded host.
   row is expired, and the time pipelines answer as `bm25-postings`.
 - Valid time is clear metadata outside the encrypted body, as ADR-0036 d2 said; an erasure
   leaves the ends wherever it leaves attribution metadata, under FR-1.
-- The time leg's cost grows with the rows in a window, bounded by its 200-row read; a window as
-  wide as a decade over a large tenant reads 200 of the rows that start in it, by id, not every
-  row in it, which can drop a row the words match; the core's ordering by the text list applies
-  only to the 200 read. Named, unmeasured at scale.
+- The time leg reads only the text list's rows, at most the depth that list was read to, so
+  its cost does not grow with a window's width; a row in the window that no word found is never
+  reached, by design (d7).
 - The parser is English only.
 
 ## Rejected alternatives

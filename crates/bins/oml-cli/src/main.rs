@@ -2243,6 +2243,7 @@ fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError
         );
         println!("  claim_key {}", field(item, "claim_key"));
         println!("  source    {}", anchor_line(&item["anchor"]));
+        println!("  valid     {}", valid_line(item));
         println!(
             "  body      | {}",
             field(item, "text").replace('\n', "\n            | ")
@@ -2314,10 +2315,34 @@ fn run_review_list(
                 }
             );
             println!("    source {}", anchor_line(&item["anchor"]));
+            println!("    valid  {}", valid_line(item));
             println!("    | {}", field(item, "text").replace('\n', "\n    | "));
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A version's valid time as one line for a reviewer, and on a held
+/// successor the end approving it gives the version it replaces, so a
+/// verdict is given on what it makes true (proposed ADR-0059 d2, d4).
+fn valid_line(item: &Value) -> String {
+    let (from, until) = (item["valid_from"].as_str(), item["valid_until"].as_str());
+    let mut line = if from.is_none() && until.is_none() {
+        "none declared".to_owned()
+    } else {
+        format!(
+            "from {}, {}",
+            from.unwrap_or("any time"),
+            until.map_or_else(|| "open".to_owned(), |u| format!("until {u}"))
+        )
+    };
+    if let (Some(end), Some(version)) = (
+        item["replaces_valid_until"].as_str(),
+        item["replaces"]["version"].as_u64(),
+    ) {
+        line.push_str(&format!("; approving ends version {version} at {end}"));
+    }
+    line
 }
 
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
@@ -4480,24 +4505,18 @@ impl Scrape {
     }
 }
 
-/// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
-/// listener's recall counts, a warning when the scan answered more than 5%
-/// of its recalls since the lead started; and, read by an admin key from
-/// `GET /v2/search`, one warning per fault in the tenant's postings, each
-/// naming the repair, or one line saying they are complete.
-/// The time pipelines' doctor line (proposed ADR-0059 d12): where one is
-/// enabled, how many served memories declare valid time and how many have
-/// ended, read by an admin key from `GET /v2/search`; a warning when none
-/// declares any, since the `time` list is then always empty.
+/// The valid-time doctor line (proposed ADR-0059 d12), read by an admin key
+/// from `GET /v2/search`: how many served memories declare valid time and
+/// how many have ended and are hidden from recall, under every pipeline,
+/// since the expiry rule binds the default too; and, where a time pipeline
+/// is enabled and none declares any, a warning that its `time` list is
+/// always empty.
 fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
     let timed: Vec<&str> = enabled
         .iter()
         .copied()
         .filter(|p| p.starts_with("bm25-postings-time"))
         .collect();
-    if timed.is_empty() {
-        return Vec::new();
-    }
     let Some(v) = settings.map(|s| &s["valid_time"]).filter(|v| v.is_object()) else {
         return Vec::new();
     };
@@ -4505,17 +4524,25 @@ fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> 
         v["declared"].as_u64().unwrap_or(0),
         v["expired"].as_u64().unwrap_or(0),
     );
-    if declared == 0 {
+    if declared == 0 && !timed.is_empty() {
         return vec![format!(
             "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0059 d12)",
             timed.join(", ")
         )];
+    }
+    if declared == 0 && expired == 0 {
+        return Vec::new();
     }
     vec![format!(
         "time: {declared} memories declare valid time; {expired} ended and hidden from recall unless include_expired"
     )]
 }
 
+/// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
+/// listener's recall counts, a warning when the scan answered more than 5%
+/// of its recalls since the lead started; and, read by an admin key from
+/// `GET /v2/search`, one warning per fault in the tenant's postings, each
+/// naming the repair, or one line saying they are complete.
 fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) -> Vec<String> {
     let mut lines = Vec::new();
     let (postings, scan) = recall_counts.unwrap_or((0, 0));
@@ -4835,5 +4862,28 @@ mod tests {
             vec!["time: 12 memories declare valid time; 3 ended and hidden from recall unless include_expired".to_owned()]
         );
         assert!(valid_time_doctor(&["bm25-postings"], Some(&none)).is_empty());
+        assert_eq!(
+            valid_time_doctor(&["bm25-postings"], Some(&some)).len(),
+            1,
+            "the expired count shows under the default pipeline too"
+        );
+    }
+
+    #[test]
+    fn a_review_line_shows_the_valid_time_and_the_end_approving_gives() {
+        let successor = serde_json::json!({
+            "valid_from": "2026-06-01",
+            "valid_until": null,
+            "replaces": { "artifact_id": "x", "version": 1 },
+            "replaces_valid_until": "2026-06-01T00:00:00.000000Z",
+        });
+        assert_eq!(
+            valid_line(&successor),
+            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
+        );
+        let open = serde_json::json!({ "valid_from": null, "valid_until": null });
+        assert_eq!(valid_line(&open), "none declared");
+        let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
+        assert_eq!(valid_line(&ended), "from any time, until 2015");
     }
 }

@@ -952,6 +952,7 @@ pub trait KeywordAllReads: Retriever {
                     k,
                     sparse: &[],
                     window: None,
+                    within: &[],
                 },
             )
             .await
@@ -990,6 +991,7 @@ pub trait KeywordAllReads: Retriever {
                     k,
                     sparse: &[],
                     window: None,
+                    within: &[],
                 },
             )
             .await
@@ -6785,13 +6787,13 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
         key,
         "the api is at v3",
     );
-    v1.valid = Box::new(ValidTime::parse(Some("2025"), None).expect("ends"));
+    *v1.valid = ValidTime::parse(Some("2025"), None).expect("ends");
     hold(&mut rig, store, v1.clone()).await.expect("hold v1");
     promote(&mut rig, store, v1.memory_id)
         .await
         .expect("promote v1");
     let mut v2 = successor_of(&v1, Uuid::from_u128(0x7202), "the api is at v4", false);
-    v2.valid = Box::new(ValidTime::parse(Some("2026-06-01"), None).expect("ends"));
+    *v2.valid = ValidTime::parse(Some("2026-06-01"), None).expect("ends");
     hold(&mut rig, store, v2.clone()).await.expect("hold v2");
     // An end before v1's own start: refused, nothing moves.
     let before = ValidEnd::from_stored(
@@ -9696,6 +9698,7 @@ async fn run<S: Retriever>(
                 k: 50,
                 sparse: &sparse,
                 window: None,
+                within: &[],
             },
         )
         .await
@@ -10602,6 +10605,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                                 k,
                                 sparse: &[],
                                 window: None,
+                                within: &[],
                             },
                         )
                     };
@@ -10643,9 +10647,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S:
         (0xF32, "invoices billing ledger reconciled monthly"),
     ] {
         let mut m = held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
-        m.valid = Box::new(
-            oml_app::domain::valid_time::ValidTime::parse(None, Some("2020")).expect("ends"),
-        );
+        *m.valid = oml_app::domain::valid_time::ValidTime::parse(None, Some("2020")).expect("ends");
         hold_and_promote(&mut rig, store, m).await;
     }
     let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
@@ -10666,6 +10668,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S:
                         k: 12,
                         sparse: &[],
                         window: None,
+                        within: &[],
                     },
                 )
             };
@@ -11000,6 +11003,7 @@ pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: Jo
                             k,
                             sparse: &[],
                             window: None,
+                            within: &[],
                         },
                     )
                 };
@@ -11104,8 +11108,7 @@ pub async fn a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds
 
 /// A fixture row of the valid-time laws with its declared ends.
 fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> MemoryRecord {
-    m.valid =
-        Box::new(oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends"));
+    *m.valid = oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends");
     m
 }
 
@@ -11196,8 +11199,11 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
     .await
     .expect("hold another's");
     let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // As if the text list had found every fixture row.
+    let within: Vec<Uuid> = (0x7001..=0x7008_u128).map(Uuid::from_u128).collect();
     let leg = |scope: CandidateScope| {
         let window = window.clone();
+        let within = within.clone();
         async move {
             store
                 .retrieve(
@@ -11210,6 +11216,7 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
                         k: 50,
                         sparse: &[],
                         window: Some(&window),
+                        within: &within,
                     },
                 )
                 .await
@@ -11303,6 +11310,7 @@ pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore
                         k: 50,
                         sparse: &sparse,
                         window: Some(&window),
+                        within: &[ended, current],
                     },
                 )
                 .await
@@ -11322,6 +11330,69 @@ pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore
             );
         }
     }
+}
+
+/// The `time` leg reads only the rows the text list found, named by id, so
+/// its cost is bounded by that list and a window holding more rows than any
+/// read cap still answers every one of them it holds; ties break by id,
+/// so equal input gives equal output (proposed ADR-0059 d7).
+pub async fn the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(434);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let mut ids = Vec::new();
+    for i in 0..205_u128 {
+        let mut m = held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0x7300 + i),
+            "rita",
+            other,
+            "a dated note",
+        );
+        *m.valid =
+            oml_app::domain::valid_time::ValidTime::parse(Some("2015-06"), None).expect("ends");
+        hold_and_promote(&mut rig, store, m).await;
+        ids.push(Uuid::from_u128(0x7300 + i));
+    }
+    let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // The text list found the last row and one outside the window's rows.
+    let within = vec![ids[204], ids[3], Uuid::from_u128(0x7FFF)];
+    let read = || async {
+        store
+            .retrieve(
+                tenant,
+                RetrieverKind::Time,
+                &scope_of(wa, None),
+                RetrievalQuery {
+                    query: "in 2015",
+                    match_mode: MatchMode::Any,
+                    k: 50,
+                    sparse: &[],
+                    window: Some(&window),
+                    within: &within,
+                },
+            )
+            .await
+            .expect("retrieve")
+            .candidates
+            .iter()
+            .map(|c| c.memory_id)
+            .collect::<Vec<_>>()
+    };
+    let first = read().await;
+    assert_eq!(
+        first,
+        vec![ids[3], ids[204]],
+        "the text list's rows the window holds, by id"
+    );
+    assert_eq!(read().await, first, "equal input, equal output");
 }
 
 pub async fn run_retriever_suite<S, F, Fut>(new_store: F)
@@ -11344,6 +11415,8 @@ where
         .await;
     the_time_leg_never_returns_a_row_outside_the_scope(&new_store().await).await;
     an_expired_memory_is_outside_every_retrievers_scope(&new_store().await).await;
+    the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds(&new_store().await)
+        .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -11565,6 +11638,7 @@ pub async fn an_encoded_version_follows_promotion_supersession_and_retirement<S:
                             "quokka",
                         ),
                         window: None,
+                        within: &[],
                     },
                 )
                 .await

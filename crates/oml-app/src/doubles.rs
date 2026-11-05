@@ -1415,6 +1415,21 @@ fn apply_fold(
             if !cas {
                 return Err(StoreError::TipMoved { replaced });
             }
+            // memories_valid_time_ends: an end at or before the replaced
+            // version's start is refused, and nothing moves (proposed
+            // ADR-0059 d4, d11).
+            if let (Some(end), Some(target)) =
+                (&replaced_valid_until, state.memories.get(&replaced))
+                && target
+                    .valid
+                    .from
+                    .as_ref()
+                    .is_some_and(|f| f.unix_micros() >= end.unix_micros())
+            {
+                return Err(StoreError::Backend(
+                    "memories_valid_time_ends: the end is not after the start".to_owned(),
+                ));
+            }
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
                 if let Some(end) = replaced_valid_until {
@@ -1864,6 +1879,7 @@ impl Retriever for MemStore {
                 .memories
                 .values()
                 .filter(admitted)
+                .filter(|m| query.within.contains(&m.memory_id))
                 .filter(|m| m.valid.overlaps(window))
                 .filter_map(|m| {
                     let from = m.valid.from.as_ref()?.unix_micros();

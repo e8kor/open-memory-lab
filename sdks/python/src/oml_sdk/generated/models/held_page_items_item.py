@@ -80,6 +80,9 @@ class HeldPageItemsItem:
             YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
             it at; null when open (proposed ADR-0059 d2, d4).
+        replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
+            replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
+            approving ends nothing (proposed ADR-0059 d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false.
     """
@@ -115,6 +118,7 @@ class HeldPageItemsItem:
     attachments: list[AttachmentDescriptor] | Unset = UNSET
     valid_from: None | str | Unset = UNSET
     valid_until: None | str | Unset = UNSET
+    replaces_valid_until: str | Unset = UNSET
     text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -238,6 +242,8 @@ class HeldPageItemsItem:
         else:
             valid_until = self.valid_until
 
+        replaces_valid_until = self.replaces_valid_until
+
         text = self.text
 
         field_dict: dict[str, Any] = {}
@@ -289,6 +295,8 @@ class HeldPageItemsItem:
             field_dict["valid_from"] = valid_from
         if valid_until is not UNSET:
             field_dict["valid_until"] = valid_until
+        if replaces_valid_until is not UNSET:
+            field_dict["replaces_valid_until"] = replaces_valid_until
         if text is not UNSET:
             field_dict["text"] = text
 
@@ -497,6 +505,8 @@ class HeldPageItemsItem:
 
         valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
 
+        replaces_valid_until = d.pop("replaces_valid_until", UNSET)
+
         text = d.pop("text", UNSET)
 
         held_page_items_item = cls(
@@ -531,6 +541,7 @@ class HeldPageItemsItem:
             attachments=attachments,
             valid_from=valid_from,
             valid_until=valid_until,
+            replaces_valid_until=replaces_valid_until,
             text=text,
         )
 

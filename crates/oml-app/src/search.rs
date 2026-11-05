@@ -136,10 +136,6 @@ pub const CC_DEPTH: usize = 100;
 /// 0.007 nDCG@10 of each external set's own best (ADR-0052 d13).
 pub const CC_BM25_SPARSE: [f32; 2] = [0.3, 0.7];
 
-/// How many rows the `time` retriever reads at most, nearest start first
-/// (proposed ADR-0059 d7).
-pub const TIME_READ: usize = 200;
-
 /// How deep the `time` list enters fusion once the core has ordered it by
 /// the text list: the cap (proposed ADR-0059 d7).
 pub const TIME_DEPTH: usize = FUSION_DEPTH;
@@ -607,6 +603,10 @@ pub struct RetrievalQuery<'a> {
     /// The query's date window, which the `time` retriever reads; `None`
     /// when the query names none (proposed ADR-0059 d6, d7).
     pub window: Option<&'a Window>,
+    /// The rows the `time` retriever may answer: the ids the pipeline's
+    /// text list found, which bound its read; empty for every other
+    /// retriever (proposed ADR-0059 d7).
+    pub within: &'a [Uuid],
 }
 
 /// One query token of the learned sparse encoder: its vocabulary id, its
