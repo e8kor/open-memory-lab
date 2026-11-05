@@ -12,6 +12,7 @@ use axum::routing::get;
 use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 
@@ -50,6 +51,11 @@ struct RerankLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SparseLabels {
+    outcome: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -66,6 +72,8 @@ pub struct Metrics {
     oauth_tokens: Family<TokenLabels, Counter>,
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
+    sparse_encoded: Family<SparseLabels, Counter>,
+    sparse_backlog: Gauge,
 }
 
 impl Default for Metrics {
@@ -82,6 +90,8 @@ impl Default for Metrics {
         let oauth_tokens = Family::<TokenLabels, Counter>::default();
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
+        let sparse_encoded = Family::<SparseLabels, Counter>::default();
+        let sparse_backlog = Gauge::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -122,6 +132,19 @@ impl Default for Metrics {
             "reranking stages by outcome, and why a skipped one was skipped",
             reranks.clone(),
         );
+        // The learned sparse encoder's outbox (ADR-0052 d15): versions
+        // written or failed, a closed set, and the entries waiting, summed
+        // over every tenant with no tenant label.
+        registry.register(
+            "oml_sparse_encoded",
+            "versions the learned sparse encoder wrote postings for, or failed to",
+            sparse_encoded.clone(),
+        );
+        registry.register(
+            "oml_sparse_backlog",
+            "versions waiting for the learned sparse encoder, every tenant's summed",
+            sparse_backlog.clone(),
+        );
         Self {
             registry,
             http,
@@ -131,6 +154,8 @@ impl Default for Metrics {
             oauth_tokens,
             recalls,
             reranks,
+            sparse_encoded,
+            sparse_backlog,
         }
     }
 }
@@ -199,6 +224,25 @@ impl Metrics {
                 reason: reason.unwrap_or("none").to_owned(),
             })
             .inc();
+    }
+
+    /// One encoder pass's versions: `written` and `failed` (ADR-0052 d15).
+    pub fn sparse_pass(&self, written: u64, failed: u64) {
+        for (outcome, n) in [("written", written), ("failed", failed)] {
+            if n > 0 {
+                self.sparse_encoded
+                    .get_or_create(&SparseLabels {
+                        outcome: outcome.to_owned(),
+                    })
+                    .inc_by(n);
+            }
+        }
+    }
+
+    /// The entries waiting for the encoder (ADR-0052 d15).
+    pub fn sparse_backlog(&self, waiting: u64) {
+        self.sparse_backlog
+            .set(i64::try_from(waiting).unwrap_or(i64::MAX));
     }
 
     /// One `/mcp` call, by the closed values of its `mcp_call` line.

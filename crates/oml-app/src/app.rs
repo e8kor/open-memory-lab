@@ -11,7 +11,7 @@ mod sparse;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use search::SearchSettings;
-pub use sparse::SparsePass;
+pub use sparse::{SparsePass, encode_sparse_pass};
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;

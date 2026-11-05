@@ -265,6 +265,18 @@ async fn retriever_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The learned sparse laws on PostgreSQL, as the serving role under row
+/// security (ADR-0052 d15, d16, d17).
+#[tokio::test]
+async fn sparse_contract_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::run_sparse_suite(|| fresh_search_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
 /// `keyword-all` returns exactly what the v0.5.0 recall returned: the rows
 /// and the order of its two statements, merged and cut to `k` as the core
 /// merged them, for every query of a fixture (ADR-0049 d7).
@@ -5856,7 +5868,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7294,7 +7306,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7955,7 +7967,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 21);
+    assert_eq!(applied, 22);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

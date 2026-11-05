@@ -38,7 +38,7 @@ use oml_app::ports::{
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, Retrieved,
-    RetrieverKind,
+    RetrieverKind, SparsePending,
 };
 use oml_app::types::{
     AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
@@ -10888,4 +10888,282 @@ pub async fn run_reranker_suite<R: Reranker + ?Sized>(r: &R) {
     a_reranker_scores_lie_in_the_unit_interval(r).await;
     a_reranker_scores_a_passage_alone_as_among_others(r).await;
     a_reranker_ranks_an_answer_above_an_unrelated_passage(r).await;
+}
+
+// ---------------------------------------------------------------------------
+// Learned sparse laws (ADR-0052 d15, d16, d17), for a store serving the
+// `sparse` retriever, with the deterministic encoder double.
+// ---------------------------------------------------------------------------
+
+fn sparse_ids(list: &Retrieved) -> Vec<u128> {
+    list.candidates
+        .iter()
+        .map(|c| c.memory_id.as_u128())
+        .collect()
+}
+
+/// Each `sparse` candidate's score is the sum over the query's tokens of
+/// its idf weight times the row's own weight, and nothing else; its
+/// `tokens` name each contribution, largest first, and mark the encoder's
+/// expansions, and `matched` names only the pieces its text holds
+/// (ADR-0052 d16, d17).
+pub async fn sparse_scores_each_row_by_its_own_postings_alone<S: JournalStore>(store: &S) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(store, 0).await;
+    let (promoted, _, wa, own) = retriever_fixture(&mut rig, store, true).await;
+    let encoder = FakeSparseEncoder::new();
+    for query in ["billing invoice", "deploy friday", "rollback zebra"] {
+        let list = run(
+            store,
+            rig.tenant_id,
+            RetrieverKind::Sparse,
+            &scope_of(wa, Some(own)),
+            query,
+            MatchMode::Any,
+        )
+        .await;
+        assert_eq!(list.access, Access::Postings, "{query}");
+        let terms = oml_app::ports::SparseEncoder::encode_query(&encoder, query);
+        for c in &list.candidates {
+            let body = promoted
+                .iter()
+                .find(|(id, _)| *id == c.memory_id)
+                .map(|(_, b)| *b)
+                .unwrap_or("billing deploy notes held");
+            let doc = FakeSparseEncoder::document(body);
+            let mut want = 0.0_f64;
+            for t in &terms {
+                if let Some(p) = doc.iter().find(|p| p.token_id == t.token_id) {
+                    want += f64::from(t.weight) * f64::from(p.weight);
+                }
+            }
+            #[allow(clippy::cast_possible_truncation, reason = "the score is a float4")]
+            let want = want as f32;
+            assert!(
+                (c.score - want).abs() <= 1e-5 * want.max(1.0),
+                "{query}: {} scored {} where its own postings give {want}",
+                c.memory_id,
+                c.score
+            );
+            for pair in c.tokens.windows(2) {
+                assert!(
+                    pair[0].weight >= pair[1].weight,
+                    "{query}: tokens largest first"
+                );
+            }
+            for t in &c.tokens {
+                let in_text = body.split(' ').any(|w| w == t.token);
+                assert_eq!(t.expanded, !in_text, "{query}: {} expanded", t.token);
+            }
+            assert!(c.matched.iter().all(|m| body.split(' ').any(|w| w == m)));
+        }
+    }
+    // "invoice" is said by no row; "invoices" expands to it, so the rows
+    // saying "invoices" are found and the match is named an expansion.
+    let expanded = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Sparse,
+        &scope_of(wa, None),
+        "invoice",
+        MatchMode::Any,
+    )
+    .await;
+    let mut ids = sparse_ids(&expanded);
+    ids.sort_unstable();
+    assert_eq!(ids, vec![0xF02, 0xF04]);
+    for c in &expanded.candidates {
+        assert!(c.matched.is_empty(), "the text does not say invoice");
+        assert!(c.tokens.iter().all(|t| t.expanded && t.token == "invoice"));
+    }
+}
+
+/// A version is enqueued for the encoder in its own write's transaction,
+/// leaves the queue when its postings are written, and its kind 2
+/// postings follow its state: found while it is the served tip, not after
+/// its supersession or retirement, and a rejected held version's never
+/// (ADR-0052 d7, d15).
+pub async fn an_encoded_version_follows_promotion_supersession_and_retirement<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let first = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA01),
+        "rita",
+        key,
+        "quokka habitat notes",
+    );
+    hold(&mut rig, store, first.clone()).await.expect("hold");
+    assert!(
+        store
+            .sparse_tenants()
+            .await
+            .expect("tenants")
+            .contains(&tenant),
+        "the write enqueued its version"
+    );
+    assert_eq!(encode_sparse_backlog(store).await, 1, "one version encoded");
+    assert!(
+        store
+            .sparse_pending(tenant, 10)
+            .await
+            .expect("pending")
+            .is_empty(),
+        "an encoded version leaves the queue"
+    );
+    let find = |rig_tenant: Uuid| async move {
+        sparse_ids(
+            &store
+                .retrieve(
+                    rig_tenant,
+                    RetrieverKind::Sparse,
+                    &scope_of(wa, None),
+                    RetrievalQuery {
+                        query: "quokka",
+                        match_mode: MatchMode::Any,
+                        k: 10,
+                        sparse: &oml_app::ports::SparseEncoder::encode_query(
+                            &FakeSparseEncoder::new(),
+                            "quokka",
+                        ),
+                    },
+                )
+                .await
+                .expect("retrieve"),
+        )
+    };
+    assert!(
+        find(tenant).await.is_empty(),
+        "a held version is no promoted hit"
+    );
+    promote(&mut rig, store, first.memory_id)
+        .await
+        .expect("promote");
+    assert_eq!(
+        find(tenant).await,
+        vec![0xA01],
+        "promotion serves its postings"
+    );
+    supersede(
+        &mut rig,
+        store,
+        &first,
+        Uuid::from_u128(0xA02),
+        "quokka burrow notes",
+        false,
+    )
+    .await;
+    encode_sparse_backlog(store).await;
+    assert_eq!(
+        find(tenant).await,
+        vec![0xA02],
+        "the successor is served and the replaced version is not"
+    );
+    let second = successor_of(&first, Uuid::from_u128(0xA02), "quokka burrow notes", false);
+    supersede(
+        &mut rig,
+        store,
+        &second,
+        Uuid::from_u128(0xA03),
+        "quokka",
+        true,
+    )
+    .await;
+    encode_sparse_backlog(store).await;
+    assert!(find(tenant).await.is_empty(), "a retired claim is no hit");
+    let rejected = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA04),
+        "rita",
+        key,
+        "quokka rejected",
+    );
+    hold(&mut rig, store, rejected).await.expect("hold");
+    encode_sparse_backlog(store).await;
+    reject(&mut rig, store, Uuid::from_u128(0xA04))
+        .await
+        .expect("reject");
+    assert!(
+        find(tenant).await.is_empty(),
+        "a rejected version is no hit"
+    );
+}
+
+/// A failed encode keeps its version queued, counts the attempt and puts
+/// the next try off, so the next pass does not take it at once; a version
+/// enqueued again after it was read is not written with the older claim
+/// (ADR-0052 d15).
+pub async fn a_failed_encode_stays_queued_and_a_stale_read_writes_nothing<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Sparse) {
+        return;
+    }
+    let mut rig = ChainRig::new(433);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let row = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0xA11),
+        "rita",
+        key,
+        "wombat notes",
+    );
+    hold(&mut rig, store, row).await.expect("hold");
+    let pass = oml_app::app::encode_sparse_pass(store, &FakeSparseEncoder::failing("no model"), 16)
+        .await
+        .expect("pass");
+    assert_eq!((pass.written, pass.failed), (0, 1));
+    assert!(
+        store
+            .sparse_pending(tenant, 10)
+            .await
+            .expect("pending")
+            .is_empty(),
+        "a failed version waits before its next try"
+    );
+    let health = store.postings_health(tenant).await.expect("health");
+    if let Some(h) = health {
+        assert_eq!((h.sparse_backlog, h.sparse_failing), (1, 1), "{h:?}");
+    }
+    let stale = SparsePending {
+        memory_id: Uuid::from_u128(0xA11),
+        claim: "wombat notes".to_owned(),
+        enqueued_at_us: 0,
+    };
+    assert!(
+        !store
+            .sparse_write(tenant, &stale, &FakeSparseEncoder::document("wombat notes"))
+            .await
+            .expect("write"),
+        "an entry read before its re-enqueue writes nothing"
+    );
+}
+
+/// Every learned sparse law, for a store serving the `sparse` retriever.
+pub async fn run_sparse_suite<S, F, Fut>(new_store: F)
+where
+    S: JournalStore,
+    F: Fn() -> Fut,
+    Fut: Future<Output = S>,
+{
+    sparse_scores_each_row_by_its_own_postings_alone(&new_store().await).await;
+    an_encoded_version_follows_promotion_supersession_and_retirement(&new_store().await).await;
+    a_failed_encode_stays_queued_and_a_stale_read_writes_nothing(&new_store().await).await;
 }
