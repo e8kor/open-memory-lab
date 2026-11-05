@@ -4183,6 +4183,7 @@ fn search_doctor(
         )
     });
     lines.extend(postings_doctor(recall_counts, settings));
+    lines.extend(valid_time_doctor(&enabled, settings));
     lines
 }
 
@@ -4378,6 +4379,37 @@ impl Scrape {
 /// of its recalls since the lead started; and, read by an admin key from
 /// `GET /v2/search`, one warning per fault in the tenant's postings, each
 /// naming the repair, or one line saying they are complete.
+/// The time pipelines' doctor line (proposed ADR-0058 d12): where one is
+/// enabled, how many served memories declare valid time and how many have
+/// ended, read by an admin key from `GET /v2/search`; a warning when none
+/// declares any, since the `time` list is then always empty.
+fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
+    let timed: Vec<&str> = enabled
+        .iter()
+        .copied()
+        .filter(|p| p.starts_with("bm25-postings-time"))
+        .collect();
+    if timed.is_empty() {
+        return Vec::new();
+    }
+    let Some(v) = settings.map(|s| &s["valid_time"]).filter(|v| v.is_object()) else {
+        return Vec::new();
+    };
+    let (declared, expired) = (
+        v["declared"].as_u64().unwrap_or(0),
+        v["expired"].as_u64().unwrap_or(0),
+    );
+    if declared == 0 {
+        return vec![format!(
+            "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0058 d12)",
+            timed.join(", ")
+        )];
+    }
+    vec![format!(
+        "time: {declared} memories declare valid time; {expired} ended and hidden from recall unless include_expired"
+    )]
+}
+
 fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) -> Vec<String> {
     let mut lines = Vec::new();
     let (postings, scan) = recall_counts.unwrap_or((0, 0));
@@ -4628,5 +4660,22 @@ mod tests {
             "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn doctor_warns_when_a_time_pipeline_has_no_memory_that_declares_valid_time() {
+        let none = serde_json::json!({ "valid_time": { "declared": 0, "expired": 0 } });
+        let lines = valid_time_doctor(&["bm25-postings", "bm25-postings-time"], Some(&none));
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].starts_with("warn time: bm25-postings-time enabled"),
+            "{lines:?}"
+        );
+        let some = serde_json::json!({ "valid_time": { "declared": 12, "expired": 3 } });
+        assert_eq!(
+            valid_time_doctor(&["bm25-postings-time"], Some(&some)),
+            vec!["time: 12 memories declare valid time; 3 ended and hidden from recall unless include_expired".to_owned()]
+        );
+        assert!(valid_time_doctor(&["bm25-postings"], Some(&none)).is_empty());
     }
 }

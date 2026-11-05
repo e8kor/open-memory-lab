@@ -172,6 +172,7 @@ from .review_policy import ReviewPolicy
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
 from .search_settings import SearchSettings
+from .search_settings_valid_time import SearchSettingsValidTime
 from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
@@ -384,6 +385,7 @@ __all__ = (
     "RevokeConnectionBody",
     "Role",
     "SearchSettings",
+    "SearchSettingsValidTime",
     "Serve",
     "ServedDigests",
     "ServedGuardrail",

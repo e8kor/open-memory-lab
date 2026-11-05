@@ -10941,7 +10941,8 @@ fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> Memory
 /// another node's dated row, another key's held dated row, a dated steering
 /// row, an own held row when no own keys are named; a row with no
 /// `valid_from` never matches a window; an empty scope ranks nothing; and
-/// its order is nearest start first, then id (proposed ADR-0058 d7).
+/// its order is the rows that start inside the window first, then those
+/// that started before it, nearest first, ties by id (proposed ADR-0058 d7).
 pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(431);
     rig.seed_chain(store, 0).await;
@@ -11050,11 +11051,11 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
     assert_eq!(
         leg(scope_of(wa, None)).await,
         vec![in_2015, spans_2015],
-        "the window's rows on the readable node, nearest start first"
+        "the window's rows on the readable node, those starting inside it first"
     );
     assert_eq!(
         leg(scope_of(wa, Some(own))).await,
-        vec![own_held, in_2015, spans_2015],
+        vec![in_2015, own_held, spans_2015],
         "the own held row joins only when its key is named"
     );
     let empty = CandidateScope {

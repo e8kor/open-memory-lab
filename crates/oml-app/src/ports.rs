@@ -594,6 +594,19 @@ pub trait Retriever: Send + Sync {
         async { Ok(None) }
     }
 
+    /// The tenant's served versions that declare valid time, and those
+    /// ended at or before `now_us`, for doctor (proposed ADR-0058 d12);
+    /// `None` from an adapter that keeps none.
+    fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> impl Future<Output = Result<Option<crate::search::ValidTimeCounts>, StoreError>> + Send
+    {
+        let _ = (tenant_id, now_us);
+        async { Ok(None) }
+    }
+
     /// The tenants the encoder's pass has work for, in one read: those whose
     /// queue holds an entry due now, and those whose sparse state is not on
     /// yet or whose backfill has not finished (ADR-0052 d15); none from an

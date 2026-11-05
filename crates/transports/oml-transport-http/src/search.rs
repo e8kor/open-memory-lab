@@ -32,6 +32,14 @@ fn settings_json(settings: &SearchSettings) -> Value {
         "tenant_default": settings.tenant_default,
         "effective": settings.effective.as_str(),
     });
+    // The tenant's valid time doctor reads where a time pipeline is served
+    // (proposed ADR-0058 d12).
+    if let (Some(v), Some(obj)) = (&settings.valid_time, body.as_object_mut()) {
+        obj.insert(
+            "valid_time".to_owned(),
+            json!({ "declared": v.declared, "expired": v.expired }),
+        );
+    }
     // The postings health doctor reads, on the read alone (ADR-0052 d12).
     if let (Some(h), Some(obj)) = (&settings.postings, body.as_object_mut()) {
         obj.insert(

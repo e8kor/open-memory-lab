@@ -1345,6 +1345,11 @@ export interface components {
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
+            /** @description Where the deployment serves a time pipeline: the tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0058 d12). */
+            valid_time?: {
+                declared: number;
+                expired: number;
+            };
         };
         UsageSettings: {
             /** @description Whether this server records recalls. */

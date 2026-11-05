@@ -29,6 +29,7 @@ drop it. Latency is the client-side wall time of the /mcp call.
 """
 
 import argparse
+import os
 import concurrent.futures as cf
 import json
 import statistics
@@ -45,7 +46,7 @@ from adapters import ADAPTERS, PUBLISHED_BM25, safe, workarea  # noqa: E402
 from run import Client  # noqa: E402  eval/recall/run.py's HTTP client
 
 PIPELINES = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank",
-             "sparse", "bm25-sparse"]
+             "sparse", "bm25-sparse", "bm25-postings-time", "bm25-postings-time-recent"]
 K = 100
 MEASURES = ["nDCG@10", "R@10", "R@20", "R@100", "RR@10", "Success@1", "Success@5"]
 DEFAULT_CACHE = "/srv/build/bench-data"
@@ -131,6 +132,10 @@ def cmd_load(a):
     def write(d):
         body = {"body": d.text, "claim_key": claim_key(a.dataset, d.id), "kind": "memory",
                 "workarea": workarea(a.dataset, d.group)}
+        # The date the dataset states, declared as the memory's valid_from
+        # (proposed ADR-0058 d10); BENCH_NO_VALID_TIME=1 loads without it.
+        if d.valid_from and not os.environ.get("BENCH_NO_VALID_TIME"):
+            body["valid_from"] = d.valid_from
         status, resp = retrying(writer, "POST", "/v1/memories", body)
         if status == 202:
             with lock:
@@ -244,7 +249,8 @@ def cmd_run(a):
         runs, served_by = {}, set()
 
         def ask(q, pipeline=pipeline):
-            res, ms = writer.recall(q.text, a.k, None, workarea(a.dataset, q.group), pipeline)
+            res, ms = writer.recall(q.text, a.k, None, workarea(a.dataset, q.group), pipeline,
+                                    now=q.now)
             hits = res.get("hits", [])
             ranked = [doc_of.get(back.get((h.get("memory", h))["artifact_id"])) for h in hits]
             search = res.get("search", {})
@@ -258,6 +264,9 @@ def cmd_run(a):
                 "rerank_reason": search.get("rerank_reason"),
                 "rerank_scores": [(h.get("matched") or {}).get("rerank") for h in hits],
                 "below_floor": search.get("below_floor"),
+                # The date window read from the question (proposed ADR-0058
+                # d6), so its reach can be counted per category.
+                "window": search.get("window"),
             }
 
         t0 = time.perf_counter()

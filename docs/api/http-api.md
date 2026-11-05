@@ -821,6 +821,19 @@ recall is not run; past 1,000 feedback members from one key in a UTC day, refuse
 1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
 
+*Proposed ([ADR-0058](../adr/ADR-0058-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)), built on draft branch `feat/valid-time`:* a memory may
+declare `valid_from` and `valid_until` on submit and supersede, each `YYYY`, `YYYY-MM`,
+`YYYY-MM-DD` or an RFC 3339 date-time with an offset; a period end names the whole period, so
+`valid_from: "2015", valid_until: "2015"` holds through 2015. Only `memory` and `derived_fact`
+take them, and every served memory carries both. Recall hides a version whose `valid_until` is at
+or before the request's `now` (the lead's clock when omitted) unless `include_expired` is true;
+get and the listings serve it. A ratified supersession whose successor declares `valid_from`
+ends the replaced version there, in the ratifying event. `search.window` names the date window
+read from the query by rule (`in 2015`, `last week`, `since March 2025`), or `null`; the opt-in
+pipelines `bm25-postings-time` and `bm25-postings-time-recent` fuse the memories whose valid time
+overlaps it, `matched.via` naming `time`, and the second moves each of the first 50 scores by at
+most 10% by recency, `matched.recency` the factor.
+
 ### Recall telemetry
 
 *Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2, d3, d11*

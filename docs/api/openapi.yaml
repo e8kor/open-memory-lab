@@ -2873,6 +2873,14 @@ components:
         tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
         effective: { type: string, description: The pipeline a recall naming none runs now. }
         postings: { $ref: '#/components/schemas/PostingsHealth' }
+        valid_time:
+          type: object
+          additionalProperties: false
+          description: 'Where the deployment serves a time pipeline: the tenant''s served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0058 d12).'
+          required: [declared, expired]
+          properties:
+            declared: { type: integer, minimum: 0 }
+            expired: { type: integer, minimum: 0 }
 
     UsageSettings:
       type: object

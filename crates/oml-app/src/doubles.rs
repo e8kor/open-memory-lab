@@ -1849,7 +1849,9 @@ impl Retriever for MemStore {
             let Some(window) = query.window else {
                 return Ok(Retrieved::default());
             };
-            let anchor = window.from_us.or(window.until_us).unwrap_or(0);
+            // Inside the window scores 1; an earlier start scores by its
+            // distance to the window's start (proposed ADR-0058 d7).
+            let start = window.from_us;
             let mut candidates: Vec<Candidate> = state
                 .memories
                 .values()
@@ -1858,7 +1860,7 @@ impl Retriever for MemStore {
                 .filter_map(|m| {
                     let from = m.valid.from.as_ref()?.unix_micros();
                     #[allow(clippy::cast_precision_loss, reason = "days apart")]
-                    let days = (from - anchor).unsigned_abs() as f64 / 86_400_000_000.0;
+                    let days = start.map_or(0, |s| (s - from).max(0)) as f64 / 86_400_000_000.0;
                     #[allow(clippy::cast_possible_truncation, reason = "a score in (0, 1]")]
                     let score = (1.0 / (1.0 + days)) as f32;
                     Some(Candidate {
@@ -1897,6 +1899,27 @@ impl Retriever for MemStore {
         _limit: usize,
     ) -> Result<Vec<String>, StoreError> {
         Ok(Vec::new())
+    }
+
+    async fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> Result<Option<crate::search::ValidTimeCounts>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Some(crate::search::ValidTimeCounts::default()));
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let served = || {
+            state
+                .memories
+                .values()
+                .filter(|m| served_tip(m) && !m.retirement)
+        };
+        Ok(Some(crate::search::ValidTimeCounts {
+            declared: served().filter(|m| m.valid.from.is_some()).count() as u64,
+            expired: served().filter(|m| m.valid.expired_at(now_us)).count() as u64,
+        }))
     }
 }
 

@@ -152,8 +152,9 @@ use. Decided here and built on the same branch; the measurements below are this 
       (`pg_proc.proleakproof` for `int8lt`, `int8gt`, `int8le`, `int8ge`, checked 2026-11-05),
       so the index on (`tenant_id`, `valid_from_us`) serves the serving role under row security
       ([ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
-      d1's reason for integers). It reads at most 200 rows, nearest start to the window's start
-      first, then id.
+      d1's reason for integers). It reads at most 200 rows: those that start inside the window
+      first, equal among themselves, then those that started before it, nearest first; ties by
+      id.
     - **Its order, in the core.** The core orders the leg's rows by the text list's rank where
       the text list holds them, then by the leg's own order, and cuts it at 50, the depth
       ADR-0049 d3 reads a fused list to. So a row that matches both the words and the window
@@ -200,8 +201,8 @@ use. Decided here and built on the same branch; the measurements below are this 
   on its branch; if another number lands first this one is renumbered at merge.
 
 - **d12 — Doctor names a time pipeline that has nothing to read.** `GET /v2/search` answers
-  `valid_time: {declared, expired}`, the served versions on the key's readable nodes that
-  declare a `valid_from` and those whose end has passed. `oml doctor` prints
+  `valid_time: {declared, expired}`, the tenant's served versions that declare a `valid_from`
+  and those whose end has passed. `oml doctor` prints
   `time: <declared> memories declare valid time; <expired> ended and hidden from recall` when a
   time pipeline is enabled, and warns when one is enabled and no served memory declares valid
   time, since its `time` list is then always empty and it answers as `bm25-postings` does.
@@ -235,8 +236,9 @@ client on loopback); see [Consequences](#consequences) for what they decide.
 - Valid time is clear metadata outside the encrypted body, as ADR-0036 d2 said; an erasure
   leaves the ends wherever it leaves attribution metadata, under FR-1.
 - The time leg's cost grows with the rows in a window, bounded by its 200-row read; a window as
-  wide as a decade over a large tenant reads its 200 nearest starts, not every row in it, which
-  can drop a matching row that starts far from the window's start. Named, unmeasured at scale.
+  wide as a decade over a large tenant reads 200 of the rows that start in it, by id, not every
+  row in it, which can drop a row the words match; the core's ordering by the text list applies
+  only to the 200 read. Named, unmeasured at scale.
 - The parser is English only.
 
 ## Rejected alternatives

@@ -36,6 +36,10 @@ class Doc:
     id: str
     text: str
     group: str = ""
+    # When the memory begins to hold, as the dataset states it as metadata
+    # (a session's date), declared by the loader as the memory's valid_from;
+    # never read out of the text (proposed ADR-0058 d10).
+    valid_from: str = None
 
 
 @dataclass
@@ -44,6 +48,9 @@ class Query:
     text: str
     group: str = ""
     category: str = "all"
+    # The instant the question is asked at, sent as recall's now (proposed
+    # ADR-0058 d5); None asks at the server's clock.
+    now: str = None
 
 
 @dataclass
@@ -166,6 +173,24 @@ LOCOMO_CATEGORIES = {1: "multi-hop", 2: "temporal", 3: "open-domain", 4: "single
                      5: "adversarial"}
 
 
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"])}
+
+
+def locomo_day(stamp):
+    """LoCoMo's `1:56 pm on 8 May, 2023` as `2023-05-08`, or None."""
+    m = re.search(r"(\d{1,2}) (\w+),? (\d{4})", stamp or "")
+    if not m or m.group(2).lower() not in MONTHS:
+        return None
+    return f"{int(m.group(3)):04d}-{MONTHS[m.group(2).lower()]:02d}-{int(m.group(1)):02d}"
+
+
+def next_day(day):
+    import datetime
+    return (datetime.date.fromisoformat(day) + datetime.timedelta(days=1)).isoformat()
+
+
 class Locomo:
     """LoCoMo's ten conversations; one dialogue turn is one memory.
 
@@ -199,17 +224,24 @@ class Locomo:
             group = safe(conv["sample_id"])
             c = conv["conversation"]
             ids = set()
+            last_day = None
             n = 1
             while f"session_{n}" in c:
                 date = c.get(f"session_{n}_date_time", "")
+                day = locomo_day(date)
+                last_day = max(filter(None, [last_day, day]), default=None)
                 for t in c[f"session_{n}"]:
                     text = f"[{date}] {t['speaker']}: {t['text']}"
                     if t.get("blip_caption"):
                         text += f" [shares a photo: {t['blip_caption']}]"
                     did = f"{group}.{t['dia_id']}"
                     ids.add(did)
-                    docs.append(Doc(did, text, group))
+                    # The session's date is the turn's valid_from: what was
+                    # said holds from then on (proposed ADR-0058 d10).
+                    docs.append(Doc(did, text, group, valid_from=day))
                 n += 1
+            # The questions are asked the day after the last session.
+            asked = next_day(last_day) if last_day else None
             for i, q in enumerate(conv["qa"]):
                 qid = f"{group}.q{i}"
                 rel = {}
@@ -223,11 +255,77 @@ class Locomo:
                     continue
                 qrels[qid] = rel
                 qs.append(Query(qid, q["question"], group,
-                                LOCOMO_CATEGORIES.get(q["category"], str(q["category"]))))
+                                LOCOMO_CATEGORIES.get(q["category"], str(q["category"])),
+                                now=asked))
         self.groups = sorted({d.group for d in docs})
         return Bench(self.name, docs, subsample_queries(qs, qrels, seed, limit), qrels,
                      notes=["headline over categories multi-hop, temporal, open-domain, "
                             "single-hop; adversarial reported apart"])
+
+
+LONGMEMEVAL_URL = ("https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/"
+                   "resolve/main/longmemeval_s_cleaned.json")
+
+
+def longmemeval_day(stamp):
+    """LongMemEval's `2023/05/20 (Sat) 02:21` as `2023-05-20T02:21:00Z`."""
+    m = re.match(r"(\d{4})/(\d{2})/(\d{2}) \(\w+\) (\d{2}):(\d{2})", stamp or "")
+    if not m:
+        return None
+    y, mo, d, h, mi = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:00Z"
+
+
+class LongMemEvalTemporal:
+    """LongMemEval_s (MIT), its temporal-reasoning questions only.
+
+    Each question has its own haystack of about 50 chat sessions; one turn is
+    one memory, `[<session date>] <role>: <content>`, in a workarea of the
+    question's own, and the session's date is the turn's valid_from. The
+    qrels are the turns the dataset marks `has_answer`; a question with none
+    is dropped. The question is asked at its `question_date`, sent as now.
+    A fixed seeded subset of `LONGMEMEVAL_QUESTIONS` questions is loaded,
+    since every haystack is about 500 memories. No answer is generated:
+    recall is scored against the evidence turns.
+    """
+
+    name = "longmemeval-tr"
+
+    def path(self, cache):
+        p = Path(cache) / "longmemeval" / "longmemeval_s_cleaned.json"
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(LONGMEMEVAL_URL, p)
+        return p
+
+    def load(self, cache, seed, limit):
+        data = json.loads(self.path(cache).read_text())
+        items = [q for q in data if q.get("question_type") == "temporal-reasoning"]
+        items.sort(key=lambda q: q["question_id"])
+        n = int(os.environ.get("LONGMEMEVAL_QUESTIONS", "30"))
+        items = random.Random(seed).sample(items, min(n, len(items)))
+        docs, qs, qrels = [], [], {}
+        for q in items:
+            group = safe(q["question_id"])
+            rel = {}
+            for s_i, (session, stamp) in enumerate(zip(q["haystack_sessions"],
+                                                       q["haystack_dates"])):
+                day = longmemeval_day(stamp)
+                for t_i, turn in enumerate(session):
+                    did = f"{group}.s{s_i}.t{t_i}"
+                    docs.append(Doc(did, f"[{stamp}] {turn['role']}: {turn['content']}",
+                                    group, valid_from=day))
+                    if turn.get("has_answer"):
+                        rel[did] = 1
+            if not rel:
+                continue
+            qid = f"{group}.q"
+            qrels[qid] = rel
+            qs.append(Query(qid, q["question"], group, "temporal-reasoning",
+                            now=longmemeval_day(q.get("question_date"))))
+        return Bench(self.name, docs, subsample_queries(qs, qrels, seed, limit), qrels,
+                     notes=[f"LongMemEval_s temporal-reasoning, {len(qs)} questions drawn "
+                            f"with seed {seed}; one turn per memory; has_answer turns as qrels"])
 
 
 ADAPTERS = {
@@ -236,6 +334,7 @@ ADAPTERS = {
     "nfcorpus": lambda: Beir("nfcorpus", "beir/nfcorpus/test"),
     "arguana": lambda: Beir("arguana", "beir/arguana"),
     "locomo": Locomo,
+    "longmemeval-tr": LongMemEvalTemporal,
     "scifact-x10": lambda: Scaled("scifact-x10", Beir("scifact", "beir/scifact/test"), 10),
 }
 

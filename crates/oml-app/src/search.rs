@@ -597,6 +597,14 @@ pub struct PostingsHealth {
     pub sparse_enabled: bool,
 }
 
+/// The tenant's valid time for doctor (proposed ADR-0058 d12): its served
+/// versions that declare a start, and those whose end has passed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidTimeCounts {
+    pub declared: u64,
+    pub expired: u64,
+}
+
 /// One retrieval: the query, whether every term must match, and how many
 /// candidates to return at most.
 #[derive(Debug, Clone, Copy, PartialEq)]

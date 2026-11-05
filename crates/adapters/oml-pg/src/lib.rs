@@ -731,9 +731,10 @@ const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
 
 /// The `time` statement (proposed ADR-0058 d7): the scope's rows whose
 /// declared valid time overlaps the window [`$6`, `$7`), either side open
-/// when null; a row with no `valid_from` never matches. Nearest start to the
-/// window's start (its end when the start is open) first, then id, at most
-/// `$8`; the score is `1 / (1 + days apart)`. Every predicate on the bounds
+/// when null; a row with no `valid_from` never matches. A row that starts
+/// inside the window scores 1, one that started before it `1 / (1 + days
+/// from its start to the window's)`, so the rows the window holds come
+/// first, then the nearest earlier ones; ties by id; at most `$8`. Every predicate on the bounds
 /// is a leakproof `int8` comparison, so `memories_valid_from` serves the
 /// serving role under row security. Exported so the suite plans the
 /// statement the adapter runs.
@@ -741,7 +742,8 @@ const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
 pub fn time_sql() -> String {
     format!(
         "SELECT m.id, m.body_bytes, \
-                (1.0 / (1.0 + abs(m.valid_from_us - COALESCE($6::int8, $7::int8))::float8 / 86400000000.0))::float4 AS score, \
+                (1.0 / (1.0 + GREATEST(COALESCE($6::int8, m.valid_from_us) - m.valid_from_us, 0)::float8 \
+                                / 86400000000.0))::float4 AS score, \
                 '{{}}'::text[] AS matched \
          FROM memories m \
          WHERE {SEARCH_SCOPE} AND m.valid_from_us IS NOT NULL \
@@ -3982,6 +3984,31 @@ impl Retriever for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(found)
+    }
+
+    async fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> Result<Option<oml_app::search::ValidTimeCounts>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (declared, expired): (i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE m.valid_from_us IS NOT NULL)::int8, \
+                    count(*) FILTER (WHERE m.valid_until_us <= $2)::int8 \
+             FROM memories m WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
+               AND NOT m.retirement",
+        )
+        .bind(tenant_id)
+        .bind(now_us)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(Some(oml_app::search::ValidTimeCounts {
+            declared: u64::try_from(declared).map_err(backend)?,
+            expired: u64::try_from(expired).map_err(backend)?,
+        }))
     }
 
     async fn postings_health(&self, tenant_id: Uuid) -> Result<Option<PostingsHealth>, StoreError> {
