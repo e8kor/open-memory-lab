@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25-postings",
  "date": "2026-11-05",
- "commit": "9a4bae6",
+ "commit": "44fcc88",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "17.9",
@@ -15,11 +15,11 @@
  "n_docs": 200,
  "sampled": null,
  "metrics": {
-  "ndcg@10": 0.873,
+  "ndcg@10": 0.876,
   "recall@10": 0.91,
   "recall@100": null,
-  "mrr@10": 0.872,
-  "success@1": 0.826,
+  "mrr@10": 0.876,
+  "success@1": 0.835,
   "success@5": 0.934,
   "zero_result_rate": 0.0
  },
@@ -52,11 +52,11 @@
    "n_queries": 11
   },
   "partial": {
-   "success@1": 0.818,
+   "success@1": 0.909,
    "success@5": 1.0,
    "recall@10": 1.0,
-   "mrr@10": 0.882,
-   "ndcg@10": 0.907,
+   "mrr@10": 0.927,
+   "ndcg@10": 0.94,
    "zero_result_rate": 0.0,
    "n_queries": 11
   },
@@ -125,9 +125,9 @@
   }
  },
  "latency_ms": {
-  "p50": 31.93,
-  "p95": 64.49,
-  "p99": 89.56
+  "p50": 13.0,
+  "p95": 16.35,
+  "p99": 21.86
  },
  "reference": null,
  "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured."

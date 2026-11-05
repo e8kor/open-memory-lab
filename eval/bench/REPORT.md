@@ -58,6 +58,28 @@ the best `4 × k` candidates with every form.
   0.1 cost at most 0.0005 nDCG@10 and 0.05 cost 0.0019 (NFCorpus); the budget did not bind below
   6,000 rows. The budget was set on the scale lane, where it decides the universe scope's p95.
 
+### Where the candidates come from, and the LoCoMo tail (amended 2026-11-05)
+
+`bm25-postings` takes its candidates from the postings of the query forms it reads; rescoring the
+best `4 × k` with every form reorders those candidates and adds none. The first rule left out
+every form held by more than 10% of the readable rows whatever the budget, so a row holding only
+such forms was never a candidate. LoCoMo shows it: each query reads one conversation of about 590
+turns, where most query words are frequent (99% of queries had a word pruned), and R@100 fell from
+0.813 to 0.767 while the top ten barely moved. The rule now prunes only once the query's readable
+postings pass `POSTING_BUDGET`; below it every form is read and the list is `bm25`'s. Served, k
+100, the same build for both pipelines, before (`1c57c49`) and after (`ac57cd8`):
+
+| suite | R@20 bm25 | R@20 postings before → after | R@100 postings before → after | nDCG@10 postings before → after | p95 ms postings before → after |
+|---|---:|---|---|---|---|
+| SciFact | 0.8656 | 0.8656 → 0.8656 | 0.928 → 0.928 | 0.6851 → 0.6851 | 72.0 → 66.1 |
+| NFCorpus | 0.1840 | 0.1836 → 0.1840 | 0.245 → 0.248 | 0.3203 → 0.3208 | 62.7 → 53.0 |
+| LoCoMo | 0.6971 | 0.6935 → 0.6971 | 0.767 → 0.813 | 0.5029 → 0.5034 | 29.9 → 37.9 |
+
+After the change all three lists equal `bm25`'s on every measure. R@20 is what a reranker reading
+the first 10 to 20 hits sees; it had lost 0.0027 on LoCoMo and 0.0004 on NFCorpus. Raw numbers:
+`results/budget-first.json`; the scale lane's latency for the same rule is in
+`bench/scale/REPORT.md`.
+
 ## Latency at the size an agent asks, and at scale
 
 `bm25`, p50 / p95 per query, one client:

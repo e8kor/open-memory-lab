@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25-postings",
  "date": "2026-11-05",
- "commit": "9a4bae6",
+ "commit": "ac57cd8",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "17.9",
@@ -17,6 +17,7 @@
  "metrics": {
   "ndcg@10": 0.6851,
   "recall@10": 0.8217,
+  "recall@20": 0.8656,
   "recall@100": 0.9276,
   "mrr@10": 0.6496,
   "success@1": 0.54,
@@ -25,9 +26,9 @@
  },
  "per_category": {},
  "latency_ms": {
-  "p50": 49.845,
-  "p95": 89.87,
-  "p99": 152.93
+  "p50": 46.25,
+  "p95": 65.0,
+  "p99": 81.79
  },
  "reference": {
   "source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",
@@ -35,5 +36,5 @@
   "value": 0.665,
   "url": "https://arxiv.org/abs/2104.08663"
  },
- "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only."
+ "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only. bm25-postings takes its candidates from the postings of the query forms it reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves out the forms held by more than 10% of the readable rows, so a row holding only those is no candidate, and below the budget it reads every form and ranks as bm25 (ADR-0052 d6)."
 }

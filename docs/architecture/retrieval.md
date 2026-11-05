@@ -242,12 +242,14 @@ reaches an index, but integer equality does, so `bm25-postings` reads each versi
 integer postings (`search_postings`, one partition per tenant under the same policy; [schema](../data/postgres-schema.md#search-postings-adr-0052)).
 Before it reads a posting it sums the served versions' counts over the readable workareas, adding
 the caller's own held rows when it asked for them: the row count, the mean length and each query
-form's document frequency are the readable rows', never the tenant's. A form held by more than
-`FREQUENT_SHARE` of the readable rows is **frequent** and left out of the postings read; then,
-while the kept forms' frequencies sum above `POSTING_BUDGET`, the most frequent kept one is left
-out too. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
-returned row's score is its full BM25 score; what pruning loses is a row that holds only frequent
-words. The answer names those words in `search.pruned`. When every form present is frequent, the
+form's document frequency are the readable rows', never the tenant's. While the query forms'
+readable postings together fit `POSTING_BUDGET`, every form is read and the list is `bm25`'s.
+Past it, a form held by more than `FREQUENT_SHARE` of the readable rows is **frequent** and left
+out of the postings read; then, while the kept forms' frequencies sum above the budget, the most
+frequent kept one is left out too. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
+returned row's score is its full BM25 score. Candidates come only from the forms read, so what
+pruning loses is a row that holds only frequent words, a loss in the long tail of the list: it is
+why the budget, not the share, decides when to prune (ADR-0052 d6, amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
 `bm25` statement answers over the stored lexemes, ranked as `bm25` ranks, and the answer says
 `search.access: "scan"`; otherwise `"postings"`. Under `match: "all"` it reads only the rarest
 word's postings, which every answer must hold, and prunes nothing. Which words are pruned depends

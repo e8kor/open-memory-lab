@@ -13,6 +13,24 @@ its transaction and every statement in it. `bm25` is v0.5.5's statement over the
 `POSTING_BUDGET` 10,000. 165,000 memories put 99,721 served rows in the `universe` scope: the
 "100,000 readable rows" of ADR-0052 d9.
 
+## Amended 2026-11-05: prune only past the budget
+
+The first rule left out every frequent form whatever the budget, which cost LoCoMo's R@100
+(`eval/bench/REPORT.md`). The rule now reads every form while the query's readable postings fit
+`POSTING_BUDGET`, and prunes as before only past it. Re-run at 165,000 memories on `ac57cd8`
+(`results/postings-165k-budget-first.json`), on a busier host than the first run (load average
+5 to 12; `bm25`'s own universe p95 rose from 493 to 841 ms between the two runs):
+
+| rule | leaf p95 | project p95 | universe p95 | same list as bm25 | top-10 overlap |
+|---|---:|---:|---:|---:|---:|
+| bm25 | 26.0 | 389 | 841 | – | – |
+| first rule (earlier run) | 9.2 | 12.1 | 29.9 | 0.921 | 0.975 |
+| **budget first** | **14.6** | **24.0** | **41.7** | **0.942** | **0.979** |
+
+The universe p95 stays under ADR-0052 d9's 50 ms. Leaf and project scopes now read every form of
+a query whose postings fit the budget, so they cost more and match `bm25` more often. The tables
+below are the first rule's.
+
 ## Headline: warm p95 (ms) by scope
 
 | memories | readable rows (leaf / project / universe) | bm25 leaf / project / universe | bm25-postings leaf / project / universe | unpruned postings universe |

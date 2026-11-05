@@ -18,7 +18,7 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [Synthetic recall set](recall-synthetic.md)
 
-200 memories, 121 queries. Measured 2026-11-05 on commit `71b7b69`, `9a4bae6`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+200 memories, 121 queries. Measured 2026-11-05 on commit `44fcc88`, `71b7b69`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -26,19 +26,19 @@ Every number below went through the served path: memories written over HTTP by a
 | keyword-any | 121 | 0.689 | 0.843 | – | 0.033 | 18.9 | 29.7 |
 | bm25 | 121 | 0.876 | 0.926 | – | 0.000 | 16.3 | 21.2 |
 | bm25-trigram | 121 | 0.874 | 0.950 | – | 0.000 | 30.4 | 41.9 |
-| bm25-postings | 121 | 0.873 | 0.934 | – | 0.000 | 31.9 | 64.5 |
+| bm25-postings | 121 | 0.876 | 0.934 | – | 0.000 | 13.0 | 16.4 |
 
 ## [BEIR SciFact](beir-scifact.md)
 
-5,183 memories, 300 queries. Measured 2026-11-05 on commit `9a4bae6`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,183 memories, 300 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 300 | 0.013 | 0.013 | 0.013 | 0.987 | 629 | 672 |
 | keyword-any | 300 | 0.515 | 0.603 | 0.781 | 0.000 | 815 | 1,075 |
-| bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 100 | 172 |
+| bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 87.2 | 116 |
 | bm25-trigram | 100 (sampled) | 0.611 | 0.710 | 0.906 | 0.000 | 3,707 | 5,454 |
-| bm25-postings | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 49.8 | 89.9 |
+| bm25-postings | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 46.2 | 65.0 |
 | bm25-k10 | 300 | 0.685 | 0.783 | 0.822 | 0.000 | 70.5 | 98.5 |
 | bm25-trigram-k10 | 100 (sampled) | 0.612 | 0.720 | 0.754 | 0.000 | 3,664 | 5,334 |
 | keyword-any-k10 | 300 | 0.515 | 0.603 | 0.632 | 0.000 | 630 | 1,090 |
@@ -48,30 +48,30 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [BEIR NFCorpus](beir-nfcorpus.md)
 
-3,633 memories, 323 queries. Measured 2026-11-05 on commit `9a4bae6`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+3,633 memories, 323 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 323 | 0.187 | 0.362 | 0.092 | 0.511 | 477 | 513 |
 | keyword-any | 323 | 0.274 | 0.560 | 0.210 | 0.081 | 586 | 1,016 |
-| bm25 | 323 | 0.321 | 0.656 | 0.247 | 0.046 | 65.6 | 89.3 |
+| bm25 | 323 | 0.321 | 0.656 | 0.248 | 0.046 | 54.3 | 83.5 |
 | bm25-trigram | 100 (sampled) | 0.267 | 0.600 | 0.245 | 0.000 | 2,172 | 3,047 |
-| bm25-postings | 323 | 0.321 | 0.656 | 0.244 | 0.046 | 35.6 | 63.7 |
+| bm25-postings | 323 | 0.321 | 0.656 | 0.248 | 0.046 | 30.9 | 53.0 |
 | reference-bm25s-k1-0.9-b-0.4 | 323 | 0.318 | 0.647 | 0.246 | 0.046 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 323 | 0.318 | 0.644 | 0.247 | 0.046 | offline | offline |
 | BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields), published | | 0.325 | | | | | |
 
 ## [LoCoMo](locomo.md)
 
-5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `9a4bae6`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
+5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `ac57cd8`, `d3fdb72`; build release, host 8 vCPU / 15 GB, postgres 17.9.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | keyword-all | 1,535 | 0.001 | 0.001 | 0.001 | 0.996 | 31.4 | 41.3 |
 | keyword-any | 1,535 | 0.345 | 0.437 | 0.744 | 0.000 | 62.2 | 86.4 |
-| bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 25.0 | 36.7 |
+| bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 28.9 | 39.0 |
 | bm25-trigram | 1,535 | 0.483 | 0.587 | 0.822 | 0.000 | 89.1 | 112 |
-| bm25-postings | 1,535 | 0.503 | 0.627 | 0.767 | 0.000 | 14.6 | 25.0 |
+| bm25-postings | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 24.0 | 37.2 |
 | reference-bm25s-k1-0.9-b-0.4 | 1,535 | 0.468 | 0.585 | 0.812 | 0.000 | offline | offline |
 | reference-bm25s-k1-1.2-b-0.75 | 1,535 | 0.446 | 0.566 | 0.806 | 0.000 | offline | offline |
 

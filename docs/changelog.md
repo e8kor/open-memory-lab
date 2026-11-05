@@ -59,6 +59,17 @@ Entries kept apart until the release that carries them, newest first. `info.vers
   holding writes while it runs, about 0.4 s per 1,000 memories (a batched fill before any tenant
   reaches 1,000,000 is FR-103). A key holding 10,000 unreviewed rows of its own pays 266 ms for a
   whole-tree recall that includes them.
+- **Nothing is left out while a search fits its budget.** Common words are dropped from what a
+  recall reads only when reading them all would pass 10,000 postings; below that the list is
+  exactly `bm25`'s, so a memory holding only common words is found again. On LoCoMo this restores
+  R@100 from 0.767 to 0.813 and R@20 from 0.6935 to 0.6971, `bm25`'s own
+  ([benchmark report](https://github.com/e8kor/open-memory-lab/blob/main/eval/bench/REPORT.md)).
+- **`oml doctor` checks the postings.** It warns when the scan answered more than 5% of
+  `bm25-postings`'s recalls since the server started, and, with an admin key, when a tenant's
+  postings are missing, behind, or their counts drift, naming the repair:
+  `oml_search_postings_refill` run by the owner ([observability](operations/observability.md#the-doctor-contract)).
+  `/readyz` gains `search.access`, each pipeline's recalls by how they were read, and `GET
+  /v2/search` gains `postings`.
 - **Erasure, when it is built, removes postings and counts** with the version's other copies;
   until then nothing deletes them, and replaced, demoted, rejected and retired versions keep
   theirs, flipped off.
