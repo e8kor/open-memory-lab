@@ -27,6 +27,7 @@
 //! racing a ratification to `validated` never leaves a validated node over
 //! an unvalidated child (ADR-0009 d3, d4).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -5854,7 +5855,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 20);
+    assert_eq!(applied, 21);
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7291,7 +7292,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 20);
+    assert_eq!(applied, 21);
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7323,6 +7324,636 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
         assert_eq!(
             bm25_list(&upgraded, rig.tenant_id, wa, query).await,
             bm25_list(&fresh, twin.tenant_id, wa, query).await,
+            "{query}: the upgraded database ranks as a fresh one"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Integer postings (migrations/0021_search_postings.sql; ADR-0052)
+// ---------------------------------------------------------------------------
+
+/// A fresh store whose `bm25_postings` prunes by `limits`.
+async fn postings_store(created: &Mutex<Vec<String>>, limits: oml_pg::PruneLimits) -> PgStore {
+    fresh_search_store(created).await.with_prune_limits(limits)
+}
+
+/// Forms above a share of 0.3 of the readable rows are pruned, with no
+/// budget: the limits the pruning laws name.
+const LAW_PRUNING: oml_pg::PruneLimits = oml_pg::PruneLimits {
+    frequent_share: 0.3,
+    posting_budget: u64::MAX,
+};
+
+/// The postings laws of `oml-port-contracts` against the real store, each
+/// with the limits its doc names (ADR-0052 d12).
+#[tokio::test]
+async fn bm25_postings_contract_laws() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned(
+        &postings_store(&created, oml_pg::PruneLimits::NONE).await,
+    )
+    .await;
+    oml_port_contracts::a_pruned_list_scores_each_of_its_rows_as_bm25_does(
+        &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
+    oml_port_contracts::which_words_are_pruned_depends_on_the_readable_rows_alone(
+        &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
+    oml_port_contracts::a_query_of_only_frequent_words_is_answered_by_the_scan_and_says_so(
+        &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
+    for limits in [
+        oml_pg::PruneLimits::NONE,
+        LAW_PRUNING,
+        oml_pg::PruneLimits::SERVED,
+    ] {
+        oml_port_contracts::a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds(
+            &postings_store(&created, limits).await,
+        )
+        .await;
+    }
+    // The scope and no-leak laws, with pruning that bites on their fixture.
+    oml_port_contracts::a_retriever_never_returns_a_row_outside_the_scope(
+        &postings_store(&created, LAW_PRUNING).await,
+    )
+    .await;
+    oml_port_contracts::a_row_outside_the_scope_never_changes_a_candidates_score(|| {
+        postings_store(&created, LAW_PRUNING)
+    })
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// `oml_token_id` in SQL and [`oml_pg::token_id`] give every lexeme the same
+/// id, ASCII, accented, CJK, an identifier part and the empty string alike
+/// (ADR-0052 d2, d12).
+#[tokio::test]
+async fn oml_token_id_in_sql_equals_the_adapters() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let lexemes = [
+        "",
+        "a",
+        "billing",
+        "deploy",
+        "useinvoicefilters",
+        "am-7741",
+        "café",
+        "naïve",
+        "東京",
+        "ünïcødé",
+        "x'y",
+        "back\\slash",
+    ];
+    for lexeme in lexemes {
+        let sql: i64 = sqlx::query_scalar("SELECT oml_token_id($1)")
+            .bind(lexeme)
+            .fetch_one(store.pool())
+            .await
+            .expect("oml_token_id");
+        assert_eq!(sql, oml_pg::token_id(lexeme), "{lexeme:?}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// What the postings and counts of `tenant` hold, read as the owner under
+/// the tenant's row security: per memory, its postings' (state, count); per
+/// (workarea, memory kind, token), the count row; per (workarea, memory
+/// kind), the row count and summed length.
+type Postings = (
+    BTreeMap<Uuid, (i16, i64)>,
+    BTreeMap<(Uuid, i16, i64), i32>,
+    BTreeMap<(Uuid, i16), (i32, i64)>,
+);
+
+async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let per_memory: Vec<(Uuid, i16, i64)> = sqlx::query_as(
+        "SELECT memory_id, max(state), count(*) FROM search_postings \
+          WHERE tenant_id = $1 GROUP BY memory_id HAVING min(state) = max(state)",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("postings");
+    let mixed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT memory_id FROM search_postings WHERE tenant_id = $1 \
+          GROUP BY memory_id HAVING min(state) <> max(state)) x",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("mixed");
+    assert_eq!(mixed, 0, "a version's postings share one state");
+    let terms: Vec<(Uuid, i16, i64, i32)> = sqlx::query_as(
+        "SELECT workarea_id, memory_kind, token_id, rows FROM search_term_rows \
+          WHERE tenant_id = $1 AND kind = 1",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("term rows");
+    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
+        "SELECT workarea_id, memory_kind, rows, total_len FROM search_workarea_rows \
+          WHERE tenant_id = $1 AND kind = 1",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("workarea rows");
+    tx.commit().await.expect("commit");
+    (
+        per_memory
+            .into_iter()
+            .map(|(m, s, n)| (m, (s, n)))
+            .collect(),
+        terms
+            .into_iter()
+            .map(|(w, k, t, n)| ((w, k, t), n))
+            .collect(),
+        areas
+            .into_iter()
+            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .collect(),
+    )
+}
+
+/// The counts recomputed from the postings and the versions: what the
+/// trigger's counts must equal (ADR-0052 d5).
+async fn counts_from_postings(
+    store: &PgStore,
+    tenant: Uuid,
+) -> (
+    BTreeMap<(Uuid, i16, i64), i32>,
+    BTreeMap<(Uuid, i16), (i32, i64)>,
+) {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let terms: Vec<(Uuid, i16, i64, i32)> = sqlx::query_as(
+        "SELECT workarea_id, memory_kind, token_id, count(DISTINCT memory_id)::int4 \
+           FROM search_postings WHERE tenant_id = $1 AND kind = 1 AND state = 1 \
+          GROUP BY 1, 2, 3",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("terms");
+    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
+        "SELECT workarea_id, oml_search_memory_kind(kind), count(*)::int4, sum(search_len)::int8 \
+           FROM memories WHERE tenant_id = $1 \
+            AND status = 'promoted' AND is_tip AND NOT retirement \
+            AND kind IN ('memory', 'derived_fact') \
+          GROUP BY 1, 2",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("areas");
+    tx.commit().await.expect("commit");
+    (
+        terms
+            .into_iter()
+            .map(|(w, k, t, n)| ((w, k, t), n))
+            .collect(),
+        areas
+            .into_iter()
+            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .collect(),
+    )
+}
+
+/// Runs `sql` as the owner under `tenant`'s row security: the demotion and
+/// erasure the folds do not build yet (ADR-0052 d7).
+async fn as_owner(store: &PgStore, tenant: Uuid, sql: &str, id: Uuid) {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query(sql)
+        .bind(tenant)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .expect("owner statement");
+    tx.commit().await.expect("commit");
+}
+
+/// Promoted, held, superseded, retired, rejected, demoted and steering rows
+/// on two workareas, of both hit kinds; returns (replaced, retired tip,
+/// demoted, rejected, served).
+async fn lifecycle_rows(rig: &mut ChainRig, store: &PgStore) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
+    let tenant = rig.tenant_id;
+    let (wa, wb) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let key = Uuid::from_u128(0xE5);
+    let row = |id: u128, node: Uuid, body: &str| {
+        held_memory(tenant, node, Uuid::from_u128(id), "rita", key, body)
+    };
+    for (id, node, body) in [
+        (0xB01, wa, "deploy the billing service on friday"),
+        (0xB02, wa, "the billing service owns invoices"),
+        (0xB03, wb, "never deploy on friday evenings"),
+        (0xB04, wb, "invoices are numbered per tenant"),
+    ] {
+        oml_port_contracts::hold_and_promote(rig, store, row(id, node, body)).await;
+    }
+    oml_port_contracts::hold_and_promote(
+        rig,
+        store,
+        oml_app::types::MemoryRecord {
+            kind: MemoryKind::DerivedFact,
+            ..row(0xB05, wa, "billing derived fact for friday")
+        },
+    )
+    .await;
+    oml_port_contracts::hold_and_promote(
+        rig,
+        store,
+        oml_app::types::MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..row(0xB06, wa, "steering says billing")
+        },
+    )
+    .await;
+    oml_port_contracts::hold(rig, store, row(0xB07, wa, "billing held notes"))
+        .await
+        .expect("hold");
+    oml_port_contracts::hold(rig, store, row(0xB08, wa, "billing to be rejected"))
+        .await
+        .expect("hold");
+    oml_port_contracts::reject(rig, store, Uuid::from_u128(0xB08))
+        .await
+        .expect("reject");
+    // 0xB01 is replaced by 0xB11; 0xB02 is retired by 0xB12; 0xB04 is
+    // demoted by the owner, as the demotion fold will.
+    let replaced = row(0xB01, wa, "deploy the billing service on friday");
+    oml_port_contracts::supersede(
+        rig,
+        store,
+        &replaced,
+        Uuid::from_u128(0xB11),
+        "deploy billing on monday",
+        false,
+    )
+    .await;
+    let retired = row(0xB02, wa, "the billing service owns invoices");
+    oml_port_contracts::supersede(
+        rig,
+        store,
+        &retired,
+        Uuid::from_u128(0xB12),
+        "the billing service owns invoices",
+        true,
+    )
+    .await;
+    as_owner(
+        store,
+        tenant,
+        "UPDATE memories SET status = 'demoted', is_tip = false WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB04),
+    )
+    .await;
+    (
+        Uuid::from_u128(0xB01),
+        Uuid::from_u128(0xB02),
+        Uuid::from_u128(0xB04),
+        Uuid::from_u128(0xB08),
+        Uuid::from_u128(0xB03),
+    )
+}
+
+/// The counts the trigger keeps equal the served postings counted in scope,
+/// per workarea, memory kind and token, through promotion, supersession,
+/// retirement, rejection and demotion (ADR-0052 d5, d12).
+#[tokio::test]
+async fn the_counts_summed_over_readable_nodes_equal_the_postings_counted_in_scope() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(571);
+    rig.seed_chain(&store, 0).await;
+    lifecycle_rows(&mut rig, &store).await;
+    let (_, terms, areas) = postings_of(&store, rig.tenant_id).await;
+    let (want_terms, want_areas) = counts_from_postings(&store, rig.tenant_id).await;
+    assert!(!terms.is_empty(), "served versions are counted");
+    assert_eq!(terms, want_terms, "per token");
+    assert_eq!(areas, want_areas, "per workarea");
+    assert_eq!(
+        areas.keys().map(|(_, k)| *k).collect::<BTreeSet<_>>(),
+        BTreeSet::from([1, 2]),
+        "both hit kinds are counted apart"
+    );
+    drop_dbs(&created).await;
+}
+
+/// A superseded, demoted, retired or rejected version keeps its postings,
+/// flipped off, and leaves the counts; a held one's are held; the served
+/// tip's are served; a steering row and a retirement version have none
+/// (ADR-0052 d1, d7, d12).
+#[tokio::test]
+async fn a_superseded_demoted_or_retired_version_keeps_its_postings_and_leaves_the_counts() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(572);
+    rig.seed_chain(&store, 0).await;
+    let (replaced, retired, demoted, rejected, served) = lifecycle_rows(&mut rig, &store).await;
+    let (memories, terms, _) = postings_of(&store, rig.tenant_id).await;
+    for (what, id) in [
+        ("replaced", replaced),
+        ("retired", retired),
+        ("demoted", demoted),
+        ("rejected", rejected),
+    ] {
+        let (state, n) = memories.get(&id).copied().unwrap_or((-1, 0));
+        assert_eq!(state, 2, "the {what} version's postings are off");
+        assert!(n > 0, "the {what} version keeps its postings");
+    }
+    assert_eq!(
+        memories[&served].0, 1,
+        "the served tip's postings are served"
+    );
+    assert_eq!(
+        memories[&Uuid::from_u128(0xB11)].0,
+        1,
+        "the successor is served"
+    );
+    assert_eq!(
+        memories[&Uuid::from_u128(0xB07)].0,
+        0,
+        "a held version's are held"
+    );
+    assert!(
+        !memories.contains_key(&Uuid::from_u128(0xB06)),
+        "a steering row has no postings"
+    );
+    assert!(
+        !memories.contains_key(&Uuid::from_u128(0xB12)),
+        "a retirement version has no postings"
+    );
+    // `invoices` was said by the retired and the demoted rows alone among
+    // the served: no count holds it.
+    let invoices = oml_pg::token_id("invoices");
+    assert!(
+        !terms.keys().any(|(_, _, t)| *t == invoices),
+        "a word no served version says leaves the counts"
+    );
+    let monday = oml_pg::token_id("monday");
+    assert_eq!(
+        terms.get(&(Uuid::from_u128(0xE2), 1, monday)),
+        Some(&1),
+        "the successor's words are counted"
+    );
+    drop_dbs(&created).await;
+}
+
+/// An erased version leaves no posting and no count, whether the erase
+/// marks it `erased` or deletes the row; the other versions' stay
+/// (ADR-0052 d7; ADR-0005 d4).
+#[tokio::test]
+async fn an_erased_version_leaves_no_posting_and_no_count() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(573);
+    rig.seed_chain(&store, 0).await;
+    let (replaced, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased', is_tip = false WHERE tenant_id = $1 AND id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        replaced,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM memories WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    let (memories, terms, areas) = postings_of(&store, tenant).await;
+    for id in [served, replaced, Uuid::from_u128(0xB07)] {
+        assert!(!memories.contains_key(&id), "{id}: no posting is left");
+    }
+    let evenings = oml_pg::token_id("evenings");
+    assert!(
+        !terms.keys().any(|(_, _, t)| *t == evenings),
+        "the erased version's words leave the counts"
+    );
+    assert_eq!(
+        (terms, areas),
+        counts_from_postings(&store, tenant).await,
+        "the counts are the remaining served postings'"
+    );
+    assert!(
+        memories.contains_key(&Uuid::from_u128(0xB11)),
+        "the other versions keep theirs"
+    );
+    drop_dbs(&created).await;
+}
+
+/// The `bm25_postings` statement reads the postings by their token index as
+/// the serving role, under row security: integer equality is leakproof, so
+/// the policy leaves the index usable (ADR-0052 Context, d1).
+#[tokio::test]
+async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row_security() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(574);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &store, wa).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    // Sequential scans off, so a plan that can use the index does: on five
+    // rows the planner would otherwise scan, and the law is that it may.
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("seqscan off");
+    let token = oml_pg::token_id("deploy");
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN (COSTS OFF) {}",
+        oml_pg::bm25_postings_sql()
+    ))
+    .bind(rig.tenant_id)
+    .bind(vec![wa])
+    .bind(vec![1_i16, 2])
+    .bind(Vec::<Uuid>::new())
+    .bind(vec!["deploy".to_owned()])
+    .bind(vec![token])
+    .bind(vec![2.0_f64])
+    .bind(5.0_f64)
+    .bind(10.0_f64)
+    .bind(vec![token])
+    .bind(Some(10_i64))
+    .bind(false)
+    .bind(1_i64)
+    .bind(10_i64)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("plan");
+    tx.commit().await.expect("commit");
+    let plan = plan.join("\n");
+    assert!(
+        plan.lines()
+            .any(|l| l.contains("Index Cond") && l.contains("token_id")),
+        "the token is an index condition under the policy: {plan}"
+    );
+    drop_dbs(&created).await;
+}
+
+/// A database shaped like v0.5.5's, migrated through 0020 and holding
+/// promoted, held, replaced and rejected memories, migrates through 0021:
+/// its postings and counts are those the trigger writes for the same rows
+/// written after 0021, nothing is journalled, and `bm25_postings` ranks as
+/// it does over them (ADR-0052 d8, d12).
+#[tokio::test]
+async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 20).await;
+    let upgraded = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(575);
+    rig.seed_chain(&upgraded, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &upgraded, wa).await;
+    lifecycle_rows(&mut rig, &upgraded).await;
+    let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    upgraded
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0021 applies over a v0.5.5 database");
+    let upgraded = upgraded.with_search_probe().await.expect("probe");
+    let journal_after: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut conn)
+        .await
+        .expect("count");
+    assert_eq!(
+        journal_after, journal_before,
+        "the upgrade journals nothing"
+    );
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 21);
+    drop(conn);
+
+    let fresh = fresh_search_store(&created).await;
+    let mut twin = ChainRig::new(575);
+    twin.seed_chain(&fresh, 0).await;
+    lexeme_rows(&mut twin, &fresh, wa).await;
+    lifecycle_rows(&mut twin, &fresh).await;
+    let filled = postings_of(&upgraded, rig.tenant_id).await;
+    assert!(
+        !filled.0.is_empty(),
+        "0021 fills the postings of existing rows"
+    );
+    assert_eq!(
+        filled,
+        postings_of(&fresh, twin.tenant_id).await,
+        "the filled postings and counts are the ones the writes keep"
+    );
+    let list = |store: &PgStore, tenant: Uuid, query: &'static str| {
+        let store = store.clone();
+        async move {
+            store
+                .retrieve(
+                    tenant,
+                    RetrieverKind::Bm25Postings,
+                    &CandidateScope {
+                        promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
+                        kinds: oml_app::types::HIT_KINDS.to_vec(),
+                        own_held: Some(OwnHeldScope {
+                            author_key_ids: vec![Uuid::from_u128(0xE5)],
+                            nodes: vec![wa],
+                        }),
+                    },
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 50,
+                    },
+                )
+                .await
+                .expect("bm25_postings")
+        }
+    };
+    for query in [
+        "price",
+        "the prices of aluminium",
+        "invoice filters",
+        "deploy canary",
+        "billing friday",
+        "AM-7741",
+        "zebra",
+    ] {
+        assert_eq!(
+            list(&upgraded, rig.tenant_id, query).await,
+            list(&fresh, twin.tenant_id, query).await,
             "{query}: the upgraded database ranks as a fresh one"
         );
     }

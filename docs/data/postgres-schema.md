@@ -1359,10 +1359,76 @@ absent, 0020 goes on without it, `did_you_mean` answers `[]`, the default pipeli
 extension. `tenants.search_default` is the tenant's default pipeline by name, `NULL` for the
 deployment's.
 
-A learned sparse leg, or the integer token table the operator chose on 2026-11-05 as the next
-step for text search, would sit beside these columns as a table of its own under the same
-partitioning and row security: nothing here holds the lexical leg's statistics in a shape another
-leg would have to share.
+### search postings (ADR-0052)
+
+*Unreleased: migration 0021 on `feat/token-postings`
+([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md),
+proposed).*
+
+Under row security no text operator reaches an index (`@@`, `%`, `ts_rank` are not leakproof), but
+integer and `uuid` equality are, so 0021 keeps each version's words a second time as integer
+postings whose `token_id = ANY(…)` stays an index condition for the serving role. The
+`bm25-postings` pipeline reads them; `bm25` and the stored lexemes stay, as its fallback and its
+comparison.
+
+```sql
+-- a lexeme's id: the first 8 bytes of SHA-256 over its UTF-8 bytes, a signed big-endian bigint;
+-- computed, never looked up: no table maps a word to an id (oml-pg's token_id is held equal)
+CREATE FUNCTION oml_token_id(t text) RETURNS bigint IMMUTABLE ...;
+CREATE TABLE search_postings (
+    tenant_id   uuid     NOT NULL,   -- the partition key and the policy's column
+    memory_id   uuid     NOT NULL,   -- the version the posting derives from
+    workarea_id uuid     NOT NULL,   -- copied at write
+    token_id    bigint   NOT NULL,   -- kind 1: oml_token_id(lexeme)
+    weight      real     NOT NULL,   -- kind 1: the lexeme's term frequency
+    doc_len     integer  NOT NULL,   -- kind 1: the version's search_len
+    kind        smallint NOT NULL,   -- 1 lexeme term frequency; 2 kept for a learned sparse encoder
+    memory_kind smallint NOT NULL,   -- 1 memory, 2 derived_fact
+    state       smallint NOT NULL    -- 0 held, 1 served (promoted tip, no retirement), 2 off
+) PARTITION BY LIST (tenant_id);     -- search_postings_t_<tenant id, 32 hex>
+-- the served postings, by token then workarea, carrying what a score needs: an index-only read
+CREATE INDEX search_postings_served ON search_postings (kind, token_id, workarea_id)
+    INCLUDE (memory_kind, memory_id, weight, doc_len, tenant_id) WHERE state = 1;
+CREATE INDEX search_postings_memory ON search_postings (memory_id);
+-- the served versions' counts per workarea and memory kind, summed over a recall's readable nodes
+CREATE TABLE search_term_rows (tenant_id, workarea_id, kind, memory_kind, token_id, rows,
+    PRIMARY KEY (tenant_id, workarea_id, kind, memory_kind, token_id));
+CREATE TABLE search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows, total_len,
+    PRIMARY KEY (tenant_id, workarea_id, kind, memory_kind));
+-- each ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the
+-- serving role; the two count tables SET STATISTICS 0 on every column (FR-45)
+CREATE TRIGGER memories_search_postings AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim,
+    search_vector, workarea_id, kind OR DELETE ON memories
+    FOR EACH ROW EXECUTE FUNCTION oml_search_postings_fold();
+```
+
+Only versions of kind `memory` and `derived_fact` that are no retirement version get postings, one
+per lexeme of the stored `search_vector`, written with the version in its own transaction; no text
+is parsed again. Promotion sets their `state` to 1 and adds the version to the counts; supersession,
+demotion, rejection and retirement set it to 2 and take the version back out; a count reaching zero
+deletes its row. A recall reads a token's served postings on its readable workareas from
+`search_postings_served` alone, an index-only scan once vacuum has marked the pages visible, so a
+leaf scope reads its own workareas' postings and not the tenant's; a flip in or out of served adds
+or removes that entry, so it is no heap-only update. Only an erase
+(`status = 'erased'`) or a row's deletion deletes the postings, and with them the counts' share:
+both are plaintext-derived, so ADR-0005 d4's erasure inventory lists them beside the stored
+lexemes. A version whose lexemes, workarea or kind change gives its postings back and takes new
+ones. The trigger function is `SECURITY INVOKER` with `search_path` pinned.
+
+The owner creates each tenant's postings partition in the same transaction as its memories
+partition, first, so the tenant's first write finds it; 0021 creates one for every existing
+tenant, then creates the trigger, then fills every existing version's postings and the served
+versions' counts from the stored lexemes under each tenant's row security. Writes wait for the
+fill, since the trigger's lock on `memories` is held to its end; a batched, resumable fill is
+FR-103.
+
+A recall sums the counts over its readable nodes and memory kinds, adds the caller's own held
+rows (read by the `memories_author` index) when it asked for them, and so knows each word's
+readable document frequency before it reads a posting. A tenant-wide count is never kept: it
+would rank by rows the key cannot read. Frequent words are pruned from the postings read and
+rescored for the candidates the others reach; when every word is pruned the `bm25` scan answers
+(`search.access: "scan"`); [retrieval](../architecture/retrieval.md) has the rule and its
+constants.
 
 ## upload_sessions
 

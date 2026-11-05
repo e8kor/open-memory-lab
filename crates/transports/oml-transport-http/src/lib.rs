@@ -748,6 +748,8 @@ where
                 "terms": result.terms,
                 "fallback": result.fallback.then_some("any_term"),
                 "did_you_mean": result.did_you_mean,
+                "access": result.access.as_str(),
+                "pruned": result.pruned,
             },
         });
         // The budget object is present if and only if max_tokens was sent

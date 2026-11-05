@@ -139,9 +139,10 @@
               "keyword-all",
               "keyword-any",
               "bm25",
-              "bm25-trigram"
+              "bm25-trigram",
+              "bm25-postings"
             ],
-            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
           },
           "match": {
             "type": "string",

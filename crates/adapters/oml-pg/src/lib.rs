@@ -31,7 +31,7 @@ use oml_app::ports::{
     claim_subject,
 };
 use oml_app::search::{
-    Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
+    Access, Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
 };
 use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -46,6 +46,7 @@ use oml_app::types::{
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Connection, Postgres, QueryBuilder, Row, Transaction};
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 /// The committed migrations, embedded at build time. The migrations are
@@ -456,6 +457,12 @@ fn memories_partition(tenant_id: Uuid) -> String {
     format!("memories_t_{}", tenant_id.simple())
 }
 
+/// The partition `search_postings` holds `tenant_id`'s postings in, named as
+/// [`memories_partition`] names the tenant's memories (ADR-0052 d1).
+fn postings_partition(tenant_id: Uuid) -> String {
+    format!("search_postings_t_{}", tenant_id.simple())
+}
+
 /// A partition DDL failure as the port answers it: a lock contest the DDL
 /// lost, a wait past the timeout (`55P03`) or a deadlock the detector broke
 /// by aborting it (`40P01`), is [`StoreError::PartitionLockTimeout`],
@@ -468,7 +475,8 @@ fn partition_error(e: &sqlx::Error) -> StoreError {
 }
 
 /// `tenant_id`'s partition DDL, in one owner transaction under `SET LOCAL
-/// lock_timeout`: the table `LIKE memories INCLUDING ALL`, its `ENABLE` and
+/// lock_timeout`: its `search_postings` partition, fenced alike and attached
+/// first (ADR-0052 d1), then the table `LIKE memories INCLUDING ALL`, its `ENABLE` and
 /// `FORCE ROW LEVEL SECURITY` and its parent's `tenant_isolation` policy,
 /// then `ATTACH PARTITION`, which takes `ShareUpdateExclusiveLock` on the
 /// parent where `CREATE TABLE … PARTITION OF` would take
@@ -483,19 +491,46 @@ fn partition_error(e: &sqlx::Error) -> StoreError {
 /// which is why they are spelled into the DDL, which takes no parameters.
 async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Result<(), sqlx::Error> {
     let partition = memories_partition(tenant_id);
+    let postings = postings_partition(tenant_id);
+    let policy = "USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
+                  WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)";
     let mut tx = owner.begin().await?;
-    for statement in [
-        format!("SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"),
+    sqlx::query(&format!(
+        "SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"
+    ))
+    .persistent(false)
+    .execute(&mut *tx)
+    .await?;
+    // The postings partition first, so the tenant's first write finds it
+    // when its trigger writes postings (ADR-0052 d1). A schema before 0021,
+    // as an upgrade test builds, has no postings table; 0021 then creates
+    // the partition of every tenant it finds.
+    let postings_table: bool =
+        sqlx::query_scalar("SELECT to_regclass('search_postings') IS NOT NULL")
+            .persistent(false)
+            .fetch_one(&mut *tx)
+            .await?;
+    let mut statements = Vec::new();
+    if postings_table {
+        statements.extend([
+            format!("CREATE TABLE {postings} (LIKE search_postings INCLUDING ALL)"),
+            format!("ALTER TABLE {postings} ENABLE ROW LEVEL SECURITY"),
+            format!("ALTER TABLE {postings} FORCE ROW LEVEL SECURITY"),
+            format!("CREATE POLICY tenant_isolation ON {postings} {policy}"),
+            format!(
+                "ALTER TABLE search_postings ATTACH PARTITION {postings} \
+                 FOR VALUES IN ('{tenant_id}')"
+            ),
+        ]);
+    }
+    statements.extend([
         format!("CREATE TABLE {partition} (LIKE memories INCLUDING ALL)"),
         format!("ALTER TABLE {partition} ENABLE ROW LEVEL SECURITY"),
         format!("ALTER TABLE {partition} FORCE ROW LEVEL SECURITY"),
-        format!(
-            "CREATE POLICY tenant_isolation ON {partition} \
-             USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
-             WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)"
-        ),
+        format!("CREATE POLICY tenant_isolation ON {partition} {policy}"),
         format!("ALTER TABLE memories ATTACH PARTITION {partition} FOR VALUES IN ('{tenant_id}')"),
-    ] {
+    ]);
+    for statement in statements {
         sqlx::query(&statement)
             .persistent(false)
             .execute(&mut *tx)
@@ -682,6 +717,193 @@ pub fn bm25_sql() -> String {
     )
 }
 
+/// The forms the `bm25` and `bm25_postings` retrievers read for `$1`: each
+/// kept query word ([`SEARCH_WORDS`]) with its exact form and its English
+/// stem, one row per distinct (word, form), in byte order (ADR-0049 d12;
+/// ADR-0052 d4).
+fn search_forms_sql() -> String {
+    format!(
+        "WITH {SEARCH_WORDS}, \
+         forms AS (SELECT DISTINCT kept.w, f FROM kept \
+                   CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f) \
+         SELECT w, f FROM forms ORDER BY w COLLATE \"C\", f COLLATE \"C\""
+    )
+}
+
+/// The readable counts, one statement (ADR-0052 d5): a first row with no
+/// token, the served versions on the readable nodes `$2` of the memory kinds
+/// `$3` and their summed length; then each token of `$4` with its document
+/// frequency among them. Both sum the per-workarea counts, so they are the
+/// readable rows', never the tenant's.
+const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.rows), 0)::int8 AS n, \
+            COALESCE(sum(c.total_len), 0)::int8 AS len \
+     FROM search_workarea_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     UNION ALL \
+     SELECT c.token_id, sum(c.rows)::int8, 0::int8 \
+     FROM search_term_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
+     GROUP BY c.token_id";
+
+/// The own held rows a recall may rank: the held versions of the keys `$2`
+/// on their nodes `$3` of the kinds `$4`, never a retirement version
+/// (ADR-0025 d4, d5), with their lengths; read by the `memories_author`
+/// index (ADR-0052 d5, open question 7).
+const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
+     WHERE m.tenant_id = $1 AND m.status = 'held' AND m.author_key_id = ANY($2::uuid[]) \
+       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement";
+
+/// Each token of `$3`'s document frequency among the own held rows `$2`,
+/// from their postings by the `(memory_id)` index.
+const POSTINGS_OWN_HELD_DF: &str = "SELECT p.token_id, count(DISTINCT p.memory_id)::int8 AS df \
+     FROM search_postings p \
+     WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1 \
+       AND p.token_id = ANY($3::int8[]) \
+     GROUP BY p.token_id";
+
+/// The BM25 contribution of a posting `p` for the query form `q`, written as
+/// the `bm25` statement writes it (k1 1.2, b 0.75; [`bm25_sql`]), so equal
+/// inputs give equal floats.
+const POSTING_CONTRIBUTION: &str = "q.idf * p.weight::float8 * 2.2 \
+     / (p.weight::float8 + 1.2 * (0.25 + 0.75 * p.doc_len::float8 / $9))";
+
+/// The `bm25_postings` statement (ADR-0052 d4): the postings of the
+/// generating tokens `$10` read by the `(kind, token_id)` index, kept when
+/// served on a readable node `$2` of a memory kind `$3` or one of the own
+/// held rows `$4`; each candidate's partial BM25 score over those tokens;
+/// the best `$11` candidates (all when NULL), ordered as the answer is, by
+/// the `float4` score then id, so a cut at `k` keeps the rows `bm25` keeps,
+/// rescored with every form of
+/// every word, `$5`/`$6`/`$7` (word, token, readable document frequency),
+/// by the `(memory_id)` index, so each returned row's score is its full
+/// BM25 score; under `$12` (`match: all`) only rows holding all `$13` words.
+/// `$8` the readable row count, `$9` their mean length, `$14` `k`. Every
+/// predicate on the postings is a leakproof equality, so the indexes serve
+/// the serving role under row security. Exported so the suite plans the
+/// statement the adapter runs.
+#[must_use]
+pub fn bm25_postings_sql() -> String {
+    format!(
+        "WITH q AS (SELECT q.w, q.token_id, ln(1 + ($8 - q.df + 0.5) / (q.df + 0.5)) AS idf \
+                    FROM unnest($5::text[], $6::int8[], $7::float8[]) AS q(w, token_id, df)), \
+         p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
+               WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
+                 AND p.workarea_id = ANY($2::uuid[]) AND p.state = 1 \
+                 AND p.memory_kind = ANY($3::int2[]) \
+               UNION ALL \
+               SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
+               WHERE p.tenant_id = $1 AND p.memory_id = ANY($4::uuid[]) AND p.kind = 1 \
+                 AND p.token_id = ANY($10::int8[])), \
+         gen AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                 FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, q.w), \
+         top AS (SELECT memory_id FROM gen GROUP BY memory_id \
+                 ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $11), \
+         scored AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                    FROM top JOIN search_postings p ON p.memory_id = top.memory_id \
+                    JOIN q ON q.token_id = p.token_id \
+                    WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($6::int8[]) \
+                    GROUP BY p.memory_id, q.w), \
+         ranked AS (SELECT memory_id, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
+                    FROM scored GROUP BY memory_id) \
+         SELECT r.memory_id AS id, m.body_bytes, r.score::float4 AS score, r.words AS matched \
+         FROM ranked r JOIN memories m ON m.tenant_id = $1 AND m.id = r.memory_id \
+         WHERE NOT $12 OR cardinality(r.words) = $13 \
+         ORDER BY score DESC, id ASC \
+         LIMIT $14"
+    )
+}
+
+/// A lexeme's posting id, as `oml_token_id` computes it in SQL: the first
+/// eight bytes of SHA-256 over its UTF-8 bytes, a signed big-endian integer
+/// (ADR-0052 d2). No table maps a word to an id, so a write assigns
+/// nothing and no shared row holds a tenant's word.
+#[must_use]
+pub fn token_id(lexeme: &str) -> i64 {
+    let digest = Sha256Hash::digest(lexeme.as_bytes()).0;
+    let mut first = [0_u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    i64::from_be_bytes(first)
+}
+
+/// The share of the readable rows above which a form is frequent and
+/// pruned from the postings read (ADR-0052 d6): at 0.1 the external sets
+/// lost at most 0.0005 nDCG@10 (eval/bench/results/prune-sweep.json;
+/// ADR-0052 open question 2).
+pub const FREQUENT_SHARE: f64 = 0.1;
+
+/// The most postings the kept forms may hold among the readable rows; past
+/// it the most frequent kept form is pruned too (ADR-0052 d6): at 10,000 a
+/// universe recall over 99,721 readable rows measured 29.9 ms p95
+/// (bench/scale/REPORT.md; ADR-0052 open question 2).
+pub const POSTING_BUDGET: u64 = 10_000;
+
+/// The candidates rescored with every form after a pruned read, as a
+/// multiple of `k` (ADR-0052 d4 step 5).
+pub const RESCORE_DEPTH: usize = 4;
+
+/// The two constants of ADR-0052 d6 a store prunes by. The lead serves
+/// [`PruneLimits::SERVED`]; the suite names others to prove the laws on a
+/// small fixture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PruneLimits {
+    /// [`FREQUENT_SHARE`]: a form whose readable document frequency is above
+    /// this share of the readable rows is pruned.
+    pub frequent_share: f64,
+    /// [`POSTING_BUDGET`]: the kept forms' summed readable frequencies stay
+    /// at or below it.
+    pub posting_budget: u64,
+}
+
+impl PruneLimits {
+    /// The constants the lead serves.
+    pub const SERVED: Self = Self {
+        frequent_share: FREQUENT_SHARE,
+        posting_budget: POSTING_BUDGET,
+    };
+
+    /// No pruning: every form is read, so the list is `bm25`'s.
+    pub const NONE: Self = Self {
+        frequent_share: f64::INFINITY,
+        posting_budget: u64::MAX,
+    };
+
+    /// The tokens pruned from `forms` (token, readable document frequency)
+    /// over `rows` readable rows: every frequent one, then, while the kept
+    /// ones' frequencies sum above the budget, the most frequent kept one,
+    /// ties by token id. A form no readable row holds is neither kept nor
+    /// pruned. It reads the readable counts alone, so which word is pruned
+    /// depends only on rows the key may read (ADR-0052 d6).
+    #[must_use]
+    pub fn pruned(&self, forms: &[(i64, u64)], rows: u64) -> BTreeSet<i64> {
+        #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+        let bound = self.frequent_share * rows as f64;
+        let mut pruned = BTreeSet::new();
+        let mut kept: BTreeMap<i64, u64> = BTreeMap::new();
+        for &(token, df) in forms {
+            #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+            let frequent = df as f64 > bound;
+            if df == 0 {
+                continue;
+            } else if frequent {
+                pruned.insert(token);
+            } else {
+                kept.insert(token, df);
+            }
+        }
+        while kept.values().sum::<u64>() > self.posting_budget {
+            let Some((&token, _)) = kept.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+            else {
+                break;
+            };
+            kept.remove(&token);
+            pruned.insert(token);
+        }
+        pruned
+    }
+}
+
 /// The `trigram` statement (ADR-0048 S3): `pg_trgm` word similarity of the
 /// query to the normalised text above 0.3, the threshold `SET LOCAL` gives
 /// `<%`. No index serves it: under row security `<%` is not leakproof, so it
@@ -722,6 +944,8 @@ pub struct PgStore {
     /// each migration: the trigram retriever is served only then (ADR-0049
     /// d8). Shared by every clone of the store, as the database is.
     trigram: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The constants `bm25_postings` prunes by (ADR-0052 d6).
+    prune: PruneLimits,
 }
 
 impl PgStore {
@@ -739,6 +963,7 @@ impl PgStore {
             pool,
             owner_url: None,
             trigram: std::sync::Arc::default(),
+            prune: PruneLimits::SERVED,
         }
         .with_search_probe()
         .await
@@ -750,7 +975,17 @@ impl PgStore {
             pool,
             owner_url: None,
             trigram: std::sync::Arc::default(),
+            prune: PruneLimits::SERVED,
         }
+    }
+
+    /// The store pruning `bm25_postings` by `limits` rather than
+    /// [`PruneLimits::SERVED`]; the lead never calls it, the suite does, to
+    /// prove the pruning laws on a small fixture (ADR-0052 d12).
+    #[must_use]
+    pub fn with_prune_limits(mut self, limits: PruneLimits) -> Self {
+        self.prune = limits;
+        self
     }
 
     /// The store with the retrievers its database can run: the trigram
@@ -2883,12 +3118,268 @@ impl PgStore {
     }
 }
 
+/// The candidate scope's binds every search statement takes: the tenant,
+/// the promoted nodes, the kinds, and the own held keys and their nodes
+/// (ADR-0049 d2).
+struct ScopeBinds<'a> {
+    tenant_id: Uuid,
+    nodes: &'a [Uuid],
+    kinds: &'a [&'static str],
+    authors: &'a [Uuid],
+    held_nodes: &'a [Uuid],
+}
+
+/// What the `bm25_postings` retriever read: the query's words, its list,
+/// how, and the words it pruned (ADR-0052 d6, d11).
+struct PostingsRead {
+    terms: Vec<String>,
+    candidates: Vec<Candidate>,
+    access: Access,
+    pruned: Vec<String>,
+}
+
+impl PgStore {
+    /// `bm25`'s scan statement over the scope ([`bm25_sql`]): the fallback
+    /// `bm25_postings` runs when it pruned every form (ADR-0052 d6).
+    async fn bm25_scan(
+        tx: &mut Transaction<'_, Postgres>,
+        scope: &ScopeBinds<'_>,
+        query: RetrievalQuery<'_>,
+    ) -> Result<Vec<Candidate>, StoreError> {
+        sqlx::query(&bm25_sql())
+            .bind(scope.tenant_id)
+            .bind(scope.nodes)
+            .bind(scope.kinds)
+            .bind(scope.authors)
+            .bind(scope.held_nodes)
+            .bind(query.query)
+            .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
+            .bind(query.match_mode == MatchMode::All)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?
+            .iter()
+            .map(candidate_from_row)
+            .collect()
+    }
+
+    /// The `bm25_postings` list (ADR-0052 d4, d5, d6): the readable counts
+    /// of every form, read before any posting; the forms pruned by them;
+    /// then the kept forms' postings, the best candidates rescored with
+    /// every form. Under `match: all` it reads only the rarest word's
+    /// forms and keeps the rows holding every word, pruning nothing. When
+    /// every form present is pruned, `bm25`'s scan answers and says so.
+    async fn bm25_postings(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        scope: &ScopeBinds<'_>,
+        query: RetrievalQuery<'_>,
+    ) -> Result<PostingsRead, StoreError> {
+        let forms: Vec<(String, String)> = sqlx::query_as(&search_forms_sql())
+            .bind(query.query)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+        // The kept words are the forms' words, in byte order, as `bm25`'s
+        // terms statement reads them.
+        let mut terms: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
+        terms.dedup();
+        let empty = |terms: Vec<String>| PostingsRead {
+            terms,
+            candidates: Vec::new(),
+            access: Access::Postings,
+            pruned: Vec::new(),
+        };
+        if forms.is_empty() {
+            return Ok(empty(terms));
+        }
+        let memory_kinds: Vec<i16> = scope
+            .kinds
+            .iter()
+            .filter_map(|k| match *k {
+                "memory" => Some(1_i16),
+                "derived_fact" => Some(2_i16),
+                _ => None,
+            })
+            .collect();
+        let tokens: Vec<i64> = {
+            let mut t: Vec<i64> = forms.iter().map(|(_, f)| token_id(f)).collect();
+            t.sort_unstable();
+            t.dedup();
+            t
+        };
+        // The readable rows: the served versions' counts on the readable
+        // nodes, and the own held rows read by the author index.
+        let counted: Vec<(Option<i64>, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
+            .bind(scope.tenant_id)
+            .bind(scope.nodes)
+            .bind(&memory_kinds)
+            .bind(&tokens)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+        let mut rows = 0_u64;
+        let mut total_len = 0_u64;
+        let mut df: BTreeMap<i64, u64> = tokens.iter().map(|t| (*t, 0)).collect();
+        for (token, n, len) in counted {
+            let n = u64::try_from(n).map_err(backend)?;
+            match token {
+                None => {
+                    rows = n;
+                    total_len = u64::try_from(len).map_err(backend)?;
+                }
+                Some(token) => *df.entry(token).or_default() += n,
+            }
+        }
+        let held: Vec<(Uuid, i32)> = if scope.authors.is_empty() || scope.held_nodes.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_as(POSTINGS_OWN_HELD)
+                .bind(scope.tenant_id)
+                .bind(scope.authors)
+                .bind(scope.held_nodes)
+                .bind(scope.kinds)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(backend)?
+        };
+        rows += held.len() as u64;
+        total_len += held
+            .iter()
+            .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
+            .sum::<u64>();
+        if rows == 0 {
+            return Ok(empty(terms));
+        }
+        let held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
+        if !held_ids.is_empty() {
+            let held_counted: Vec<(i64, i64)> = sqlx::query_as(POSTINGS_OWN_HELD_DF)
+                .bind(scope.tenant_id)
+                .bind(&held_ids)
+                .bind(&tokens)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(backend)?;
+            for (token, n) in held_counted {
+                *df.entry(token).or_default() += u64::try_from(n).map_err(backend)?;
+            }
+        }
+        // Each word's present forms, and the words the query has.
+        let mut words: BTreeMap<&str, Vec<i64>> = BTreeMap::new();
+        for (w, f) in &forms {
+            let present = words.entry(w.as_str()).or_default();
+            let t = token_id(f);
+            if df.get(&t).copied().unwrap_or(0) > 0 && !present.contains(&t) {
+                present.push(t);
+            }
+        }
+        let all = query.match_mode == MatchMode::All;
+        let (generators, depth, pruned_words) = if all {
+            // Every answer holds the rarest word, so its forms generate the
+            // candidates and nothing is pruned (ADR-0052 d4).
+            if words.values().any(Vec::is_empty) {
+                return Ok(empty(terms));
+            }
+            let Some(rarest) = words
+                .values()
+                .min_by_key(|ts| ts.iter().map(|t| df[t]).sum::<u64>())
+            else {
+                return Ok(empty(terms));
+            };
+            if rarest.iter().map(|t| df[t]).sum::<u64>() > self.prune.posting_budget {
+                return Ok(PostingsRead {
+                    terms,
+                    candidates: Self::bm25_scan(tx, scope, query).await?,
+                    access: Access::Scan,
+                    pruned: Vec::new(),
+                });
+            }
+            (rarest.clone(), None, Vec::new())
+        } else {
+            let present: Vec<(i64, u64)> = df.iter().map(|(t, n)| (*t, *n)).collect();
+            let pruned = self.prune.pruned(&present, rows);
+            let kept: Vec<i64> = present
+                .iter()
+                .filter(|(t, n)| *n > 0 && !pruned.contains(t))
+                .map(|(t, _)| *t)
+                .collect();
+            if kept.is_empty() && !pruned.is_empty() {
+                return Ok(PostingsRead {
+                    terms,
+                    candidates: Self::bm25_scan(tx, scope, query).await?,
+                    access: Access::Scan,
+                    pruned: Vec::new(),
+                });
+            }
+            let pruned_words: Vec<String> = words
+                .iter()
+                .filter(|(_, ts)| !ts.is_empty() && ts.iter().all(|t| pruned.contains(t)))
+                .map(|(w, _)| (*w).to_owned())
+                .collect();
+            let depth = if pruned.is_empty() {
+                query.k
+            } else {
+                query.k.saturating_mul(RESCORE_DEPTH)
+            };
+            (kept, Some(depth), pruned_words)
+        };
+        if generators.is_empty() {
+            return Ok(empty(terms));
+        }
+        // Every (word, form) a row may hold, with the form's readable
+        // frequency; a form no readable row holds scores nothing.
+        let mut q_words = Vec::new();
+        let mut q_tokens = Vec::new();
+        let mut q_df = Vec::new();
+        for (w, f) in &forms {
+            let t = token_id(f);
+            let n = df.get(&t).copied().unwrap_or(0);
+            if n > 0 {
+                q_words.push(w.clone());
+                q_tokens.push(t);
+                #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+                q_df.push(n as f64);
+            }
+        }
+        #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+        let (n, avgdl) = (rows as f64, (total_len as f64 / rows as f64).max(1.0));
+        let candidates = sqlx::query(&bm25_postings_sql())
+            .bind(scope.tenant_id)
+            .bind(scope.nodes)
+            .bind(&memory_kinds)
+            .bind(&held_ids)
+            .bind(&q_words)
+            .bind(&q_tokens)
+            .bind(&q_df)
+            .bind(n)
+            .bind(avgdl)
+            .bind(&generators)
+            .bind(depth.map(|d| i64::try_from(d).unwrap_or(i64::MAX)))
+            .bind(all)
+            .bind(i64::try_from(words.len()).unwrap_or(i64::MAX))
+            .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?
+            .iter()
+            .map(candidate_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PostingsRead {
+            terms,
+            candidates,
+            access: Access::Postings,
+            pruned: pruned_words,
+        })
+    }
+}
+
 impl Retriever for PgStore {
     fn retrievers(&self) -> Vec<RetrieverKind> {
         let mut served = vec![
             RetrieverKind::KeywordAll,
             RetrieverKind::KeywordAny,
             RetrieverKind::Bm25,
+            RetrieverKind::Bm25Postings,
         ];
         if self.trigram.load(std::sync::atomic::Ordering::SeqCst) {
             served.push(RetrieverKind::Trigram);
@@ -2921,24 +3412,46 @@ impl Retriever for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // The terms as the retriever reads them: the query's `simple`
-        // lexemes, of the normalised query for bm25 and trigram.
+        // lexemes, of the normalised query for bm25, bm25_postings and
+        // trigram.
+        // `bm25_postings` reads them with its forms, one statement fewer.
         let terms_sql = match kind {
             RetrieverKind::KeywordAll | RetrieverKind::KeywordAny => {
-                "SELECT tsvector_to_array(to_tsvector('simple', $1))".to_owned()
+                Some("SELECT tsvector_to_array(to_tsvector('simple', $1))".to_owned())
             }
-            RetrieverKind::Bm25 | RetrieverKind::Trigram => search_terms_sql(),
+            RetrieverKind::Bm25 | RetrieverKind::Trigram => Some(search_terms_sql()),
+            RetrieverKind::Bm25Postings => None,
         };
-        let terms: Vec<String> = sqlx::query_scalar(&terms_sql)
-            .bind(query.query)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(backend)?;
+        let mut terms: Vec<String> = match terms_sql {
+            Some(sql) => sqlx::query_scalar(&sql)
+                .bind(query.query)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?,
+            None => Vec::new(),
+        };
+        let scoped = ScopeBinds {
+            tenant_id,
+            nodes: &scope.promoted_nodes,
+            kinds: &kinds,
+            authors: &authors,
+            held_nodes: &held_nodes,
+        };
+        let mut access = Access::Scan;
+        let mut pruned = Vec::new();
         let candidates = match kind {
             RetrieverKind::KeywordAll => {
                 self.keyword_all(&mut tx, tenant_id, scope, &kinds, query, &terms)
                     .await?
             }
             RetrieverKind::Trigram if all => Vec::new(),
+            RetrieverKind::Bm25Postings => {
+                let read = self.bm25_postings(&mut tx, &scoped, query).await?;
+                terms = read.terms;
+                access = read.access;
+                pruned = read.pruned;
+                read.candidates
+            }
             RetrieverKind::KeywordAny | RetrieverKind::Bm25 | RetrieverKind::Trigram => {
                 if kind == RetrieverKind::Trigram {
                     sqlx::query("SET LOCAL pg_trgm.word_similarity_threshold = 0.3")
@@ -2972,7 +3485,12 @@ impl Retriever for PgStore {
             }
         };
         tx.commit().await.map_err(backend)?;
-        Ok(Retrieved { terms, candidates })
+        Ok(Retrieved {
+            terms,
+            candidates,
+            access,
+            pruned,
+        })
     }
 
     async fn suggest(

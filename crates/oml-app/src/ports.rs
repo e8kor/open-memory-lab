@@ -1492,11 +1492,12 @@ pub trait RequestObserver: Send + Sync {
     /// The request's verb targets `workarea_id`.
     fn workarea(&self, workarea_id: Uuid);
 
-    /// A recall ran `pipeline`, and `fallback` says whether `match: all`
-    /// fell back to any term (ADR-0049 d4, d5). Telling no one is the
+    /// A recall ran `pipeline`, `fallback` says whether `match: all` fell
+    /// back to any term, and `access` how its lists were read, `postings` or
+    /// `scan` (ADR-0049 d4, d5; ADR-0052 d11). Telling no one is the
     /// default.
-    fn search(&self, pipeline: &'static str, fallback: bool) {
-        let _ = (pipeline, fallback);
+    fn search(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
+        let _ = (pipeline, fallback, access);
     }
 }
 

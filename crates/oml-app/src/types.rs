@@ -1437,6 +1437,12 @@ pub struct RecallResult {
     /// pipeline with a trigram list, when no hit holds every term
     /// (`explain.did_you_mean`; ADR-0049 d6).
     pub did_you_mean: Vec<String>,
+    /// How the pipeline read its lists: `postings` when every list was read
+    /// from postings, else `scan` (`search.access`; ADR-0052 d11).
+    pub access: crate::search::Access,
+    /// The query words whose every form was pruned from the postings read
+    /// (`search.pruned`; ADR-0052 d6, d11).
+    pub pruned: Vec<String>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's

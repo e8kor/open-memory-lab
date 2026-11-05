@@ -136,6 +136,7 @@ from .recall_request_search import RecallRequestSearch
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
 from .recall_search import RecallSearch
+from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .remove_web_email_body import RemoveWebEmailBody
@@ -319,6 +320,7 @@ __all__ = (
     "RecallResponse",
     "RecallResponseHitsItem",
     "RecallSearch",
+    "RecallSearchAccess",
     "RecallSearchMatch",
     "RecallSearchPipeline",
     "RemoveWebEmailBody",

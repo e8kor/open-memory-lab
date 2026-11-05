@@ -1098,10 +1098,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1130,12 +1130,12 @@ export interface components {
             /** @description How many words the query had. */
             of: number;
             /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram")[];
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings")[];
         };
-        /** @description What ran and how the query was read (ADR-0049 d5, d6). */
+        /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1143,6 +1143,13 @@ export interface components {
             fallback: string | null;
             /** @description Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty. */
             did_you_mean: string[];
+            /**
+             * @description postings when every list was read from integer postings by their index; scan when any list scanned the rows in scope, as every pipeline but bm25-postings does, and as bm25-postings does when every query word was pruned (ADR-0052 d6).
+             * @enum {string}
+             */
+            access: "postings" | "scan";
+            /** @description The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11). */
+            pruned: string[];
         };
         SearchSettings: {
             /** @description The pipelines the deployment serves (search.enabled). */
