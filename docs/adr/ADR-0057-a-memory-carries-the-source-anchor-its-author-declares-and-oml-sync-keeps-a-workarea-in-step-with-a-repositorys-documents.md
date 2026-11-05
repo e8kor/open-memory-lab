@@ -1,20 +1,22 @@
 <!--
 id: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents
 tier: engineering
-status: proposed
-answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workarea and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from
+status: accepted
+answers: why source mapping's first slice is its own record beside ADR-0047; what a memory's anchor holds, who declares it, what the server checks and what it never computes; how recall and the listing filter by origin and how a hit shows its anchor and whether its source moved; what `oml sync` reads, how its adapters extract, how claim keys and hashes are derived, how it diffs against a workarea and what each outcome writes; how runs are batched for bulk review and kept idempotent; how cross-document edges are proposed and ratified; how staleness is checked and confirmed; how a moved span, a concurrent supersession and a rollback are handled; what a fragment may name; how each retriever's list is capped before fusion; how ADR-0047's eleven questions are answered and which this slice exercises; what v0.5.8 builds and what waits for code; how OML's own ADRs are loaded and re-synced; the tests, doctor lines and costs; the contract the build lane starts from
 -->
 
 # ADR-0057 — A memory carries the source anchor its author declares, and `oml sync` keeps a workarea in step with a repository's documents
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 for release v0.5.8,
+with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight)
 
-**Release:** planned for v0.5.8 ([releases](../product/releases.md#planned-releases))
+**Release:** v0.5.8 ([releases](../product/releases.md#planned-releases))
 
 **Amends:** ADR-0047 (d3, d12, d15 a, d17, and its open questions, answered here and in its own
 answers table), ADR-0048 (d5: two of S4's filters built ahead of the stage), ADR-0039 (d3, d4:
 one argument on `oml_write`, two on `oml_read`; d10: `oml sync`, `oml anchor`), ADR-0055 (d2: the
-listed item carries the anchor); on its branch, ADR-0056 (claim formats, #63: its question 5,
+listed item carries the anchor); ADR-0025 (d10: a supersession names the claim's latest version, d19);
+ADR-0049 (d13: each retriever's list capped before fusion, d22); on its branch, ADR-0056 (claim formats, #63: its question 5,
 answered in d11); and, on its branch, ADR-0050 (d5: `sources` stay free citations
 beside the one structured anchor)
 
@@ -64,7 +66,7 @@ Occam rule ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d8 and the
 [use-case call map](../engineering/use-case-call-map.md)): every new call traces to a documented
 use case, and a capability is a parameter before it is a tool.
 
-Decided, not built.
+Accepted for build in v0.5.8 on 2026-11-05.
 
 ## Decision
 
@@ -106,7 +108,7 @@ Decided, not built.
     | `uri` | An absolute `https` URL of at most 2,048 characters, no user information, no `#` (the fragment is its own field). |
     | `rev` | With `repo`, required: 40 or 64 lower-case hex digits, a full git object id. With `uri`, optional: 1 to 128 printable ASCII characters without whitespace (a page version or an ETag). |
     | `path` | With `repo`, required; with `uri`, refused. NFC, a relative POSIX path of at most 1,024 UTF-8 bytes: no leading `/`, no `\`, no empty, `.` or `..` segment, no control character. |
-    | `fragment` | Optional. NFC, 1 to 256 characters, no whitespace, control character or `#`. Absent means the whole file or page. |
+    | `fragment` | Optional. NFC, 1 to 256 characters, no whitespace, control character or `#`. Absent means the whole file or page. One that reads as a line span or a page must be a well-formed one (d21). |
     | `hash`, `hasher` | Both or neither. `hash` is `sha256:` and 64 lower-case hex digits; `hasher` is one of a closed set, `oml-md/1` (d7) in v0.5.8, which ADR-0047 d4 extends with `oml-span/1`. |
 
     An anchor without a hash is a citation that staleness can never check (d11): a phone agent
@@ -132,14 +134,15 @@ Decided, not built.
   *Decided by the operator on 2026-11-05.* `anchor` is the version's
   anchor or `null`. A **source check** is a journalled statement that a version's anchored span
   was compared with the repository at a commit: `POST /v1/memories/{artifact_id}/source-check
-  {rev, result, hash?}`, `result` one of `fresh`, `equivalent`, `changed` or `removed`, `hash` the
-  span's current hash. It admits only a promoted, anchored served tip, and only from the
+  {rev, result, hash?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed` or `removed`, `hash` the
+  span's current hash, and, for `moved` alone, the span's new `path` and `fragment` (d18). It admits only a promoted, anchored served tip, and only from the
   version's author key or a dreamer on its workarea; it journals `source.checked`, changes no
   text and no anchor, and moves nothing through review, since it states an observation, as the
   anchor itself does, and is no more verified than the anchor. `oml sync` records one for every
   anchored tip it compares (d8), and `oml sync --check --record` records them without writing a
   memory, for CI. `stale` on a claim item is the version's latest check: `changed` or `removed`,
-  else `null`; the item also carries `source_checked {rev, at}` or `null`. Served versions are
+  else `null`; the item also carries `source_checked {rev, at, result, moved_to}` or `null`, `moved_to` the
+  `{path, fragment}` a `moved` check recorded and otherwise `null`. Served versions are
   the only ones marked, and the mark is computed from the source, so a hit reveals nothing about
   any held row and R3 holds unread. It is the HTTP API and the CLI only; no MCP argument records
   one. Where held versions matter, `oml sync --check` reports `pending` from the key's own rows,
@@ -208,10 +211,12 @@ Decided, not built.
     | Outcome | When | Action |
     |---|---|---|
     | `new` | no held, promoted or demoted version of the key lives in the workarea | `POST /v1/memories` with the claim key, text and anchor |
-    | `changed` | the tip's anchor differs from the item's in `path`, `fragment` or `hash`, or its `plaintext_digest` differs from the item text's, and the change is not `equivalent` | a source check `changed`, then supersede the tip with the item's text and anchor |
+    | `changed` | the tip's anchor differs from the item's in `path`, `fragment` or `hash`, or its `plaintext_digest` differs from the item text's, and the change is not `equivalent`, `moved` or `rollback` | a source check `changed`, then supersede the tip with the item's text and anchor, naming the claim's latest version (d19) |
     | `removed` | a listed claim anchored under the source's path is yielded by no item at this `rev` | a source check `removed`, then supersede with `retirement: true`, the text naming the repository, `rev` and path, the anchor without a hash |
+    | `moved` | the claim's span hash is found, with the same extracted text, at another `path` or `fragment` under the source, and no item yields the claim's own key (d18) | a source check `moved` naming the new `path` and `fragment`: nothing is written and nothing is reviewed |
+    | `rollback` | the item's hash equals the anchor hash of a version of the claim older than its tip that was promoted (d20) | nothing, and the run exits 1; `--allow-rollback` writes it as `changed`, a revert the reviewer judges |
     | `unchanged` | anchor and text digest equal | a source check `fresh` (d5); a newer `rev` with the same hash is not a change |
-| `equivalent` | the hash differs, and the format's `diff` (ADR-0056 d11) finds the change equivalent and the extracted text equal | a source check `equivalent`: nothing is written and the anchor keeps its hash (d11) |
+    | `equivalent` | the hash differs, and the format's `diff` (ADR-0056 d11) finds the change equivalent and the extracted text equal | a source check `equivalent`: nothing is written and the anchor keeps its hash (d11) |
     | `pending` | the claim has a held version | nothing: one held version per claim, so the run never needs the unbuilt revision of a held version (RS-17); the next run after review takes it |
     | `diverged` | the tip has no anchor, or one in another repository | nothing, unless `--adopt`, which supersedes it as `changed`: a general capability for claims written before their source was synced, not used by d14's load |
     | `foreign` | the tip was written by another key | nothing; a writer may supersede only its own tip ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)) |
@@ -237,7 +242,7 @@ Decided, not built.
       plan the run then executes, byte for byte, while the workarea does not change between
       them.
     - **Exit codes:** 0 when every planned write was accepted; 1 when any item was `diverged`,
-      `foreign`, `conflict`, `unreadable` or refused; 2 for a usage error.
+      `foreign`, `conflict`, `rollback`, `unreadable` or refused; 2 for a usage error.
 
 - **d10 — Edges between documents are proposed by a person's dreamer key after the claims promote,
   and ratified by another.** The `adr` adapter reads `**Amends:** ADR-0025 (d10, d12), ADR-0039
@@ -270,8 +275,9 @@ Decided, not built.
   `stale`, `removed` or `untracked`, so CI on the repository can run it after every merge, and
   with `--record` it records d5's source checks. Hits show `stale` (d5).
     - **ADR-0047 question 1, answered a:** no route changes an anchor in place. A span whose
-      extracted text is unchanged while the anchor moved (a renamed file, a moved heading, a
-      changed link) is `changed`, and the run writes a successor with the same text and the new
+      extracted text is unchanged while the anchor moved within the source (a renamed file, a
+      moved heading) is `moved` (d18) and costs no review; one whose text is unchanged while its
+      hash changed (a changed link target) is `changed`, and the run writes a successor with the same text and the new
       anchor; the reviewer sees the text unchanged and the anchor moved, and approves that the
       memory still reads true of its new source. The cost is one review per moved span.
     - **ADR-0056 question 5, answered: no.** A change that the format's `diff` finds equivalent
@@ -412,6 +418,12 @@ Decided, not built.
        `an_unresolved_target_is_reported_and_not_proposed`.
     5. **The load:** `the_adr_load_at_ca61c9e_plans_523_items_and_117_amends_edges`, against a
        fixture of that commit's `docs/adr`.
+    6. **The amendments (d18–d22):** `a_renamed_file_is_moved_and_writes_nothing`,
+       `a_moved_claim_changed_later_is_superseded_at_its_new_location`,
+       `a_supersession_naming_an_older_version_is_version_conflict`,
+       `a_rollback_to_an_earlier_promoted_hash_is_never_written`,
+       `a_malformed_line_span_or_a_page_fragment_is_request_validation`,
+       `no_retriever_contributes_more_candidates_than_its_cap`.
 
 - **d17 — Every new failure has a doctor line.** `oml doctor` names: a server that does not
   accept anchors (before v0.5.8), which `oml sync` also refuses before reading anything; an
@@ -419,6 +431,67 @@ Decided, not built.
   remove from `.git/config`; the public default server without `--allow-public-server` recorded
   for this clone; and, for the key's default workarea, the count of served versions marked
   `stale` and of claim edges waiting for a second key.
+
+- **d18 — A span found by its hash at a new path or fragment is `moved`: a source check records
+  where it went, and nothing goes back through review.** *Added 2026-11-05 from basic-memory's
+  move detection (`indexing/change_detector.py:128-142`).* Before the diff names a claim
+  `removed` and an item `new`, it pairs them when the item's span hash and extracted text equal
+  the claim's anchor hash and text: the claim is `moved`, the item is not `new`. The anchor still
+  states the truth at its own `rev`, which names the commit the author read, so the version is
+  not superseded; the run records a source check `moved` carrying the new `path` and `fragment`,
+  which reads not stale (d5) and which the next run locates the claim by: a listed claim's
+  location is its anchor's, or the `moved_to` of its latest check when that is `moved`. A later
+  change of the moved span is `changed` at its new location, and the successor carries the new
+  anchor and keeps the claim's key, which never changes once written. A move out of the synced
+  source (another directory than `<source>`) is not seen by that run: it reads `removed` and
+  `new`, as before. The cost: a claim key is no longer always a function of its anchor's path,
+  so a moved claim is found by the listing (d4), not by key arithmetic; a span moved and edited
+  in one commit is `removed` plus `new`.
+
+- **d19 — A supersession names the claim's latest version, and anything newer is refused by
+  name.** *Added 2026-11-05 from basic-memory's `expected_checksum`
+  (`mcp/tools/write.py:71-72, 142-148`).* `POST /v1/memories/{artifact_id}/supersede`, `oml_write`
+  with `replaces` and `oml write --replaces` take a required `expected_version`, the ordinal of
+  the claim's latest live version as the caller last read it: the greatest `version` among the
+  claim's held and promoted versions in the workarea, the tip's own when nothing is held. When
+  the claim's latest live version differs, the write is refused with `submission.version_conflict`
+  and `details.current_version`, after the readability check and before the tip check, and
+  nothing is captured. Two sessions of one key that both read version 3 can no longer each leave
+  a held successor for the reviewer to arbitrate: the first captures version 4, the second is
+  refused and re-reads. The residual is the one FR-31 already states for the ordinal: the
+  refusal tells a writer that a version it may not read exists, a count and never content. A
+  rejected or demoted version does not count, so a rejection never blocks the next proposal.
+  The web console's dreamer edit sends the version it rendered. Pre-release (ADR-0060's rule
+  for OML, ADR-0039 d11): the field is required, not defaulted, so no caller supersedes blind.
+
+- **d20 — Sync never writes a rollback.** *Added 2026-11-05 from basic-memory's lineage check
+  (`indexing/note_content_reconciliation.py:93-108`).* An item whose span hash equals the anchor
+  hash of a promoted version of the claim older than its tip is the signature of a stale read
+  (a checkout of an old commit, a `--rev` behind `main`): the outcome is `rollback`, nothing is
+  written, and the run exits 1 naming the earlier version. `--allow-rollback` writes it as
+  `changed` for a deliberate revert, which the reviewer then judges. The check costs nothing
+  beyond the listing the diff already reads, since the sync key authored every version it may
+  supersede (d8 `foreign`) and `own=true` lists them all.
+
+- **d21 — A fragment names a heading, a decision, or a line span; a page waits for a PDF
+  hasher.** *Added 2026-11-05, chunk-level anchors.* Beside d3's rule, a fragment is one of: a
+  heading's slug (d7 `headings`) or an ADR decision handle `dN` (d7 `adr`), free under d3; a line
+  span `L<n>` or `L<n>-L<m>`, 1-based and inclusive, `1 <= n <= m <= 10^7`, for a document a
+  chunker splits by lines because it has no headings; and `page=<n>` for a PDF page, reserved and
+  refused with `request.validation` until a hasher reads PDFs (ADR-0035's attachments). A
+  fragment that starts with `L` and a digit, or with `page=`, and is not well formed is refused
+  naming `/anchor/fragment`. The `lines` adapter (`--adapter lines`) is v0.5.8's generic
+  chunker: blocks of at most 40 lines split at blank lines, keyed `doc/<path>/L<n>-L<m>`; its
+  spans move whenever a line is added above them, so it suits documents that are appended to,
+  and a document with headings should use `headings`.
+
+- **d22 — Each retriever's list is capped before fusion.** *Added 2026-11-05 from Hindsight's
+  per-arm cap (`hindsight_api/engine/search/fusion.py:8-26`); recorded as
+  [ADR-0049](ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md)
+  d13.* The core keeps each list's first `depth` candidates before `fuse` reads it, so no
+  retriever contributes more than any other to the fused pool or the reranker's head, whatever
+  its adapter returns. The anchor filters (d4) sit inside the candidate scope, before this cap,
+  so a filtered recall still never under-returns.
 
 ## Contract sketch
 
@@ -444,7 +517,8 @@ Anchor:
     uri:      { type: string, format: uri, maxLength: 2048, pattern: '^https://[^@#\s]+$' }
     rev:      { type: string, maxLength: 128, description: 'With repo, 40 or 64 lower-case hex.' }
     path:     { type: string, description: 'Relative POSIX path, at most 1,024 UTF-8 bytes; no .. segment.' }
-    fragment: { type: string, minLength: 1, maxLength: 256, pattern: '^[^\s#\x00-\x1f]+$' }
+    fragment: { type: string, minLength: 1, maxLength: 256, pattern: '^[^\s#\x00-\x1f]+$',
+                description: 'A slug, dN, L<n> or L<n>-L<m>; page=<n> reserved (d21).' }
     hash:     { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
     hasher:   { type: string, enum: [oml-md/1] }
 Stale:
@@ -453,13 +527,14 @@ Stale:
   description: The served version's latest source check (ADR-0057 d5); never inferred from a held version.
 ```
 
-**Requests.** `SubmitRequest` and `SupersedeRequest` gain `anchor: Anchor`. `RecallRequest` and
+**Requests.** `SubmitRequest` and `SupersedeRequest` gain `anchor: Anchor`; `SupersedeRequest`
+gains a required `expected_version` (integer, at least 1; d19). `RecallRequest` and
 `GET /v1/memories` gain `anchor_repo` (string, the `repo` grammar) and `anchor_path_prefix`
 (string, at most 1,024 bytes). **Responses.** `MemorySummary`, and so `Memory`, every recall hit,
 the `review next` serve and the `GET /v2/review/held` item, gain `anchor: Anchor | null` and
-`stale: Stale` and `source_checked: {rev, at} | null`. **A route.** `POST
-/v1/memories/{artifact_id}/source-check`, body `{rev, result: fresh | equivalent | changed |
-removed, hash?}`, `Idempotency-Key` required, answering the version's new `stale`; refused with
+`stale: Stale` and `source_checked: {rev, at, result, moved_to: {path, fragment} | null} | null`. **A route.** `POST
+/v1/memories/{artifact_id}/source-check`, body `{rev, result: fresh | equivalent | moved | changed |
+removed, hash?, path?, fragment?}` (`path` required for `moved` and refused otherwise), `Idempotency-Key` required, answering the version's new `stale`; refused with
 `access.author_only` for a writer that did not author the version, `access.not_found` for a
 version the key cannot read, and `request.validation` for a held, unanchored or superseded one.
 It journals `source.checked {artifact_id, rev, result, hash}`. **Journal.** `submission.remember` and `submission.learn` carry `anchor` (the
@@ -471,17 +546,20 @@ free one when the lane starts. **MCP.** `oml_write` gains `anchor` (the schema a
 get mode.
 
 **Refusals.** A malformed anchor or filter: `request.validation`, `details.field` such as
-`/anchor/path`. A scanned finding in it: `submission.scan_veto`. No new code.
+`/anchor/path`. A scanned finding in it: `submission.scan_veto`. A supersession whose
+`expected_version` is not the claim's latest live version: `submission.version_conflict` (409),
+`details.current_version`, the one new code (d19).
 
 **CLI.**
 
 ```text
 oml sync <source> --workarea <workarea>
-         [--adapter adr|headings] [--rev <commit>] [--repo <repo>]
+         [--adapter adr|headings|lines] [--rev <commit>] [--repo <repo>]
          [--dry-run | --check [--record]] [--json] [--max-writes <n>] [--adopt] [--retire-all]
-         [--edges [--ratify]] [--allow-public-server]
+         [--edges [--ratify]] [--allow-public-server] [--allow-rollback]
 oml anchor <path>[#<fragment>] [--rev <commit>] [--repo <repo>]      # prints one Anchor as JSON
 oml write <text> --anchor <json | @file> …                           # beside today's flags
+oml write <text> --replaces <id> --expected-version <n> …            # d19
 oml read --query <q> [--anchor-repo <repo>] [--anchor-path-prefix <prefix>] …
 oml read [--own | --all] [--anchor-repo <repo>] [--anchor-path-prefix <prefix>] …
 ```
@@ -524,7 +602,7 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
   ],
   "edges": [{"from": "adr-0046-summary", "label": "amends", "to": "adr-0009-d1", "state": "waiting"}],
   "summary": {"new": 523, "changed": 0, "removed": 0, "unchanged": 0, "pending": 0,
-              "diverged": 0, "foreign": 0, "conflict": 0, "writes_this_run": 200}
+              "moved": 0, "rollback": 0, "diverged": 0, "foreign": 0, "conflict": 0, "writes_this_run": 200}
 }
 ```
 
@@ -572,4 +650,7 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 | **A server-computed `stale` from the repository** | It is the crawler above. A source check is recorded by the client that holds the checkout. |
 | **`stale` inferred from a held successor** | It tells every reader of a served version that a held row exists, which R3 does not grant; a check recorded from the source says the same thing without it. |
 | **An equivalent change refreshes the anchor's hash** (ADR-0056 question 5) | The anchor is signed and immutable per version; an unreviewed refresh is a silent re-anchor. A check `equivalent` keeps the hit unmarked at no review. |
+| **A moved span superseded with its new anchor** (this record's first reading of question 1) | Every rename sends every claim of the file back through review although nothing it states changed; the anchor names its commit and stays true there, and a source check records where the span went. |
+| **`expected_version` optional, defaulting to the target's** | A caller that omits it supersedes blind, which is the lost update the field exists to refuse; pre-release, the contract can require it. |
+| **The rollback guard on the server** | The server never reads the source (d2), so it cannot tell a stale checkout from a deliberate revert; the sync holds the commit graph and the listing. |
 | **A fourth MCP tool for sync or origin reads** | ADR-0039 d8: an argument on `oml_write` and two on `oml_read` carry it, and sync is a CLI run over a checkout. |
