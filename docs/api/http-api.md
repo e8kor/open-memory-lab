@@ -807,7 +807,8 @@ key's earlier recall answered its question and which did not, at most 20 ids. It
 before the recall runs: a `recall_id` this key did not receive in the last 24 hours, an id that
 recall did not serve it, an id named twice, or a member of another shape is
 `request.validation` naming the field (`/feedback/recall_id`, `/feedback/useful/0`, …), and the
-recall is not run; past 1,000 of the key's explicit labels in a UTC day it is `limit.rate`. A
+recall is not run; past 1,000 feedback members from one key in a UTC day, refused or not, or
+1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
 
 ### Recall telemetry
@@ -828,12 +829,16 @@ words within 2 minutes with nothing used (`requery`), and nothing used after 30 
   same commit. Journalled as `telemetry.settings_set` with the choice and the admin key.
 - `GET /v2/usage/events?limit=&before=` answers `{items, next_before}`, the tenant's events
   of the last 30 days, newest first, each with its labels; `before` is the page before's
-  `next_before`.
+  `next_before`. Each read is journalled as `telemetry.events_read`, with the count, how many
+  carried text and the page's bounds, never a query.
 - `POST /v2/usage/eval` takes `{pipelines}` and replays each recall that kept its text and
   carries feedback, a get or a citation, through each pipeline, under its original key's scope
   as that key reads now, inside the server. It answers `{labelled, skipped_revoked,
-  window_days, pipelines: [{pipeline, queries, success_at_1, success_at_5, ndcg_at_10,
-  recall_at_10}]}`: numbers and counts, never a query, a hit or an id. It records no event.
+  window_days, capped, pipelines: [{pipeline, queries, success_at_1, success_at_5, ndcg_at_10,
+  recall_at_10}]}`: numbers and counts, never a query, a hit or an id. It runs the newest 500
+  labelled recalls at most and stops at 60 seconds, `capped` saying so; it refuses a reranking
+  pipeline with `request.validation` naming `/pipelines`, so it never takes a live recall's
+  reranker slot. It records no recall event, and it is journalled as `telemetry.replayed`.
 
 All four are admin by key role, as `oml usage settings`, `oml usage events` and `oml usage
 eval` call them; every other key role is `access.verb_ceiling`, on every transport, and

@@ -87,8 +87,9 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. system.unavailable with reason telemetry_off where the
-    server records no recall. Since v0.5.7.
+    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
+    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
+    no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -133,8 +134,9 @@ def sync(
 
      Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. system.unavailable with reason telemetry_off where the
-    server records no recall. Since v0.5.7.
+    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
+    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
+    no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -174,8 +176,9 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. system.unavailable with reason telemetry_off where the
-    server records no recall. Since v0.5.7.
+    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
+    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
+    no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -218,8 +221,9 @@ async def asyncio(
 
      Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on
     any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. system.unavailable with reason telemetry_off where the
-    server records no recall. Since v0.5.7.
+    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
+    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
+    no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.

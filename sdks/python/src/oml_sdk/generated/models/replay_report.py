@@ -18,18 +18,23 @@ class ReplayReport:
 
     Attributes:
         labelled (int):
+        capped (bool): The replay stopped short: past 500 labelled recalls the newest 500 ran, or it reached its
+            60-second deadline.
         skipped_revoked (int):
         window_days (int):
         pipelines (list[ReplayReportPipelinesItem]):
     """
 
     labelled: int
+    capped: bool
     skipped_revoked: int
     window_days: int
     pipelines: list[ReplayReportPipelinesItem]
 
     def to_dict(self) -> dict[str, Any]:
         labelled = self.labelled
+
+        capped = self.capped
 
         skipped_revoked = self.skipped_revoked
 
@@ -45,6 +50,7 @@ class ReplayReport:
         field_dict.update(
             {
                 "labelled": labelled,
+                "capped": capped,
                 "skipped_revoked": skipped_revoked,
                 "window_days": window_days,
                 "pipelines": pipelines,
@@ -60,6 +66,8 @@ class ReplayReport:
         d = dict(src_dict)
         labelled = d.pop("labelled")
 
+        capped = d.pop("capped")
+
         skipped_revoked = d.pop("skipped_revoked")
 
         window_days = d.pop("window_days")
@@ -73,6 +81,7 @@ class ReplayReport:
 
         replay_report = cls(
             labelled=labelled,
+            capped=capped,
             skipped_revoked=skipped_revoked,
             window_days=window_days,
             pipelines=pipelines,

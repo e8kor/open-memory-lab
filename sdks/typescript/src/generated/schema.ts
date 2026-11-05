@@ -791,7 +791,7 @@ export interface paths {
         };
         /**
          * The tenant's recalls of the last 30 days, with what their readers did next, newest first.
-         * @description Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.
+         * @description Requires: admin key role (ADR-0054 d2). No agent, writer, reader or dreamer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page's bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.
          */
         get: operations["usageEvents"];
         put?: never;
@@ -813,7 +813,7 @@ export interface paths {
         put?: never;
         /**
          * Replay the tenant's labelled recalls through each named pipeline and answer the scores alone.
-         * @description Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and which carries feedback, a get or a citation is replayed inside the server under its original key's scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a citation 2, a get or a supersession 1, feedback not useful 0. The answer holds numbers and counts, never a query, a hit or an id, and the replay records no event. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
+         * @description Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and which carries feedback, a get or a citation is replayed inside the server under its original key's scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and counts, never a query, a hit or an id; the replay records no recall event and is journalled as telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
          */
         post: operations["usageEval"];
         delete?: never;
@@ -1311,6 +1311,8 @@ export interface components {
         /** @description The real-usage replay's scores, numbers and counts alone (ADR-0054 d11). */
         ReplayReport: {
             labelled: number;
+            /** @description The replay stopped short: past 500 labelled recalls the newest 500 ran, or it reached its 60-second deadline. */
+            capped: boolean;
             skipped_revoked: number;
             window_days: number;
             pipelines: {
@@ -4748,6 +4750,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "labelled": 212,
+                     *       "capped": false,
                      *       "skipped_revoked": 3,
                      *       "window_days": 30,
                      *       "pipelines": [

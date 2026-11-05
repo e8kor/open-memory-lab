@@ -82,9 +82,11 @@ def sync_detailed(
      Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and
     which carries feedback, a get or a citation is replayed inside the server under its original key's
     scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a
-    citation 2, a get or a supersession 1, feedback not useful 0. The answer holds numbers and counts,
-    never a query, a hit or an id, and the replay records no event. Read-shaped POST: no Idempotency-
-    Key. Since v0.5.7.
+    citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled
+    recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming
+    /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and
+    counts, never a query, a hit or an id; the replay records no recall event and is journalled as
+    telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
 
     Args:
         x_request_id (str | Unset):
@@ -127,9 +129,11 @@ def sync(
      Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and
     which carries feedback, a get or a citation is replayed inside the server under its original key's
     scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a
-    citation 2, a get or a supersession 1, feedback not useful 0. The answer holds numbers and counts,
-    never a query, a hit or an id, and the replay records no event. Read-shaped POST: no Idempotency-
-    Key. Since v0.5.7.
+    citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled
+    recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming
+    /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and
+    counts, never a query, a hit or an id; the replay records no recall event and is journalled as
+    telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
 
     Args:
         x_request_id (str | Unset):
@@ -167,9 +171,11 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and
     which carries feedback, a get or a citation is replayed inside the server under its original key's
     scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a
-    citation 2, a get or a supersession 1, feedback not useful 0. The answer holds numbers and counts,
-    never a query, a hit or an id, and the replay records no event. Read-shaped POST: no Idempotency-
-    Key. Since v0.5.7.
+    citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled
+    recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming
+    /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and
+    counts, never a query, a hit or an id; the replay records no recall event and is journalled as
+    telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
 
     Args:
         x_request_id (str | Unset):
@@ -210,9 +216,11 @@ async def asyncio(
      Requires: admin key role (ADR-0054 d11). Each recall of the last 30 days whose text was kept and
     which carries feedback, a get or a citation is replayed inside the server under its original key's
     scope as that key reads now; a revoked key's are skipped and counted. Graded: feedback useful and a
-    citation 2, a get or a supersession 1, feedback not useful 0. The answer holds numbers and counts,
-    never a query, a hit or an id, and the replay records no event. Read-shaped POST: no Idempotency-
-    Key. Since v0.5.7.
+    citation 2, a get or a supersession 1, feedback not useful 0. At most the newest 500 labelled
+    recalls, for at most 60 seconds (capped says so); a reranking pipeline is request.validation naming
+    /pipelines, so the replay never takes a live recall's reranker slot. The answer holds numbers and
+    counts, never a query, a hit or an id; the replay records no recall event and is journalled as
+    telemetry.replayed. Read-shaped POST: no Idempotency-Key. Since v0.5.7.
 
     Args:
         x_request_id (str | Unset):

@@ -1476,19 +1476,28 @@ CREATE TABLE recall_outcomes (         -- what the reader did next
 ) PARTITION BY LIST (tenant_id);
 ```
 
-Each tenant's partition, `recall_events_t_<tenant id hex>` and `recall_outcomes_t_<hex>`, is
-range-partitioned by ISO week of `created_at`, `…_w<YYYYMMDD>` from Monday 00:00 UTC. Every
-partition at both levels has `ENABLE` and `FORCE ROW LEVEL SECURITY` and `tenant_isolation`, and
-the columns holding a reader's words or names keep no statistics. The lead creates a new
-tenant's with its memories partition, and at start and every hour creates each tenant's weeks
-for this week and the next four and detaches and drops each week whose upper bound is more
-than 30 days past, under the owner connection it opens for partition DDL (ADR-0034 d11). The
-serving role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on both and owns neither: it
-inserts, labels, nulls text on opt-out and erase, and every minute deletes rows older than 30
-days from the weeks that remain. Every read filters `created_at > now() - 30 days`.
+Each table is list-partitioned by tenant alone, `recall_events_t_<tenant id hex>` and
+`recall_outcomes_t_<hex>`, each with `ENABLE` and `FORCE ROW LEVEL SECURITY` and
+`tenant_isolation`, and no statistics on the columns holding a reader's words or names. 0022
+creates every existing tenant's; the lead creates a new tenant's with its memories partition,
+and at its start repairs a tenant a lead before 0022 created. No owner DDL runs on a schedule
+(ADR-0034 d4). Both tables carry a `(tenant_id, created_at)` index, which the purge and the
+`no_use` pass read. The serving role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on both and
+owns neither: it inserts, labels, nulls text on opt-out and erase, and every minute deletes rows
+older than 30 days in batches of 5,000, each committed. Every read filters
+`created_at > now() - 30 days`.
+
+The opt-in is the database's rule. `recall_events_query_text_rule`, an owner-owned `BEFORE
+INSERT OR UPDATE OF query_text, created_at` trigger running `oml_telemetry_query_text_rule()`
+(`SECURITY INVOKER`), nulls `query_text` unless the tenant's `telemetry_query_text_since` is set
+and not after the row's `created_at`. It reads the tenant's row `FOR SHARE`, so an opt-out
+committing while a writer's batch is open waits for it and then nulls its text. The serving
+role holds no `TRIGGER` privilege.
+
 `oml_telemetry_erase(tenant, version_ids)`, `SECURITY INVOKER`, granted to the serving role, is
-the rule erase's build calls: it nulls the text of each event that served an erased version,
-removes the version from `hit_ids` and `hit_scores`, and deletes its labels.
+the rule erase's build calls: it nulls the text and zeroes the query digest of each event that
+served an erased version, removes the version from `hit_ids` and `hit_scores`, and deletes its
+labels.
 
 ## upload_sessions
 

@@ -51,8 +51,9 @@ half stays proposed. What changes for someone using OML:
 
 The contract gained members and removed none: the recall answer's `recall_id`, the recall
 body's `feedback`, `/v2/usage/settings`, `/v2/usage/events` and `/v2/usage/eval`, and the event
-type `telemetry.settings_set`. Migration 0022 adds `recall_events`, `recall_outcomes` and
-`tenants.telemetry_query_text_since`.
+types `telemetry.settings_set`, `telemetry.events_read` and `telemetry.replayed`. Migration 0022
+adds `recall_events` and `recall_outcomes`, partitioned by tenant, the trigger that keeps query
+text only by the opt-in, and `tenants.telemetry_query_text_since`.
 
 ## 0.5.6-design
 

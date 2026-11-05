@@ -42,12 +42,17 @@ this section governs.
    opt-in per tenant and journalled. *Not built in v0.5.7*: the confirmed set's table, its
    retention setting and its erase path are a later step (FR-108); until then d11's set is
    rolling.
-2. *Partition count* (question 2): **weekly** partitions, not daily. Each tenant's event tables are
-   range-partitioned by ISO week (Monday 00:00 UTC), so a tenant holds about six partitions per
-   event table rather than 31. A weekly partition outlives the 30 days by up to a week, so the
-   bound is kept by the reads and a purge, as d2's fallback already did: every read filters
-   `created_at > now() - 30 days`, the lead deletes rows older than 30 days in batches under the
-   serving role, and a partition whose last instant is more than 30 days past is dropped.
+2. *Partition count* (question 2): **by tenant alone**, as `memories` is; no partition by time.
+   Settled first as weekly partitions and changed on review the same day, for this reason: a
+   week can be dropped only once its last instant is 30 days past, and by then the minute purge
+   has deleted every row in it, so the drop removes empty tables and saves no deletion, while it
+   costs owner DDL on a schedule (ADR-0034 d4 allows the owner at boot and for a tenant's
+   creation, not on a timer), a `DETACH` that locks the tenant's partition, and a new failure in
+   which every event is dropped once the rotation falls four weeks behind. So each tenant's two
+   partitions are created once, with the tenant, on the owner path ADR-0034 d11 already holds;
+   the serving role deletes rows older than 30 days in bounded batches, each its own
+   transaction, by a `(tenant_id, created_at)` index; and every read filters the same bound.
+   The cost: the retention is paid in row deletions and vacuum, which FR-104 measures.
 3. *An offline annotator* (question 3): deferred. No model grades a tenant's queries in v0.5.7.
 4. *Usage with the reranker* (question 4): measured later, with the ranking half.
 5. *The starting constants* (question 5): placeholders, set by d10's replay. The measurement
@@ -62,7 +67,7 @@ this section governs.
   `oml_recall_events_total{outcome}` (`written`, `dropped_queue_full`, `dropped_store_error`,
   `dropped_no_partition`), `oml_recall_labels_dropped_total{reason}` (`rate_limited`,
   `queue_full`, `store_error`), `oml_telemetry_queue_depth`, `oml_labeller_lag_seconds`,
-  `oml_telemetry_partitions_missing`, `oml_telemetry_purge_overdue`,
+  `oml_telemetry_purge_overdue`,
   `oml_memories_unrecalled{promoted_for}`, `oml_remember_duplicates_total{relation}` (`same_text`,
   `none`), `oml_review_wait_seconds{verdict}` and `oml_web_exchanges_failed_total{provider,
   reason}`; and `oml_reranks_total` as before. The remember side counts what main can see: an
@@ -78,29 +83,33 @@ this section governs.
   The dashboard is committed as `docs/operations/dashboards/oml-quality.json`, beside the
   observability page; the operator imports it, and the chart's provisioning is *not built*.
 - **d2.** The tables are `recall_events` and `recall_outcomes`, migration 0022, list-partitioned by
-  tenant and each tenant's partition range-partitioned by week; every partition at both levels
-  has `ENABLE` and `FORCE ROW LEVEL SECURITY` and the `tenant_isolation` policy. `usage_applied`
-  and `interleaved` belong to the ranking half and are not created. `pipeline` and `access` are
-  text checked against their closed spellings, not codes, so a pipeline another branch adds
-  needs no code table. A recall-level label
-  (`requery`, `no_use`) has no `artifact_id`. **The rotation is the lead's**, not an owner
-  timer's: the lead already opens the owner's URL for a tenant's partition DDL (ADR-0034 d11),
-  and rotating is that DDL, so at start and every hour it creates each tenant's partitions for
-  this week and the next four and drops those past the 30 days, under the owner's connection,
-  opened for the rotation and closed after it; a new tenant's partitions are created with its
-  memories partition. `oml admin telemetry rotate` is therefore not a verb. The serving role
-  holds `SELECT`, `INSERT`, `UPDATE` (for d3's nulling and d4's erase) and `DELETE` (for the
-  purge) on both tables and owns neither.
+  tenant alone (question 2); every partition has `ENABLE` and `FORCE ROW LEVEL SECURITY` and the
+  `tenant_isolation` policy, and is created with its tenant by the owner path of ADR-0034 d11,
+  or, for a tenant a lead before 0022 created, at the lead's next start; no owner connection
+  opens on a schedule, so ADR-0034 d4 holds as written. `usage_applied` and `interleaved` belong
+  to the ranking half and are not created. `pipeline` and `access` are text checked against
+  their closed spellings, not codes, so a pipeline another branch adds needs no code table. A
+  recall-level label (`requery`, `no_use`) has no `artifact_id`. The serving role holds
+  `SELECT`, `INSERT`, `UPDATE` (for d3's nulling and d4's erase) and `DELETE` (for the purge) on
+  both tables and owns neither. Every minute the lead's pass first records whether a tenant
+  holds a row past the 30 days and the pass's minute (`oml_telemetry_purge_overdue`, the purge's
+  real lag), then deletes such rows in batches of 5,000, each committed. A tenant admin reading
+  the events is journalled as `telemetry.events_read`, with the count, how many carried text
+  and the page's bounds, never a query, as an admin read of a memory is (ADR-0045 d21).
 - **d3.** The setting is journalled as `telemetry.settings_set` and folded into
   `tenants.telemetry_query_text_since`, the instant it was turned on, `NULL` when off. The text
-  is kept only for an event created at or after that instant, a rule the insert applies in SQL,
-  so an event queued before the switch never stores its text. Turning it off nulls the text of
+  is kept only for an event created at or after that instant, and the rule is the database's:
+  an owner-owned `BEFORE INSERT OR UPDATE` trigger on `recall_events`, `SECURITY INVOKER`, nulls
+  any other text, whichever statement of the serving role writes it, and the serving role holds
+  no `TRIGGER` privilege to disable it. The trigger reads the tenant's row `FOR SHARE`, so an
+  opt-out committing while a writer's batch is open waits for the batch and then nulls its text,
+  and a batch that starts after the opt-out reads it. Turning it off nulls the text of
   the tenant's events in the same commit as the fold, not in the background. The routes are
   `GET /v2/usage/settings` and `POST /v2/usage/settings`, and the CLI verb is `oml usage
   settings [--query-text on|off]`.
 - **d4.** Erase is not built (ADR-0052 d7), so the rule is built as the function its build calls:
   `oml_telemetry_erase(tenant, version_ids)` nulls the query text of every event that served an
-  erased version, removes the version from `hit_ids` and `hit_scores`, and deletes its labels,
+  erased version, zeroes its query digest (a short query's digest inverts by word list), removes the version from `hit_ids` and `hit_scores`, and deletes its labels,
   under the tenant's row security. ADR-0005 d4's inventory gains the rows of d4, less the two the
   ranking half adds.
 - **d5.** The labeller does not read the journal: after a get by id, a write citing
@@ -111,12 +120,24 @@ this section governs.
   inferred labels past 1,000 a UTC day are dropped and counted
   (`oml_recall_labels_dropped_total{reason="rate_limited"}`), since no credit exists yet to
   withhold.
-- **d6.** The rate limits: at most 20 ids per `feedback`; a key's explicit labels past 1,000 a UTC
-  day answer `limit.rate`, and the read is not run. A `recall_id` the writer has not yet stored is
-  looked up again after the queue is flushed once, so feedback sent right after its recall is
-  accepted; on a deployment of several replicas, feedback reaching another replica within the
-  writer's second is refused `request.validation`, a limit of the replicas a lead serves today
-  (none).
+- **d6.** The rate limits: at most 20 ids per `feedback`; a key's feedback members checked in a
+  UTC day, refused or not, past 1,000 answer `limit.rate` before any lookup, so made-up recall
+  ids cost nothing past the cap; and a key's stored explicit labels past 1,000 a UTC day answer
+  the same. A member names only a `recall_id` this key made, which another key's or another
+  tenant's id is refused as. A `recall_id` the writer has not yet stored is looked up again after
+  the queue is flushed once, and that flush never waits for queue room: when the queue is full,
+  the member is refused as unknown rather than holding the read. On a deployment of several
+  replicas, feedback reaching another replica within the writer's second is refused
+  `request.validation`, a limit of the replicas a lead serves today (none).
+- **d11.** The replay is `POST /v2/usage/eval` and `oml usage eval --pipelines a,b`. It runs the
+  newest 500 labelled recalls at most and stops at 60 seconds, saying so in `capped`; it refuses
+  a reranking pipeline, so it never takes a live recall's reranker slot; and it is journalled as
+  `telemetry.replayed` with the pipelines and the counts. **How it scopes as each key:** it
+  reads each original key's record again, skips a revoked or vanished key's recalls and counts
+  them, and runs the recall as that key's caller with the grants and denials the key holds now,
+  no own held rows and no text, inside the lead; it never presents or stores the key's secret,
+  and the answer holds numbers alone. It writes no event and no label of its own. The
+  `served-replay` suite of `eval/bench/` and the first committed run are *not built*.
 - **d11.** The replay is `POST /v2/usage/eval` and `oml usage eval --pipelines a,b`, as decided.
   It writes no event and no label of its own. The `served-replay` suite of `eval/bench/` and the
   first committed run are *not built*.
@@ -128,18 +149,22 @@ this section governs.
   `no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport`,
   `no_tenant_reads_another_tenants_recall_events_and_the_probe_finds_a_leak_without_the_fence`,
   `query_text_is_null_unless_the_tenant_opted_in`,
-  `no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied_and_dropped`,
+  `no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_the_lag`,
+  `an_opt_out_committing_during_a_batch_keeps_that_batchs_text_out`,
+  `feedback_is_capped_per_key_and_another_tenants_key_cannot_label_this_tenants_recall`,
+  `an_admin_reading_recall_events_or_replaying_them_is_journalled`,
   `an_erased_version_leaves_no_text_no_hit_and_no_label_in_the_telemetry`,
   `every_quality_metric_label_is_from_its_declared_set`,
   `a_replay_scores_the_labelled_queries_and_its_answer_holds_no_text_and_no_id` and
-  `a_get_a_citation_and_a_second_recall_in_other_words_label_the_keys_recall`. The fence and
-  the opt-in laws carry their control in the test, the same probe run against a broken clause;
+  `a_get_a_citation_and_a_second_recall_in_other_words_label_the_keys_recall`. The fence law
+  carries its control in the test, the same probe run against a broken clause; the opt-in law
+  writes text as the serving role, by INSERT and UPDATE, and finds none stored; the MCP probes
+  call `oml_read` in every mode and `oml_workarea` with real arguments;
   the admin check, the insert's opt-in rule and the feedback's key check were each shown red
   by hand against a broken clause before the change was kept. The event write's cost on a
   recall was measured as negligible on a debug build (FR-104 stays open for the scale lane). Doctor
   reads the telemetry's health from the metrics listener: events dropped above 1% of recalls,
-  the queue's depth above half its bound, a tenant missing this week's or next week's partition,
-  rows past the 30 days not yet purged, and the labeller's lag above 10 minutes.
+  the queue's depth above half its bound, rows past the 30 days not yet purged, and the labeller's lag above 10 minutes.
 
 ## Context
 

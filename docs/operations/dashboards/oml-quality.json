@@ -584,8 +584,8 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "Queue, lag, partitions and purge",
-      "description": "The writer's queue (bound 10,000), seconds since the labeller's last pass, tenants missing a partition for this week or the next, and tenants or weeks past the 30 days not yet purged.",
+      "title": "Queue, lag and purge",
+      "description": "The writer's queue (bound 10,000), seconds since the labeller's last pass, and tenants whose events past the 30 days were found at a pass's start: the purge is behind.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -621,15 +621,6 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "C",
-          "expr": "sum(oml_telemetry_partitions_missing)",
-          "legendFormat": "partitions missing"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "refId": "D",
           "expr": "sum(oml_telemetry_purge_overdue)",
           "legendFormat": "purge overdue"
         }
