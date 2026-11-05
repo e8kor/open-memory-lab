@@ -115,7 +115,11 @@ fn keyword_ranked<'a>(
         .collect();
     hit_order(&mut candidates, |c| (c.score, c.memory_id));
     candidates.truncate(query.k);
-    Retrieved { terms, candidates }
+    Retrieved {
+        terms,
+        candidates,
+        ..Retrieved::default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1794,7 +1798,7 @@ impl Retriever for MemStore {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Retrieved {
                 terms: words(query.query).into_iter().collect(),
-                candidates: Vec::new(),
+                ..Retrieved::default()
             });
         };
         let state = tenant.lock().expect("tenant lock");

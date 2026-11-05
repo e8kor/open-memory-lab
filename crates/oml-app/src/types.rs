@@ -1486,6 +1486,12 @@ pub struct RecallResult {
     /// How many of the first `k` candidates the floor withheld; `0` when no
     /// floor applied (ADR-0053 d6).
     pub below_floor: usize,
+    /// How the pipeline read its lists: `postings` when every list was read
+    /// from postings, else `scan` (`search.access`; ADR-0052 d11).
+    pub access: crate::search::Access,
+    /// The query words whose every form was pruned from the postings read
+    /// (`search.pruned`; ADR-0052 d6, d11).
+    pub pruned: Vec<String>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's

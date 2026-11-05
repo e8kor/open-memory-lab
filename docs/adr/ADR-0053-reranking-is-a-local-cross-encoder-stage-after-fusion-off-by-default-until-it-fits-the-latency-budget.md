@@ -367,3 +367,8 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   floor against the query's own best `bm25` evidence (FR-89).
 - Whether reranking `bm25-trigram`'s fused list helps misspellings, which a cross-encoder reads
   as other words.
+- Whether a reranking pipeline should sit on `bm25-postings` (ADR-0052), the default since it
+  landed, rather than on `bm25`'s scan. `bm25-rerank` reads `bm25`'s list, so its first stage
+  costs what `bm25` costs at scale; a `bm25-postings-rerank` would be a sixth closed name with its
+  own gate and its own measurement on the recall eval and the public sets, which this record does
+  not make.

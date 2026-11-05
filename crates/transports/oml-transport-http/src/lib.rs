@@ -463,6 +463,10 @@ where
                         },
                     })
                 }),
+                // No recall counts: they are every tenant's traffic, and
+                // this probe answers anyone; they are the metrics
+                // listener's, oml_recalls_total (ADR-0042 d11; ADR-0052
+                // d12).
             },
         });
         let status = if ready {
@@ -773,6 +777,8 @@ where
                 "rerank_reason": result.rerank.reason(),
                 "floor": result.floor.map(relevance),
                 "below_floor": result.below_floor,
+                "access": result.access.as_str(),
+                "pruned": result.pruned,
             },
         });
         // The budget object is present if and only if max_tokens was sent

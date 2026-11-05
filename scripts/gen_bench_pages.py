@@ -25,7 +25,7 @@ SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "resu
 OUT = ROOT / "docs" / "api" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
-SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-rerank"]
+SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank"]
 SUITE_TITLES = {
     "recall-synthetic": "Synthetic recall set",
     "beir-scifact": "BEIR SciFact",
@@ -34,20 +34,25 @@ SUITE_TITLES = {
     "locomo": "LoCoMo",
 }
 SUITE_ORDER = ["recall-synthetic", "beir-scifact", "beir-nfcorpus", "locomo", "beir-scifact-x10"]
-QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@100", "R@100"),
+QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@20", "R@20"),
+           ("recall@100", "R@100"),
            ("mrr@10", "RR@10"), ("success@1", "S@1"), ("success@5", "S@5"),
            ("zero_result_rate", "zero")]
 LATENCY_LINE_MS = 50
 
 
 CEILING = ("**The latency ceiling.** Under row security no text index serves a recall: `@@`, "
-           "`%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline reads the "
+           "`%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but "
+           "`bm25-postings` reads the "
            "stored lexemes of every row the key may read, and its cost grows with those rows. "
            "Storing the lexemes made a row several times cheaper, not free: the scale lane "
            "measured an every-word match over a stored `simple` vector past 50 ms near 70,000 "
            "readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads "
            "more per row than that match, so on abstract-length text it crosses the line far "
-           "sooner, as the tables show. Latency at scale is not solved by stored lexemes.\n")
+           "sooner, as the tables show. Latency at scale is not solved by stored lexemes. "
+           "`bm25-postings` (ADR-0052) reads integer postings, which row security lets an "
+           "index serve, so its cost follows the postings it reads: 25.5 ms p95 at 99,721 "
+           "readable rows against `bm25`'s 485 ms (`bench/scale/REPORT.md`).\n")
 
 
 def load_results():
@@ -75,7 +80,8 @@ def default_pipeline():
     m = re.search(r"DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::(\w+);",
                   DEFAULT_SOURCE.read_text())
     names = {"KeywordAll": "keyword-all", "KeywordAny": "keyword-any", "Bm25": "bm25",
-             "Bm25Trigram": "bm25-trigram", "Bm25Rerank": "bm25-rerank"}
+             "Bm25Trigram": "bm25-trigram", "Bm25Postings": "bm25-postings",
+             "Bm25Rerank": "bm25-rerank"}
     return names.get(m.group(1), m.group(1)) if m else "unknown"
 
 

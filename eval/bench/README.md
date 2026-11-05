@@ -25,6 +25,7 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 | `export.py` | writes every result in the common schema below, and converts `eval/recall`'s served results too |
 | `rerank_probe.py` | reorders a served run's first-stage lists offline with each cross-encoder through onnxruntime, at several depths, to choose a model and a depth before one is served (ADR-0053 d4) |
 | `rerank_floor.py` | sweeps a relevance floor over runs made with none: unanswerable queries emptied against answerable ones lost, and LoCoMo's categories (ADR-0053 d6) |
+| `prune_sweep.py` | asks every query through the PostgreSQL adapter's own `retrieve` (`crates/adapters/oml-pg/examples/search_scale.rs`) for `bm25` and for `bm25-postings` at several pairs of prune constants, and scores each list: the run that set ADR-0052's constants (`results/prune-sweep.json`) |
 | `requirements.txt` | the Python packages, pinned |
 | `results/<suite>/<method>.json` | the committed results, one file per suite and method, schema `oml-bench/1` |
 | `results/tables.md`, `results/load-*.json` | the report tables and each dataset's load log |
@@ -72,7 +73,7 @@ at once. The raw rows record each recall's `rerank` outcome and each hit's relev
 ## What is measured
 
 Each query is asked once per pipeline (`search`: `keyword-all`, `keyword-any`, `bm25`,
-`bm25-trigram`), with `k` 100 and no `max_tokens`, one query at a time so the latency is a
+`bm25-trigram`, `bm25-postings`), with `k` 100 and no `max_tokens`, one query at a time so the latency is a
 single client's. From that one ranked list: **nDCG@10**, **R@10**, **R@100**, **RR@10** (MRR
 cut at 10), **Success@1** and **Success@5**, each the ir_measures measure of that name. A
 query whose recall served nothing scores 0 on every measure; pytrec_eval alone would drop it

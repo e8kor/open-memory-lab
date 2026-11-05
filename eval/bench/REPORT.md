@@ -26,6 +26,65 @@ nDCG@10, then the median and p95 latency per query at `k` 100, one client:
 | offline BM25 (bm25s, k1 0.9, b 0.4) | 0.837 | 0.676 | 0.318 | 0.468 |
 | BEIR BM25, published | | 0.665 | 0.325 | |
 
+## Integer postings: `bm25-postings` (ADR-0052)
+
+Measured 2026-11-05 on a release build of this branch (`feat/token-postings`), `bm25` and
+`bm25-postings` asked one after the other through `oml_read` against the same loaded corpus,
+PostgreSQL 17.9, on the same host shared with other build lanes (load average 10 to 29 during
+the runs, so the latencies are an upper bound for one client). `bm25-postings` reads `bm25`'s
+score from integer postings that row security lets an index serve, leaves out of what it reads the
+query forms held by more than 10% of the readable rows (`FREQUENT_SHARE` 0.1) and then the most
+frequent kept form while the kept ones sum above 10,000 postings (`POSTING_BUDGET`), and rescores
+the best `4 × k` candidates with every form.
+
+| suite | nDCG@10 bm25 / postings | R@100 bm25 / postings | p50 ms bm25 / postings | p95 ms bm25 / postings |
+|---|---|---|---|---|
+| synthetic (200) | 0.874 / 0.874 | 0.930 / 0.930 | 12.4 / 9.3 | 18.6 / 13.0 |
+| SciFact (5,183) | 0.6851 / 0.6851 | 0.928 / 0.928 | 100 / 49.8 | 174 / 91.9 |
+| NFCorpus (3,633) | 0.3214 / 0.3209 | 0.247 / 0.245 | 65.6 / 35.6 | 89.3 / 63.7 |
+| LoCoMo (5,882, categories 1-4) | 0.5033 / 0.5030 | 0.813 / 0.767 | 25.6 / 14.5 | 36.9 / 24.2 |
+
+- **nDCG@10 moves by at most 0.0005**, within ADR-0052 d9's 0.005 on every set. The recall eval's
+  gate passes with `bm25`'s own numbers (success@1 0.826, success@5 0.934;
+  `eval/recall/results/served_bm25_postings.json`).
+- **What pruning costs is the tail.** LoCoMo's R@100 falls from 0.813 to 0.767: a turn that
+  holds only words frequent in its conversation (the speakers' names are) is no longer a
+  candidate. The top ten barely move; a recall that pages past the first hundred loses
+  some of those turns.
+- **About half the latency** at these sizes, through the whole served path; the scale lane
+  (`bench/scale/REPORT.md`) measures the part that grows with the rows a key reads.
+- **How the constants were chosen.** `prune_sweep.py` asked every query through the adapter's
+  `retrieve` at nine pairs of constants (`results/prune-sweep.json`). On the four sets a share of
+  0.1 cost at most 0.0005 nDCG@10 and 0.05 cost 0.0019 (NFCorpus); the budget did not bind below
+  6,000 rows. The budget was set on the scale lane, where it decides the universe scope's p95.
+
+### Where the candidates come from, and the LoCoMo tail (amended 2026-11-05)
+
+`bm25-postings` takes its candidates from the postings of the query forms it reads; rescoring the
+best `4 × k` with every form reorders those candidates and adds none. The first rule left out
+every form held by more than 10% of the readable rows whatever the budget, so a row holding only
+such forms was never a candidate. LoCoMo shows it: each query reads one conversation of about 590
+turns, where most query words are frequent (99% of queries had a word pruned), and R@100 fell from
+0.813 to 0.767 while the top ten barely moved. The rule now prunes only once the query's readable
+postings pass `POSTING_BUDGET`; below it every form is read and the list is `bm25`'s. Served, k
+100, the same build for both pipelines, before (`1c57c49`) and after (`ac57cd8`):
+
+| suite | R@20 bm25 | R@20 postings before → after | R@100 postings before → after | nDCG@10 postings before → after | p95 ms postings before → after |
+|---|---:|---|---|---|---|
+| SciFact | 0.8656 | 0.8656 → 0.8656 | 0.928 → 0.928 | 0.6851 → 0.6851 | 72.0 → 66.1 |
+| NFCorpus | 0.1840 | 0.1836 → 0.1840 | 0.245 → 0.248 | 0.3203 → 0.3208 | 62.7 → 53.0 |
+| LoCoMo | 0.6971 | 0.6935 → 0.6971 | 0.767 → 0.813 | 0.5029 → 0.5034 | 29.9 → 37.9 |
+
+After the change all three lists equal `bm25`'s on every measure. A review then found that
+pruning by form, not by word, could drop a stem while keeping the word's exact form, losing rows
+with `search.pruned` empty; words are now pruned whole (`66979b4`). Re-measured on that build
+(load average 5): SciFact, NFCorpus and LoCoMo again equal `bm25` on nDCG@10, R@20 (0.8656 /
+0.1839 / 0.6968) and R@100 (0.928 / 0.247 / 0.813), at p95 65.9 / 54.8 / 37.1 ms against
+`bm25`'s 117 / 83.8 / 39.3. R@20 is what a reranker reading
+the first 10 to 20 hits sees; it had lost 0.0027 on LoCoMo and 0.0004 on NFCorpus. Raw numbers:
+`results/budget-first.json`; the scale lane's latency for the same rule is in
+`bench/scale/REPORT.md`.
+
 ## Latency at the size an agent asks, and at scale
 
 `bm25`, p50 / p95 per query, one client:

@@ -1098,10 +1098,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-rerank";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1130,16 +1130,16 @@ export interface components {
             /** @description How many words the query had. */
             of: number;
             /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram")[];
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings")[];
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
             rank_before?: number | null;
         };
-        /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7). */
+        /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-rerank";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1147,6 +1147,13 @@ export interface components {
             fallback: string | null;
             /** @description Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty. */
             did_you_mean: string[];
+            /**
+             * @description postings when every list was read from integer postings by their index; scan when any list scanned the rows in scope, as every pipeline but bm25-postings does, and as bm25-postings does when every query word was pruned (ADR-0052 d6).
+             * @enum {string}
+             */
+            access: "postings" | "scan";
+            /** @description The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11). */
+            pruned: string[];
             /** @description applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does not rerank or found nothing. */
             rerank: components["schemas"]["RerankOutcome"] | null;
             /** @description Why the rerank was skipped; null otherwise. */
@@ -1175,6 +1182,22 @@ export interface components {
             tenant_default: string | null;
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
+            postings?: components["schemas"]["PostingsHealth"];
+        };
+        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings; absent from the answer to POST /v2/search/default. */
+        PostingsHealth: {
+            /** @description The tenant's postings partition exists. */
+            partition: boolean;
+            /** @description Memory versions that should have postings and have none: the fill incomplete. */
+            unfilled: number;
+            /** @description Served memories with no served posting, which bm25-postings cannot find. */
+            served_behind: number;
+            /** @description Per-workarea counts that disagree with the served memories. */
+            workarea_drift: number;
+            /** @description Sampled word counts that disagree with the served postings, or are missing. */
+            term_drift: number;
+            /** @description How many word counts were sampled. */
+            terms_checked: number;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.

@@ -26,7 +26,7 @@ class RecallResponse:
             order declared in docs/architecture/retrieval.md (ADR-0025 d8).
         hits (list[RecallResponseHitsItem]):
         query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
-        search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7).
+        search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
         budget (RecallBudget | Unset): How the max_tokens cut was applied (docs/architecture/retrieval.md, Token
             budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the
             90-token hit is not, because the cut is a strict rank prefix. Example: {'max_tokens': 500, 'counter': 'oml-

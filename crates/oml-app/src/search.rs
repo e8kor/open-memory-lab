@@ -40,6 +40,12 @@ pub enum RetrieverKind {
     /// Trigram word similarity of the normalised text, for misspellings and
     /// fragments (ADR-0048 S3).
     Trigram,
+    /// `Bm25`'s score read from integer postings that row security lets an
+    /// index serve, with the readable rows' counts kept per workarea; a word
+    /// frequent among the readable rows is pruned from the postings read and
+    /// still scored for the rows the others reach, and a query of only such
+    /// words is answered by `Bm25`'s scan (ADR-0052 d4, d6).
+    Bm25Postings,
 }
 
 impl RetrieverKind {
@@ -51,6 +57,31 @@ impl RetrieverKind {
             Self::KeywordAny => "keyword_any",
             Self::Bm25 => "bm25",
             Self::Trigram => "trigram",
+            Self::Bm25Postings => "bm25_postings",
+        }
+    }
+}
+
+/// How a retriever read its list (ADR-0052 d6, d9): from the postings an
+/// index serves, or by a scan of the scope's stored lexemes, which every
+/// retriever but `Bm25Postings` always runs and which `Bm25Postings` runs
+/// when every word of the query is pruned.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Access {
+    /// Read from the postings by their index.
+    Postings,
+    /// A scan of every row in the scope.
+    #[default]
+    Scan,
+}
+
+impl Access {
+    /// The name the answer's `search.access` and the request line use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Postings => "postings",
+            Self::Scan => "scan",
         }
     }
 }
@@ -95,6 +126,10 @@ pub enum Pipeline {
     /// `bm25-trigram`: `bm25` fused with trigram similarity by reciprocal
     /// rank (S3).
     Bm25Trigram,
+    /// `bm25-postings`: `bm25`'s ranking read from integer postings, with
+    /// frequent words pruned and the scan as the named fallback (ADR-0052
+    /// d9).
+    Bm25Postings,
     /// `bm25-rerank`: `bm25`'s list, its head reordered by a local
     /// cross-encoder (ADR-0048 S6; ADR-0053 d1).
     Bm25Rerank,
@@ -102,11 +137,12 @@ pub enum Pipeline {
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
         Self::Bm25Trigram,
+        Self::Bm25Postings,
         Self::Bm25Rerank,
     ];
 
@@ -118,6 +154,7 @@ impl Pipeline {
             Self::KeywordAny => "keyword-any",
             Self::Bm25 => "bm25",
             Self::Bm25Trigram => "bm25-trigram",
+            Self::Bm25Postings => "bm25-postings",
             Self::Bm25Rerank => "bm25-rerank",
         }
     }
@@ -137,6 +174,7 @@ impl Pipeline {
             Self::KeywordAny => &[RetrieverKind::KeywordAny],
             Self::Bm25 | Self::Bm25Rerank => &[RetrieverKind::Bm25],
             Self::Bm25Trigram => &[RetrieverKind::Bm25, RetrieverKind::Trigram],
+            Self::Bm25Postings => &[RetrieverKind::Bm25Postings],
         }
     }
 
@@ -144,7 +182,11 @@ impl Pipeline {
     #[must_use]
     pub const fn fusion(self) -> Fusion {
         match self {
-            Self::KeywordAll | Self::KeywordAny | Self::Bm25 | Self::Bm25Rerank => Fusion::Single,
+            Self::KeywordAll
+            | Self::KeywordAny
+            | Self::Bm25
+            | Self::Bm25Postings
+            | Self::Bm25Rerank => Fusion::Single,
             Self::Bm25Trigram => Fusion::Rrf { k: RRF_K },
         }
     }
@@ -249,7 +291,7 @@ impl RerankPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchConfigError {
     #[error(
-        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-rerank)"
+        "search.enabled names {0:?}, which this build does not serve (known: keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank)"
     )]
     Unknown(String),
     #[error("search.enabled is empty: a deployment serves at least one pipeline")]
@@ -418,6 +460,22 @@ pub struct OwnHeldScope {
     pub nodes: Vec<Uuid>,
 }
 
+/// The health of a tenant's integer postings, for doctor (ADR-0052 d12):
+/// whether its partition exists; how many versions that should have
+/// postings have none (the fill incomplete); how many served versions have
+/// no served postings (behind); how many per-workarea counts disagree with
+/// the served versions; and, of a sample of word counts, how many disagree
+/// with the served postings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PostingsHealth {
+    pub partition: bool,
+    pub unfilled: u64,
+    pub served_behind: u64,
+    pub workarea_drift: u64,
+    pub term_drift: u64,
+    pub terms_checked: u64,
+}
+
 /// One retrieval: the query, whether every term must match, and how many
 /// candidates to return at most.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,12 +486,15 @@ pub struct RetrievalQuery<'a> {
 }
 
 /// One retriever's ranked list: the query's terms as this retriever reads
-/// them, and its candidates in its own total order (score descending, then
-/// id ascending).
+/// them, its candidates in its own total order (score descending, then id
+/// ascending), how it read them, and the query words whose every form it
+/// pruned from the postings it read (ADR-0052 d6, d9; `[]` for a scan).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Retrieved {
     pub terms: Vec<String>,
     pub candidates: Vec<Candidate>,
+    pub access: Access,
+    pub pruned: Vec<String>,
 }
 
 /// One candidate as a retriever ranks it: no body, so a row the cuts drop is
@@ -554,6 +615,29 @@ pub fn apply_floor(candidates: Vec<Fused>, floor: f32) -> (Vec<Fused>, usize) {
     (kept, withheld)
 }
 
+/// How a pipeline read its lists: `Postings` only when every list was read
+/// from postings, else `Scan` (ADR-0052 d11).
+#[must_use]
+pub fn pipeline_access(lists: &[(RetrieverKind, Retrieved)]) -> Access {
+    if !lists.is_empty() && lists.iter().all(|(_, l)| l.access == Access::Postings) {
+        Access::Postings
+    } else {
+        Access::Scan
+    }
+}
+
+/// The query words any list pruned, sorted and distinct (ADR-0052 d11).
+#[must_use]
+pub fn pruned_words(lists: &[(RetrieverKind, Retrieved)]) -> Vec<String> {
+    let mut words: Vec<String> = lists
+        .iter()
+        .flat_map(|(_, l)| l.pruned.iter().cloned())
+        .collect();
+    words.sort_unstable();
+    words.dedup();
+    words
+}
+
 /// The query's distinct terms across the lists, sorted: `matched.of`'s
 /// denominator.
 #[must_use]
@@ -584,6 +668,7 @@ mod tests {
         Retrieved {
             terms: vec!["a".into(), "b".into()],
             candidates: cands,
+            ..Retrieved::default()
         }
     }
 

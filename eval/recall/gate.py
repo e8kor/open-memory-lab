@@ -18,6 +18,7 @@ it against its gate, taken from ADR-0048 d1:
 - bm25-rerank: success@1 >= 0.87 and success@5 >= 0.94, above bm25's
   measured 0.835 and 0.934 (ADR-0053 d9), and no reranked query skipped:
   a skipped rerank serves bm25's order, so its numbers would gate bm25.
+- bm25-postings: bm25's gate (ADR-0052 d9).
 
 Every pipeline must also keep each category's success@5 within one query
 (1/11) of its committed result, when one is committed.
@@ -35,6 +36,7 @@ from pathlib import Path
 GATES = {
     "keyword-any": [("overall", "s5", ">=", 0.70), ("overall", "zero", "<=", 0.05)],
     "bm25": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
+    "bm25-postings": [("overall", "s5", ">=", 0.86), ("overall", "s1", ">=", 0.67)],
     "bm25-trigram": [
         ("overall", "s5", ">=", 0.92),
         ("partial", "s5", ">=", 0.91),
@@ -101,7 +103,7 @@ def main():
     results, committed_dir = Path(a.results), Path(a.committed)
     failed = False
     seen = []
-    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-rerank"]:
+    for pipeline in ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank"]:
         path = results / file_of(pipeline)
         if not path.exists():
             continue

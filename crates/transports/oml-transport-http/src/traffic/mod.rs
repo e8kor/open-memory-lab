@@ -68,12 +68,12 @@ struct Observed {
     workarea_id: Option<Uuid>,
     store: Duration,
     store_calls: u64,
-    /// The search pipeline a recall ran, and whether `match: all` fell
-    /// back (ADR-0049 d4).
-    search: Option<(&'static str, bool)>,
     /// What a recall's reranking stage did, and why when it was skipped
     /// (ADR-0053 d9).
     rerank: Option<(&'static str, Option<&'static str>)>,
+    /// The search pipeline a recall ran, whether `match: all` fell back,
+    /// and whether postings or a scan answered (ADR-0049 d4; ADR-0052 d11).
+    search: Option<(&'static str, bool, &'static str)>,
 }
 
 impl Scope {
@@ -154,9 +154,10 @@ pub fn workarea(workarea_id: Uuid) {
 }
 
 /// The request's recall ran `pipeline`; `fallback` when `match: all` fell
-/// back to any term (ADR-0049 d4, d5).
-pub fn search(pipeline: &'static str, fallback: bool) {
-    in_scope(|scope| scope.update(|o, _| o.search = Some((pipeline, fallback))));
+/// back to any term; `access`, `postings` or `scan` (ADR-0049 d4, d5;
+/// ADR-0052 d11).
+pub fn search(pipeline: &'static str, fallback: bool, access: &'static str) {
+    in_scope(|scope| scope.update(|o, _| o.search = Some((pipeline, fallback, access))));
 }
 
 /// The request's recall reranked (`applied`) or served the first stage's
@@ -191,8 +192,8 @@ impl RequestObserver for ScopeObserver {
         workarea(workarea_id);
     }
 
-    fn search(&self, pipeline: &'static str, fallback: bool) {
-        search(pipeline, fallback);
+    fn search(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
+        search(pipeline, fallback, access);
     }
 
     fn rerank(&self, outcome: Option<&'static str>, reason: Option<&'static str>) {
@@ -451,10 +452,11 @@ pub(crate) async fn layer(
         idempotency_replay: replay.then_some(true),
         client,
         user_agent: agent.as_deref(),
-        search: observed.search.map(|(pipeline, _)| pipeline),
+        search: observed.search.map(|(pipeline, _, _)| pipeline),
         search_fallback: observed
             .search
-            .and_then(|(_, fallback)| fallback.then_some(true)),
+            .and_then(|(_, fallback, _)| fallback.then_some(true)),
+        search_access: observed.search.map(|(_, _, access)| access),
         search_rerank: observed.rerank.map(|(outcome, _)| outcome),
         search_rerank_reason: observed.rerank.and_then(|(_, reason)| reason),
     };
@@ -471,8 +473,8 @@ pub(crate) async fn layer(
         resolved.error_code.as_deref(),
         resolved.grant_type,
     );
-    if let Some((pipeline, fallback)) = observed.search {
-        traffic.metrics.recall(pipeline, fallback);
+    if let Some((pipeline, fallback, access)) = observed.search {
+        traffic.metrics.recall(pipeline, fallback, access);
     }
     if let Some((outcome, reason)) = observed.rerank {
         traffic.metrics.rerank(outcome, reason);
@@ -503,6 +505,8 @@ struct Line<'a> {
     /// The reranking stage's outcome and its reason (ADR-0053 d9).
     search_rerank: Option<&'static str>,
     search_rerank_reason: Option<&'static str>,
+    /// `postings` or `scan` (ADR-0052 d11).
+    search_access: Option<&'static str>,
 }
 
 /// The line at one level: the event macros take their level as a constant.
@@ -554,6 +558,7 @@ macro_rules! write_line {
             search_fallback = line.search_fallback,
             search_rerank = line.search_rerank,
             search_rerank_reason = line.search_rerank_reason,
+            search_access = line.search_access,
         );
     }};
 }

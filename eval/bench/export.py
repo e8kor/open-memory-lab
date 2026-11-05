@@ -35,7 +35,7 @@ SUITES = {"scifact": "beir-scifact", "nfcorpus": "beir-nfcorpus", "arguana": "be
 METHOD_NAMES = {"ref_bm25_anserini": "reference-bm25s-k1-0.9-b-0.4",
                 "ref_bm25_oml_params": "reference-bm25s-k1-1.2-b-0.75"}
 BEIR_URL = "https://arxiv.org/abs/2104.08663"
-METRICS = {"nDCG@10": "ndcg@10", "R@10": "recall@10", "R@100": "recall@100",
+METRICS = {"nDCG@10": "ndcg@10", "R@10": "recall@10", "R@20": "recall@20", "R@100": "recall@100",
            "RR@10": "mrr@10", "Success@1": "success@1", "Success@5": "success@5",
            "zero": "zero_result_rate"}
 
@@ -120,6 +120,12 @@ def from_bench(r, a):
     if not offline and r.get("workers", 1) > 1:
         note += (f" Queries ran {r['workers']} at a time to fit the time box, so latency is "
                  "under that many concurrent clients.")
+    if method == "bm25-postings":
+        note += (" bm25-postings takes its candidates from the postings of the query forms it "
+                 "reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves "
+                 "out the forms held by more than 10% of the readable rows, so a row holding only "
+                 "those is no candidate, and below the budget it reads every form and ranks as "
+                 "bm25 (ADR-0052 d6).")
     if offline:
         note = ("Offline bm25s over the same memories (Lucene BM25, English stop words, "
                 "Snowball stems), not a served path; " + note)

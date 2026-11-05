@@ -4943,7 +4943,7 @@ async fn query_digest_changes_when_max_tokens_or_include_unreviewed_change() {
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
          \"k\":8,\"kinds\":[],\"match\":\"any\",\"max_tokens\":null,\"query\":\"canary\",\
-         \"scope\":\"{crew}\",\"search\":\"bm25\",\"terms\":[]}}"
+         \"scope\":\"{crew}\",\"search\":\"bm25-postings\",\"terms\":[]}}"
     );
     assert_eq!(base, json!(sha256_digest_string(canonical.as_bytes())));
     assert_eq!(
@@ -8333,7 +8333,11 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     ] {
         let recall = recall_ok(router, &reader, json!({"query": query})).await;
         assert_eq!(hit_ids(&recall), vec![json!(quote)], "{query}: {recall}");
-        assert_eq!(recall["search"]["pipeline"], "bm25", "{recall}");
+        assert_eq!(recall["search"]["pipeline"], "bm25-postings", "{recall}");
+        // One readable row: its postings fit the budget, so they are read
+        // whole, nothing pruned (ADR-0052 d6).
+        assert_eq!(recall["search"]["access"], "postings", "{recall}");
+        assert_eq!(recall["search"]["pruned"], json!([]), "{recall}");
         assert_eq!(recall["search"]["match"], "any", "{recall}");
         assert_eq!(recall["search"]["fallback"], Value::Null, "{recall}");
         let matched = &recall["hits"][0]["matched"];
@@ -8358,6 +8362,7 @@ async fn a_recall_runs_the_default_pipeline_and_names_it_with_each_hits_matched_
     )
     .await;
     assert_eq!(named["search"]["pipeline"], "keyword-any", "{named}");
+    assert_eq!(named["search"]["access"], "scan", "{named}");
     assert_eq!(
         named["hits"][0]["matched"],
         json!({"terms": ["nightly"], "of": 2, "via": ["keyword_any"], "rerank": null, "rank_before": null}),
@@ -8386,7 +8391,7 @@ async fn a_search_the_deployment_does_not_serve_is_refused_naming_search() {
         assert_eq!(refusal["error"]["details"]["field"], "/search", "{refusal}");
         assert_eq!(
             refusal["error"]["details"]["served"],
-            json!(["keyword-any", "bm25"]),
+            json!(["keyword-any", "bm25", "bm25-postings"]),
             "{refusal}"
         );
     }
@@ -8427,10 +8432,10 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     assert_eq!(
         settings,
         json!({
-            "enabled": ["keyword-any", "bm25"],
-            "deployment_default": "bm25",
+            "enabled": ["keyword-any", "bm25", "bm25-postings"],
+            "deployment_default": "bm25-postings",
             "tenant_default": null,
-            "effective": "bm25",
+            "effective": "bm25-postings",
         })
     );
     let (status, _, refused) = send(router, "GET", "/v2/search", Call::auth(&reader)).await;
@@ -8468,7 +8473,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["tenant_default"], Value::Null);
     let recall = recall_ok(router, &reader, json!({"query": "deployed"})).await;
-    assert_eq!(recall["search"]["pipeline"], "bm25", "{recall}");
+    assert_eq!(recall["search"]["pipeline"], "bm25-postings", "{recall}");
     assert_eq!(recall["hits"].as_array().map(Vec::len), Some(1), "{recall}");
 
     drop_db(&rig.db_name).await;
@@ -8495,7 +8500,7 @@ async fn did_you_mean_is_offered_only_when_a_recall_is_empty_or_thin() {
     {
         promoted_over_http(router, &agent, &dreamer, &format!("dym-{i}"), body).await;
     }
-    for search in ["bm25", "keyword-any"] {
+    for search in ["bm25", "bm25-postings", "keyword-any"] {
         let thick = recall_ok(
             router,
             &reader,
@@ -8509,7 +8514,7 @@ async fn did_you_mean_is_offered_only_when_a_recall_is_empty_or_thin() {
             "{search}: three hits are not thin: {thick}"
         );
     }
-    for search in ["bm25", "keyword-any"] {
+    for search in ["bm25", "bm25-postings", "keyword-any"] {
         let empty = recall_ok(
             router,
             &reader,
@@ -8687,4 +8692,37 @@ async fn an_answer_the_floor_emptied_offers_no_spellings() {
     assert_eq!(recall["search"]["below_floor"], 1, "{recall}");
     assert_eq!(recall["search"]["did_you_mean"], json!([]), "{recall}");
     drop_db(&db).await;
+}
+
+/// `/readyz`, unauthenticated on the public port, names no recall counts:
+/// how many recalls ran, and how, is the metrics listener's alone, so no
+/// caller learns another tenant's traffic (ADR-0042 d11; ADR-0052 d12).
+#[tokio::test]
+async fn readyz_names_no_recall_counts() {
+    let Some((rig, _admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    promoted_over_http(
+        router,
+        &agent,
+        &dreamer,
+        "scan-0",
+        "deploy the billing service",
+    )
+    .await;
+    for query in ["deploy", "zebra"] {
+        recall_ok(router, &reader, json!({"query": query})).await;
+    }
+    let (_, _, ready) = send(router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(
+        ready["search"],
+        json!({
+            "enabled": ["keyword-any", "bm25", "bm25-postings"],
+            "default": "bm25-postings",
+            "rerank": null,
+        }),
+        "{ready}"
+    );
+    drop_db(&rig.db_name).await;
 }

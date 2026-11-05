@@ -5,6 +5,7 @@ from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.recall_search_access import RecallSearchAccess
 from ..models.recall_search_match import RecallSearchMatch
 from ..models.recall_search_pipeline import RecallSearchPipeline
 from ..models.rerank_outcome import RerankOutcome
@@ -15,7 +16,7 @@ T = TypeVar("T", bound="RecallSearch")
 
 @_attrs_define
 class RecallSearch:
-    """What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7).
+    """What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
 
     Attributes:
         pipeline (RecallSearchPipeline):
@@ -25,6 +26,12 @@ class RecallSearch:
             null otherwise.
         did_you_mean (list[str]): Spellings from rows the key may read, from a pipeline with a trigram list, when no hit
             holds every word; else empty.
+        access (RecallSearchAccess): postings when every list was read from integer postings by their index; scan when
+            any list scanned the rows in scope, as every pipeline but bm25-postings does, and as bm25-postings does when
+            every query word was pruned (ADR-0052 d6).
+        pruned (list[str]): The query words left out of the postings read because they are frequent among the rows the
+            key may read; a hit the other words reach is still scored with them, and a memory holding only them is not
+            found. Empty for a scan (ADR-0052 d6, d11).
         rerank (None | RerankOutcome): applied when a reranking pipeline reordered the head of its first stage; skipped
             when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does
             not rerank or found nothing.
@@ -40,6 +47,8 @@ class RecallSearch:
     terms: list[str]
     fallback: None | str
     did_you_mean: list[str]
+    access: RecallSearchAccess
+    pruned: list[str]
     rerank: None | RerankOutcome
     rerank_reason: None | RerankReason
     floor: float | None
@@ -56,6 +65,10 @@ class RecallSearch:
         fallback = self.fallback
 
         did_you_mean = self.did_you_mean
+
+        access = self.access.value
+
+        pruned = self.pruned
 
         rerank: None | str
         if isinstance(self.rerank, RerankOutcome):
@@ -83,6 +96,8 @@ class RecallSearch:
                 "terms": terms,
                 "fallback": fallback,
                 "did_you_mean": did_you_mean,
+                "access": access,
+                "pruned": pruned,
                 "rerank": rerank,
                 "rerank_reason": rerank_reason,
                 "floor": floor,
@@ -109,6 +124,10 @@ class RecallSearch:
         fallback = _parse_fallback(d.pop("fallback"))
 
         did_you_mean = cast(list[str], d.pop("did_you_mean"))
+
+        access = RecallSearchAccess(d.pop("access"))
+
+        pruned = cast(list[str], d.pop("pruned"))
 
         def _parse_rerank(data: object) -> None | RerankOutcome:
             if data is None:
@@ -155,6 +174,8 @@ class RecallSearch:
             terms=terms,
             fallback=fallback,
             did_you_mean=did_you_mean,
+            access=access,
+            pruned=pruned,
             rerank=rerank,
             rerank_reason=rerank_reason,
             floor=floor,

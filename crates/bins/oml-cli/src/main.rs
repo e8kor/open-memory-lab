@@ -3488,7 +3488,13 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     }
     let web = web_doctor(ready.as_ref(), admin_emails);
     let web_warn = web.iter().any(|line| line.starts_with("warn"));
-    let search = search_doctor(ready.as_ref(), search_settings.as_ref());
+    // The recall counts are the metrics listener's alone (ADR-0042 d11), read
+    // where OML_METRICS_URL names it (ADR-0052 d12).
+    let recall_counts = std::env::var("OML_METRICS_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .and_then(|u| postings_recall_counts(u.trim_end_matches('/')));
+    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), recall_counts);
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
@@ -3703,7 +3709,11 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 /// serves, so the deployment's applies instead. A pipeline whose retriever
 /// the database lacks (`pg_trgm`) never reaches here: the lead refuses to
 /// start, naming it.
-fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<String> {
+fn search_doctor(
+    ready: Option<&(u16, Value)>,
+    settings: Option<&Value>,
+    recall_counts: Option<(u64, u64)>,
+) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
     };
@@ -3761,6 +3771,109 @@ fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<
         lines.push(format!(
             "warn search: this tenant's default {tenant} is not served here, so {} applies; oml search set-default <pipeline>",
             settings["effective"].as_str().unwrap_or("the deployment's")
+        ));
+    }
+    lines.extend(postings_doctor(recall_counts, settings));
+    lines
+}
+
+/// The share of `bm25-postings`'s recalls since the lead started that the
+/// scan may answer before doctor warns (ADR-0052 open question 2).
+const SCAN_SHARE_WARN_PERCENT: u64 = 5;
+
+/// The fewest `bm25-postings` recalls since start over which doctor judges
+/// the scan share: below it one recall would swing it.
+const SCAN_SHARE_MIN_RECALLS: u64 = 20;
+
+/// `bm25-postings`'s recalls since the lead started, (read from postings,
+/// answered by the scan), summed from `oml_recalls_total` on the metrics
+/// listener at `base` (ADR-0042 d11), or `None` when it does not answer.
+fn postings_recall_counts(base: &str) -> Option<(u64, u64)> {
+    let text = ureq::get(&format!("{base}/metrics"))
+        .call()
+        .ok()?
+        .into_string()
+        .ok()?;
+    let (mut postings, mut scan) = (0_u64, 0_u64);
+    for line in text.lines() {
+        if !line.starts_with("oml_recalls_total{") || !line.contains("pipeline=\"bm25-postings\"") {
+            continue;
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a counter's integral value"
+        )]
+        let value = line
+            .rsplit(' ')
+            .next()
+            .and_then(|v| v.parse::<f64>().ok())
+            .map_or(0, |v| v as u64);
+        if line.contains("access=\"scan\"") {
+            scan += value;
+        } else if line.contains("access=\"postings\"") {
+            postings += value;
+        }
+    }
+    Some((postings, scan))
+}
+
+/// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
+/// listener's recall counts, a warning when the scan answered more than 5%
+/// of its recalls since the lead started; and, read by an admin key from
+/// `GET /v2/search`, one warning per fault in the tenant's postings, each
+/// naming the repair, or one line saying they are complete.
+fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (postings, scan) = recall_counts.unwrap_or((0, 0));
+    let total = postings + scan;
+    if total >= SCAN_SHARE_MIN_RECALLS && scan * 100 > SCAN_SHARE_WARN_PERCENT * total {
+        #[allow(clippy::cast_precision_loss, reason = "a share of small counts")]
+        let percent = scan as f64 * 100.0 / total as f64;
+        lines.push(format!(
+            "warn search: bm25-postings answered {scan} of {total} recalls by the scan since the lead started ({percent:.1}%, above {SCAN_SHARE_WARN_PERCENT}%): their words are held by most memories the keys read, so those recalls cost what bm25 costs (ADR-0052 d6)"
+        ));
+    }
+    let Some(h) = settings.map(|s| &s["postings"]).filter(|h| h.is_object()) else {
+        return lines;
+    };
+    let n = |field: &str| h[field].as_u64().unwrap_or(0);
+    let refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_search_postings_refill('<tenant id>') rebuilds them (postgres-schema.md, search postings)";
+    if h["partition"] == Value::Bool(false) {
+        lines.push(
+            "warn search: this tenant has no postings partition, so every memory write for it fails, as a lead before 0021 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0052 d1)".to_owned(),
+        );
+    }
+    if n("unfilled") > 0 {
+        lines.push(format!(
+            "warn search: the postings fill is incomplete: {} memory versions have no postings; {refill}",
+            n("unfilled")
+        ));
+    }
+    if n("served_behind") > 0 {
+        lines.push(format!(
+            "warn search: {} served memories have no served postings, so bm25-postings cannot find them; a defect: {refill}, and report it",
+            n("served_behind")
+        ));
+    }
+    if n("workarea_drift") > 0 || n("term_drift") > 0 {
+        lines.push(format!(
+            "warn search: the postings counts disagree: {} workarea count{}, {} of {} sampled word counts; a defect, which ranks by wrong frequencies: {refill}, and report it",
+            n("workarea_drift"),
+            if n("workarea_drift") == 1 { "" } else { "s" },
+            n("term_drift"),
+            n("terms_checked")
+        ));
+    }
+    let faulty = h["partition"] != Value::Bool(true)
+        || n("unfilled") > 0
+        || n("served_behind") > 0
+        || n("workarea_drift") > 0
+        || n("term_drift") > 0;
+    if !faulty {
+        lines.push(format!(
+            "postings complete; counts agree ({} sampled word counts)",
+            n("terms_checked")
         ));
     }
     lines
@@ -3844,7 +3957,7 @@ mod tests {
                            "skipped": {"busy": 3, "timeout": 0, "failed": 1}},
             }}),
         );
-        let lines = search_doctor(Some(&ready), None);
+        let lines = search_doctor(Some(&ready), None, None);
         assert_eq!(
             lines[1],
             "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
@@ -3874,7 +3987,7 @@ mod tests {
             }}),
         );
         assert_eq!(
-            search_doctor(Some(&floored), None)[1],
+            search_doctor(Some(&floored), None, None)[1],
             "rerank ms-marco-MiniLM-L6-v2, depth 10, floor 0.005"
         );
         let quiet = (
@@ -3882,7 +3995,7 @@ mod tests {
             json!({"search": {"enabled": ["bm25"], "default": "bm25", "rerank": null}}),
         );
         assert_eq!(
-            search_doctor(Some(&quiet), None).len(),
+            search_doctor(Some(&quiet), None, None).len(),
             1,
             "no reranker, no line"
         );

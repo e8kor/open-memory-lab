@@ -384,7 +384,7 @@ jobs:
           # bm25-rerank is measured beside the others and gated on quality;
           # its deadline is raised so a slow runner measures the ranking, not
           # its own CPU (ADR-0053 d9).
-          EVAL_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-rerank
+          EVAL_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-postings bm25-rerank
           OML_SEARCH__RERANK__MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
           OML_SEARCH__RERANK__TIMEOUT_MS: "60000"
         run: bash eval/recall/served.sh "$RUNNER_TEMP/recall-eval"

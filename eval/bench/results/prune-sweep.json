@@ -1,0 +1,290 @@
+{
+ "scifact": {
+  "bm25": {
+   "ndcg@10": 0.6851,
+   "scan_share": 1.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 65.93,
+   "store_p95_ms": 90.52
+  },
+  "postings inf 9223372036854775807": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 10.36,
+   "store_p95_ms": 19.44
+  },
+  "postings 0.5 50000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 9.52,
+   "store_p95_ms": 17.69
+  },
+  "postings 0.3 50000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.27,
+   "store_p50_ms": 12.4,
+   "store_p95_ms": 33.92
+  },
+  "postings 0.2 50000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.47,
+   "store_p50_ms": 19.21,
+   "store_p95_ms": 31.0
+  },
+  "postings 0.1 50000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.7867,
+   "store_p50_ms": 18.12,
+   "store_p95_ms": 26.52
+  },
+  "postings 0.05 50000": {
+   "ndcg@10": 0.6853,
+   "scan_share": 0.0,
+   "pruned_share": 0.9167,
+   "store_p50_ms": 17.3,
+   "store_p95_ms": 25.16
+  },
+  "postings 0.1 20000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.7867,
+   "store_p50_ms": 18.78,
+   "store_p95_ms": 28.66
+  },
+  "postings 0.1 10000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.7867,
+   "store_p50_ms": 19.29,
+   "store_p95_ms": 29.8
+  },
+  "postings 0.1 5000": {
+   "ndcg@10": 0.6851,
+   "scan_share": 0.0,
+   "pruned_share": 0.7867,
+   "store_p50_ms": 18.42,
+   "store_p95_ms": 28.73
+  }
+ },
+ "nfcorpus": {
+  "bm25": {
+   "ndcg@10": 0.3208,
+   "scan_share": 1.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 31.19,
+   "store_p95_ms": 52.84
+  },
+  "postings inf 9223372036854775807": {
+   "ndcg@10": 0.3208,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 5.25,
+   "store_p95_ms": 13.24
+  },
+  "postings 0.5 50000": {
+   "ndcg@10": 0.3208,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 4.57,
+   "store_p95_ms": 14.87
+  },
+  "postings 0.3 50000": {
+   "ndcg@10": 0.3208,
+   "scan_share": 0.0,
+   "pruned_share": 0.0433,
+   "store_p50_ms": 5.35,
+   "store_p95_ms": 19.81
+  },
+  "postings 0.2 50000": {
+   "ndcg@10": 0.3203,
+   "scan_share": 0.0,
+   "pruned_share": 0.1827,
+   "store_p50_ms": 5.86,
+   "store_p95_ms": 24.2
+  },
+  "postings 0.1 50000": {
+   "ndcg@10": 0.3203,
+   "scan_share": 0.0,
+   "pruned_share": 0.2879,
+   "store_p50_ms": 5.29,
+   "store_p95_ms": 21.04
+  },
+  "postings 0.05 50000": {
+   "ndcg@10": 0.3189,
+   "scan_share": 0.0155,
+   "pruned_share": 0.4272,
+   "store_p50_ms": 4.34,
+   "store_p95_ms": 17.33
+  },
+  "postings 0.1 20000": {
+   "ndcg@10": 0.3203,
+   "scan_share": 0.0,
+   "pruned_share": 0.2879,
+   "store_p50_ms": 5.14,
+   "store_p95_ms": 20.3
+  },
+  "postings 0.1 10000": {
+   "ndcg@10": 0.3203,
+   "scan_share": 0.0,
+   "pruned_share": 0.2879,
+   "store_p50_ms": 4.78,
+   "store_p95_ms": 20.08
+  },
+  "postings 0.1 5000": {
+   "ndcg@10": 0.3203,
+   "scan_share": 0.0,
+   "pruned_share": 0.2879,
+   "store_p50_ms": 5.57,
+   "store_p95_ms": 19.11
+  }
+ },
+ "locomo": {
+  "bm25": {
+   "ndcg@10": 0.5166,
+   "scan_share": 1.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 5.0,
+   "store_p95_ms": 13.33
+  },
+  "postings inf 9223372036854775807": {
+   "ndcg@10": 0.5166,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 3.98,
+   "store_p95_ms": 11.9
+  },
+  "postings 0.5 50000": {
+   "ndcg@10": 0.5166,
+   "scan_share": 0.0015,
+   "pruned_share": 0.9889,
+   "store_p50_ms": 3.53,
+   "store_p95_ms": 11.73
+  },
+  "postings 0.3 50000": {
+   "ndcg@10": 0.5166,
+   "scan_share": 0.0015,
+   "pruned_share": 0.9889,
+   "store_p50_ms": 3.26,
+   "store_p95_ms": 11.26
+  },
+  "postings 0.2 50000": {
+   "ndcg@10": 0.5166,
+   "scan_share": 0.0015,
+   "pruned_share": 0.9889,
+   "store_p50_ms": 3.33,
+   "store_p95_ms": 11.3
+  },
+  "postings 0.1 50000": {
+   "ndcg@10": 0.5163,
+   "scan_share": 0.004,
+   "pruned_share": 0.9899,
+   "store_p50_ms": 2.8,
+   "store_p95_ms": 10.02
+  },
+  "postings 0.05 50000": {
+   "ndcg@10": 0.5154,
+   "scan_share": 0.0136,
+   "pruned_share": 0.9808,
+   "store_p50_ms": 2.43,
+   "store_p95_ms": 9.69
+  },
+  "postings 0.1 20000": {
+   "ndcg@10": 0.5163,
+   "scan_share": 0.004,
+   "pruned_share": 0.9899,
+   "store_p50_ms": 3.0,
+   "store_p95_ms": 10.12
+  },
+  "postings 0.1 10000": {
+   "ndcg@10": 0.5163,
+   "scan_share": 0.004,
+   "pruned_share": 0.9899,
+   "store_p50_ms": 2.98,
+   "store_p95_ms": 10.1
+  },
+  "postings 0.1 5000": {
+   "ndcg@10": 0.5163,
+   "scan_share": 0.004,
+   "pruned_share": 0.9899,
+   "store_p50_ms": 2.96,
+   "store_p95_ms": 10.43
+  }
+ },
+ "synthetic": {
+  "bm25": {
+   "ndcg@10": 0.8737,
+   "scan_share": 1.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 1.96,
+   "store_p95_ms": 7.77
+  },
+  "postings inf 9223372036854775807": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 1.94,
+   "store_p95_ms": 8.49
+  },
+  "postings 0.5 50000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 1.95,
+   "store_p95_ms": 8.61
+  },
+  "postings 0.3 50000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 1.85,
+   "store_p95_ms": 6.29
+  },
+  "postings 0.2 50000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "store_p50_ms": 1.81,
+   "store_p95_ms": 4.81
+  },
+  "postings 0.1 50000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.1653,
+   "store_p50_ms": 1.78,
+   "store_p95_ms": 8.31
+  },
+  "postings 0.05 50000": {
+   "ndcg@10": 0.8739,
+   "scan_share": 0.0,
+   "pruned_share": 0.3636,
+   "store_p50_ms": 1.72,
+   "store_p95_ms": 7.48
+  },
+  "postings 0.1 20000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.1653,
+   "store_p50_ms": 1.93,
+   "store_p95_ms": 8.08
+  },
+  "postings 0.1 10000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.1653,
+   "store_p50_ms": 1.89,
+   "store_p95_ms": 7.11
+  },
+  "postings 0.1 5000": {
+   "ndcg@10": 0.8737,
+   "scan_share": 0.0,
+   "pruned_share": 0.1653,
+   "store_p50_ms": 1.71,
+   "store_p95_ms": 8.05
+  }
+ }
+}

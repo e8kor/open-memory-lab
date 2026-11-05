@@ -40,6 +40,7 @@ struct McpLabels {
 struct RecallLabels {
     pipeline: String,
     fallback: String,
+    access: String,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -111,7 +112,7 @@ impl Default for Metrics {
         // names (ADR-0049 d4).
         registry.register(
             "oml_recalls",
-            "recalls by the search pipeline that ranked them and whether match all fell back",
+            "recalls by the search pipeline that ranked them, whether match all fell back, and whether postings or a scan answered",
             recalls.clone(),
         );
         // Both labels are closed sets: applied or skipped, and none, busy,
@@ -177,12 +178,14 @@ impl Metrics {
         }
     }
 
-    /// One recall, by the pipeline that ranked it (ADR-0049 d4).
-    pub(crate) fn recall(&self, pipeline: &'static str, fallback: bool) {
+    /// One recall, by the pipeline that ranked it and how its lists were
+    /// read (ADR-0049 d4; ADR-0052 d6).
+    pub(crate) fn recall(&self, pipeline: &'static str, fallback: bool, access: &'static str) {
         self.recalls
             .get_or_create(&RecallLabels {
                 pipeline: pipeline.to_owned(),
                 fallback: fallback.to_string(),
+                access: access.to_owned(),
             })
             .inc();
     }

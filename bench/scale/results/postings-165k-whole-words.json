@@ -1,0 +1,289 @@
+{
+ "rows": 165000,
+ "seed": 20261105,
+ "date": "2026-11-05",
+ "postgres": "17.9 (Ubuntu 17.9-1.pgdg26.04+2)",
+ "load_s": 59.7,
+ "workareas": 81,
+ "fill_0021_s": 64.94,
+ "space": {
+  "postings_heap_mib": 567.6,
+  "term_rows_mib": 55.5,
+  "workarea_rows_mib": 0.1,
+  "memories_heap_mib": 162.2,
+  "search_postings_served_mib": 454.5,
+  "search_postings_memory_mib": 56.5,
+  "postings": 5884714,
+  "postings_by_state": {
+   "0": 885661,
+   "1": 3807186,
+   "2": 1191867
+  },
+  "term_rows": 380327,
+  "served": 99721
+ },
+ "readable_rows": {
+  "leaf": 2380,
+  "project": 13981,
+  "universe": 99721
+ },
+ "runs": {
+  "bm25": {
+   "all": {
+    "p50": 23.62,
+    "p95": 331.23
+   },
+   "leaf": {
+    "n": 147,
+    "p50": 7.37,
+    "p95": 22.25
+   },
+   "project": {
+    "n": 123,
+    "p50": 34.14,
+    "p95": 247.7
+   },
+   "universe": {
+    "n": 60,
+    "p50": 252.31,
+    "p95": 485.18
+   },
+   "scan_share": 1.0,
+   "pruned_share": 0.0
+  },
+  "bm25_postings_unpruned": {
+   "all": {
+    "p50": 4.77,
+    "p95": 45.53
+   },
+   "leaf": {
+    "n": 147,
+    "p50": 3.64,
+    "p95": 6.44
+   },
+   "project": {
+    "n": 123,
+    "p50": 5.83,
+    "p95": 24.55
+   },
+   "universe": {
+    "n": 60,
+    "p50": 30.28,
+    "p95": 117.38
+   },
+   "scan_share": 0.0,
+   "pruned_share": 0.0,
+   "same_list_share": 1.0,
+   "overlap_at_10": 1.0
+  },
+  "bm25_postings_0.1_5000": {
+   "all": {
+    "p50": 4.21,
+    "p95": 13.8
+   },
+   "leaf": {
+    "n": 147,
+    "p50": 2.86,
+    "p95": 5.38
+   },
+   "project": {
+    "n": 123,
+    "p50": 4.81,
+    "p95": 9.74
+   },
+   "universe": {
+    "n": 60,
+    "p50": 11.75,
+    "p95": 207.33
+   },
+   "scan_share": 0.0091,
+   "pruned_share": 0.2091,
+   "same_list_share": 0.8727,
+   "overlap_at_10": 0.941
+  },
+  "bm25_postings_served": {
+   "all": {
+    "p50": 4.76,
+    "p95": 22.05
+   },
+   "leaf": {
+    "n": 147,
+    "p50": 3.44,
+    "p95": 5.87
+   },
+   "project": {
+    "n": 123,
+    "p50": 5.42,
+    "p95": 15.9
+   },
+   "universe": {
+    "n": 60,
+    "p50": 17.16,
+    "p95": 25.45
+   },
+   "scan_share": 0.0,
+   "pruned_share": 0.1364,
+   "same_list_share": 0.9273,
+   "overlap_at_10": 0.9714
+  }
+ },
+ "index_kind_token": {
+  "build_s": 2.28,
+  "mib": 41.9,
+  "all": {
+   "p50": 43.92,
+   "p95": 201.07
+  },
+  "leaf": {
+   "n": 147,
+   "p50": 39.8,
+   "p95": 222.87
+  },
+  "project": {
+   "n": 123,
+   "p50": 47.25,
+   "p95": 175.02
+  },
+  "universe": {
+   "n": 60,
+   "p50": 42.87,
+   "p95": 154.0
+  },
+  "scan_share": 0.0,
+  "pruned_share": 0.1364,
+  "same_list_share": 1.0,
+  "overlap_at_10": 1.0
+ },
+ "own_held": {
+  "1000": {
+   "rows": 1000,
+   "bm25": {
+    "all": {
+     "p50": 28.04,
+     "p95": 449.12
+    },
+    "leaf": {
+     "n": 147,
+     "p50": 8.43,
+     "p95": 26.49
+    },
+    "project": {
+     "n": 123,
+     "p50": 39.59,
+     "p95": 167.99
+    },
+    "universe": {
+     "n": 60,
+     "p50": 393.21,
+     "p95": 641.25
+    },
+    "scan_share": 1.0,
+    "pruned_share": 0.0
+   },
+   "bm25_postings": {
+    "all": {
+     "p50": 6.11,
+     "p95": 51.46
+    },
+    "leaf": {
+     "n": 147,
+     "p50": 2.99,
+     "p95": 8.36
+    },
+    "project": {
+     "n": 123,
+     "p50": 10.52,
+     "p95": 24.6
+    },
+    "universe": {
+     "n": 60,
+     "p50": 40.37,
+     "p95": 62.04
+    },
+    "scan_share": 0.0,
+    "pruned_share": 0.1364
+   }
+  },
+  "10000": {
+   "rows": 10000,
+   "bm25": {
+    "all": {
+     "p50": 28.95,
+     "p95": 315.43
+    },
+    "leaf": {
+     "n": 147,
+     "p50": 9.31,
+     "p95": 25.82
+    },
+    "project": {
+     "n": 123,
+     "p50": 41.32,
+     "p95": 172.94
+    },
+    "universe": {
+     "n": 60,
+     "p50": 246.08,
+     "p95": 509.83
+    },
+    "scan_share": 1.0,
+    "pruned_share": 0.0
+   },
+   "bm25_postings": {
+    "all": {
+     "p50": 21.98,
+     "p95": 231.53
+    },
+    "leaf": {
+     "n": 147,
+     "p50": 8.16,
+     "p95": 18.39
+    },
+    "project": {
+     "n": 123,
+     "p50": 33.14,
+     "p95": 73.92
+    },
+    "universe": {
+     "n": 60,
+     "p50": 224.57,
+     "p95": 273.58
+    },
+    "scan_share": 0.003,
+    "pruned_share": 0.1485
+   }
+  }
+ },
+ "write_ms": {
+  "with_trigger": {
+   "insert": {
+    "p50": 1.99,
+    "p95": 4.15
+   },
+   "promote": {
+    "p50": 7.41,
+    "p95": 15.87
+   },
+   "supersede": {
+    "p50": 5.3,
+    "p95": 11.02
+   }
+  },
+  "without_trigger": {
+   "insert": {
+    "p50": 1.18,
+    "p95": 4.0
+   },
+   "promote": {
+    "p50": 1.24,
+    "p95": 4.1
+   },
+   "supersede": {
+    "p50": 2.46,
+    "p95": 5.97
+   }
+  }
+ },
+ "host": "8 vCPU / 15 GiB, shared; load average 2.3 to 4.7 during the run",
+ "rule": "whole words, budget first (66979b4)"
+}
