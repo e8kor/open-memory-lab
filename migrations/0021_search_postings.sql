@@ -90,6 +90,15 @@ CREATE INDEX search_postings_served ON search_postings (kind, token_id, workarea
     INCLUDE (memory_kind, memory_id, weight, doc_len, tenant_id) WHERE state = 1;
 CREATE INDEX search_postings_memory ON search_postings (memory_id);
 
+-- No statistics on the parent: an ANALYZE of the partitioned parent would
+-- gather every tenant's tokens into one set of inherited statistics, the
+-- channel FR-45 closes. ONLY, so each tenant's partition keeps its own,
+-- which its own plans need and only its tenant's rows feed.
+ALTER TABLE ONLY search_postings
+    ALTER COLUMN token_id    SET STATISTICS 0,
+    ALTER COLUMN memory_id   SET STATISTICS 0,
+    ALTER COLUMN workarea_id SET STATISTICS 0;
+
 ALTER TABLE search_postings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE search_postings FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON search_postings
@@ -121,7 +130,7 @@ CREATE TABLE search_term_rows (
         PRIMARY KEY (tenant_id, workarea_id, kind, memory_kind, token_id),
     CONSTRAINT search_term_rows_tenant_id_fkey
         FOREIGN KEY (tenant_id) REFERENCES tenants (id),
-    CONSTRAINT search_term_rows_rows CHECK (rows > 0)
+    CONSTRAINT search_term_rows_rows CHECK (rows >= 0)
 );
 
 CREATE TABLE search_workarea_rows (
@@ -134,7 +143,7 @@ CREATE TABLE search_workarea_rows (
     CONSTRAINT search_workarea_rows_pkey PRIMARY KEY (tenant_id, workarea_id, kind, memory_kind),
     CONSTRAINT search_workarea_rows_tenant_id_fkey
         FOREIGN KEY (tenant_id) REFERENCES tenants (id),
-    CONSTRAINT search_workarea_rows_rows CHECK (rows > 0)
+    CONSTRAINT search_workarea_rows_rows CHECK (rows >= 0)
 );
 
 ALTER TABLE search_term_rows
@@ -183,17 +192,25 @@ END $$;
 
 ------------------------------------------------------------------------------
 -- oml_search_count — adds (delta 1) or takes back (delta -1) one served
--- version's tokens and length in its workarea's counts. Tokens are taken in
--- id order, so two writes of one tenant lock count rows in the same order.
+-- version's tokens and length in its workarea's counts. Lock order: every
+-- path locks the version's word-count rows in token id order, then its
+-- workarea row; an increment by the order of its INSERT, a take-back by an
+-- explicit SELECT ... ORDER BY token_id FOR UPDATE before it changes any
+-- row, then it subtracts and deletes the rows that reach zero (a count is
+-- zero only inside the write that deletes it). So two writes never wait on
+-- each other in opposite orders, whether or not they hold the tenant's
+-- chain lock, as every write does today and a future encoder or repair
+-- might not (ADR-0052 d5; FR-102).
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_search_count(t uuid, wa uuid, mk smallint, sv tsvector, len integer,
                                  delta integer) RETURNS void
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+DECLARE
+    ids bigint[] := ARRAY(SELECT DISTINCT oml_token_id(l) FROM unnest(tsvector_to_array(sv)) l);
 BEGIN
     IF delta > 0 THEN
         INSERT INTO search_term_rows (tenant_id, workarea_id, kind, memory_kind, token_id, rows)
-        SELECT t, wa, 1, mk, x.id, 1
-          FROM (SELECT DISTINCT oml_token_id(l) AS id FROM unnest(tsvector_to_array(sv)) l) x
+        SELECT t, wa, 1, mk, x.id, 1 FROM unnest(ids) x(id)
          ORDER BY x.id
         ON CONFLICT (tenant_id, workarea_id, kind, memory_kind, token_id)
         DO UPDATE SET rows = search_term_rows.rows + 1;
@@ -203,18 +220,23 @@ BEGIN
         DO UPDATE SET rows = search_workarea_rows.rows + 1,
                       total_len = search_workarea_rows.total_len + EXCLUDED.total_len;
     ELSE
-        DELETE FROM search_term_rows c
+        PERFORM 1 FROM search_term_rows c
          WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk
-           AND c.token_id = ANY (ARRAY(SELECT oml_token_id(l) FROM unnest(tsvector_to_array(sv)) l))
-           AND c.rows = 1;
+           AND c.token_id = ANY (ids)
+         ORDER BY c.token_id
+           FOR UPDATE;
         UPDATE search_term_rows c SET rows = c.rows - 1
          WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk
-           AND c.token_id = ANY (ARRAY(SELECT oml_token_id(l) FROM unnest(tsvector_to_array(sv)) l));
+           AND c.token_id = ANY (ids) AND c.rows > 0;
+        DELETE FROM search_term_rows c
+         WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.token_id = ANY (ids) AND c.rows = 0;
+        UPDATE search_workarea_rows c SET rows = c.rows - 1, total_len = c.total_len - len
+         WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk
+           AND c.rows > 0;
         DELETE FROM search_workarea_rows c
          WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk
-           AND c.rows = 1;
-        UPDATE search_workarea_rows c SET rows = c.rows - 1, total_len = c.total_len - len
-         WHERE c.tenant_id = t AND c.workarea_id = wa AND c.kind = 1 AND c.memory_kind = mk;
+           AND c.rows = 0;
     END IF;
 END
 $$;
@@ -329,8 +351,10 @@ CREATE TRIGGER memories_search_postings
 -- owner runs it for one when doctor names a fault (ADR-0052 d12;
 -- postgres-schema.md), in a transaction whose oml.tenant_id is that tenant,
 -- which it checks, so row security fences it as it fences the writes. It
--- takes the trigger's lock on memories first, so no write lands between its
--- read and its commit; writes wait for it (FR-103).
+-- takes the tenant's chain lock first, so none of that tenant's writes lands
+-- between its read and its commit, and no other tenant's waits; inside 0021
+-- the trigger's lock on memories already holds every write (FR-103). Owner
+-- only: EXECUTE is revoked from PUBLIC below.
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_search_postings_refill(t uuid) RETURNS void
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
@@ -338,7 +362,11 @@ BEGIN
     IF t IS DISTINCT FROM NULLIF(current_setting('oml.tenant_id', true), '')::uuid THEN
         RAISE EXCEPTION 'oml_search_postings_refill(%) runs with oml.tenant_id set to that tenant', t;
     END IF;
-    LOCK TABLE memories IN SHARE ROW EXCLUSIVE MODE;
+    -- The tenant's chain lock, the advisory lock every memory write of the
+    -- tenant takes first (oml-pg chain_lock_key: SHA-256's first eight bytes
+    -- over the uuid's bytes): this tenant's writes wait, no other tenant's.
+    PERFORM pg_advisory_xact_lock(
+        ('x' || encode(substr(sha256(uuid_send(t)), 1, 8), 'hex'))::bit(64)::bigint);
     DELETE FROM search_postings p WHERE p.tenant_id = t;
     DELETE FROM search_term_rows c WHERE c.tenant_id = t;
     DELETE FROM search_workarea_rows c WHERE c.tenant_id = t;
@@ -380,3 +408,15 @@ BEGIN
     PERFORM set_config('oml.startup_check', '', true);
 END
 $$;
+
+-- The refill is the owner's (ADR-0052 d12); the count function is the
+-- trigger's, which runs as the role that writes memories, the serving role.
+REVOKE EXECUTE ON FUNCTION oml_search_postings_refill(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION oml_search_count(uuid, uuid, smallint, tsvector, integer, integer)
+    FROM PUBLIC;
+DO $$
+BEGIN
+    EXECUTE format('GRANT EXECUTE ON FUNCTION '
+                   'oml_search_count(uuid, uuid, smallint, tsvector, integer, integer) TO %I',
+                   current_setting('oml.serving_role'));
+END $$;

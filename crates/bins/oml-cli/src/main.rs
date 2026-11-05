@@ -3488,7 +3488,13 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     }
     let web = web_doctor(ready.as_ref(), admin_emails);
     let web_warn = web.iter().any(|line| line.starts_with("warn"));
-    let search = search_doctor(ready.as_ref(), search_settings.as_ref());
+    // The recall counts are the metrics listener's alone (ADR-0042 d11), read
+    // where OML_METRICS_URL names it (ADR-0052 d12).
+    let recall_counts = std::env::var("OML_METRICS_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .and_then(|u| postings_recall_counts(u.trim_end_matches('/')));
+    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), recall_counts);
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
@@ -3703,7 +3709,11 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 /// serves, so the deployment's applies instead. A pipeline whose retriever
 /// the database lacks (`pg_trgm`) never reaches here: the lead refuses to
 /// start, naming it.
-fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<String> {
+fn search_doctor(
+    ready: Option<&(u16, Value)>,
+    settings: Option<&Value>,
+    recall_counts: Option<(u64, u64)>,
+) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
     };
@@ -3732,7 +3742,7 @@ fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<
             settings["effective"].as_str().unwrap_or("the deployment's")
         ));
     }
-    lines.extend(postings_doctor(body, settings));
+    lines.extend(postings_doctor(recall_counts, settings));
     lines
 }
 
@@ -3744,18 +3754,47 @@ const SCAN_SHARE_WARN_PERCENT: u64 = 5;
 /// the scan share: below it one recall would swing it.
 const SCAN_SHARE_MIN_RECALLS: u64 = 20;
 
-/// The `bm25-postings` doctor lines (ADR-0052 d12): from `/readyz`, a
-/// warning when the scan answered more than 5% of its recalls since the lead
-/// started; and, read by an admin key from `GET /v2/search`, one warning per
-/// fault in the tenant's postings, each naming the repair, or one line
-/// saying they are complete.
-fn postings_doctor(ready: &Value, settings: Option<&Value>) -> Vec<String> {
+/// `bm25-postings`'s recalls since the lead started, (read from postings,
+/// answered by the scan), summed from `oml_recalls_total` on the metrics
+/// listener at `base` (ADR-0042 d11), or `None` when it does not answer.
+fn postings_recall_counts(base: &str) -> Option<(u64, u64)> {
+    let text = ureq::get(&format!("{base}/metrics"))
+        .call()
+        .ok()?
+        .into_string()
+        .ok()?;
+    let (mut postings, mut scan) = (0_u64, 0_u64);
+    for line in text.lines() {
+        if !line.starts_with("oml_recalls_total{") || !line.contains("pipeline=\"bm25-postings\"") {
+            continue;
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a counter's integral value"
+        )]
+        let value = line
+            .rsplit(' ')
+            .next()
+            .and_then(|v| v.parse::<f64>().ok())
+            .map_or(0, |v| v as u64);
+        if line.contains("access=\"scan\"") {
+            scan += value;
+        } else if line.contains("access=\"postings\"") {
+            postings += value;
+        }
+    }
+    Some((postings, scan))
+}
+
+/// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
+/// listener's recall counts, a warning when the scan answered more than 5%
+/// of its recalls since the lead started; and, read by an admin key from
+/// `GET /v2/search`, one warning per fault in the tenant's postings, each
+/// naming the repair, or one line saying they are complete.
+fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) -> Vec<String> {
     let mut lines = Vec::new();
-    let access = &ready["search"]["access"]["bm25-postings"];
-    let (postings, scan) = (
-        access["postings"].as_u64().unwrap_or(0),
-        access["scan"].as_u64().unwrap_or(0),
-    );
+    let (postings, scan) = recall_counts.unwrap_or((0, 0));
     let total = postings + scan;
     if total >= SCAN_SHARE_MIN_RECALLS && scan * 100 > SCAN_SHARE_WARN_PERCENT * total {
         #[allow(clippy::cast_precision_loss, reason = "a share of small counts")]
@@ -3771,7 +3810,7 @@ fn postings_doctor(ready: &Value, settings: Option<&Value>) -> Vec<String> {
     let refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_search_postings_refill('<tenant id>') rebuilds them (postgres-schema.md, search postings)";
     if h["partition"] == Value::Bool(false) {
         lines.push(
-            "warn search: this tenant has no postings partition, so bm25-postings finds nothing it writes; a defect: report it (ADR-0052 d1)".to_owned(),
+            "warn search: this tenant has no postings partition, so every memory write for it fails, as a lead before 0021 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0052 d1)".to_owned(),
         );
     }
     if n("unfilled") > 0 {

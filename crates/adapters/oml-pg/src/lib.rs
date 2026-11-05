@@ -492,7 +492,6 @@ fn partition_error(e: &sqlx::Error) -> StoreError {
 /// which is why they are spelled into the DDL, which takes no parameters.
 async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Result<(), sqlx::Error> {
     let partition = memories_partition(tenant_id);
-    let postings = postings_partition(tenant_id);
     let policy = "USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
                   WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)";
     let mut tx = owner.begin().await?;
@@ -513,16 +512,7 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
             .await?;
     let mut statements = Vec::new();
     if postings_table {
-        statements.extend([
-            format!("CREATE TABLE {postings} (LIKE search_postings INCLUDING ALL)"),
-            format!("ALTER TABLE {postings} ENABLE ROW LEVEL SECURITY"),
-            format!("ALTER TABLE {postings} FORCE ROW LEVEL SECURITY"),
-            format!("CREATE POLICY tenant_isolation ON {postings} {policy}"),
-            format!(
-                "ALTER TABLE search_postings ATTACH PARTITION {postings} \
-                 FOR VALUES IN ('{tenant_id}')"
-            ),
-        ]);
+        statements.extend(postings_partition_ddl(tenant_id));
     }
     statements.extend([
         format!("CREATE TABLE {partition} (LIKE memories INCLUDING ALL)"),
@@ -538,6 +528,78 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
             .await?;
     }
     tx.commit().await
+}
+
+/// The DDL of `tenant_id`'s `search_postings` partition, fenced before it is
+/// attached, as 0021 builds every existing tenant's (ADR-0052 d1).
+fn postings_partition_ddl(tenant_id: Uuid) -> Vec<String> {
+    let postings = postings_partition(tenant_id);
+    let policy = "USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
+                  WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)";
+    vec![
+        format!("CREATE TABLE {postings} (LIKE search_postings INCLUDING ALL)"),
+        format!("ALTER TABLE {postings} ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {postings} FORCE ROW LEVEL SECURITY"),
+        format!("CREATE POLICY tenant_isolation ON {postings} {policy}"),
+        format!(
+            "ALTER TABLE search_postings ATTACH PARTITION {postings} FOR VALUES IN ('{tenant_id}')"
+        ),
+    ]
+}
+
+/// Creates and fills the `search_postings` partition of every tenant whose
+/// memories partition exists and whose postings partition does not, each
+/// in an owner transaction of its own: a lead built before 0021 creates a
+/// tenant's memories partition alone, and that tenant's memory writes fail
+/// until the postings partition exists (ADR-0052 d1, d12; review F4). The
+/// lead runs it at every start, after migrating; it creates nothing where
+/// nothing is missing. Returns the tenants repaired.
+async fn ensure_postings_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx = owner.begin().await?;
+    sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let mut repaired = 0;
+    for tenant_id in tenants {
+        let mut tx = owner.begin().await?;
+        let missing: bool =
+            sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL")
+                .bind(memories_partition(tenant_id))
+                .bind(postings_partition(tenant_id))
+                .fetch_one(&mut *tx)
+                .await?;
+        if !missing {
+            tx.rollback().await?;
+            continue;
+        }
+        sqlx::query(&format!(
+            "SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"
+        ))
+        .persistent(false)
+        .execute(&mut *tx)
+        .await?;
+        for statement in postings_partition_ddl(tenant_id) {
+            sqlx::query(&statement)
+                .persistent(false)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT oml_search_postings_refill($1)")
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        repaired += 1;
+    }
+    Ok(repaired)
 }
 
 /// The full-text recall statement `recall_fts` runs, binding `$1` the
@@ -824,7 +886,10 @@ pub fn bm25_postings_sql() -> String {
 /// per-workarea counts that disagree with the served versions; and, of
 /// 200 count rows and as many served (workarea, kind, token)
 /// triples, the ones whose count disagrees with the served postings or is
-/// missing. Each served posting read goes through `search_postings_served`.
+/// missing. The 200 start at a random token each read and wrap round, so
+/// repeated reads cover every count; each side's read is bounded by its
+/// index (review F7). The version checks read every version of the tenant
+/// once with an index probe each: doctor's cost, not a recall's.
 const POSTINGS_HEALTH: &str = "WITH v AS ( \
          SELECT m.id, m.workarea_id, oml_search_memory_kind(m.kind) AS mk, m.search_len, \
                 oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
@@ -834,12 +899,24 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
                 FROM v WHERE state = 1 GROUP BY workarea_id, mk), \
      kept AS (SELECT workarea_id, memory_kind AS mk, rows::int8 AS rows, total_len AS len \
               FROM search_workarea_rows WHERE tenant_id = $1 AND kind = 1), \
-     sampled AS (SELECT c.workarea_id, c.memory_kind, c.token_id, c.rows FROM search_term_rows c \
-                 WHERE c.tenant_id = $1 AND c.kind = 1 \
-                 ORDER BY c.token_id, c.workarea_id, c.memory_kind LIMIT 200), \
-     posted AS (SELECT DISTINCT p.workarea_id, p.memory_kind, p.token_id FROM search_postings p \
-                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 \
-                ORDER BY p.token_id, p.workarea_id, p.memory_kind LIMIT 200) \
+     start AS MATERIALIZED (SELECT ((random() - 0.5) * 1.8e19)::int8 AS s), \
+     sampled AS (SELECT * FROM ( \
+         (SELECT 0 AS lap, c.workarea_id, c.memory_kind, c.token_id, c.rows \
+            FROM search_term_rows c, start WHERE c.tenant_id = $1 AND c.token_id >= start.s \
+           ORDER BY c.token_id LIMIT 200) \
+         UNION ALL \
+         (SELECT 1, c.workarea_id, c.memory_kind, c.token_id, c.rows \
+            FROM search_term_rows c, start WHERE c.tenant_id = $1 AND c.token_id < start.s \
+           ORDER BY c.token_id LIMIT 200)) x \
+       WHERE x.token_id IS NOT NULL ORDER BY lap, token_id LIMIT 200), \
+     posted AS (SELECT DISTINCT y.workarea_id, y.memory_kind, y.token_id FROM ( \
+         (SELECT 0 AS lap, p.workarea_id, p.memory_kind, p.token_id FROM search_postings p, start \
+           WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 AND p.token_id >= start.s \
+           ORDER BY p.token_id LIMIT 200) \
+         UNION ALL \
+         (SELECT 1, p.workarea_id, p.memory_kind, p.token_id FROM search_postings p, start \
+           WHERE p.tenant_id = $1 AND p.kind = 1 AND p.state = 1 AND p.token_id < start.s \
+           ORDER BY p.token_id LIMIT 200)) y) \
      SELECT to_regclass($2) IS NOT NULL AS partition, \
        (SELECT count(*) FROM want w WHERE NOT EXISTS ( \
             SELECT 1 FROM search_postings p WHERE p.tenant_id = $1 AND p.memory_id = w.id))::int8 \
@@ -915,42 +992,51 @@ impl PruneLimits {
         posting_budget: u64::MAX,
     };
 
-    /// The tokens pruned from `forms` (token, readable document frequency)
-    /// over `rows` readable rows: none while every form's postings together
-    /// fit the budget, so a scope that can be read whole is, and a row
-    /// holding only frequent words is still found; past it, every frequent
-    /// one, then, while the kept ones' frequencies sum above the budget,
-    /// the most frequent kept one, ties by token id. A form no readable row
-    /// holds is neither kept nor pruned. It reads the readable counts alone,
-    /// so which word is pruned depends only on rows the key may read
-    /// (ADR-0052 d6, amended 2026-11-05).
+    /// The query words pruned, by index into `words`, each word its present
+    /// forms (token, readable document frequency), over `rows` readable
+    /// rows. A word is pruned whole, every form of it, so a word the answer
+    /// does not name in `pruned` is read in full and every row holding it
+    /// is a candidate (ADR-0052 d6, d11). None while the distinct forms'
+    /// postings together fit the budget, so a scope that can be read whole
+    /// is; past it, every frequent word, one with a form held by more than
+    /// the share of the readable rows; then, while the kept words' distinct
+    /// forms sum above the budget, the kept word with the most postings,
+    /// ties by index. A word with no present form is neither kept nor
+    /// pruned. It reads the readable counts alone, so which word is pruned
+    /// depends only on rows the key may read.
     #[must_use]
-    pub fn pruned(&self, forms: &[(i64, u64)], rows: u64) -> BTreeSet<i64> {
-        if forms.iter().map(|(_, df)| df).sum::<u64>() <= self.posting_budget {
+    pub fn pruned(&self, words: &[Vec<(i64, u64)>], rows: u64) -> BTreeSet<usize> {
+        let postings = |chosen: &mut dyn Iterator<Item = &Vec<(i64, u64)>>| -> u64 {
+            let distinct: BTreeMap<i64, u64> = chosen.flatten().copied().collect();
+            distinct.values().sum()
+        };
+        if postings(&mut words.iter()) <= self.posting_budget {
             return BTreeSet::new();
         }
         #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
         let bound = self.frequent_share * rows as f64;
         let mut pruned = BTreeSet::new();
-        let mut kept: BTreeMap<i64, u64> = BTreeMap::new();
-        for &(token, df) in forms {
+        for (i, forms) in words.iter().enumerate() {
             #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
-            let frequent = df as f64 > bound;
-            if df == 0 {
-                continue;
-            } else if frequent {
-                pruned.insert(token);
-            } else {
-                kept.insert(token, df);
+            let frequent = forms.iter().any(|(_, df)| *df as f64 > bound);
+            if !forms.is_empty() && frequent {
+                pruned.insert(i);
             }
         }
-        while kept.values().sum::<u64>() > self.posting_budget {
-            let Some((&token, _)) = kept.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
-            else {
+        loop {
+            let kept: Vec<usize> = (0..words.len())
+                .filter(|i| !pruned.contains(i) && !words[*i].is_empty())
+                .collect();
+            if postings(&mut kept.iter().map(|i| &words[*i])) <= self.posting_budget {
+                break;
+            }
+            let Some(&heaviest) = kept.iter().max_by(|a, b| {
+                let sum = |i: usize| words[i].iter().map(|(_, df)| df).sum::<u64>();
+                sum(**a).cmp(&sum(**b)).then(b.cmp(a))
+            }) else {
                 break;
             };
-            kept.remove(&token);
-            pruned.insert(token);
+            pruned.insert(heaviest);
         }
         pruned
     }
@@ -1120,6 +1206,11 @@ impl PgStore {
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
         MIGRATOR.run(owner).await?;
+        // A tenant a lead before 0021 created has no postings partition, and
+        // its writes fail until it does (ADR-0052 d1).
+        ensure_postings_partitions(owner)
+            .await
+            .map_err(sqlx::migrate::MigrateError::Execute)?;
         // 0020 may have created pg_trgm, which serves bm25-trigram.
         self.probe_search().await?;
         Ok(aligned)
@@ -3348,13 +3439,20 @@ impl PgStore {
             }
             (rarest.clone(), None, Vec::new())
         } else {
-            let present: Vec<(i64, u64)> = df.iter().map(|(t, n)| (*t, *n)).collect();
-            let pruned = self.prune.pruned(&present, rows);
-            let kept: Vec<i64> = present
+            let entries: Vec<(&str, Vec<(i64, u64)>)> = words
                 .iter()
-                .filter(|(t, n)| *n > 0 && !pruned.contains(t))
-                .map(|(t, _)| *t)
+                .map(|(w, ts)| (*w, ts.iter().map(|t| (*t, df[t])).collect()))
                 .collect();
+            let forms: Vec<Vec<(i64, u64)>> = entries.iter().map(|(_, f)| f.clone()).collect();
+            let pruned = self.prune.pruned(&forms, rows);
+            let mut kept: Vec<i64> = entries
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !pruned.contains(i))
+                .flat_map(|(_, (_, f))| f.iter().map(|(t, _)| *t))
+                .collect();
+            kept.sort_unstable();
+            kept.dedup();
             if kept.is_empty() && !pruned.is_empty() {
                 return Ok(PostingsRead {
                     terms,
@@ -3363,11 +3461,8 @@ impl PgStore {
                     pruned: Vec::new(),
                 });
             }
-            let pruned_words: Vec<String> = words
-                .iter()
-                .filter(|(_, ts)| !ts.is_empty() && ts.iter().all(|t| pruned.contains(t)))
-                .map(|(w, _)| (*w).to_owned())
-                .collect();
+            let pruned_words: Vec<String> =
+                pruned.iter().map(|i| entries[*i].0.to_owned()).collect();
             let depth = if pruned.is_empty() {
                 query.k
             } else {
@@ -3462,6 +3557,12 @@ impl Retriever for PgStore {
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
+        // One snapshot for every statement of the list, so counts and
+        // postings read together; nothing here writes (review F6).
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // The terms as the retriever reads them: the query's `simple`
         // lexemes, of the normalised query for bm25, bm25_postings and
