@@ -1,0 +1,83 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "scale",
+ "suite_version": "1",
+ "kind": "scale",
+ "method": "trigram",
+ "date": "2026-11-04",
+ "commit": "bb40436db8a2515e2055b81c1be480afcf206763",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "PostgreSQL 18.6",
+  "cache": "warm"
+ },
+ "n_docs": 1000000,
+ "tenants": 1,
+ "metrics": {
+  "index_mb": 265.4453,
+  "index_build_s": 12.0394,
+  "write_overhead_ms": 0.1158,
+  "cold_p50_ms": 376.5239,
+  "cold_p95_ms": 5000.0,
+  "cold_p99_ms": 5000.0,
+  "timeouts": 61,
+  "empty_results": 196,
+  "queries": 330,
+  "write_total_p50_ms_today": 4.6691,
+  "no_rls_p95_ms": 983.4584
+ },
+ "latency_ms": {
+  "p50": 362.6246,
+  "p95": 5000.0,
+  "p99": 5000.0
+ },
+ "per_category": {
+  "exact": {
+   "p50": 361.2381,
+   "p95": 5000.0
+  },
+  "paraphrase": {
+   "p50": 378.3928,
+   "p95": 5000.0
+  },
+  "inflection": {
+   "p50": 196.0014,
+   "p95": 5000.0
+  },
+  "partial": {
+   "p50": 332.0784,
+   "p95": 5000.0
+  },
+  "typo": {
+   "p50": 348.0633,
+   "p95": 5000.0
+  },
+  "identifier": {
+   "p50": 336.6396,
+   "p95": 5000.0
+  },
+  "question": {
+   "p50": 395.4908,
+   "p95": 5000.0
+  },
+  "long": {
+   "p50": 634.3863,
+   "p95": 5000.0
+  },
+  "negation": {
+   "p50": 379.0981,
+   "p95": 5000.0
+  },
+  "temporal": {
+   "p50": 369.1281,
+   "p95": 5000.0
+  },
+  "multihop": {
+   "p50": 450.1527,
+   "p95": 5000.0
+  }
+ },
+ "extrapolated": false,
+ "notes": "Synthetic templated text from the recall eval's 200 seeds (and synthetic clustered vectors), one client on a shared 8-vCPU host, queried as the serving role under row security. Timed-out queries count as the timeout (5000 ms).",
+ "source": "bench/scale/results/s1m_text.json"
+}

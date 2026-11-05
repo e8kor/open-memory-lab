@@ -1,0 +1,75 @@
+{
+ "case": "sparse",
+ "scale": 100000,
+ "tenants": 1,
+ "k": 10,
+ "vocab": 30522,
+ "nnz_per_doc": 60,
+ "query_tokens": 10,
+ "started": "2026-11-04T23:03:45",
+ "load_s": 10.685429841978475,
+ "postings": 5441729,
+ "heap_bytes": 459800576,
+ "index_build_s": 1.123109093052335,
+ "index_bytes": 38649856,
+ "cold": {
+  "n": 330,
+  "p50_ms": 209.5873310463503,
+  "p95_ms": 323.35959502961487,
+  "p99_ms": 393.0655880831182,
+  "mean_ms": 227.17200779835835
+ },
+ "warm": {
+  "n": 330,
+  "p50_ms": 216.7608329327777,
+  "p95_ms": 328.21474492084235,
+  "p99_ms": 402.38073002547026,
+  "mean_ms": 219.29596350104973,
+  "by_scope": {
+   "project": {
+    "p50_ms": 210.1273920852691,
+    "p95_ms": 308.4871310275048
+   },
+   "leaf": {
+    "p50_ms": 190.4608990298584,
+    "p95_ms": 274.8777150409296
+   },
+   "universe": {
+    "p50_ms": 276.88227500766516,
+    "p95_ms": 402.38073002547026
+   }
+  }
+ },
+ "warm_pruned_top100": {
+  "n": 330,
+  "p50_ms": 6.452030967921019,
+  "p95_ms": 15.324342995882034,
+  "p99_ms": 18.51851399987936,
+  "mean_ms": 7.14441919099596,
+  "by_scope": {
+   "project": {
+    "p50_ms": 6.4251599833369255,
+    "p95_ms": 14.345283037982881
+   },
+   "leaf": {
+    "p50_ms": 6.178781972266734,
+    "p95_ms": 13.127972022630274
+   },
+   "universe": {
+    "p50_ms": 8.569321013055742,
+    "p95_ms": 17.77407294139266
+   }
+  }
+ },
+ "explain_universe": "Limit (actual time=385.235..385.239 rows=10.00 loops=1)\n  Buffers: shared hit=255861\n  ->  Sort (actual time=385.233..385.236 rows=10.00 loops=1)\n        Sort Key: (sum((p.weight * q.w))) DESC, p.memory_id\n        Sort Method: top-N heapsort  Memory: 25kB\n        Buffers: shared hit=255861\n        ->  HashAggregate (actual time=371.304..380.749 rows=65149.00 loops=1)\n              Group Key: p.memory_id\n              Batches: 1  Memory Usage: 5169kB\n              Buffers: shared hit=255855\n              ->  Result (actual time=0.126..304.677 rows=235137.00 loops=1)\n                    One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '601518c4-de34-4b7e-b4e8-11cdd82d332b'::uuid)\n                    Buffers: shared hit=255855\n                    ->  Nested Loop (actual time=0.120..285.138 rows=235137.00 loops=1)\n                          Buffers: shared hit=255855\n                          ->  Function Scan on q (actual time=0.026..0.040 rows=10.00 loops=1)\n                          ->  Index Scan using sparse_postings_t_601518c4de344b7eb4e811cdd82d332b_token on sparse_postings_t_601518c4de344b7eb4e811cdd82d332b p (actual time=0.027..26.467 rows=23513.70 loops=10)\n                                Index Cond: ((token_id = q.token_id) AND (token_id = ANY ('{0,3,11,14,20,27,28,159,765,779}'::integer[])))\n                                Filter: (served AND (tenant_id = '601518c4-de34-4b7e-b4e8-11cdd82d332b'::uuid) AND (workarea_id = ANY ('{7ab94de2-dadd-42ee-b6fd-d869269b3c7d,1d74420a-fa66-4c5d-8be8-06c2f400978c,b60a8415-a82b-4b44-992d-c24b7a6ec04e,90815301-d489-4513-b781-2e96d244c1cc,53d9fcbf-f5c8-4ba2-97e2-0463983a9563,cf22880e-e933-46e5-ae27-0026d339ecef,56fbc85b-541a-4cf6-a69b-eae079e9a1ad,bbbdb1cd-f033-4c14-85ad-87de1a668ec5,b5bfdeb0-6aad-4135-8c45-019ac74f7c04,d945b764-2d0e-4026-b432-063ad109afaf,2dc5df74-6fc1-48b2-bea8-b7263ac6b44d,381d512a-f919-4caa-83a4-f8e5f9ab331a,cdff0e0f-fba2-4993-99b3-54f8d50632f6,895f2880-11ec-46f5-bc19-66b88232a176,713625cf-bc19-4e05-a61d-16c8cd596bab,7c013cde-cd96-4872-8cb7-1adea1d15297,1a146163-6419-4b7d-990e-82d9e5b4f478,801bd22f-22e8-4904-858e-dce425cc795c,3352c840-dbe0-4555-b9e5-3f93efba81ef,2e2b9729-4269-4894-b01f-325834103b37,57bb03a0-e181-4331-a30e-ea9834466be3,83330035-3fdb-4ccf-bccd-f787694064d6,5512b60d-09ca-4582-9bd6-f058c289c5ab,7111176a-50b2-4ae0-b5ba-66f7941eb73b,1e636469-9366-4a87-9e08-2e63b327bde2,241099d0-4aae-4b21-b873-cc01d114376a,336afcb1-e50a-4312-9c42-89266021090e,9d5af226-72bf-4599-86f2-1873439b43c7,45fb35c3-67f9-4be9-8e7e-643c9928937d,100c95a7-68ac-4a88-9796-4ad5e53ea71d,1e2a6501-85b0-4bcf-98a3-a34ea40f6335,ca79702f-f1ec-461b-a564-2b4ffc415670,8ddc50c1-164f-40e3-8355-45658d8b458c,397a4401-e4a4-4df9-b1f8-493645fed19a,5e3fb845-7685-4aee-8a58-c0490b280e85,09293879-c7f3-4c2e-a8bd-c391452b0dce,fa08208a-9b2c-4744-a1be-5c8fb009f78e,d22e9c6d-f350-42c4-b83a-012ca6e5e482,09982991-3fd4-4d29-8dc2-bfe2d1bda5c2,8841cff0-a5dc-439d-b077-7c81e73767ce,2ced59ad-f1b9-46eb-988f-e5ca0303c002,01e0ea79-b93d-4fa6-b8f4-8ba7224bf5ae,ca662297-f3d5-44e8-baea-99b26eef9538,6707be53-fe40-4028-861f-8bb5a4503310,90433e58-2f40-48f8-9efb-424f5e5289d0,58c2e4f3-e014-4029-a42f-b1c47d88b964}'::uuid[])))\n                                Rows Removed by Filter: 12541\n                                Index Searches: 10\n                                Buffers: shared hit=255855\nPlanning:\n  Buffers: shared hit=348\nPlanning Time: 1.570 ms\nExecution Time: 386.013 ms",
+ "postings_touched_p50": 360548,
+ "postings_touched_p95": 502684,
+ "write_60_postings": {
+  "n": 300,
+  "p50_ms": 2.707349951379001,
+  "p95_ms": 17.787634045816958,
+  "p99_ms": 28.590245987288654,
+  "mean_ms": 4.714499629335478
+ },
+ "finished": "2026-11-04T23:06:42"
+}

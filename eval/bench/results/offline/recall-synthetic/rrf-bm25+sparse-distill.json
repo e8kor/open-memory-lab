@@ -1,0 +1,184 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "recall-synthetic",
+ "suite_version": "eval/recall data version 1, scored by eval/bench/bench.py (gain = grade)",
+ "kind": "offline",
+ "method": "rrf-bm25+sparse-distill",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 121,
+ "n_docs": 200,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.897,
+  "recall@10": 0.9339,
+  "recall@100": 0.9835,
+  "mrr@10": 0.93,
+  "success@1": 0.8347,
+  "success@5": 0.9669,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "exact": {
+   "ndcg@10": 0.9564,
+   "recall@10": 0.9091,
+   "recall@100": 0.9545,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "identifier": {
+   "ndcg@10": 1.0,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "inflection": {
+   "ndcg@10": 0.9421,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.9545,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "long": {
+   "ndcg@10": 0.9263,
+   "recall@10": 0.947,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.9091,
+   "success@5": 0.9091,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "multihop": {
+   "ndcg@10": 0.8754,
+   "recall@10": 0.947,
+   "recall@100": 0.9697,
+   "mrr@10": 1.0,
+   "success@1": 0.9091,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "negation": {
+   "ndcg@10": 0.9909,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "paraphrase": {
+   "ndcg@10": 0.5719,
+   "recall@10": 0.6364,
+   "recall@100": 0.9242,
+   "mrr@10": 0.5909,
+   "success@1": 0.4545,
+   "success@5": 0.7273,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "partial": {
+   "ndcg@10": 0.9564,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.9545,
+   "success@1": 0.9091,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "question": {
+   "ndcg@10": 0.9278,
+   "recall@10": 0.9091,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.9091,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "temporal": {
+   "ndcg@10": 0.8162,
+   "recall@10": 0.9242,
+   "recall@100": 0.9697,
+   "mrr@10": 0.8591,
+   "success@1": 0.4545,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "typo": {
+   "ndcg@10": 0.9034,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.8712,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "RRF (k 60, equal weights) of bm25+sparse-distill over each leg's top 100.",
+ "cost": {
+  "sparse-distill": {
+   "docs": 200,
+   "encode_seconds": 8.9,
+   "docs_per_second": 22.5,
+   "mean_chars": 121,
+   "threads": 8,
+   "batch": 32,
+   "nnz_mean": 203.0,
+   "nnz_p50": 202,
+   "nnz_p95": 248,
+   "nnz_max": 283,
+   "clean": {
+    "load_before": 2.45,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 36.19,
+     "docs_per_second": 7.1
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 9.83,
+     "docs_per_second": 52.1
+    },
+    "query_encode": {
+     "what": "tokenizer + idf lookup, no model",
+     "p50_ms": 0.04,
+     "p95_ms": 0.08
+    },
+    "load_after": 5.62
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.023,
+  "p_value": 0.0227,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ }
+}

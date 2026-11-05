@@ -20,8 +20,8 @@ postings partition beside each memories partition).
 
 ## Context
 
-**Under row security no text index serves a recall.** The scale lane (`feat/scale-bench`,
-`bench/scale/REPORT.md`, measured 2026-11-04 on PostgreSQL 18.6, 8 vCPU) found that every full-text and
+**Under row security no text index serves a recall.** The scale lane (`bench/scale/REPORT-baseline.md`,
+measured 2026-11-04 on PostgreSQL 18.6, 8 vCPU) found that every full-text and
 trigram operator PostgreSQL ships (`@@`, `%`, `<%`, `ts_rank`) has `proleakproof = false`, so the
 planner keeps it above the `tenant_isolation` policy's predicate and never turns it into an index
 condition. Each text statement is an index scan on `(tenant_id, workarea_id, …)` and a per-row filter
@@ -419,7 +419,7 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
   `bm25-postings` with pruning off, which must equal `bm25` (the agreement law, measured end to end);
   the gate of d9 (2). A readable-half run: a key that reads half the workareas gets, for every query,
   the scores a database holding only that half gives.
-- **The scale lane** (`bench/scale/`, `feat/scale-bench`): a new approach, h) `bm25-postings` through
+- **The scale lane** (`bench/scale/`): a new approach, h) `bm25-postings` through
   migration 0021's own table and trigger, at 10,000, 100,000 and 1,000,000 rows per tenant measured
   (the disk the 1,000,000 point needs is provisioned, not extrapolated), leaf / project / universe
   scopes, warm and cold p95, the share answered by `scan`, postings touched, heap and both indexes'

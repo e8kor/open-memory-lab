@@ -1,0 +1,876 @@
+{
+ "scale": 10000,
+ "tenants": 1,
+ "k": 10,
+ "queries": 330,
+ "timeout_ms": 10000,
+ "norls_one_pass": false,
+ "started": "2026-11-04T21:44:53",
+ "load": [
+  {
+   "tenant": "991176e8-5802-4470-ad8a-543e1c82ccf6",
+   "copy_s": 0.5547285019420087,
+   "heap_bytes": 4784128,
+   "toast_bytes": 32768,
+   "index": {
+    "pkey": {
+     "build_s": 0.02060355502180755,
+     "bytes": 516096
+    },
+    "workarea": {
+     "build_s": 0.01837049308232963,
+     "bytes": 98304
+    },
+    "claim_fts": {
+     "build_s": 0.26138301310129464,
+     "bytes": 1368064
+    },
+    "claim_version": {
+     "build_s": 0.04017106897663325,
+     "bytes": 655360
+    },
+    "served_tip": {
+     "build_s": 0.02881588600575924,
+     "bytes": 458752
+    },
+    "author": {
+     "build_s": 0.015974404057487845,
+     "bytes": 98304
+    }
+   },
+   "attach_s": 0.016682374058291316
+  }
+ ],
+ "stages": {
+  "bm25": {
+   "build_s": 0.3094790809554979,
+   "df_rows": 26548,
+   "df_total_bytes": 4202496,
+   "scope_total_bytes": 24576
+  },
+  "dual": {
+   "rewrite_s": 0.7357132480246946,
+   "gin_simple_s": 0.1635535939130932,
+   "gin_english_s": 0.09170117799658328,
+   "gin_simple_bytes": "1581056",
+   "gin_english_bytes": "1261568",
+   "heap_bytes_after": "13139968"
+  }
+ },
+ "latency": {
+  "a_simple_and": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 17.570943920873106,
+    "p95_ms": 98.36412000004202,
+    "p99_ms": 111.6531619336456,
+    "mean_ms": 30.870209451920044,
+    "max_ms": 308.80148289725184,
+    "timeouts": 0,
+    "empty": 286,
+    "mean_rows": 0.7242424242424242,
+    "first_ms": 308.80148289725184
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 17.39621302112937,
+    "p95_ms": 93.6535979853943,
+    "p99_ms": 102.22662205342203,
+    "mean_ms": 29.34124927833733,
+    "max_ms": 127.98217602539808,
+    "timeouts": 0,
+    "empty": 286,
+    "mean_rows": 0.7242424242424242
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 19.05794406775385,
+     "p95_ms": 104.10277207847685
+    },
+    "paraphrase": {
+     "p50_ms": 19.93032405152917,
+     "p95_ms": 101.15127998869866
+    },
+    "inflection": {
+     "p50_ms": 20.242573926225305,
+     "p95_ms": 98.47140999045223
+    },
+    "partial": {
+     "p50_ms": 15.552684082649648,
+     "p95_ms": 94.05695903114974
+    },
+    "typo": {
+     "p50_ms": 17.670363071374595,
+     "p95_ms": 98.20527001284063
+    },
+    "identifier": {
+     "p50_ms": 17.848704010248184,
+     "p95_ms": 43.26344805303961
+    },
+    "question": {
+     "p50_ms": 18.276064074598253,
+     "p95_ms": 88.96272792480886
+    },
+    "long": {
+     "p50_ms": 14.551543979905546,
+     "p95_ms": 88.55619898531586
+    },
+    "negation": {
+     "p50_ms": 13.792042969726026,
+     "p95_ms": 88.18632806651294
+    },
+    "temporal": {
+     "p50_ms": 6.858051056042314,
+     "p95_ms": 44.48300995863974
+    },
+    "multihop": {
+     "p50_ms": 17.98481203150004,
+     "p95_ms": 90.83589795045555
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 90.5747179640457,
+     "p95_ms": 103.91487099695951
+    },
+    "leaf": {
+     "p50_ms": 6.3910920871421695,
+     "p95_ms": 37.139037041924894
+    },
+    "project": {
+     "p50_ms": 18.484523985534906,
+     "p95_ms": 45.86149996612221
+    }
+   }
+  },
+  "c_dual_or": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 2.8195190243422985,
+    "p95_ms": 14.410162926651537,
+    "p99_ms": 28.355396003462374,
+    "mean_ms": 6.711262894907232,
+    "max_ms": 685.8003590023145,
+    "timeouts": 0,
+    "empty": 7,
+    "mean_rows": 9.43939393939394,
+    "first_ms": 685.8003590023145
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 2.8310500783845782,
+    "p95_ms": 13.857992948032916,
+    "p99_ms": 30.243256012909114,
+    "mean_ms": 4.808014879271275,
+    "max_ms": 34.21603702008724,
+    "timeouts": 0,
+    "empty": 7,
+    "mean_rows": 9.43939393939394
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 3.0994400149211287,
+     "p95_ms": 20.478493999689817
+    },
+    "paraphrase": {
+     "p50_ms": 3.180262050591409,
+     "p95_ms": 13.309913105331361
+    },
+    "inflection": {
+     "p50_ms": 2.278860076330602,
+     "p95_ms": 9.214292978867888
+    },
+    "partial": {
+     "p50_ms": 1.795210991986096,
+     "p95_ms": 6.555881001986563
+    },
+    "typo": {
+     "p50_ms": 2.2703709546476603,
+     "p95_ms": 7.895010989159346
+    },
+    "identifier": {
+     "p50_ms": 1.9783410243690014,
+     "p95_ms": 4.9953400157392025
+    },
+    "question": {
+     "p50_ms": 4.142459947615862,
+     "p95_ms": 18.978885025717318
+    },
+    "long": {
+     "p50_ms": 6.469232030212879,
+     "p95_ms": 30.243256012909114
+    },
+    "negation": {
+     "p50_ms": 3.307709936052561,
+     "p95_ms": 13.857992948032916
+    },
+    "temporal": {
+     "p50_ms": 1.6738210106268525,
+     "p95_ms": 5.852761911228299
+    },
+    "multihop": {
+     "p50_ms": 3.889282001182437,
+     "p95_ms": 26.50490601081401
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 9.846410946920514,
+     "p95_ms": 30.81709600519389
+    },
+    "leaf": {
+     "p50_ms": 1.5533410478383303,
+     "p95_ms": 6.567441043443978
+    },
+    "project": {
+     "p50_ms": 3.2672000816091895,
+     "p95_ms": 12.339932029135525
+    }
+   }
+  },
+  "a_stored_and": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 1.5260999789461493,
+    "p95_ms": 5.1220019813627005,
+    "p99_ms": 9.437622036784887,
+    "mean_ms": 4.043884793733896,
+    "max_ms": 625.3647460835055,
+    "timeouts": 0,
+    "empty": 285,
+    "mean_rows": 0.7636363636363637,
+    "first_ms": 625.3647460835055
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 1.8228599801659584,
+    "p95_ms": 6.349030998535454,
+    "p99_ms": 10.671561933122575,
+    "mean_ms": 2.5898865861535976,
+    "max_ms": 17.084004008211195,
+    "timeouts": 0,
+    "empty": 285,
+    "mean_rows": 0.7636363636363637
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 2.3452809546142817,
+     "p95_ms": 10.9403720125556
+    },
+    "paraphrase": {
+     "p50_ms": 2.0052100298926234,
+     "p95_ms": 6.523382035084069
+    },
+    "inflection": {
+     "p50_ms": 1.8587909871712327,
+     "p95_ms": 6.479809992015362
+    },
+    "partial": {
+     "p50_ms": 1.8065000185742974,
+     "p95_ms": 6.229652091860771
+    },
+    "typo": {
+     "p50_ms": 1.7468510195612907,
+     "p95_ms": 6.111560971476138
+    },
+    "identifier": {
+     "p50_ms": 1.901070005260408,
+     "p95_ms": 3.36265005171299
+    },
+    "question": {
+     "p50_ms": 2.7534200344234705,
+     "p95_ms": 6.349030998535454
+    },
+    "long": {
+     "p50_ms": 1.4847810380160809,
+     "p95_ms": 5.084640928544104
+    },
+    "negation": {
+     "p50_ms": 2.5107209803536534,
+     "p95_ms": 9.616142022423446
+    },
+    "temporal": {
+     "p50_ms": 1.4381799846887589,
+     "p95_ms": 4.661511047743261
+    },
+    "multihop": {
+     "p50_ms": 1.4913399936631322,
+     "p95_ms": 4.973220988176763
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 5.835229996591806,
+     "p95_ms": 10.673151933588088
+    },
+    "leaf": {
+     "p50_ms": 1.1738799512386322,
+     "p95_ms": 2.8595200274139643
+    },
+    "project": {
+     "p50_ms": 2.000239910557866,
+     "p95_ms": 3.934960928745568
+    }
+   }
+  },
+  "b_stored_or": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 2.1053210366517305,
+    "p95_ms": 9.577901917509735,
+    "p99_ms": 21.491604042239487,
+    "mean_ms": 4.925983409383193,
+    "max_ms": 517.5151349976659,
+    "timeouts": 0,
+    "empty": 13,
+    "mean_rows": 9.212121212121213,
+    "first_ms": 517.5151349976659
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 2.1364589920267463,
+    "p95_ms": 10.207762010395527,
+    "p99_ms": 19.192263949662447,
+    "mean_ms": 3.3353783892270066,
+    "max_ms": 21.07953408267349,
+    "timeouts": 0,
+    "empty": 13,
+    "mean_rows": 9.212121212121213
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 1.9160000374540687,
+     "p95_ms": 13.62738199532032
+    },
+    "paraphrase": {
+     "p50_ms": 1.9180210074409842,
+     "p95_ms": 7.993601029738784
+    },
+    "inflection": {
+     "p50_ms": 1.5952209942042828,
+     "p95_ms": 4.836010979488492
+    },
+    "partial": {
+     "p50_ms": 2.811359940096736,
+     "p95_ms": 10.207762010395527
+    },
+    "typo": {
+     "p50_ms": 1.650210004299879,
+     "p95_ms": 6.539291003718972
+    },
+    "identifier": {
+     "p50_ms": 1.707589952275157,
+     "p95_ms": 3.3425999572500587
+    },
+    "question": {
+     "p50_ms": 2.3854700848460197,
+     "p95_ms": 12.790301931090653
+    },
+    "long": {
+     "p50_ms": 3.716320963576436,
+     "p95_ms": 19.74319398868829
+    },
+    "negation": {
+     "p50_ms": 1.99321995023638,
+     "p95_ms": 10.223092045634985
+    },
+    "temporal": {
+     "p50_ms": 1.3360199518501759,
+     "p95_ms": 4.057231009937823
+    },
+    "multihop": {
+     "p50_ms": 2.9781400226056576,
+     "p95_ms": 13.136243098415434
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 8.043762063607574,
+     "p95_ms": 19.74319398868829
+    },
+    "leaf": {
+     "p50_ms": 1.2277300702407956,
+     "p95_ms": 3.120200941339135
+    },
+    "project": {
+     "p50_ms": 2.539939945563674,
+     "p95_ms": 5.955631961114705
+    }
+   }
+  },
+  "d_bm25_stored": {
+   "cold": {
+    "n": 330,
+    "p50_ms": 6.2304409220814705,
+    "p95_ms": 60.31215202528983,
+    "p99_ms": 107.48378094285727,
+    "mean_ms": 15.05713012937287,
+    "max_ms": 725.9201869601384,
+    "timeouts": 0,
+    "empty": 13,
+    "mean_rows": 9.212121212121213,
+    "first_ms": 725.9201869601384
+   },
+   "warm": {
+    "n": 330,
+    "p50_ms": 5.489411065354943,
+    "p95_ms": 51.746441051363945,
+    "p99_ms": 95.2888400061056,
+    "mean_ms": 11.485997219499426,
+    "max_ms": 117.34966293442994,
+    "timeouts": 0,
+    "empty": 13,
+    "mean_rows": 9.212121212121213
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 2.474580076523125,
+     "p95_ms": 18.659093999303877
+    },
+    "paraphrase": {
+     "p50_ms": 6.308762007392943,
+     "p95_ms": 38.50441693793982
+    },
+    "inflection": {
+     "p50_ms": 3.051751060411334,
+     "p95_ms": 15.951392939314246
+    },
+    "partial": {
+     "p50_ms": 2.1925809560343623,
+     "p95_ms": 7.420220994390547
+    },
+    "typo": {
+     "p50_ms": 2.3747009690850973,
+     "p95_ms": 10.172481997869909
+    },
+    "identifier": {
+     "p50_ms": 2.060840022750199,
+     "p95_ms": 7.333220914006233
+    },
+    "question": {
+     "p50_ms": 13.399851974099874,
+     "p95_ms": 83.96712597459555
+    },
+    "long": {
+     "p50_ms": 17.09609304089099,
+     "p95_ms": 111.46361310966313
+    },
+    "negation": {
+     "p50_ms": 5.877241026610136,
+     "p95_ms": 53.240859997458756
+    },
+    "temporal": {
+     "p50_ms": 6.23680092394352,
+     "p95_ms": 22.640734096057713
+    },
+    "multihop": {
+     "p50_ms": 12.731113005429506,
+     "p95_ms": 75.91053599026054
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 15.951392939314246,
+     "p95_ms": 104.24649098422378
+    },
+    "leaf": {
+     "p50_ms": 2.8145109536126256,
+     "p95_ms": 13.269693008624017
+    },
+    "project": {
+     "p50_ms": 6.108241039328277,
+     "p95_ms": 31.773216906003654
+    }
+   }
+  }
+ },
+ "latency_no_rls": {
+  "a_simple_and": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 1.005569938570261,
+    "p95_ms": 1.8434299854561687,
+    "p99_ms": 2.79675901401788,
+    "mean_ms": 1.1052827287296003,
+    "max_ms": 3.4114010632038116,
+    "timeouts": 0,
+    "empty": 286,
+    "mean_rows": 0.7242424242424242
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 1.5893210656940937,
+     "p95_ms": 3.2507210271432996
+    },
+    "paraphrase": {
+     "p50_ms": 0.8245810167863965,
+     "p95_ms": 1.2359298998489976
+    },
+    "inflection": {
+     "p50_ms": 1.016691094264388,
+     "p95_ms": 1.4161899453029037
+    },
+    "partial": {
+     "p50_ms": 0.9550799150019884,
+     "p95_ms": 1.2258400674909353
+    },
+    "typo": {
+     "p50_ms": 0.9285199921578169,
+     "p95_ms": 1.1629100190475583
+    },
+    "identifier": {
+     "p50_ms": 1.0695710079744458,
+     "p95_ms": 1.760960090905428
+    },
+    "question": {
+     "p50_ms": 0.8668099762871861,
+     "p95_ms": 1.3242600252851844
+    },
+    "long": {
+     "p50_ms": 1.0556509951129556,
+     "p95_ms": 1.9043509382754564
+    },
+    "negation": {
+     "p50_ms": 1.25427998136729,
+     "p95_ms": 2.370079979300499
+    },
+    "temporal": {
+     "p50_ms": 0.9238109923899174,
+     "p95_ms": 1.526850974187255
+    },
+    "multihop": {
+     "p50_ms": 1.2423810549080372,
+     "p95_ms": 1.6732699004933238
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 1.1808109702542424,
+     "p95_ms": 3.068411024287343
+    },
+    "leaf": {
+     "p50_ms": 0.9813109645619988,
+     "p95_ms": 1.6803209437057376
+    },
+    "project": {
+     "p50_ms": 0.9854889940470457,
+     "p95_ms": 1.8179200123995543
+    }
+   }
+  },
+  "c_dual_or": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 3.8450409192591906,
+    "p95_ms": 60.71465299464762,
+    "p99_ms": 172.91723506059498,
+    "mean_ms": 12.942494407197405,
+    "max_ms": 214.03541299514472,
+    "timeouts": 0,
+    "empty": 7,
+    "mean_rows": 9.43939393939394
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 1.392180914990604,
+     "p95_ms": 6.4025119645521045
+    },
+    "paraphrase": {
+     "p50_ms": 5.794900935143232,
+     "p95_ms": 40.22122803144157
+    },
+    "inflection": {
+     "p50_ms": 2.6078399969264865,
+     "p95_ms": 15.702913049608469
+    },
+    "partial": {
+     "p50_ms": 1.0049300035461783,
+     "p95_ms": 2.8157199267297983
+    },
+    "typo": {
+     "p50_ms": 1.1208399664610624,
+     "p95_ms": 5.560461082495749
+    },
+    "identifier": {
+     "p50_ms": 1.0899199405685067,
+     "p95_ms": 4.499209928326309
+    },
+    "question": {
+     "p50_ms": 11.624531936831772,
+     "p95_ms": 84.18118802364916
+    },
+    "long": {
+     "p50_ms": 34.9714569747448,
+     "p95_ms": 206.25716203358024
+    },
+    "negation": {
+     "p50_ms": 6.0756109887734056,
+     "p95_ms": 42.338759056292474
+    },
+    "temporal": {
+     "p50_ms": 4.560030065476894,
+     "p95_ms": 14.44768300279975
+    },
+    "multihop": {
+     "p50_ms": 14.52153199352324,
+     "p95_ms": 80.81634703557938
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 9.39086196012795,
+     "p95_ms": 184.75061701610684
+    },
+    "leaf": {
+     "p50_ms": 2.310630981810391,
+     "p95_ms": 20.17780498135835
+    },
+    "project": {
+     "p50_ms": 5.2783910650759935,
+     "p95_ms": 49.408398917876184
+    }
+   }
+  },
+  "a_stored_and": {
+   "warm": {
+    "n": 330,
+    "p50_ms": 0.9208109695464373,
+    "p95_ms": 1.5580400358885527,
+    "p99_ms": 1.9410100067034364,
+    "mean_ms": 0.9707879275083542,
+    "max_ms": 2.056530094705522,
+    "timeouts": 0,
+    "empty": 285,
+    "mean_rows": 0.7636363636363637
+   },
+   "warm_by_category": {
+    "exact": {
+     "p50_ms": 0.8571499492973089,
+     "p95_ms": 1.0794000700116158
+    },
+    "paraphrase": {
+     "p50_ms": 0.7106700213626027,
+     "p95_ms": 0.9703210089355707
+    },
+    "inflection": {
+     "p50_ms": 0.5329500418156385,
+     "p95_ms": 0.7645599544048309
+    },
+    "partial": {
+     "p50_ms": 0.5744899390265346,
+     "p95_ms": 0.6358800455927849
+    },
+    "typo": {
+     "p50_ms": 0.8657900616526604,
+     "p95_ms": 1.0262499563395977
+    },
+    "identifier": {
+     "p50_ms": 1.197099918499589,
+     "p95_ms": 1.533441012725234
+    },
+    "question": {
+     "p50_ms": 1.319289905950427,
+     "p95_ms": 1.574869966134429
+    },
+    "long": {
+     "p50_ms": 1.093609957024455,
+     "p95_ms": 1.953909988515079
+    },
+    "negation": {
+     "p50_ms": 0.6877200212329626,
+     "p95_ms": 1.6822600737214088
+    },
+    "temporal": {
+     "p50_ms": 1.2784000718966126,
+     "p95_ms": 1.430719974450767
+    },
+    "multihop": {
+     "p50_ms": 1.3596999924629927,
+     "p95_ms": 1.8882410367950797
+    }
+   },
+   "warm_by_scope": {
+    "universe": {
+     "p50_ms": 0.9208109695464373,
+     "p95_ms": 1.5354510396718979
+    },
+    "leaf": {
+     "p50_ms": 0.9101310279220343,
+     "p95_ms": 1.5580400358885527
+    },
+    "project": {
+     "p50_ms": 0.927891000173986,
+     "p95_ms": 1.6304700402542949
+    }
+   }
+  }
+ },
+ "write": {
+  "base": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 0.8838999783620238,
+    "p95_ms": 2.5445499923080206,
+    "p99_ms": 3.5345209762454033,
+    "mean_ms": 1.221875570481643,
+    "max_ms": 32.50654600560665,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 0.6056400015950203,
+    "p95_ms": 1.0781210148707032,
+    "p99_ms": 1.525291008874774,
+    "mean_ms": 0.71527432766743,
+    "max_ms": 13.146862969733775,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  },
+  "+bm25_trigger": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 1.0107499547302723,
+    "p95_ms": 1.5335989883169532,
+    "p99_ms": 1.931859995238483,
+    "mean_ms": 1.0735683255673696,
+    "max_ms": 10.110261966474354,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 1.0670899646356702,
+    "p95_ms": 1.9700010307133198,
+    "p99_ms": 2.288301009684801,
+    "mean_ms": 1.1790106814199437,
+    "max_ms": 8.711123024113476,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  },
+  "+dual": {
+   "insert": {
+    "n": 300,
+    "p50_ms": 1.2717399513348937,
+    "p95_ms": 3.5911010345444083,
+    "p99_ms": 7.7244010753929615,
+    "mean_ms": 1.7408539284951985,
+    "max_ms": 61.0938910394907,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   },
+   "promote": {
+    "n": 300,
+    "p50_ms": 0.7865600055083632,
+    "p95_ms": 1.3099000789225101,
+    "p99_ms": 2.8511410346254706,
+    "mean_ms": 0.8536114314726243,
+    "max_ms": 8.790272055193782,
+    "timeouts": 0,
+    "empty": 0,
+    "mean_rows": 1.0
+   }
+  }
+ },
+ "explain": {
+  "a_simple_and": {
+   "exact": "Limit (actual time=112.862..112.864 rows=5.00 loops=1)\n  Buffers: shared hit=3859\n  ->  Sort (actual time=112.859..112.861 rows=5.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''canary'' & ''5'' & ''traffic'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=3859\n        ->  Result (actual time=31.917..112.792 rows=5.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=3853\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=31.870..112.643 rows=5.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''canary'' & ''5'' & ''traffic'''::tsquery))\n                    Rows Removed by Filter: 6517\n                    Index Searches: 1\n                    Buffers: shared hit=3853\nPlanning:\n  Buffers: shared hit=523\nPlanning Time: 2.622 ms\nExecution Time: 112.919 ms",
+   "long": "Limit (actual time=112.785..112.786 rows=0.00 loops=1)\n  Buffers: shared hit=3859\n  ->  Sort (actual time=112.783..112.784 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=3859\n        ->  Result (actual time=112.672..112.673 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=3853\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=112.666..112.667 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery))\n                    Rows Removed by Filter: 6522\n                    Index Searches: 1\n                    Buffers: shared hit=3853\nPlanning:\n  Buffers: shared hit=523\nPlanning Time: 2.596 ms\nExecution Time: 112.858 ms",
+   "identifier": "Limit (actual time=91.027..91.029 rows=2.00 loops=1)\n  Buffers: shared hit=3859\n  ->  Sort (actual time=91.025..91.027 rows=2.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''1999'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=3859\n        ->  Result (actual time=81.778..90.995 rows=2.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=3853\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=81.759..90.968 rows=2.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''1999'''::tsquery))\n                    Rows Removed by Filter: 6520\n                    Index Searches: 1\n                    Buffers: shared hit=3853\nPlanning:\n  Buffers: shared hit=523\nPlanning Time: 1.340 ms\nExecution Time: 91.070 ms",
+   "typo": "Limit (actual time=102.762..102.763 rows=0.00 loops=1)\n  Buffers: shared hit=3859\n  ->  Sort (actual time=102.760..102.761 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''playwrite'' & ''flaky'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=3859\n        ->  Result (actual time=102.721..102.722 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=3853\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=102.715..102.716 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (to_tsvector('simple'::regconfig, claim) @@ '''playwrite'' & ''flaky'''::tsquery))\n                    Rows Removed by Filter: 6522\n                    Index Searches: 1\n                    Buffers: shared hit=3853\nPlanning:\n  Buffers: shared hit=523\nPlanning Time: 2.097 ms\nExecution Time: 102.820 ms"
+  },
+  "a_simple_and@no_rls": {
+   "exact": "Limit (actual time=0.389..0.391 rows=5.00 loops=1)\n  Buffers: shared hit=19\n  ->  Sort (actual time=0.388..0.389 rows=5.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''canary'' & ''5'' & ''traffic'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=19\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.152..0.354 rows=5.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''canary'' & ''5'' & ''traffic'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Rows Removed by Filter: 1\n              Heap Blocks: exact=6\n              Buffers: shared hit=13\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_claim_fts (actual time=0.060..0.061 rows=6.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''canary'' & ''5'' & ''traffic'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=7\nPlanning:\n  Buffers: shared hit=518\nPlanning Time: 1.795 ms\nExecution Time: 0.438 ms",
+   "long": "Limit (actual time=0.435..0.436 rows=0.00 loops=1)\n  Buffers: shared hit=56\n  ->  Sort (actual time=0.433..0.434 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=56\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.396..0.397 rows=0.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Buffers: shared hit=50\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_claim_fts (actual time=0.391..0.391 rows=0.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=50\nPlanning:\n  Buffers: shared hit=518\nPlanning Time: 1.946 ms\nExecution Time: 0.482 ms",
+   "identifier": "Limit (actual time=0.265..0.267 rows=2.00 loops=1)\n  Buffers: shared hit=14\n  ->  Sort (actual time=0.263..0.264 rows=2.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''1999'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=14\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.141..0.215 rows=2.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''1999'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Rows Removed by Filter: 3\n              Heap Blocks: exact=5\n              Buffers: shared hit=8\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_claim_fts (actual time=0.039..0.040 rows=5.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''1999'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=3\nPlanning:\n  Buffers: shared hit=518\nPlanning Time: 2.909 ms\nExecution Time: 0.321 ms",
+   "typo": "Limit (actual time=0.053..0.053 rows=0.00 loops=1)\n  Buffers: shared hit=11\n  ->  Sort (actual time=0.052..0.052 rows=0.00 loops=1)\n        Sort Key: (ts_rank(to_tsvector('simple'::regconfig, m.claim), '''playwrite'' & ''flaky'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=11\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.032..0.032 rows=0.00 loops=1)\n              Recheck Cond: (to_tsvector('simple'::regconfig, claim) @@ '''playwrite'' & ''flaky'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Buffers: shared hit=5\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_claim_fts (actual time=0.026..0.026 rows=0.00 loops=1)\n                    Index Cond: (to_tsvector('simple'::regconfig, claim) @@ '''playwrite'' & ''flaky'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=5\nPlanning:\n  Buffers: shared hit=518\nPlanning Time: 1.224 ms\nExecution Time: 0.080 ms"
+  },
+  "c_dual_or": {
+   "exact": "Limit (actual time=8.607..8.609 rows=10.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=8.605..8.606 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''canari'' | ''5'' | ''traffic'''::tsquery, 0) + ts_rank(m.fts_simple, '''canary'' | ''5'' | ''traffic'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=0.085..8.539 rows=254.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.080..8.362 rows=254.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''canari'' | ''5'' | ''traffic'''::tsquery) OR (fts_simple @@ '''canary'' | ''5'' | ''traffic'''::tsquery)))\n                    Rows Removed by Filter: 6868\n                    Index Searches: 1\n                    Buffers: shared hit=5562\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.009 ms\nExecution Time: 8.641 ms",
+   "long": "Limit (actual time=33.051..33.053 rows=10.00 loops=1)\n  Buffers: shared hit=5578\n  ->  Sort (actual time=33.050..33.051 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery, 0) + ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5578\n        ->  Result (actual time=0.037..32.288 rows=6530.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5572\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.027..12.754 rows=6530.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery) OR (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery)))\n                    Rows Removed by Filter: 592\n                    Index Searches: 1\n                    Buffers: shared hit=5558\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.500 ms\nExecution Time: 33.098 ms",
+   "identifier": "Limit (actual time=8.264..8.266 rows=2.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=8.262..8.263 rows=2.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''1999'''::tsquery, 0) + ts_rank(m.fts_simple, '''1999'''::tsquery, 0))) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=7.603..8.237 rows=2.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=7.597..8.231 rows=2.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''1999'''::tsquery) OR (fts_simple @@ '''1999'''::tsquery)))\n                    Rows Removed by Filter: 7120\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=567\nPlanning Time: 1.573 ms\nExecution Time: 8.304 ms",
+   "typo": "Limit (actual time=9.065..9.067 rows=10.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=9.064..9.065 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''playwrit'' | ''flaki'''::tsquery, 0) + ts_rank(m.fts_simple, '''playwrite'' | ''flaky'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=0.093..9.004 rows=120.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.089..8.916 rows=120.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''playwrit'' | ''flaki'''::tsquery) OR (fts_simple @@ '''playwrite'' | ''flaky'''::tsquery)))\n                    Rows Removed by Filter: 7002\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=577\nPlanning Time: 2.255 ms\nExecution Time: 9.104 ms"
+  },
+  "c_dual_or@no_rls": {
+   "exact": "Limit (actual time=2.151..2.154 rows=10.00 loops=1)\n  Buffers: shared hit=362\n  ->  Sort (actual time=2.150..2.151 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''canari'' | ''5'' | ''traffic'''::tsquery, 0) + ts_rank(m.fts_simple, '''canary'' | ''5'' | ''traffic'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=362\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.962..2.088 rows=254.00 loops=1)\n              Recheck Cond: (((fts_english @@ '''canari'' | ''5'' | ''traffic'''::tsquery) OR (fts_simple @@ '''canary'' | ''5'' | ''traffic'''::tsquery)) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])) AND is_tip AND (status = 'promoted'::text))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])))\n              Rows Removed by Filter: 19\n              Heap Blocks: exact=253\n              Buffers: shared hit=356\n              ->  BitmapAnd (actual time=0.899..0.900 rows=0.00 loops=1)\n                    Buffers: shared hit=74\n                    ->  BitmapOr (actual time=0.157..0.158 rows=0.00 loops=1)\n                          Buffers: shared hit=14\n                          ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_english_idx (actual time=0.100..0.100 rows=422.00 loops=1)\n                                Index Cond: (fts_english @@ '''canari'' | ''5'' | ''traffic'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=7\n                          ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.057..0.057 rows=422.00 loops=1)\n                                Index Cond: (fts_simple @@ '''canary'' | ''5'' | ''traffic'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=7\n                    ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_served_tip (actual time=0.715..0.715 rows=7122.00 loops=1)\n                          Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                          Index Searches: 1\n                          Buffers: shared hit=60\nPlanning:\n  Buffers: shared hit=576\nPlanning Time: 2.527 ms\nExecution Time: 2.255 ms",
+   "long": "Limit (actual time=32.166..32.168 rows=10.00 loops=1)\n  Buffers: shared hit=5578\n  ->  Sort (actual time=32.164..32.165 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery, 0) + ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5578\n        ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.039..31.472 rows=6530.00 loops=1)\n              Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND ((fts_english @@ '''worker'' | ''kill'' | ''pdf'' | ''render'' | ''job'' | ''roll'' | ''deploy'' | ''invoic'' | ''end'' | ''half'' | ''render'' | ''stop'''::tsquery) OR (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery)))\n              Rows Removed by Filter: 592\n              Index Searches: 1\n              Buffers: shared hit=5572\nPlanning:\n  Buffers: shared hit=576\nPlanning Time: 2.294 ms\nExecution Time: 32.194 ms",
+   "identifier": "Limit (actual time=0.130..0.131 rows=2.00 loops=1)\n  Buffers: shared hit=17\n  ->  Sort (actual time=0.129..0.130 rows=2.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''1999'''::tsquery, 0) + ts_rank(m.fts_simple, '''1999'''::tsquery, 0))) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=17\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.068..0.104 rows=2.00 loops=1)\n              Recheck Cond: ((fts_english @@ '''1999'''::tsquery) OR (fts_simple @@ '''1999'''::tsquery))\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Rows Removed by Filter: 3\n              Heap Blocks: exact=5\n              Buffers: shared hit=11\n              ->  BitmapOr (actual time=0.037..0.037 rows=0.00 loops=1)\n                    Buffers: shared hit=6\n                    ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_english_idx (actual time=0.022..0.022 rows=5.00 loops=1)\n                          Index Cond: (fts_english @@ '''1999'''::tsquery)\n                          Index Searches: 1\n                          Buffers: shared hit=3\n                    ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.014..0.014 rows=5.00 loops=1)\n                          Index Cond: (fts_simple @@ '''1999'''::tsquery)\n                          Index Searches: 1\n                          Buffers: shared hit=3\nPlanning:\n  Buffers: shared hit=566\nPlanning Time: 1.357 ms\nExecution Time: 0.176 ms",
+   "typo": "Limit (actual time=1.621..1.623 rows=10.00 loops=1)\n  Buffers: shared hit=198\n  ->  Sort (actual time=1.620..1.621 rows=10.00 loops=1)\n        Sort Key: ((ts_rank(m.fts_english, '''playwrit'' | ''flaki'''::tsquery, 0) + ts_rank(m.fts_simple, '''playwrite'' | ''flaky'''::tsquery, 0))) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=198\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.974..1.576 rows=120.00 loops=1)\n              Recheck Cond: (((fts_english @@ '''playwrit'' | ''flaki'''::tsquery) OR (fts_simple @@ '''playwrite'' | ''flaky'''::tsquery)) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])) AND is_tip AND (status = 'promoted'::text))\n              Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])))\n              Rows Removed by Filter: 6\n              Heap Blocks: exact=122\n              Buffers: shared hit=192\n              ->  BitmapAnd (actual time=0.951..0.951 rows=0.00 loops=1)\n                    Buffers: shared hit=70\n                    ->  BitmapOr (actual time=0.092..0.093 rows=0.00 loops=1)\n                          Buffers: shared hit=10\n                          ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_english_idx (actual time=0.054..0.054 rows=182.00 loops=1)\n                                Index Cond: (fts_english @@ '''playwrit'' | ''flaki'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=5\n                          ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.038..0.038 rows=182.00 loops=1)\n                                Index Cond: (fts_simple @@ '''playwrite'' | ''flaky'''::tsquery)\n                                Index Searches: 1\n                                Buffers: shared hit=5\n                    ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_served_tip (actual time=0.837..0.837 rows=7122.00 loops=1)\n                          Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                          Index Searches: 1\n                          Buffers: shared hit=60\nPlanning:\n  Buffers: shared hit=576\nPlanning Time: 1.979 ms\nExecution Time: 1.682 ms"
+  },
+  "a_stored_and": {
+   "exact": "Limit (actual time=10.495..10.499 rows=5.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=10.493..10.496 rows=5.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''canary'' & ''5'' & ''traffic'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=2.365..10.436 rows=5.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=2.348..10.406 rows=5.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''canary'' & ''5'' & ''traffic'''::tsquery))\n                    Rows Removed by Filter: 7117\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=542\nPlanning Time: 2.657 ms\nExecution Time: 10.605 ms",
+   "long": "Limit (actual time=6.266..6.266 rows=0.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=6.265..6.265 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=6.241..6.241 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=6.238..6.238 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery))\n                    Rows Removed by Filter: 7122\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=542\nPlanning Time: 1.350 ms\nExecution Time: 6.312 ms",
+   "identifier": "Limit (actual time=8.200..8.203 rows=2.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=8.199..8.200 rows=2.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''1999'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=7.424..8.164 rows=2.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=7.381..8.119 rows=2.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''1999'''::tsquery))\n                    Rows Removed by Filter: 7120\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=542\nPlanning Time: 1.672 ms\nExecution Time: 8.260 ms",
+   "typo": "Limit (actual time=11.793..11.795 rows=0.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=11.791..11.792 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''playwrite'' & ''flaky'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=11.722..11.723 rows=0.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=11.715..11.715 rows=0.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''playwrite'' & ''flaky'''::tsquery))\n                    Rows Removed by Filter: 7122\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=542\nPlanning Time: 2.995 ms\nExecution Time: 11.924 ms"
+  },
+  "a_stored_and@no_rls": {
+   "exact": "Limit (actual time=0.269..0.272 rows=5.00 loops=1)\n  Buffers: shared hit=19\n  ->  Sort (actual time=0.267..0.269 rows=5.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''canary'' & ''5'' & ''traffic'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=19\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.143..0.215 rows=5.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''canary'' & ''5'' & ''traffic'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Rows Removed by Filter: 1\n              Heap Blocks: exact=6\n              Buffers: shared hit=13\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.096..0.096 rows=6.00 loops=1)\n                    Index Cond: (fts_simple @@ '''canary'' & ''5'' & ''traffic'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=7\nPlanning:\n  Buffers: shared hit=537\nPlanning Time: 2.928 ms\nExecution Time: 0.372 ms",
+   "long": "Limit (actual time=0.480..0.480 rows=0.00 loops=1)\n  Buffers: shared hit=56\n  ->  Sort (actual time=0.479..0.479 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=56\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.441..0.441 rows=0.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Buffers: shared hit=50\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.436..0.436 rows=0.00 loops=1)\n                    Index Cond: (fts_simple @@ '''the'' & ''worker'' & ''is'' & ''killing'' & ''pdf'' & ''render'' & ''jobs'' & ''during'' & ''a'' & ''rolling'' & ''deploy'' & ''and'' & ''invoices'' & ''end'' & ''up'' & ''half'' & ''rendered'' & ''how'' & ''do'' & ''we'' & ''stop'' & ''that'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=50\nPlanning:\n  Buffers: shared hit=537\nPlanning Time: 1.532 ms\nExecution Time: 0.520 ms",
+   "identifier": "Limit (actual time=0.263..0.265 rows=2.00 loops=1)\n  Buffers: shared hit=14\n  ->  Sort (actual time=0.262..0.263 rows=2.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''1999'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=14\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.095..0.207 rows=2.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''1999'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Rows Removed by Filter: 3\n              Heap Blocks: exact=5\n              Buffers: shared hit=8\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.047..0.047 rows=5.00 loops=1)\n                    Index Cond: (fts_simple @@ '''1999'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=3\nPlanning:\n  Buffers: shared hit=537\nPlanning Time: 2.894 ms\nExecution Time: 0.341 ms",
+   "typo": "Limit (actual time=0.066..0.067 rows=0.00 loops=1)\n  Buffers: shared hit=11\n  ->  Sort (actual time=0.066..0.066 rows=0.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''playwrite'' & ''flaky'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=11\n        ->  Bitmap Heap Scan on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.038..0.038 rows=0.00 loops=1)\n              Recheck Cond: (fts_simple @@ '''playwrite'' & ''flaky'''::tsquery)\n              Filter: (is_tip AND (NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (status = 'promoted'::text) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n              Buffers: shared hit=5\n              ->  Bitmap Index Scan on memories_t_991176e858024470ad8a543e1c82ccf6_fts_simple_idx (actual time=0.027..0.028 rows=0.00 loops=1)\n                    Index Cond: (fts_simple @@ '''playwrite'' & ''flaky'''::tsquery)\n                    Index Searches: 1\n                    Buffers: shared hit=5\nPlanning:\n  Buffers: shared hit=537\nPlanning Time: 1.426 ms\nExecution Time: 0.122 ms"
+  },
+  "b_stored_or": {
+   "exact": "Limit (actual time=13.384..13.388 rows=10.00 loops=1)\n  Buffers: shared hit=5580\n  ->  Sort (actual time=13.383..13.385 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''canary'' | ''5'' | ''traffic'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5580\n        ->  Result (actual time=0.135..13.232 rows=254.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5574\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.126..12.887 rows=254.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''canary'' | ''5'' | ''traffic'''::tsquery))\n                    Rows Removed by Filter: 6868\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=554\nPlanning Time: 2.826 ms\nExecution Time: 13.539 ms",
+   "long": "Limit (actual time=23.292..23.296 rows=10.00 loops=1)\n  Buffers: shared hit=5588\n  ->  Sort (actual time=23.291..23.292 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5588\n        ->  Result (actual time=0.036..22.559 rows=6481.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5582\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.028..9.098 rows=6481.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery))\n                    Rows Removed by Filter: 641\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=554\nPlanning Time: 1.399 ms\nExecution Time: 23.362 ms",
+   "identifier": "Limit (actual time=9.276..9.277 rows=2.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=9.274..9.275 rows=2.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''1999'''::tsquery, 0)) DESC, m.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=8.674..9.199 rows=2.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=8.665..9.189 rows=2.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''1999'''::tsquery))\n                    Rows Removed by Filter: 7120\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=554\nPlanning Time: 3.389 ms\nExecution Time: 9.402 ms",
+   "typo": "Limit (actual time=7.160..7.162 rows=10.00 loops=1)\n  Buffers: shared hit=5574\n  ->  Sort (actual time=7.159..7.160 rows=10.00 loops=1)\n        Sort Key: (ts_rank(m.fts_simple, '''playwrite'' | ''flaky'''::tsquery, 0)) DESC, m.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5574\n        ->  Result (actual time=0.058..7.113 rows=120.00 loops=1)\n              One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n              Buffers: shared hit=5568\n              ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.054..7.073 rows=120.00 loops=1)\n                    Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                    Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''playwrite'' | ''flaky'''::tsquery))\n                    Rows Removed by Filter: 7002\n                    Index Searches: 1\n                    Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=554\nPlanning Time: 1.272 ms\nExecution Time: 7.211 ms"
+  },
+  "d_bm25_stored": {
+   "exact": "Limit (actual time=14.648..14.658 rows=10.00 loops=1)\n  Buffers: shared hit=5633\n  CTE qt\n    ->  Aggregate (actual time=0.040..0.042 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.037..0.038 rows=3.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.011..0.012 rows=3.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.036..0.037 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.022..0.027 rows=17.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.018..0.021 rows=17.00 loops=1)\n                      Filter: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=0.154..0.161 rows=3.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=49\n          ->  Sort (actual time=0.149..0.153 rows=40.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 26kB\n                Buffers: shared hit=49\n                ->  Result (actual time=0.032..0.134 rows=40.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                      Buffers: shared hit=49\n                      ->  Nested Loop (actual time=0.031..0.128 rows=40.00 loops=1)\n                            Buffers: shared hit=49\n                            ->  CTE Scan on qt (actual time=0.000..0.001 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.029..0.120 rows=40.00 loops=1)\n                                  Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                                  Index Searches: 3\n                                  Buffers: shared hit=49\n  CTE tf\n    ->  Result (actual time=0.153..13.683 rows=304.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n          Buffers: shared hit=5577\n          ->  Nested Loop (actual time=0.151..13.624 rows=304.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 8228\n                Buffers: shared hit=5577\n                ->  Nested Loop (actual time=0.133..9.159 rows=254.00 loops=1)\n                      Buffers: shared hit=5571\n                      ->  CTE Scan on qt qt_1 (actual time=0.041..0.041 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.091..9.078 rows=254.00 loops=1)\n                            Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''canary'' | ''5'' | ''traffic'''::tsquery))\n                            Rows Removed by Filter: 6868\n                            Index Searches: 1\n                            Buffers: shared hit=5568\n                ->  Function Scan on unnest x_1 (actual time=0.010..0.012 rows=33.59 loops=254)\n                      Buffers: shared hit=6\n  ->  Sort (actual time=14.647..14.649 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5633\n        ->  HashAggregate (actual time=14.566..14.591 rows=254.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 64kB\n              Buffers: shared hit=5627\n              ->  Nested Loop (actual time=0.384..14.174 rows=304.00 loops=1)\n                    Buffers: shared hit=5627\n                    ->  CTE Scan on st (actual time=0.038..0.039 rows=1.00 loops=1)\n                          Storage: Memory  Maximum Storage: 17kB\n                          Buffers: shared hit=1\n                    ->  Hash Join (actual time=0.344..14.090 rows=304.00 loops=1)\n                          Hash Cond: (tf.lexeme = df.term)\n                          Buffers: shared hit=5626\n                          ->  CTE Scan on tf (actual time=0.153..13.800 rows=304.00 loops=1)\n                                Storage: Memory  Maximum Storage: 33kB\n                                Buffers: shared hit=5577\n                          ->  Hash (actual time=0.170..0.170 rows=3.00 loops=1)\n                                Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                                Buffers: shared hit=49\n                                ->  CTE Scan on df (actual time=0.155..0.161 rows=3.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=49\nPlanning:\n  Buffers: shared hit=693\nPlanning Time: 2.244 ms\nExecution Time: 15.012 ms",
+   "long": "Limit (actual time=121.821..121.833 rows=10.00 loops=1)\n  Buffers: shared hit=5933\n  CTE qt\n    ->  Aggregate (actual time=0.039..0.042 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.032..0.035 rows=22.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.013..0.014 rows=22.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.027..0.029 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.014..0.019 rows=17.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.013..0.016 rows=17.00 loops=1)\n                      Filter: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=0.699..0.733 rows=18.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=341\n          ->  Sort (actual time=0.694..0.706 rows=285.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 32kB\n                Buffers: shared hit=341\n                ->  Result (actual time=0.045..0.654 rows=285.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                      Buffers: shared hit=341\n                      ->  Nested Loop (actual time=0.044..0.631 rows=285.00 loops=1)\n                            Buffers: shared hit=341\n                            ->  CTE Scan on qt (actual time=0.000..0.001 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.043..0.600 rows=285.00 loops=1)\n                                  Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                                  Index Searches: 19\n                                  Buffers: shared hit=341\n  CTE tf\n    ->  Result (actual time=0.086..97.967 rows=18374.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n          Buffers: shared hit=5585\n          ->  Nested Loop (actual time=0.083..95.647 rows=18374.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 157527\n                Buffers: shared hit=5585\n                ->  Nested Loop (actual time=0.064..10.244 rows=6481.00 loops=1)\n                      Buffers: shared hit=5571\n                      ->  CTE Scan on qt qt_1 (actual time=0.040..0.041 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.023..9.533 rows=6481.00 loops=1)\n                            Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''the'' | ''worker'' | ''is'' | ''killing'' | ''pdf'' | ''render'' | ''jobs'' | ''during'' | ''a'' | ''rolling'' | ''deploy'' | ''and'' | ''invoices'' | ''end'' | ''up'' | ''half'' | ''rendered'' | ''how'' | ''do'' | ''we'' | ''stop'' | ''that'''::tsquery))\n                            Rows Removed by Filter: 641\n                            Index Searches: 1\n                            Buffers: shared hit=5568\n                ->  Function Scan on unnest x_1 (actual time=0.005..0.006 rows=27.14 loops=6481)\n                      Buffers: shared hit=14\n  ->  Sort (actual time=121.820..121.823 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5933\n        ->  HashAggregate (actual time=120.089..121.009 rows=6481.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 665kB\n              Buffers: shared hit=5927\n              ->  Hash Join (actual time=0.881..106.994 rows=18374.00 loops=1)\n                    Hash Cond: (tf.lexeme = df.term)\n                    Buffers: shared hit=5927\n                    ->  CTE Scan on tf (actual time=0.087..102.626 rows=18374.00 loops=1)\n                          Storage: Memory  Maximum Storage: 1265kB\n                          Buffers: shared hit=5585\n                    ->  Hash (actual time=0.776..0.778 rows=18.00 loops=1)\n                          Buckets: 1024  Batches: 1  Memory Usage: 10kB\n                          Buffers: shared hit=342\n                          ->  Nested Loop (actual time=0.728..0.767 rows=18.00 loops=1)\n                                Buffers: shared hit=342\n                                ->  CTE Scan on st (actual time=0.027..0.028 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=1\n                                ->  CTE Scan on df (actual time=0.700..0.736 rows=18.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=341\nPlanning:\n  Buffers: shared hit=693\nPlanning Time: 1.659 ms\nExecution Time: 122.333 ms",
+   "identifier": "Limit (actual time=11.211..11.223 rows=2.00 loops=1)\n  Buffers: shared hit=5583\n  CTE qt\n    ->  Aggregate (actual time=0.044..0.046 rows=1.00 loops=1)\n          ->  Sort (actual time=0.038..0.040 rows=1.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                ->  Function Scan on unnest x (actual time=0.017..0.018 rows=1.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.052..0.054 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.029..0.038 rows=17.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.020..0.025 rows=17.00 loops=1)\n                      Filter: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=0.194..0.197 rows=1.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=8\n          ->  Sort (actual time=0.189..0.192 rows=2.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=8\n                ->  Result (actual time=0.130..0.148 rows=2.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                      Buffers: shared hit=5\n                      ->  Nested Loop (actual time=0.127..0.144 rows=2.00 loops=1)\n                            Buffers: shared hit=5\n                            ->  CTE Scan on qt (actual time=0.044..0.045 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.080..0.094 rows=2.00 loops=1)\n                                  Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                                  Index Searches: 1\n                                  Buffers: shared hit=5\n  CTE tf\n    ->  Result (actual time=9.809..10.804 rows=2.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n          Buffers: shared hit=5568\n          ->  Nested Loop (actual time=9.806..10.799 rows=2.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 39\n                Buffers: shared hit=5568\n                ->  Nested Loop (actual time=9.755..10.717 rows=2.00 loops=1)\n                      Buffers: shared hit=5568\n                      ->  CTE Scan on qt qt_1 (actual time=0.000..0.001 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                      ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=9.752..10.711 rows=2.00 loops=1)\n                            Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''1999'''::tsquery))\n                            Rows Removed by Filter: 7120\n                            Index Searches: 1\n                            Buffers: shared hit=5568\n                ->  Function Scan on unnest x_1 (actual time=0.029..0.031 rows=20.50 loops=2)\n  ->  Sort (actual time=11.210..11.212 rows=2.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: quicksort  Memory: 25kB\n        Buffers: shared hit=5583\n        ->  HashAggregate (actual time=11.152..11.155 rows=2.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 32kB\n              Buffers: shared hit=5577\n              ->  Nested Loop (actual time=11.126..11.132 rows=2.00 loops=1)\n                    Buffers: shared hit=5577\n                    ->  CTE Scan on st (actual time=0.055..0.056 rows=1.00 loops=1)\n                          Storage: Memory  Maximum Storage: 17kB\n                          Buffers: shared hit=1\n                    ->  Hash Join (actual time=11.068..11.072 rows=2.00 loops=1)\n                          Hash Cond: (df.term = tf.lexeme)\n                          Buffers: shared hit=5576\n                          ->  CTE Scan on df (actual time=0.195..0.196 rows=1.00 loops=1)\n                                Storage: Memory  Maximum Storage: 17kB\n                                Buffers: shared hit=8\n                          ->  Hash (actual time=10.829..10.830 rows=2.00 loops=1)\n                                Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                                Buffers: shared hit=5568\n                                ->  CTE Scan on tf (actual time=9.813..10.808 rows=2.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=5568\nPlanning:\n  Buffers: shared hit=693\nPlanning Time: 3.979 ms\nExecution Time: 11.850 ms",
+   "typo": "Limit (actual time=8.072..8.078 rows=10.00 loops=1)\n  Buffers: shared hit=5598\n  CTE qt\n    ->  Aggregate (actual time=0.030..0.030 rows=1.00 loops=1)\n          Buffers: shared hit=3\n          ->  Sort (actual time=0.027..0.027 rows=2.00 loops=1)\n                Sort Key: x.x\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=3\n                ->  Function Scan on unnest x (actual time=0.007..0.007 rows=2.00 loops=1)\n  CTE st\n    ->  Aggregate (actual time=0.025..0.025 rows=1.00 loops=1)\n          Buffers: shared hit=1\n          ->  Result (actual time=0.014..0.018 rows=17.00 loops=1)\n                One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                Buffers: shared hit=1\n                ->  Seq Scan on bm25_scope s (actual time=0.012..0.014 rows=17.00 loops=1)\n                      Filter: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                      Buffers: shared hit=1\n  CTE df\n    ->  GroupAggregate (actual time=0.180..0.181 rows=1.00 loops=1)\n          Group Key: d.term\n          Buffers: shared hit=20\n          ->  Sort (actual time=0.177..0.178 rows=14.00 loops=1)\n                Sort Key: d.term\n                Sort Method: quicksort  Memory: 25kB\n                Buffers: shared hit=20\n                ->  Result (actual time=0.046..0.166 rows=14.00 loops=1)\n                      One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n                      Buffers: shared hit=20\n                      ->  Nested Loop (actual time=0.045..0.163 rows=14.00 loops=1)\n                            Buffers: shared hit=20\n                            ->  CTE Scan on qt (actual time=0.000..0.000 rows=1.00 loops=1)\n                                  Storage: Memory  Maximum Storage: 17kB\n                            ->  Index Scan using bm25_df_pkey on bm25_df d (actual time=0.044..0.160 rows=14.00 loops=1)\n                                  Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (term = ANY (qt.terms)) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                                  Index Searches: 2\n                                  Buffers: shared hit=20\n  CTE tf\n    ->  Result (actual time=0.141..7.610 rows=120.00 loops=1)\n          One-Time Filter: ((NULLIF(current_setting('oml.tenant_id'::text, true), ''::text))::uuid = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid)\n          Buffers: shared hit=5571\n          ->  Nested Loop (actual time=0.139..7.590 rows=120.00 loops=1)\n                Join Filter: (x_1.lexeme = ANY (qt_1.terms))\n                Rows Removed by Join Filter: 3689\n                Buffers: shared hit=5571\n                ->  Nested Loop (actual time=0.116..6.287 rows=120.00 loops=1)\n                      Buffers: shared hit=5571\n                      ->  CTE Scan on qt qt_1 (actual time=0.030..0.030 rows=1.00 loops=1)\n                            Storage: Memory  Maximum Storage: 17kB\n                            Buffers: shared hit=3\n                      ->  Index Scan using memories_t_991176e858024470ad8a543e1c82ccf6_served_tip on memories_t_991176e858024470ad8a543e1c82ccf6 m (actual time=0.085..6.241 rows=120.00 loops=1)\n                            Index Cond: ((tenant_id = '991176e8-5802-4470-ad8a-543e1c82ccf6'::uuid) AND (workarea_id = ANY ('{333ea6b1-b18e-4c6b-acbe-73f7f9a95760,187da815-1324-4c10-a0a4-7aab488c284d,eada4289-28bc-468a-848d-d7dc915a8895,3a11e6ad-1679-4217-a04d-2a22253eab16,4618b1ab-0819-4c0a-bc9e-588812147d52,d1529392-33e4-48c9-af97-836b9dff1fd2,46371cd6-d3b4-4764-b9b5-04c9ebe96c64,e128acc6-887a-445e-b5f2-3a98a7faa4fb,5c4c9c5c-efa4-4a4a-8653-e692263ed428,8d38db35-aa30-4750-a53c-57cb61a19827,53ffe037-9d1e-41d7-914d-eac9ceb41e76,98d1f0af-1b95-4527-a251-dd717ee03350,9344d04f-6919-40c6-8c13-a7f2f99c87e3,017f1a89-eee0-4550-a7ad-e46029cdec06,7f0aaa62-4df6-46ce-98d8-b38e59f2ec3d,ac3652c0-087b-475d-917c-ab8576fb6d22,f9fdeec8-8be3-47c8-a00f-7bbd54216e7f}'::uuid[])))\n                            Filter: ((NOT retirement) AND (kind = ANY ('{memory,derived_fact}'::text[])) AND (fts_simple @@ '''playwrite'' | ''flaky'''::tsquery))\n                            Rows Removed by Filter: 7002\n                            Index Searches: 1\n                            Buffers: shared hit=5568\n                ->  Function Scan on unnest x_1 (actual time=0.006..0.008 rows=31.74 loops=120)\n  ->  Sort (actual time=8.072..8.073 rows=10.00 loops=1)\n        Sort Key: (sum(((ln(('1'::double precision + (((st.n - df.df) + '0.5'::double precision) / (df.df + '0.5'::double precision)))) * (((tf.tf)::numeric * 2.2))::double precision) / ((tf.tf)::double precision + ('1.2'::double precision * ('0.25'::double precision + (((0.75 * (tf.body_bytes)::numeric))::double precision / st.avgdl))))))) DESC, tf.id\n        Sort Method: top-N heapsort  Memory: 26kB\n        Buffers: shared hit=5598\n        ->  HashAggregate (actual time=8.024..8.036 rows=120.00 loops=1)\n              Group Key: tf.id, tf.body_bytes\n              Batches: 1  Memory Usage: 40kB\n              Buffers: shared hit=5592\n              ->  Nested Loop (actual time=0.372..7.918 rows=120.00 loops=1)\n                    Buffers: shared hit=5592\n                    ->  CTE Scan on st (actual time=0.026..0.027 rows=1.00 loops=1)\n                          Storage: Memory  Maximum Storage: 17kB\n                          Buffers: shared hit=1\n                    ->  Hash Join (actual time=0.344..7.875 rows=120.00 loops=1)\n                          Hash Cond: (tf.lexeme = df.term)\n                          Buffers: shared hit=5591\n                          ->  CTE Scan on tf (actual time=0.141..7.642 rows=120.00 loops=1)\n                                Storage: Memory  Maximum Storage: 23kB\n                                Buffers: shared hit=5571\n                          ->  Hash (actual time=0.186..0.187 rows=1.00 loops=1)\n                                Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                                Buffers: shared hit=20\n                                ->  CTE Scan on df (actual time=0.181..0.181 rows=1.00 loops=1)\n                                      Storage: Memory  Maximum Storage: 17kB\n                                      Buffers: shared hit=20\nPlanning:\n  Buffers: shared hit=693\nPlanning Time: 1.661 ms\nExecution Time: 8.343 ms"
+  }
+ },
+ "disk_free_start": 5837463552,
+ "workareas": 17,
+ "workload": {
+  "categories": [
+   "exact",
+   "identifier",
+   "inflection",
+   "long",
+   "multihop",
+   "negation",
+   "paraphrase",
+   "partial",
+   "question",
+   "temporal",
+   "typo"
+  ],
+  "scopes": {
+   "leaf": 138,
+   "project": 137,
+   "universe": 55
+  }
+ },
+ "served_rows": 6096,
+ "adr0050": {
+  "base": {
+   "n": 300,
+   "p50_ms": 12.978351907804608,
+   "p95_ms": 80.78808593563735,
+   "p99_ms": 87.90014695841819,
+   "mean_ms": 19.494072414236143,
+   "max_ms": 97.91040897835046,
+   "timeouts": 0,
+   "empty": 0,
+   "mean_rows": 5.61
+  }
+ },
+ "bm25_rls_check": {
+  "terms": 157,
+  "maintained_equals_querytime": 157,
+  "tenant_wide_differs": 95
+ },
+ "db_bytes": 34453183,
+ "disk_free_end": 5852901376,
+ "finished": "2026-11-04T21:46:07"
+}

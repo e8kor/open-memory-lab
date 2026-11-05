@@ -7,7 +7,8 @@
 Reads every `oml-bench/1` JSON file under eval/bench/results/ and, when the
 scale lane has written any, bench/scale/results/. A file under an `archive/`
 directory is an earlier run: its numbers are shown beside the current ones,
-never in place of them. Writes docs/api/benchmarks/index.md (the default
+never in place of them. A file under `offline/` is an experiment no served
+path ran (eval/bench/offline/) and is not rendered. Writes docs/api/benchmarks/index.md (the default
 pipeline, one headline table per suite, the runs' dates, commits and
 environments), one page per suite, and scale.md when scale results exist.
 The pages are generated; the docs CI fails when they differ from what this
@@ -47,7 +48,7 @@ CEILING = ("**The latency ceiling.** Under row security no text index serves a r
            "stored lexemes of every row the key may read, and its cost grows with those rows. "
            "Storing the lexemes made a row several times cheaper, not free: the scale lane "
            "measured an every-word match over a stored `simple` vector past 50 ms near 70,000 "
-           "readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads "
+           "readable rows (`bench/scale/REPORT-baseline.md`), and `bm25` reads "
            "more per row than that match, so on abstract-length text it crosses the line far "
            "sooner, as the tables show. Latency at scale is not solved by stored lexemes. "
            "`bm25-postings` (ADR-0052) reads integer postings, which row security lets an "
@@ -67,6 +68,8 @@ def load_results():
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+                continue
+            if "offline" in p.relative_to(base).parts:
                 continue
             doc["_path"] = p.relative_to(ROOT).as_posix()
             if "archive" in p.relative_to(base).parts:

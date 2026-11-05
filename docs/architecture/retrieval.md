@@ -192,7 +192,7 @@ inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## Search pipelines
 
-*Since v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](https://github.com/e8kor/open-memory-lab/blob/feat/code-map/docs/adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
+*Since v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](../adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
 
 **How recall ranks.** A recall's hits come from a **pipeline**: one or more retrievers, each
 producing a ranked list, merged by a fusion the core runs. The core computes what may be ranked

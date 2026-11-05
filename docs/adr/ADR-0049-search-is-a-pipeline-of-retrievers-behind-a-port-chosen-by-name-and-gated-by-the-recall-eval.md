@@ -12,7 +12,7 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); later
 increments not assigned ([releases](../product/releases.md#decisions))
 
-**Amends:** ADR-0048 (proposed, on branch `feat/code-map`): ADR-0048 stays the record of *what*
+**Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
 d10's `search` values (`keyword`, `text`, `hybrid`) are replaced by pipeline names (d4), and its
 default rule is replaced by d9's. Also ADR-0025 (d8: the score is a pipeline's; d9: the read
@@ -28,7 +28,7 @@ every word required, ranked by `ts_rank`. The in-memory test store, which `oml-a
 tests run on, kept a row when *any* word matched, so the tests exercised a more forgiving recall
 than users got. OML's recall eval (`eval/recall/`, 200 memories, 121 graded queries in 11
 categories) measured the served statement at success@5 0.17 with 83% of queries answered by
-nothing ([eval report](https://github.com/e8kor/open-memory-lab/blob/feat/recall-eval/eval/recall/REPORT.md)).
+nothing ([eval report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md)).
 
 **ADR-0048 decided what search becomes.** Seven stages ordered by measured gain per cost: any
 word (S1), identifier parts, stems and rarity (S2), trigrams fused by reciprocal rank (S3),
@@ -330,7 +330,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
        over 51,830 abstracts in one workarea, 604 / 849 ms at `k` 100 and 572 / 807 ms at `k` 10;
        the statement alone over 51,830 abstracts in the lab, 639 / 947 ms (before the stem fix),
        where the first build's statement took 15.3 s at its median. The scale lane
-       (`feat/scale-bench`) puts an every-word match over a stored `simple` vector past 50 ms near
+       (`bench/scale/REPORT-baseline.md`) puts an every-word match over a stored `simple` vector past 50 ms near
        70,000 readable rows; `bm25` reads more per row. Larger scopes need what item 13 names;
        this record does not claim them. Loading the 51,830 copies through `review next` took 37
        minutes, a few rows a second while tens of thousands were held (FR-87).
