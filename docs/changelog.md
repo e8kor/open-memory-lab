@@ -29,6 +29,26 @@ implementation milestone where it changes what the repository holds.
 
 ## Unreleased
 
+### 2026-11-05 — ADR-0055 proposed: a person reviews a listed set of held items in one act
+
+What changes for someone using OML, once released with v0.5.7:
+
+- **Review in bulk.** A person lists the memories their reviewer key may judge, with filters by
+  workarea, author key and claim-key prefix, picks them, confirms, and gets one verdict per
+  memory, each journalled and signed as a single approval is, with an outcome for each: on the
+  admin page, or with `oml review list` and `oml review approve --ids` / `reject --ids`. Agent
+  keys, a crew's reviewer keys and MCP never reach it.
+- **The review queue no longer slows as it grows**: `review next` took 100 ms a call with 45,000
+  held and takes 0.17 ms after migration `0024`.
+- **A claim's approval says whether reviewer and author are one person** (`same_user` on
+  `lifecycle.promote` and `lifecycle.supersede`).
+
+Pages: [ADR-0055](adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md),
+[HTTP API](api/http-api.md#review), [CLI reference](cli/reference.md), [event
+catalog](data/event-catalog.md), [Postgres schema](data/postgres-schema.md); `openapi.yaml` gains
+`reviewHeld` and `postBulkVerdict`, members added and none removed; `info.version` moves at the
+release.
+
 ### 2026-11-05 — Recall and remember quality, measured
 
 [ADR-0054](adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) is accepted in part: its measurement half, planned for v0.5.7; its ranking
@@ -54,6 +74,7 @@ body's `feedback`, `/v2/usage/settings`, `/v2/usage/events` and `/v2/usage/eval`
 types `telemetry.settings_set`, `telemetry.events_read` and `telemetry.replayed`. Migration 0023
 adds `recall_events` and `recall_outcomes`, partitioned by tenant, the trigger that keeps query
 text only by the opt-in, and `tenants.telemetry_query_text_since`.
+
 ### 2026-11-05 — The learned sparse leg, built for v0.5.7 (draft PR #60)
 
 [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) gains d13 to d17 and its measured paragraph; ADR-0049 d3 gains convex

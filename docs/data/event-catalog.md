@@ -214,8 +214,8 @@ The act that finds the review policy satisfied — for a claim or a proposed cla
 full lineage closure at this moment, with the policy snapshot journalled. A claim edge's and a
 brief edge's ratification (`subject_kind: "brief_edge"`, with `edge_id`, the member's
 `artifact_id` and the `workarea_id`) also carry `same_user`, `true` when the ratifying key and
-the proposing key name one user ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), read from the proposing key's row; a tenant key names no user, so a ratification
-involving one is `false`. A brief edge's ratification carries no lineage digest:
+the proposing key act for one person ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), by the one rule
+`lifecycle.promote` states. A brief edge's ratification carries no lineage digest:
 membership in a brief widens no closure.
 
 ### review.reopen
@@ -279,14 +279,23 @@ Visibility and existence changes. Each enqueues its outbox row in the same trans
   "workarea_id": "…", "claim_key": "deploy-runbook",
   "ratification_event_id": "…",
   "previous_tip_version": null,
-  "self_signed": false
+  "self_signed": false,
+  "same_user": false
 }
 ```
 
 Ratified content becomes readable by others and silver materialization is enqueued. Journalled for
 a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
 journals `lifecycle.supersede` instead
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). `same_user` is `true` when the
+reviewing key and the authoring key act for one person. That is one rule for a claim's approval,
+a transition's ratification and an edge's: each key's person is read from its row as a name, a
+user key's root's name or a session key's `session_user`, so a person's `<user>-review` key is
+that person; a tenant key with no session user acts for no one and makes the mark `false`, and
+so do two keys of two people. A verdict from a bulk review journals this event per item, the same as a
+single verdict
+([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
+d4, d7). A record a server before v0.5.7 journalled carries no `same_user`.
 
 ### lifecycle.demote
 
@@ -333,7 +342,8 @@ declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
   "replaces_artifact_id": "…", "replaces_version": 3,
   "retirement": false,
   "ratification_event_id": "…",
-  "self_signed": false
+  "self_signed": false,
+  "same_user": false
 }
 ```
 
@@ -341,7 +351,7 @@ Journalled at ratification, after the compare-and-set that the replaced version 
 under the successor's own `workarea_id` and `claim_key`, so the one `workarea_id` names both
 versions: it promotes the successor and flips the tip in one event, so the tip flip is a single
 journalled fact rather than a demote/promote pair to correlate. `self_signed` carries the
-successor's mark exactly as `lifecycle.promote` carries a first version's
+successor's marks, `self_signed` and `same_user`, exactly as `lifecycle.promote` carries a first version's
 ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5): it is the promotion event of the version it
 names, so the mark reaches the journal, the `memories.self_signed` fold and the
 [events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip

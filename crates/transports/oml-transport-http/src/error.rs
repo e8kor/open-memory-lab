@@ -449,6 +449,25 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ClaimEdgeLabel { field, reason } => {
             ApiError::validation(reason.to_string()).with_details(json!({ "field": field.as_str() }))
         }
+        // Bulk review is a person's act (ADR-0055 d1).
+        AppError::BulkReviewHumanOnly { role, held_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: the surface an agent can call never promotes, signs, demotes or deletes; bulk review is a person's act.",
+            format!(
+                "bulk review needs a dreamer key held by a human, and this is a {} key held by {}",
+                role.as_str(),
+                held_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "bulk_review_is_human_only",
+            "role": role.as_str(),
+            "held_by": held_by.as_str(),
+        })),
+        AppError::BulkShape { field, reason } => {
+            ApiError::validation(reason).with_details(json!({ "field": field }))
+        }
         AppError::AuthorInLineage => ApiError::new(
             StatusCode::FORBIDDEN,
             "review.author_in_lineage",

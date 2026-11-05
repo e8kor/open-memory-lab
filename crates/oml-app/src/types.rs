@@ -1319,6 +1319,79 @@ pub struct VerdictOutcome {
     /// Whether this answers a committed verdict's idempotency record
     /// rather than a verdict this call journalled (http-api.md idempotency).
     pub replayed: bool,
+    /// Whether the reviewing key and the authoring key name one user, as
+    /// the ratification journals it (ADR-0046 d2, ADR-0055 d7).
+    pub same_user: bool,
+}
+
+/// The most ids one bulk verdict names (ADR-0055 d3).
+pub const BULK_VERDICT_MAX: usize = 200;
+
+/// The most rows one page of the held listing serves, and the default
+/// when a request names no `limit` (ADR-0055 d2).
+pub const HELD_PAGE_MAX: usize = 200;
+pub const HELD_PAGE_DEFAULT: usize = 50;
+
+/// A bulk verdict as `POST /v2/review/verdicts/bulk` and the admin page's
+/// `bulk_verdict` received it: the ids the reviewer was listed, never a
+/// filter (ADR-0055 d3).
+#[derive(Debug, Clone)]
+pub struct BulkVerdictRequest {
+    pub verdict: Verdict,
+    pub artifact_ids: Vec<Uuid>,
+    pub reason: Option<String>,
+    pub idempotency_key: String,
+}
+
+/// One item of a bulk verdict, judged as one single verdict is: its
+/// outcome, or the refusal a single verdict naming it would have answered
+/// (ADR-0055 d4, d5, d6).
+#[derive(Debug)]
+pub struct BulkItem {
+    pub memory_id: Uuid,
+    pub result: Result<VerdictOutcome, AppError>,
+}
+
+/// The held listing's filter (ADR-0055 d2): a subtree, an authoring key
+/// and a `claim_key` prefix, each optional, all applied together.
+#[derive(Debug, Clone, Default)]
+pub struct HeldListingRequest {
+    pub workarea: Option<Reference>,
+    pub author_key: Option<Reference>,
+    pub claim_key_prefix: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: usize,
+}
+
+/// The store's half of the held listing's filter: the nodes the rows may
+/// sit on, already narrowed to the subtree, and the author and prefix.
+#[derive(Debug, Clone)]
+pub struct HeldFilter {
+    pub nodes: Vec<Uuid>,
+    pub author_key_id: Option<Uuid>,
+    pub claim_key_prefix: Option<String>,
+}
+
+/// One held row the listing serves, with the time it entered the queue.
+#[derive(Debug, Clone)]
+pub struct HeldRow {
+    pub memory: MemoryRecord,
+    pub held_since: EventTime,
+}
+
+/// One listed item: the row as review serves it, when it was held, and
+/// whether the calling key names the author's user (ADR-0055 d2, d7).
+#[derive(Debug, Clone)]
+pub struct HeldItem {
+    pub served: ServedMemory,
+    pub held_since: EventTime,
+    pub same_user: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeldPage {
+    pub items: Vec<HeldItem>,
+    pub next_cursor: Option<String>,
 }
 
 /// A serve as a verdict sent it: `serve_id` as written, digested as sent,
@@ -2292,6 +2365,15 @@ pub enum AppError {
         if *.several { "several" } else { "none" }
     )]
     ServeIdUnresolved { several: bool },
+    /// The held listing and the bulk verdict are a person's act: a key not
+    /// a dreamer held by a human is refused before any lookup (ADR-0055 d1;
+    /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
+    #[error("bulk review is a person's act: a {} key held by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
+    BulkReviewHumanOnly { role: Role, held_by: HeldBy },
+    /// A bulk verdict's `artifact_ids` or a listing's `limit` outside what
+    /// ADR-0055 d2 and d3 admit (request.validation, `details.field`).
+    #[error("{reason} (ADR-0055, request.validation, field {field})")]
+    BulkShape { field: &'static str, reason: String },
     /// A creation's name its kind already holds in the namespace, a revoked
     /// key's included; nothing was journalled. Only admin and operator keys
     /// hold a creating verb, and the bootstrap claim checks its token first,

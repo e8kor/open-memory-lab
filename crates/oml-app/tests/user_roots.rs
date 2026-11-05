@@ -1566,3 +1566,116 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
     .expect("a brief edge inside alice's root");
     let _ = (c.alice, c.curator);
 }
+
+/// The last event of `event_type` in the tenant's journal.
+async fn last_event(store: &MemStore, tenant: Uuid, event_type: &str) -> serde_json::Value {
+    store
+        .events_range(tenant, 1, 10_000)
+        .await
+        .expect("journal")
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_type)
+        .expect("the event")
+        .envelope
+        .payload
+        .clone()
+}
+
+/// One definition of `same_user` for a claim's approval, a transition's
+/// ratification and a claim edge's: true when both keys act for one person,
+/// false for two people, and false whenever either key is a tenant key that
+/// names no person (ADR-0046 d2, ADR-0055 d7).
+#[tokio::test]
+async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let (admin, tenant) = (&boot.admin_key.value, boot.tenant_id);
+    let alice_writer = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let alice_review = user_curator(&app, admin, "alice", "alice/review").await;
+    let alice_other = user_curator(&app, admin, "alice", "alice/other").await;
+    let crew_writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "crew/loader",
+        vec![
+            grant(by_name("alice"), Role::Writer),
+            grant(by_name("alice"), Role::Reader),
+        ],
+    )
+    .await;
+    let crew_review = tenant_key(
+        &app,
+        admin,
+        Role::Dreamer,
+        "crew/reviewer",
+        vec![
+            grant(by_name("alice"), Role::Dreamer),
+            grant(by_name("alice"), Role::Reader),
+        ],
+    )
+    .await;
+    let _bob = user_writer(&app, admin, "bob", "bob/laptop").await;
+    let bob_review = user_curator(&app, admin, "bob", "bob/review").await;
+
+    // Claims: the person's own agent and reviewer; a crew author; a crew
+    // reviewer.
+    let cases = [
+        (&alice_writer, &alice_review, true, "own"),
+        (&crew_writer, &alice_review, false, "crew-author"),
+        (&alice_writer, &crew_review, false, "crew-reviewer"),
+    ];
+    let mut promoted = Vec::new();
+    for (author, reviewer, expected, tag) in cases {
+        let id = written(
+            &app,
+            &author.value,
+            &submit(tag, &format!("Decision {tag}."), Some("alice")),
+        )
+        .await;
+        approve(&app, &reviewer.value, id).await;
+        assert_eq!(
+            last_event(&store, tenant, event_types::LIFECYCLE_PROMOTE).await["same_user"],
+            expected,
+            "claim {tag}"
+        );
+        promoted.push(id);
+    }
+    // Bob's reviewer key reaches nothing of alice's: two people are never
+    // one, whatever the grants.
+    assert!(
+        app.post_verdict(&bob_review.value, promoted[0], Verdict::Approve, None)
+            .await
+            .is_err()
+    );
+
+    // Claim edges: proposed by one of alice's keys, ratified by another of
+    // hers, then by a crew key.
+    for (ratifier, expected, (from, to)) in [
+        (&alice_other, true, (promoted[0], promoted[1])),
+        (&crew_review, false, (promoted[0], promoted[2])),
+    ] {
+        let edge = app
+            .propose_claim_edge(
+                &alice_review.value,
+                &oml_app::types::ProposeClaimEdge {
+                    from_artifact_id: from,
+                    to_artifact_id: to,
+                    label: "supports".to_owned(),
+                },
+                None,
+            )
+            .await
+            .expect("a proposal");
+        app.ratify_claim_edge(&ratifier.value, edge.proposal.edge_id, None)
+            .await
+            .expect("a ratification");
+        assert_eq!(
+            last_event(&store, tenant, event_types::REVIEW_RATIFY).await["same_user"],
+            expected,
+            "edge ratified by {}",
+            if expected { "alice" } else { "the crew" }
+        );
+    }
+}

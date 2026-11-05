@@ -13,6 +13,8 @@
 
 use uuid::Uuid;
 
+use crate::name::Name;
+
 /// A workarea's status, in rung order (ADR-0009 d1). The derived order is
 /// the ladder's: a step moves to the next rung and never back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -185,12 +187,15 @@ pub fn ratifier_is_proposer(
     proposer_key == ratifier_key || proposer_principal == ratifier_principal
 }
 
-/// Whether a ratification's two keys name one user: `same_user` on the
-/// ratification event (ADR-0046 d2). A key that names no user, a tenant
-/// key, is never the same user as any key.
+/// Whether a ratification's two keys act for one person: `same_user` on a
+/// claim's approval, a transition's ratification and an edge's alike
+/// (ADR-0046 d2, ADR-0055 d7). Each side is the person a key acts for, by
+/// name: a user key's root's name, or a session key's `session_user`. A key
+/// that acts for no person, a tenant key without a session user, is never
+/// the same person as any key.
 #[must_use]
-pub fn same_user(proposer_user: Option<Uuid>, ratifier_user: Option<Uuid>) -> bool {
-    matches!((proposer_user, ratifier_user), (Some(p), Some(r)) if p == r)
+pub fn same_user(proposer_person: Option<&Name>, ratifier_person: Option<&Name>) -> bool {
+    matches!((proposer_person, ratifier_person), (Some(p), Some(r)) if p == r)
 }
 
 /// An operation a frozen area may refuse (workareas.md, refusal matrix).

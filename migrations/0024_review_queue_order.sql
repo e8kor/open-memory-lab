@@ -1,0 +1,13 @@
+-- The review queue in the order review serves it (ADR-0055 d9).
+--
+-- `review next` and the held listing read review_queue joined to memories
+-- and ordered by (held_since, memory_id). With no index on that order every
+-- call joined and sorted every held row of the tenant to return one: at
+-- 45,000 held the statement took 100 ms, three sequential scans, a hash
+-- anti-join and a sort (EXPLAIN ANALYZE, 2026-11-05; ADR-0055 d9). Walked in
+-- this order, a call reads the queue's head and stops at the first row the
+-- reviewer may judge: 0.17 ms on the same rows.
+--
+-- 0022 and 0023 are left to the branches that hold them (search and
+-- telemetry), so the numbers do not collide when they land.
+CREATE INDEX review_queue_order ON review_queue (tenant_id, held_since, memory_id);

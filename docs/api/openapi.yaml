@@ -1013,6 +1013,77 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/review/held:
+    get:
+      tags: [review]
+      operationId: reviewHeld
+      summary: The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
+      description: 'Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer effective access, not claimed by another key, whose lineage closure holds neither the key nor its principal, and no held successor whose rival the key authored, ordered held_since then artifact_id. workarea narrows to that node''s subtree, author_key to one authoring key by id or name, claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and journals nothing (ADR-0055 d2).'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: workarea, in: query, schema: { $ref: '#/components/schemas/WorkareaRef' }, description: "Subtree filter, by id or name." }
+        - { name: author_key, in: query, schema: { type: string }, description: "The authoring key, by id or name." }
+        - { name: claim_key_prefix, in: query, schema: { type: string }, description: A literal prefix of the claim key. }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of held items.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeldPage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/review/verdicts/bulk:
+    post:
+      tags: [review]
+      operationId: postBulkVerdict
+      summary: One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes per item.
+      description: 'Requires: a dreamer key held_by human (access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal''s code: review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).'
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              verdict: approve
+              artifact_ids: [0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10, 6c1b2d3e-4f50-4a61-8b72-9c83d4e5f601]
+            schema: { $ref: '#/components/schemas/BulkVerdictRequest' }
+      responses:
+        '200':
+          description: Each item's outcome, in the order named, and the counts.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                items:
+                - artifact_id: 0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10
+                  outcome: approved
+                  state: promoted
+                  version: 1
+                  journal_seq: 812
+                  same_user: true
+                  replayed: false
+                - artifact_id: 6c1b2d3e-4f50-4a61-8b72-9c83d4e5f601
+                  outcome: skipped
+                  code: review.author_in_lineage
+                  message: the ratifying key or principal is in an endpoint's lineage closure
+                summary: { approved: 1, rejected: 0, skipped: 1 }
+              schema: { $ref: '#/components/schemas/BulkVerdictResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/keys:
     post:
       tags: [keys]
@@ -3203,6 +3274,59 @@ components:
         verdict: { type: string, enum: [approve, reject] }
         state: { type: string, enum: [promoted, held, rejected], description: held means the policy's k needs more verdicts. }
         ratification_event_id: { type: [string, 'null'] }
+
+    HeldPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/Memory' }
+              - type: object
+                required: [held_since, same_user]
+                properties:
+                  held_since: { type: string, format: date-time, description: When the row entered the review queue. }
+                  same_user: { type: boolean, description: "Whether the calling key and the authoring key name one user (ADR-0055 d7)." }
+        next_cursor: { type: [string, 'null'] }
+
+    BulkVerdictRequest:
+      type: object
+      additionalProperties: false
+      required: [verdict, artifact_ids]
+      properties:
+        verdict: { type: string, enum: [approve, reject] }
+        artifact_ids: { type: array, minItems: 1, maxItems: 200, uniqueItems: true, items: { type: string, format: uuid }, description: "The ids the reviewer was listed, never a filter (ADR-0055 d3)." }
+        reason: { type: string, description: Required to reject; journalled on each item. }
+
+    BulkVerdictResult:
+      type: object
+      required: [items, summary]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [artifact_id, outcome]
+            properties:
+              artifact_id: { type: string, format: uuid }
+              outcome: { type: string, enum: [approved, rejected, skipped] }
+              state: { type: string, enum: [promoted, rejected], description: A decided item's state. }
+              version: { type: integer }
+              journal_seq: { type: integer, description: The seq of the item's last event. }
+              same_user: { type: boolean }
+              replayed: { type: boolean, description: "true when the item answers its idempotency record (ADR-0055 d12)." }
+              code: { type: string, description: "A skipped item's refusal, as POST /v2/review/verdicts would answer it." }
+              message: { type: string }
+              details: { type: [object, 'null'] }
+        summary:
+          type: object
+          required: [approved, rejected, skipped]
+          properties:
+            approved: { type: integer }
+            rejected: { type: integer }
+            skipped: { type: integer }
 
     GrantRequest:
       type: object

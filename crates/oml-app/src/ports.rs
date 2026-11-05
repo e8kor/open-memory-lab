@@ -22,11 +22,11 @@ use oml_domain::{
 use crate::types::{
     AdminSearch, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCode, ConnectCodeRecord,
-    ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess,
-    KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
-    PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows, WebEntry,
-    WebSessionRecord, WorkareaRecord,
+    ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
+    HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
+    OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -861,6 +861,23 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         reviewer_key_id: Uuid,
     ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
+    /// The held listing (ADR-0055 d2): the queue entries
+    /// [`JournalStore::review_claim_next`] would serve this reviewer — on
+    /// `filter.nodes`, not claimed by another key, outside the reviewer's
+    /// exclusion set — that pass the filter's author and `claim_key`
+    /// prefix, oldest first (`held_since`, then the memory id), strictly
+    /// after `after` in that order, at most `limit`. It claims nothing. An
+    /// empty node set serves nothing.
+    fn review_held(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<HeldRow>, StoreError>> + Send;
 
     /// One equality lookup on the key-value hash (roles-and-keys.md); a
     /// revoked key resolves to nothing.

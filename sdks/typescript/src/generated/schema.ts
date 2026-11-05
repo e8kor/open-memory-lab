@@ -396,6 +396,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/review/held": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
+         * @description Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service included, is refused with access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup (ADR-0055 d1). Serves exactly what review next would serve the key: rows in its dreamer effective access, not claimed by another key, whose lineage closure holds neither the key nor its principal, and no held successor whose rival the key authored, ordered held_since then artifact_id. workarea narrows to that node's subtree, author_key to one authoring key by id or name, claim_key_prefix to claim keys that start with the text, taken literally. Claims nothing and journals nothing (ADR-0055 d2).
+         */
+        get: operations["reviewHeld"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/review/verdicts/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes per item.
+         * @description Requires: a dreamer key held_by human (access.verb_ceiling, details.reason bulk_review_is_human_only, before any lookup; ADR-0055 d1). artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3). Each id runs the verdict of POST /v2/review/verdicts in the order named, in its own transaction, with its own review.approve or review.reject and, for an approval, its own lifecycle.promote or lifecycle.supersede carrying same_user (d4, d7). An item the single verdict would refuse is skipped with that refusal's code: review.author_in_lineage (R2), review.serve_invalid (no longer held), submission.tip_conflict, access.not_found, access.grant_refused, workarea.frozen; nothing already committed is undone (d5, d6). Each item records under the Idempotency-Key and its own id: a retry replays decided items with replayed true and judges the rest; another verdict or reason for a decided item is idempotency.digest_mismatch on that item (d12). reason is required to reject and journalled on each item (d8).
+         */
+        post: operations["postBulkVerdict"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys": {
         parameters: {
             query?: never;
@@ -1636,6 +1676,54 @@ export interface components {
              */
             state: "promoted" | "held" | "rejected";
             ratification_event_id?: string | null;
+        };
+        HeldPage: {
+            items: (components["schemas"]["Memory"] & {
+                /**
+                 * Format: date-time
+                 * @description When the row entered the review queue.
+                 */
+                held_since: string;
+                /** @description Whether the calling key and the authoring key name one user (ADR-0055 d7). */
+                same_user: boolean;
+            })[];
+            next_cursor: string | null;
+        };
+        BulkVerdictRequest: {
+            /** @enum {string} */
+            verdict: "approve" | "reject";
+            /** @description The ids the reviewer was listed, never a filter (ADR-0055 d3). */
+            artifact_ids: string[];
+            /** @description Required to reject; journalled on each item. */
+            reason?: string;
+        };
+        BulkVerdictResult: {
+            items: {
+                /** Format: uuid */
+                artifact_id: string;
+                /** @enum {string} */
+                outcome: "approved" | "rejected" | "skipped";
+                /**
+                 * @description A decided item's state.
+                 * @enum {string}
+                 */
+                state?: "promoted" | "rejected";
+                version?: number;
+                /** @description The seq of the item's last event. */
+                journal_seq?: number;
+                same_user?: boolean;
+                /** @description true when the item answers its idempotency record (ADR-0055 d12). */
+                replayed?: boolean;
+                /** @description A skipped item's refusal, as POST /v2/review/verdicts would answer it. */
+                code?: string;
+                message?: string;
+                details?: Record<string, never> | null;
+            }[];
+            summary: {
+                approved: number;
+                rejected: number;
+                skipped: number;
+            };
         };
         GrantRequest: {
             /** @description The node, by id or name, never a path; stored as the id. */
@@ -3444,6 +3532,123 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            415: components["responses"]["UnsupportedMedia"];
+            429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    reviewHeld: {
+        parameters: {
+            query?: {
+                /** @description Subtree filter, by id or name. */
+                workarea?: components["schemas"]["WorkareaRef"];
+                /** @description The authoring key, by id or name. */
+                author_key?: string;
+                /** @description A literal prefix of the claim key. */
+                claim_key_prefix?: string;
+                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of held items. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    postBulkVerdict: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "verdict": "approve",
+                 *       "artifact_ids": [
+                 *         "0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10",
+                 *         "6c1b2d3e-4f50-4a61-8b72-9c83d4e5f601"
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["BulkVerdictRequest"];
+            };
+        };
+        responses: {
+            /** @description Each item's outcome, in the order named, and the counts. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "artifact_id": "0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10",
+                     *           "outcome": "approved",
+                     *           "state": "promoted",
+                     *           "version": 1,
+                     *           "journal_seq": 812,
+                     *           "same_user": true,
+                     *           "replayed": false
+                     *         },
+                     *         {
+                     *           "artifact_id": "6c1b2d3e-4f50-4a61-8b72-9c83d4e5f601",
+                     *           "outcome": "skipped",
+                     *           "code": "review.author_in_lineage",
+                     *           "message": "the ratifying key or principal is in an endpoint's lineage closure"
+                     *         }
+                     *       ],
+                     *       "summary": {
+                     *         "approved": 1,
+                     *         "rejected": 0,
+                     *         "skipped": 1
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["BulkVerdictResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             415: components["responses"]["UnsupportedMedia"];
             429: components["responses"]["RateLimited"];
             default: components["responses"]["Error"];

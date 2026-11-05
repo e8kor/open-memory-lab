@@ -7231,8 +7231,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        54,
-        "the 40 routed operations, whoami, the guardrail read, the six OAuth operations and the six web routes"
+        56,
+        "the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

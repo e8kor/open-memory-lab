@@ -93,6 +93,10 @@ use crate::types::{
     UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
     WorkareaRecord, WorkareaStatusView,
 };
+use crate::types::{
+    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
+    HeldListingRequest, HeldPage,
+};
 
 use crate::search::{
     Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
@@ -302,6 +306,25 @@ fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Resu
         Err(AppError::VerbCeiling {
             role: key.role,
             verb,
+        })
+    }
+}
+
+/// How many times one item of a bulk verdict retries after a chain-head
+/// conflict: the single verdict route's retry count (ADR-0055 d4).
+const BULK_CHAIN_RETRIES: usize = 16;
+
+/// The listing and the bulk verdict admit a dreamer key a person holds,
+/// and refuse every other key before any lookup (ADR-0055 d1): a writer or
+/// reader key (R1), a service key (ADR-0025 d1) and a dreamer key held by
+/// an agent, whose crew reviews one serve at a time.
+fn require_person_reviewer(key: &KeyRecord) -> Result<(), AppError> {
+    if key.role == Role::Dreamer && key.held_by == HeldBy::Human {
+        Ok(())
+    } else {
+        Err(AppError::BulkReviewHumanOnly {
+            role: key.role,
+            held_by: key.held_by,
         })
     }
 }
@@ -553,6 +576,7 @@ impl VerdictRecording {
             version: outcome.version,
             state: outcome.state.as_str().to_owned(),
             journal_seq: outcome.journal_seq,
+            same_user: outcome.same_user,
         };
         Ok(IdempotencyPut {
             scope: self.scope.clone(),
@@ -573,6 +597,10 @@ struct RecordedVerdict {
     version: u32,
     state: String,
     journal_seq: u64,
+    /// Absent from a record a v0.5.6 server stored, which journalled no
+    /// mark (ADR-0055 d7).
+    #[serde(default)]
+    same_user: bool,
 }
 
 impl RecordedVerdict {
@@ -593,6 +621,7 @@ impl RecordedVerdict {
             state,
             journal_seq: self.journal_seq,
             replayed: true,
+            same_user: self.same_user,
         })
     }
 }
@@ -3188,15 +3217,43 @@ where
         })
     }
 
-    /// The user a key of the tenant names, read from its key row; `None`
-    /// for a tenant key or a key the tenant does not hold (ADR-0044 d2;
-    /// ADR-0046 d2).
-    async fn key_user(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<Uuid>, AppError> {
-        Ok(self
-            .journal
-            .key(tenant_id, key_id)
-            .await?
-            .and_then(|k| k.user))
+    /// The person a key acts for, by name: a session key's
+    /// `session_user`, else the name of a user key's root; `None` for a
+    /// tenant key (ADR-0044 d2, ADR-0045 d6).
+    async fn person_of(&self, key: &KeyRecord) -> Result<Option<Name>, AppError> {
+        if let Some(user) = &key.session_user {
+            return Ok(Some(user.clone()));
+        }
+        match key.user {
+            Some(root) => Ok(self
+                .journal
+                .workarea(key.tenant_id, root)
+                .await?
+                .map(|w| w.name)),
+            None => Ok(None),
+        }
+    }
+
+    /// Whether the proposing or authoring key and the ratifying key act for
+    /// one person: the one `same_user` rule of a claim's approval, a
+    /// transition's ratification and an edge's (ADR-0046 d2, ADR-0055 d7).
+    /// A person reviews through `<user>-review`, a session key that names
+    /// its person by `session_user` rather than by a user root, so both are
+    /// read as the person's name; a key the tenant does not hold is no one's.
+    async fn same_person(
+        &self,
+        tenant_id: Uuid,
+        author_key_id: Uuid,
+        reviewer: &KeyRecord,
+    ) -> Result<bool, AppError> {
+        let Some(author) = self.journal.key(tenant_id, author_key_id).await? else {
+            return Ok(false);
+        };
+        let (a, r) = (
+            self.person_of(&author).await?,
+            self.person_of(reviewer).await?,
+        );
+        Ok(same_user(a.as_ref(), r.as_ref()))
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -3544,10 +3601,7 @@ where
                 "proposed_by_key_id": proposal.proposer_key_id.to_string(),
                 "ratified_by_key_id": key.key_id.to_string(),
                 "policy_snapshot": policy_snapshot,
-                "same_user": same_user(
-                    self.key_user(key.tenant_id, proposal.proposer_key_id).await?,
-                    key.user,
-                ),
+                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
             }),
         )?;
         self.commit(
@@ -4152,6 +4206,251 @@ where
         .await
     }
 
+    /// The held listing (ADR-0055 d2): the rows `review next` would serve
+    /// this key, with their text, a page at a time, narrowed by a subtree,
+    /// an authoring key and a `claim_key` prefix. It claims nothing and
+    /// journals nothing. Only a dreamer key a person holds is served it
+    /// (d1).
+    pub async fn review_held(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &HeldListingRequest,
+    ) -> Result<HeldPage, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        require_person_reviewer(key)?;
+        if req.limit == 0 || req.limit > HELD_PAGE_MAX {
+            return Err(AppError::BulkShape {
+                field: "limit",
+                reason: format!("limit is 1 to {HELD_PAGE_MAX}"),
+            });
+        }
+        let tenant_id = key.tenant_id;
+        let mut nodes = self.dreamer_nodes(&caller).await?;
+        if let Some(workarea) = &req.workarea {
+            let root = self.resolve(key, NamedKind::Workarea, workarea).await?;
+            let subtree: BTreeSet<Uuid> = self
+                .journal
+                .workarea_subtree(tenant_id, root)
+                .await?
+                .into_iter()
+                .map(|w| w.workarea_id)
+                .collect();
+            nodes.retain(|n| subtree.contains(n));
+        }
+        let author_key_id = match &req.author_key {
+            Some(author) => Some(self.resolve(key, NamedKind::Key, author).await?),
+            None => None,
+        };
+        let now = self.clock.now();
+        let after = req
+            .cursor
+            .as_deref()
+            .map(|cursor| ListingCursor::resume(cursor, key.key_id, &now))
+            .transpose()?;
+        let filter = HeldFilter {
+            nodes,
+            author_key_id,
+            claim_key_prefix: req.claim_key_prefix.clone(),
+        };
+        // One row past the page says whether another page exists.
+        let mut rows = self
+            .journal
+            .review_held(
+                tenant_id,
+                &key.principal,
+                key.key_id,
+                &filter,
+                after.as_ref(),
+                req.limit.saturating_add(1),
+            )
+            .await?;
+        let more = rows.len() > req.limit;
+        rows.truncate(req.limit);
+        let next_cursor = rows.last().filter(|_| more).map(|last| {
+            ListingCursor {
+                key_id: key.key_id,
+                position: ListingPosition {
+                    created_at: last.held_since.clone(),
+                    artifact_id: last.memory.memory_id,
+                },
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        let mut ancestries = BTreeMap::new();
+        let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let m = &row.memory;
+            // R2 and R3 in depth: nothing the queue would not serve this key
+            // leaves the application layer, whatever the store returned.
+            let excluded = m.lineage_key_ids.contains(&key.key_id)
+                || m.lineage_principals.contains(&key.principal);
+            if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workarea_id)
+            {
+                continue;
+            }
+            let same = match users.get(&m.author_key_id) {
+                Some(same) => *same,
+                None => {
+                    let same = self.same_person(tenant_id, m.author_key_id, key).await?;
+                    users.insert(m.author_key_id, same);
+                    same
+                }
+            };
+            items.push(HeldItem {
+                same_user: same,
+                held_since: row.held_since,
+                served: self.served_in(&caller, row.memory, &mut ancestries).await?,
+            });
+        }
+        Ok(HeldPage { items, next_cursor })
+    }
+
+    /// The named held rows as the listing would show them to this key, for
+    /// the admin page's confirmation (ADR-0055 d10): each id with its row
+    /// when it is still held, in the key's dreamer access and outside its
+    /// exclusion, else `None`. It claims and journals nothing.
+    pub async fn review_named(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, Option<ServedMemory>)>, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        require_person_reviewer(key)?;
+        let nodes: BTreeSet<Uuid> = self.dreamer_nodes(&caller).await?.into_iter().collect();
+        let mut rows: BTreeMap<Uuid, MemoryRecord> = self
+            .journal
+            .memories(key.tenant_id, ids)
+            .await?
+            .into_iter()
+            .filter(|m| {
+                m.status == MemoryStatus::Held
+                    && nodes.contains(&m.workarea_id)
+                    && !m.lineage_key_ids.contains(&key.key_id)
+                    && !m.lineage_principals.contains(&key.principal)
+            })
+            .map(|m| (m.memory_id, m))
+            .collect();
+        let mut ancestries = BTreeMap::new();
+        let mut named = Vec::with_capacity(ids.len());
+        for id in ids {
+            let served = match rows.remove(id) {
+                Some(m) => Some(self.served_in(&caller, m, &mut ancestries).await?),
+                None => None,
+            };
+            named.push((*id, served));
+        }
+        Ok(named)
+    }
+
+    /// A bulk verdict (ADR-0055 d3, d4): each named id judged in turn by
+    /// the single verdict's use case, `verdict_on` — access, R2
+    /// against the row's exclusion set, the transition, the frozen refusal,
+    /// the compare-and-set, its own signed verdict and ratification in its
+    /// own transaction — and answered with its outcome or the refusal a
+    /// single verdict naming it would have answered. Each item records under
+    /// the request's idempotency key and its own id, so a retry replays what
+    /// was decided and judges the rest (d12). Only a dreamer key a person
+    /// holds sends one (d1); the ids are 1 to [`BULK_VERDICT_MAX`] distinct
+    /// ids, and a reject carries its reason (d3, d8).
+    pub async fn review_bulk(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &BulkVerdictRequest,
+    ) -> Result<Vec<BulkItem>, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        require_person_reviewer(key)?;
+        let ids_refused = |reason: String| AppError::BulkShape {
+            field: "/artifact_ids",
+            reason,
+        };
+        if req.artifact_ids.is_empty() || req.artifact_ids.len() > BULK_VERDICT_MAX {
+            return Err(ids_refused(format!(
+                "artifact_ids names 1 to {BULK_VERDICT_MAX} ids, not {}",
+                req.artifact_ids.len()
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        if let Some(repeated) = req.artifact_ids.iter().find(|id| !seen.insert(**id)) {
+            return Err(ids_refused(format!(
+                "artifact_ids names {repeated} more than once"
+            )));
+        }
+        if req.verdict == Verdict::Reject && req.reason.as_deref().unwrap_or("").is_empty() {
+            return Err(AppError::BulkShape {
+                field: "/reason",
+                reason: "reason is required to reject".to_owned(),
+            });
+        }
+        let mut items = Vec::with_capacity(req.artifact_ids.len());
+        for &memory_id in &req.artifact_ids {
+            let result = self.bulk_item(&caller, req, memory_id).await;
+            items.push(BulkItem { memory_id, result });
+        }
+        Ok(items)
+    }
+
+    /// One item of [`Self::review_bulk`]: its record replayed when one
+    /// exists, else the single verdict, retried on a chain-head conflict as
+    /// the single verdict's route retries it.
+    async fn bulk_item(
+        &self,
+        caller: &Caller,
+        req: &BulkVerdictRequest,
+        memory_id: Uuid,
+    ) -> Result<VerdictOutcome, AppError> {
+        let key = &caller.key;
+        let doc = json!({
+            "method": "POST",
+            "route": "/v2/review/verdicts/bulk",
+            "item": {
+                "artifact_id": memory_id.to_string(),
+                "verdict": match req.verdict { Verdict::Approve => "approve", Verdict::Reject => "reject" },
+                "reason": req.reason,
+            },
+        });
+        let recording = || -> Result<VerdictRecording, AppError> {
+            Ok(VerdictRecording {
+                scope: IdempotencyScope {
+                    tenant_id: key.tenant_id,
+                    key_id: key.key_id,
+                    workarea_id: Uuid::nil(),
+                    idem_key: format!("{}/{memory_id}", req.idempotency_key),
+                },
+                request_digest: sha256_digest_string(&canonical_bytes(&doc)?),
+            })
+        };
+        let first = recording()?;
+        if let Some(recorded) = self
+            .recorded::<RecordedVerdict>(&first.scope, &first.request_digest)
+            .await?
+        {
+            return recorded.replay();
+        }
+        let mut attempt = 0;
+        loop {
+            match self
+                .verdict_on(
+                    caller,
+                    memory_id,
+                    req.verdict,
+                    req.reason.as_deref(),
+                    Some(recording()?),
+                )
+                .await
+            {
+                Err(AppError::Store(
+                    StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+                )) if attempt + 1 < BULK_CHAIN_RETRIES => attempt += 1,
+                other => return other,
+            }
+        }
+    }
+
     /// [`App::post_verdict`] after the verb ceiling, for an authenticated
     /// caller, committing `recording`'s idempotency record with the verdict
     /// when there is one.
@@ -4192,6 +4491,12 @@ where
             }
         }
         check_reviewer(key.role, &key.principal, key.key_id, &exclusion)?;
+        // A claim's ratification is marked as a transition's and an edge's
+        // are: whether the reviewing key and the authoring key name one
+        // user (ADR-0046 d2, ADR-0055 d7).
+        let same_user = self
+            .same_person(key.tenant_id, memory.author_key_id, key)
+            .await?;
 
         let (verdict_type, target_status) = match verdict {
             Verdict::Approve => (event_types::REVIEW_APPROVE, MemoryStatus::Promoted),
@@ -4257,6 +4562,7 @@ where
                     state: new_status,
                     journal_seq: verdict_event.envelope.seq,
                     replayed: false,
+                    same_user,
                 };
                 let idempotency = recording.as_ref().map(|r| r.put(&outcome)).transpose()?;
                 let committed = self
@@ -4290,6 +4596,7 @@ where
                             "ratification_event_id": verdict_event_id.to_string(),
                             "previous_tip_version": Value::Null,
                             "self_signed": false,
+                            "same_user": same_user,
                             "policy": policy,
                         }),
                         MetadataFold::MemoryPromoted { memory_id },
@@ -4306,6 +4613,7 @@ where
                             "retirement": memory.retirement,
                             "ratification_event_id": verdict_event_id.to_string(),
                             "self_signed": false,
+                            "same_user": same_user,
                             "policy": policy,
                         }),
                         MetadataFold::TipSuperseded {
@@ -4334,6 +4642,7 @@ where
                     state: new_status,
                     journal_seq: ratification.envelope.seq,
                     replayed: false,
+                    same_user,
                 };
                 let idempotency = recording.as_ref().map(|r| r.put(&outcome)).transpose()?;
                 let links = vec![
@@ -5776,10 +6085,7 @@ where
                 "workarea_id": edge.workarea_id.to_string(),
                 "verdict_event_ids": [],
                 "ratifier_key_id": key.key_id.to_string(),
-                "same_user": same_user(
-                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
-                    key.user,
-                ),
+                "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
                 "policy_snapshot": review_policy(),
             }),
         )?;
@@ -6074,10 +6380,7 @@ where
             // verdict precedes it.
             "verdict_event_ids": [],
             "ratifier_key_id": key.key_id.to_string(),
-            "same_user": same_user(
-                    self.key_user(key.tenant_id, edge.proposer_key_id).await?,
-                    key.user,
-                ),
+            "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
             "policy_snapshot": {
                 "k": 1,
                 "required_roles": ["dreamer"],
