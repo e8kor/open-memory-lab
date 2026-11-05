@@ -7,7 +7,9 @@ answers: what a write does about a memory OML already holds, and whether it refu
 
 # ADR-0050 — Remembering checks what is already held, replaces instead of repeating, and says how the memory will be found
 
-**Status:** proposed · 2026-11-04
+**Status:** proposed · 2026-11-04 · revised 2026-11-05 (r2): d1's check is a same-text and
+near-copy match read from integer keys, with no recall and no model, specified in d17; its nine
+questions answered at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05))
 
 **Release:** W1–W3 proposed for v0.5.3, beside ADR-0048's S1–S3; W4–W7 not assigned, each gated
 on the remember eval ([releases](../product/releases.md#decisions))
@@ -110,42 +112,53 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 
 ## Decision
 
-- **d1 — Every write is checked against what the writer may already read, and the answer names
-  the similar memories; it warns by default and refuses only when the writer asks.** Before
-  capture, a submit, a supersession and each batch item (d8) run one recall over the rows the
-  writing key may read: the served promoted tips of the target workarea's recall scope, as
-  `oml_read` recall at that `workarea` would read them (ADR-0044 d10 includes `universe`'s
-  claims), and the key's own held rows in that scope, the same rows `include_unreviewed: true`
-  adds. The query is the new text with its title and keywords (d5), under the served text search
-  (ADR-0048's `search: "text"`), `k` 3, kinds `memory`, `derived_fact` and `steering`; a
-  supersession leaves out its own claim's versions. A row is listed in the answer's `similar`
-  when its NFC digest equals the new text's (`relation: "same_text"`), or when it shares at least
-  `similar.min_shared` of the new text's distinct indexed terms (`relation: "shares"`, with
-  `matched: {words, of}` as ADR-0048 d9 serves it). The ratio is structural, the share of the
-  writer's own words, not a score, so it compares across queries where a score would not
-  (ADR-0038 d6). The default, 0.4, is chosen from version 1 of the remember eval only, where 0.3
-  kept every pair at precision 0.84 and 0.5 at 1.00 (FR-90). At most three rows, each a
-  [claim item](../api/mcp-plugin.md#the-claim-item) without `text`, so the hint costs the writer
-  a few dozen tokens and a `get` reads whichever it wants.
+- **d1 — Every write is checked for the same text and for a near copy among what the writer may
+  already read, by integer keys and no model, and the answer names them; it holds by default and
+  refuses only when the writer asks.** Before capture, a submit, a supersession and each batch
+  item (d8) are checked against the rows the writing key may read: the served promoted tips of
+  the target workarea's recall scope, as `oml_read` recall at that `workarea` would read them
+  (ADR-0044 d10 includes `universe`'s claims), and the key's own held rows in that scope, the
+  rows `include_unreviewed: true` adds. Another key's held row is never checked or named. Kinds
+  `memory`, `derived_fact` and `steering`; a supersession leaves out its own claim's versions.
+  Two relations, each found without a recall and without a model (d17):
 
-    The server does not decide what a similar row means. A restatement, a refinement, a changed
-    value and an unrelated row sharing vocabulary look alike to any lexical rule, and the
-    eval's novel writes are cleaner than a crew's (FR-90). So `on_similar` chooses: `"hold"`,
-    the default, captures the write held and lists `similar`; `"refuse"` answers
-    `409 submission.similar_exists` with `details.similar` when the list is not empty, and
-    journals nothing. A refusal is decided before the idempotency record is claimed, as a
-    supersession's step-1 refusal is ([http-api](../api/http-api.md#idempotency)), so the agent
-    may resend the same `idempotency_key` with `on_similar: "hold"`, or supersede instead; a
-    write whose record is committed replays its stored response, `similar` as first answered.
-    The skill sends `"refuse"` on new claims (d12), which makes the agent read the similar rows
-    and choose, once, before anything waits for review; it costs one more call per hinted
-    write, against a reviewer's verdict per unhinted duplicate. A same-text repeat by the same
-    key keeps answering `submission.claim_key_conflict`, now with `details.existing`, the
-    artifact id of its own row.
+    - **`same_text`**: the new text's normalised words (d17), in order, equal the row's: the
+      same words in the same order, case, punctuation and spacing aside.
+    - **`near_copy`**: not the same text, and the Jaccard similarity of the two texts' word sets
+      is at least **0.9**, served as `jaccard` to two decimals. Candidates come from MinHash
+      bands (d17); each is verified by the exact ratio before it is listed, so a hash collision
+      never names a row. A new text with **fewer than 10 distinct words, or whose characters
+      carry less than 3.0 bits of entropy**, is checked for `same_text` alone: below 10 distinct
+      words a ratio of 0.9 needs the same word set, which for two different texts means the same
+      words reordered ("port 8080, not 8081" against "port 8081, not 8080"), and a low-entropy
+      text is a repetition. A short text is never a near copy.
 
-    No link is made for the writer. A writer who keeps a write beside a similar row on purpose
-    says how they relate through `links` (d9). The check is a read: when the read log is built
-    it logs the rows served under the request digest, as a recall does (ADR-0025 d9).
+    At most three rows, `same_text` first, then by `jaccard`, then by artifact id, each a
+    [claim item](../api/mcp-plugin.md#the-claim-item) without `text`, with `relation`,
+    `jaccard` (1.0 for `same_text`), `version` and `own` (true when the writing key wrote it),
+    so the hint costs the writer a few dozen tokens and a `get` reads whichever it wants.
+
+    The server does not decide what a listed row means. A near copy may be a restatement, a
+    corrected typo, a changed value or a deliberate second claim, and a lexical rule cannot tell
+    which. So `on_similar` chooses: `"hold"`, the default, captures the write held and lists
+    `similar`; `"refuse"` answers `409 submission.similar_exists` with `details.similar` when the
+    list is not empty, and journals nothing. A refusal is decided before the idempotency record
+    is claimed, as a supersession's step-1 refusal is
+    ([http-api](../api/http-api.md#idempotency)), so the agent may resend the same
+    `idempotency_key` with `on_similar: "hold"`; a write whose record is committed replays its
+    stored response, `similar` as first answered. The third outcome is the writer's:
+    **replace**, by writing with `replaces` set to the listed row and `expected_version` set to
+    its `version` ([ADR-0057](https://github.com/e8kor/open-memory-lab/pull/69) d19), which a
+    supersession refuses with `submission.version_conflict` when the claim has moved since, and
+    which revises the writer's own held row under d3. The skill sends `"refuse"` on new claims
+    once d16's gate passes (d12). A same-text repeat by the same key keeps answering
+    `submission.claim_key_conflict`, now with `details.existing`, the artifact id of its own row.
+
+    Nothing is dropped, merged or linked by the server: R4's "nothing silently deleted" read for
+    a write is "nothing silently not written". A writer who keeps a write beside a listed row on
+    purpose says how they relate through `links` (d9). The check is a read: when the read log is
+    built it logs the rows named under the request digest, as a recall does (ADR-0025 d9). It
+    adds no rank term and changes no row's visibility (R3).
 
 - **d2 — A write that names a live claim's `claim_key` replaces its tip: an upsert, by the same
   rule as a supersession.** `claim_key` sent without `replaces` names a subject. When no held,
@@ -322,7 +335,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       "replaces": {"artifact_id": "7d1e…", "version": 2},
       "revises": null,
       "workarea": "fbbb41c5-9630-4274-ae53-166f562f5286",
-      "similar": [],
+      "similar": [{"artifact_id": "7d1e…", "claim_key": "deploy-window", "version": 2, "state": "promoted", "relation": "near_copy", "jaccard": 0.92, "own": true}],
       "warnings": [],
       "indexed": {"title": ["production", "deploy", "window"], "text": ["2026-06-01", "production", "deploy", "monday", "wednesday", "thursday", "09:00", "11:00", "cet", "window", "on-call", "lead", "approval"], "keywords": ["release", "schedule", "change", "window"], "identifiers": {}},
       "review": {"waits_for": "1 verdict by another identity", "human_required": false},
@@ -358,7 +371,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     > **Before you write, let OML check.** Send `on_similar: "refuse"` with a new claim. If it is
     > refused with `submission.similar_exists`, read the rows in `details.similar`: if one says
     > the same, write nothing; if one says an older value of the same thing, write with
-    > `replaces` set to it; if they differ, write again with `on_similar: "hold"`, and with
+    > `replaces` set to it and `expected_version` set to its `version`; if they differ, write again with `on_similar: "hold"`, and with
     > `links` if one contradicts yours.
     >
     > **One checkable claim per write.** Write `text` so a reader with no context can check it:
@@ -425,13 +438,19 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
        `a_hit_past_valid_until_is_served_expired_and_not_reranked`,
        `valid_at_now_leaves_out_rows_whose_validity_excludes_it`. Gate: d16's findability gate
        for any change to the skill's title guidance; the fields ship on their tests.
-    3. **W3, the similar hint (after ADR-0048 S1):** d1, d11's `similar`, d12.
-       `a_write_lists_a_same_text_row_the_writer_may_read`,
-       `a_write_never_lists_a_row_the_writer_may_not_read`,
+    3. **W3, the similar check (no search dependency since r2):** d1, d17, d11's `similar`,
+       d12. `a_write_lists_a_same_text_row_the_writer_may_read`,
+       `a_write_lists_a_near_copy_at_jaccard_0_9_and_not_below`,
+       `a_short_text_is_never_listed_as_a_near_copy`,
+       `a_write_never_lists_a_row_the_writer_may_not_read` (another key's held row, an
+       unreadable workarea), `a_supersession_never_lists_its_own_claim`,
        `on_similar_refuse_journals_nothing_and_claims_no_idempotency_record`,
        `a_replayed_write_answers_the_similar_list_first_answered`,
-       `review_next_serves_similar_rows_the_reviewer_may_read`. Gate: d16's hint gate on
-       version 2 before the skill sends `refuse`; the field ships with `hold` on its tests.
+       `similar_keys_computed_in_sql_equal_the_cores`,
+       `review_next_serves_similar_rows_the_reviewer_may_read`. Gate: d16's near-copy gate on
+       the labelled set before the field ships; the skill sends `refuse` after the hint gate on
+       version 2. W3 is built in two parts: the write side (d1, d17), then the reviewer's
+       `similar` (d11).
     4. **W4, warnings:** d6. `each_quality_finding_warns_and_never_vetoes`,
        `warnings_are_served_to_the_reviewer`. Gate: d16's warning gate.
     5. **W5, freshness:** d7. `a_tip_past_review_by_is_served_stale_and_not_reranked`,
@@ -445,7 +464,9 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     7. **W7, links (after ADR-0046's claim edges):** d9. `links_are_ratified_with_the_claim_and_dropped_with_its_rejection`.
 
 - **d15 — Every new failure has a doctor line.** `oml doctor` (admin) names: the similar check's
-  p95 over the last hour above `similar.max_ms`, with the write latency it adds (FR-91); a share
+  p95 over the last hour above `similar.max_ms`, with the write latency it adds (FR-91); versions
+  that should hold similar keys and hold none, or keys whose state differs from their version's
+  (d17), which `oml_similar_keys_refill` repairs; a share
   of the last day's writes refused `submission.similar_exists` and never resent, which is either
   duplicates avoided or a threshold too loose; held rows older than a day with a withdrawn
   sibling still served for review (a stale-promotion fault d3 forbids); workareas whose stale
@@ -455,13 +476,14 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   with `tools/list`.
 
 - **d16 — The remember eval gates each decision, and grows to real writes.** `eval/remember/`
-  holds version 1 (synthetic) and runs offline in CI as a data check now, and against a live
+  holds version 1 (synthetic), and since r2 the labelled near-duplicate set d17 is measured on,
+  and runs offline in CI as a data check now, and against a live
   lead once W1 is built, as the recall eval does (ADR-0048 d12). The gates, on version 2:
 
     | Decision | Gate |
     |---|---|
-    | d1, `hold` | hint recall ≥ 0.90 on duplicate and update writes; false alarm ≤ 0.20 on new facts |
-    | d1, the skill's `refuse` | precision ≥ 0.80 at hint recall ≥ 0.90 |
+    | d1, d17, the field | on the labelled near-duplicate set (`eval/remember/near-duplicates/`): same-text recall 1.00; near-copy recall ≥ 0.85; precision ≥ 0.95; no short text listed |
+    | d1, the skill's `refuse` | on version 2: precision ≥ 0.80 at hint recall ≥ 0.90 on duplicate writes |
     | d2–d4 | stale first 0; latest correct@1 not below the store's success@1 on the same queries |
     | d5 | title and keywords ≥ +0.10 paraphrase success@5 over text alone; no category falls by more than one query; exact queries unchanged |
     | d6 | false warnings ≤ 0.10 on accepted memories; planted problems caught ≥ 0.80 |
@@ -474,12 +496,59 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     several workareas and steering rows. The real-traffic duplicate rate is counted from
     verdicts, never from query text, which the request log does not keep (ADR-0042 d8).
 
+- **d17 — The near-copy check: normalised words, MinHash over 60 permutations in 10 bands of 6,
+  integer keys row security lets an index serve, and the exact ratio before anything is listed**
+  (r2; adopted from Graphiti's deterministic resolution, [dedup_helpers.py](https://github.com/getzep/graphiti/blob/main/graphiti_core/utils/maintenance/dedup_helpers.py),
+  read at commit `fb60e59` on 2026-11-05, Apache-2.0, re-implemented, no code copied).
+
+    - **Words.** The NFC text with ASCII letters lower-cased, split at every ASCII character that
+      is not a letter or a digit; a character outside ASCII belongs to its word, so a text in
+      another script is compared by its words as written. No stems and no stopwords: the check
+      looks for a copy, not for a meaning. `same_text` compares the word sequences; `near_copy`
+      the sets of distinct words, shingles one word long.
+    - **Keys.** A word's 64-bit id is ADR-0052 d2's `oml_token_id`; permutation *i* of 60 maps it
+      to `(aᵢ·x + bᵢ) mod (2³¹ − 1)`, `x` the id reduced into that field, `aᵢ` and `bᵢ` taken
+      from `oml_token_id('minhash:a:i')` and `('minhash:b:i')`; the signature is the 60 minima;
+      band *j* of 10 is keyed `oml_token_id('b<j>:<its six minima>')`, and the text's
+      `same_text` key is `oml_token_id('x:' || its words joined by single spaces)`. A pair at
+      Jaccard 0.9 shares a band with probability 1 − (1 − 0.9⁶)¹⁰ = 0.9995, at 0.85 with 0.991,
+      at 0.5 with 0.15. The verification reads at most 32 candidates, those sharing the most
+      bands first, then by artifact id.
+    - **Storage.** Migration 0025's `similar_keys`: one row per version and key, carrying the
+      tenant, workarea, authoring key, memory id, band (0 for `same_text`, 1–10) and state (0 held,
+      1 a served tip), list-partitioned by tenant as `search_postings` is, fenced, with no
+      statistics on the parent; one index, `(key, workarea_id) INCLUDE (state, author_key_id,
+      memory_id)`, reached only by `bigint` and `uuid` equalities, which are leakproof, so row
+      security lets it serve (ADR-0052's Context). A trigger on `memories` writes a version's
+      keys from `oml_similar_keys(claim)`, an immutable SQL function the core computes equally
+      (a law holds the two equal), and follows the version's state: written held, served at
+      promotion, deleted when the version is replaced, demoted, rejected or erased, so the table
+      holds only what d1 may name. 0025 fills every existing version; `oml_similar_keys_refill`
+      rebuilds one tenant's keys when the doctor names a fault (d15).
+    - **The read.** One statement: the new text's keys, the scope's workareas, state 1, or state 0
+      with the writing key as author; the core then reads the candidates' rows, admits each by
+      recall's rule (a readable served tip, or its own held row) and computes the exact ratio.
+      A key computed from another tenant's text can only meet its own tenant's partition.
+    - **The labelled set** (`eval/remember/near-duplicates/`, version 1): the recall eval's 200
+      memories and the remember eval's 40 seeds, with 1,115 probes derived from them by a seeded
+      script: 240 normalised copies, 714 near copies (a transposed-letter typo, one stopword
+      dropped, a `Note:` prefix), 137 changed values (one number moved), the remember eval's 8
+      paraphrases, 8 paraphrased updates and 8 new facts, and 6 short pairs that differ by one
+      value or by order. The pairs were derived by rule, not written by a model, and the
+      paraphrases are those a model wrote for version 1: the set measures the check's
+      mechanics, not real writes, which remain FR-90's. Its numbers are in the README beside it
+      and in the build's measured row in d16.
+    - **The cost.** `bench/scale/similar.py` measures the read and the trigger's write cost at
+      10k, 100k and 1M versions per tenant as the serving role under row security, beside the
+      write it guards, and records them in [the scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md).
+
 ## Downsides: argument or opportunity
 
 | Downside | Verdict | Reasoning, and what it implies |
 |---|---|---|
-| Every write pays one recall | argument | One statement over rows already indexed; its cost at scale is FR-91, and the doctor line watches it (d15). |
-| A lexical hint misses a paraphrased duplicate | argument | Version 1's restatements were all found at 0.4; real ones are FR-90's question, and the reviewer's `similar` is a second look (d11). |
+| Every write pays one lookup | argument | Since r2 an index read of at most 11 integer keys and a verification of at most 32 candidates, measured at 10k, 100k and 1M (d17), where the recall it replaces cost 128 ms p50 at 1M; the doctor line watches it (d15). |
+| The check misses a paraphrase | argument, accepted | A near copy shares 90% of its words; "the same fact in other words" shares far fewer (1 of 8 paraphrases on the labelled set). The reviewer's `similar` is a second look (d11), and meaning-level duplicates wait for a dense leg (rejected alternatives). |
+| A word set ignores order | argument, bounded | Two long texts with the same words in another order are listed as `near_copy` at 1.0, never `same_text`; under 10 distinct words they are not listed at all (d1). |
 | A hint on an unrelated row costs the agent a read | argument, bounded | At most 3 rows without text; `refuse` only when the agent asks. |
 | `refuse` costs a second call | argument | Against a reviewer's verdict per duplicate; the skill's default waits on d16's precision gate. |
 | An upsert can replace the wrong claim | argument | `upserted` and `replaces` say so at once, and nothing changes before review (d2). |
@@ -499,9 +568,9 @@ stay three.
 
 ## Consequences
 
-- **Roadmap rows.** RS-17 is answered by d3 at acceptance. FR-90 opens (the similar hint's
-  recall and precision on real writes, and `similar.min_shared`), FR-91 (the check's latency at
-  stated corpus sizes), FR-92 (the warning thresholds on accepted memories), FR-93 (the duplicate
+- **Roadmap rows.** RS-17 is answered by d3 at acceptance. FR-90 opens (the near-copy check's
+  recall and precision on real writes, and the 0.9 threshold), FR-91 (the check's latency at
+  stated corpus sizes, measured in part by d17's bench), FR-92 (the warning thresholds on accepted memories), FR-93 (the duplicate
   rate and the stale-confirmation load from verdicts) and FR-94 (`write.max_batch` and
   `capture.max_per_session`).
 - **Pages to change at acceptance.** The MCP plugin page and `mcp-tools.json` (`oml_write`'s
@@ -511,24 +580,28 @@ stay three.
   `stale`, `review_by`, `expired`); admission (advisory findings, `withdrawn`); audit and lineage
   (revision of a held version; the released key); retrieval (`stale`, `expired`, the new
   filters); the schema and the event catalog (`revises`, `duplicate_of`, the new columns);
-  configuration (`similar.min_shared`, `similar.max_ms`, `freshness.review_days`,
+  the schema (0025's `similar_keys`); configuration (`similar.max_ms`, `freshness.review_days`,
   `freshness.stale_warn_share`, `write.max_batch`, `capture.max_per_session`); the `oml-memory`
   skill (d12); the user page's memories view (state, stale and review-by markers, withdrawn
   rows); and each amended record's Status line.
 
-## Open questions for the maintainer
+## The maintainer's answers of 2026-11-05
 
-| # | Question | Options | Recommended |
-|---|---|---|---|
-| 1 | One name for a held version its author replaced or withdrew? | a. `withdrawn` for both; b. ADR-0047's `superseded` for a revision and `withdrawn` for a retirement | a: one state, one rule (never promotes) |
-| 2 | The similar check's default? | a. warn (`hold`), the skill sends `refuse`; b. refuse by default; c. warn only | a, until d16's precision gate; then b may follow |
-| 3 | Does an explicit live `claim_key` upsert? | a. yes, under the supersede rule; b. keep the conflict, require `replaces` | a: one call per changed fact, and the subject key is what makes "latest" work |
-| 4 | Is `title` required? | a. optional with a warning; b. required on new claims | a now; b only if d16's findability gate shows it pays |
-| 5 | A default `review_by` on the public server? | a. none; b. 90 days, as Copilot; c. per kind | a: many facts are timeless, and a default would fill review with confirmations; workareas opt in |
-| 6 | Does reading reset freshness? | a. never; b. on use | a, as Copilot found ("Simply retrieving a memory does not reset this period") |
-| 7 | Batch semantics? | a. independent items; b. all or nothing | a: an agent retries the rest; one refused item does not lose four good ones |
-| 8 | Release? | a. W1–W3 in v0.5.3 with ADR-0048 S1–S3; b. W1 alone first | a, with W1 able to ship alone if S1 slips |
-| 9 | Should `on_similar` look beyond the target workarea's recall scope, at the key's other workareas? | a. no; b. yes | a: the same scope recall would read at that workarea, so the answer matches what recall would later show |
+The operator answered all nine on 2026-11-05 by taking each recommendation, and narrowed d1's
+check to a same-text and near-copy match with no recall (d17, r2). The last column says which the
+first slice, W3's write side, exercises.
+
+| # | Question | Options | Answer | Exercised by W3's write side |
+|---|---|---|---|---|
+| 1 | One name for a held version its author replaced or withdrew? | a. `withdrawn` for both; b. ADR-0047's `superseded` for a revision and `withdrawn` for a retirement | a: one state, `withdrawn`, one rule (never promotes) | no: W1 |
+| 2 | The similar check's default? | a. warn (`hold`), the skill sends `refuse`; b. refuse by default; c. warn only | a: `hold` by default, the skill sends `refuse` once d16's gate passes | yes: `hold` and `refuse` |
+| 3 | Does an explicit live `claim_key` upsert? | a. yes, under the supersede rule; b. keep the conflict, require `replaces` | a: an explicit live `claim_key` upserts under the supersede rule | no: W1 |
+| 4 | Is `title` required? | a. optional with a warning; b. required on new claims | a: optional with a warning | no: W2 |
+| 5 | A default `review_by` on the public server? | a. none; b. 90 days, as Copilot; c. per kind | a: none; workareas opt in | no: W5 |
+| 6 | Does reading reset freshness? | a. never; b. on use | a: never | no: W5 |
+| 7 | Batch semantics? | a. independent items; b. all or nothing | a: independent items | no: W6 |
+| 8 | Release? | a. W1–W3 in v0.5.3 with ADR-0048 S1–S3; b. W1 alone first | a's grouping, W1 to W3 together; v0.5.3 shipped without them, and since r2 W3 no longer waits on S1, so its write side is built first; the release is the maintainer's to assign | yes |
+| 9 | Should `on_similar` look beyond the target workarea's recall scope, at the key's other workareas? | a. no; b. yes | a: the target workarea's recall scope only | yes |
 
 ## Rejected alternatives
 
@@ -539,7 +612,12 @@ stay three.
 | **Silently drop a duplicate write** | Nothing is deleted or dropped unseen (R4's spirit, ADR-0001 d4); the writer is told, and the reviewer decides. |
 | **Merge or link similar rows automatically** | A link is a claim about two memories and needs a proposer and a non-author ratifier (ADR-0046); `links` lets the writer propose one (d9). |
 | **Refuse every similar write** | The hint cannot tell a refinement from a repeat; refusing on a lexical rule would block correct writes, and its precision is unmeasured on real writes (FR-90). Opt-in `refuse` (d1). |
-| **Embeddings for duplicate detection now** | ADR-0048 stages meaning last behind its eval; the hint rides whatever search is served and improves with it. |
+| **Embeddings for duplicate detection now** | ADR-0048 stages meaning last behind its eval; a dense leg is not served, and a cosine threshold (Hindsight adjudicates at 0.97) needs labels this repository does not have. A meaning-level hint is a later leg beside d17's, not a replacement. |
+| **One recall per write, listing rows that share 0.4 of the new text's words** (r1's d1) | It cost 128 ms p50 and 180 ms p95 per write at 1M rows on the scale lane ([REPORT-baseline](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT-baseline.md), case g), ten times the write it guards at 100k, and its 0.94 precision was measured on texts the same model wrote as the labels. d17 reads integer keys instead. |
+| **Graphiti's constants: character 3-grams, 32 permutations in 8 bands of 4** ([dedup_helpers.py](https://github.com/getzep/graphiti/blob/main/graphiti_core/utils/maintenance/dedup_helpers.py)) | Built for entity names of a few words; on whole memories 8 bands of 4 make a pair at Jaccard 0.2 a candidate one time in 80, about 509 candidates per write at 1M on the labelled set's distribution, against 114 for 10 bands of 6. Its entropy gate (1.5 bits) is kept as an idea and set for sentences (3.0, under the labelled set's lowest, 3.52). |
+| **Word shingles of two or three words** | Order-aware, but at 0.9 they found 288 and 277 of 714 near copies on the labelled set, against 613 for one word, with no false listing in any; the reorder they would catch is what the 10-word guard and `same_text` already separate (d1). |
+| **An LLM adjudicates candidates** (Graphiti's `dedupe_nodes`, mem0 2025) | A model in the write path, nondeterministic and not reproducible from a rule version; as a reviewer crew's aid it may come later, never in the gate. |
+| **The server replaces, merges or links on a near copy** | A near copy can be a deliberate second claim or a changed value the writer has not checked; the writer chooses with `replaces` and `expected_version`, and the reviewer ratifies (d1, d2). |
 | **Copilot's expiry** | Expiry deletes, which R4 forbids; a stale mark keeps the fact recallable and attributed (d7). |
 | **Freshness reset on read** | Popularity is not truth; Copilot also rejected it. |
 | **Reviewer-added keywords or titles** | A verdict would change a rank (R3); a reviewer supersedes (d5, ADR-0048 d6). |
