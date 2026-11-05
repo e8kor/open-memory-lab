@@ -1,0 +1,97 @@
+<!--
+id: operations/lake
+tier: engineering
+status: proposed with ADR-0058
+answers: how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics
+-->
+
+# The lake
+
+The lake writer, `oml-lakewriter`, copies what Postgres commits into Delta tables for analysis
+([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md),
+[ADR-0058](../adr/ADR-0058-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md)).
+No client reads the lake: recall, search and get are served from Postgres
+([ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md)). The lake answers the operator's
+questions about how the system is used.
+
+## Running it
+
+```sh
+oml-lakewriter keygen --out /etc/oml/lake.kek          # once; owner-only, back it up with the database
+export OML_LAKE_URL=/srv/data/oml/lake
+export OML_LAKE_DATABASE_URL=postgres://oml_lake:…@127.0.0.1/oml   # its own role
+export OML_LAKE_OWNER_URL=postgres://oml_owner:…@127.0.0.1/oml     # grants that role at start
+export OML_LAKE_KEK_FILE=/etc/oml/lake.kek
+oml-lakewriter run --metrics-addr 127.0.0.1:9466
+```
+
+The role in `OML_LAKE_DATABASE_URL` must be neither the owner nor the serving role, and must not
+be a superuser or bypass row security; the writer refuses one that is. One writer runs at a
+time: a second waits for the first's lease. Losing the KEK file makes every sealed body in the
+lake unreadable, as erase does.
+
+## What it holds
+
+Each tenant has its own prefix, `<lake>/<tenant id>/`:
+
+| Table | Path | One row per |
+|---|---|---|
+| `bronze.events` | `bronze/events`, by `event_date` | journal event, digest-only, signature included |
+| `silver.claims` | `silver/claims` | promoted claim version; body sealed under its own key; state `promoted`, `superseded`, `demoted`, `held` or `erased` |
+| `gold.lineage` | `gold/lineage` | ratified edge, derives-from or supersedes link |
+| `telemetry.recall_daily` | `telemetry/recall_daily`, by `day` | day, pipeline and access path: counts only, the last 30 days |
+
+The provider prefix, `<lake>/_provider/`, holds `lake/batches` (the frontier) and
+`bench/results` (benchmark numbers, loaded with `oml-lakewriter load-bench eval/bench/results`).
+
+## Named queries
+
+`oml-lakewriter query --list` lists them; `oml-lakewriter query <name>` runs one.
+
+| Name | Answers |
+|---|---|
+| `writes-per-kind-per-day` | claims written each day, by kind |
+| `review-latency` | seconds from write to promotion, per promotion day |
+| `recall-volume-per-pipeline` | recalls and empty recalls per pipeline per day |
+| `recall-outcomes` | what readers did after a recall, per pipeline |
+| `stale-share` | share of promoted versions no longer the served tip |
+| `top-workareas` | workareas by journalled activity, with names |
+| `bench-latest` | each suite's methods on their overall metrics |
+
+The same questions in DuckDB, with its `delta` extension, against one tenant:
+
+```sql
+INSTALL delta; LOAD delta;
+SET VARIABLE lake = '/srv/data/oml/lake/<tenant id>';
+-- writes per kind per day
+SELECT event_date, coalesce(kind, 'memory') AS kind, count(*) AS writes
+FROM delta_scan(getvariable('lake') || '/bronze/events')
+WHERE event_type IN ('submission.remember', 'submission.learn')
+GROUP BY ALL ORDER BY ALL;
+-- review latency, seconds
+SELECT promoted_at::date AS day, count(*) AS promoted,
+       median(epoch(promoted_at) - epoch(created_at)) AS median_s
+FROM delta_scan(getvariable('lake') || '/silver/claims') GROUP BY ALL ORDER BY ALL;
+-- recall volume per pipeline
+SELECT day, pipeline, sum(recalls) AS recalls, sum(empty_recalls) AS empty
+FROM delta_scan(getvariable('lake') || '/telemetry/recall_daily') GROUP BY ALL ORDER BY ALL;
+-- stale share
+SELECT kind, avg(CASE WHEN state = 'promoted' THEN 0 ELSE 1 END) AS stale_share
+FROM delta_scan(getvariable('lake') || '/silver/claims') GROUP BY ALL;
+```
+
+Spark reads the same paths with `spark.read.format("delta").load(path)`.
+
+## Health
+
+`oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one
+fails: `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`,
+`lake.heartbeat`, `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
+The metrics listener serves the `oml_lake_*` families ADR-0058 d16 lists.
+
+## Erasure
+
+On `lifecycle.erase` the writer destroys the version's key in `artifact_keys` and rewrites its
+`silver.claims` row as `erased` with no body. From then, every older table version that still
+holds the sealed body opens under no key; the daily VACUUM removes those files once they are
+older than the erasure bound (default 7 days). Bronze holds digests only and needs no change.

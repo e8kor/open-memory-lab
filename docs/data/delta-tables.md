@@ -7,7 +7,7 @@ answers: every lake table column by column — Delta and Arrow types, partitioni
 
 # Delta tables
 
-**Status:** design draft for review · decided, not built
+**Status:** design draft for review · built in part by [ADR-0058](../adr/ADR-0058-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md) (proposed): `bronze.events`, `silver.claims`, `gold.lineage`, `telemetry.recall_daily`, `bench.results` and `lake.batches` exist as its d2–d10 state; `gold.areas` and `gold.curated_<id>` are not built. Where this page and ADR-0058 differ, ADR-0058 states what the code does.
 
 This page is the column-level specification of the lake: every Delta table, its
 Delta and Arrow types, its partitioning, its per-table commit protocol, and the
