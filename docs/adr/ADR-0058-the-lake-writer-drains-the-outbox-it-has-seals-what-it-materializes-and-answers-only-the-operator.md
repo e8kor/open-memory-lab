@@ -85,7 +85,7 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
   materialized version gets a random 256-bit data key; its body is sealed with
   ChaCha20-Poly1305 (ring), associated data binding tenant and version, and the data key is
   wrapped by a lake KEK read from an owner-only file and stored in `artifact_keys`
-  (postgres-schema.md's shape, migration 0025). On `lifecycle.erase` the writer sets
+  (postgres-schema.md's shape, migration 0026). On `lifecycle.erase` the writer sets
   `wrapped_dek` NULL and `destroyed_at`, then MERGEs the row to `erased` with no body. Every
   older table version still holding the ciphertext opens under no key from that moment;
   VACUUM removes it within the erasure bound. The cost, stated: the writer holds the KEK and
@@ -167,7 +167,7 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
 - `artifact_keys` is now a key-material table in backups (postgres-schema.md durability).
 - When ADR-0005's capture-time encryption is built, d6 is revisited: the writer copies the
   capture ciphertext and its key custody becomes encrypt-only.
-- The release that ships it builds a third binary and runs migration 0025.
+- The release that ships it builds a third binary and runs migration 0026.
 
 ## Rejected alternatives
 

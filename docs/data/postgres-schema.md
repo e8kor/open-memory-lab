@@ -1156,7 +1156,7 @@ CREATE TABLE artifact_keys (
 );
 ```
 
-As built by migration 0025 (ADR-0058 d6), the lake writer creates the row when it first
+As built by migration 0026 (ADR-0058 d6), the lake writer creates the row when it first
 materializes a version, with `created_at` and the check that `wrapped_dek` is NULL exactly
 when `destroyed_at` is set, and on `lifecycle.erase` nulls the key. Its sibling,
 `lake_dead_letter (tenant_id, outbox_seq, lake_table, reason, at, repaired_at)`, records an
