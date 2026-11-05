@@ -43,6 +43,10 @@ model = [
 name = "timing"
 required-features = ["model"]
 
+[[example]]
+name = "sparse_encode"
+required-features = ["model"]
+
 [[test]]
 name = "model"
 required-features = ["model"]

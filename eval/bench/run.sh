@@ -47,6 +47,11 @@ done
 for ds in "$@"; do
     "$PY" eval/bench/bench.py --cache "$CACHE" load --state "$STATE" "$ds" || exit 1
     cp "$STATE/load-$ds.json" "$OUT/"
+    # A sparse pipeline reads what the encoder wrote: wait for its queue
+    # to drain, and keep how long it took (ADR-0052 d15).
+    case " ${BENCH_PIPELINES:-} " in *" sparse "*|*" bm25-sparse "*)
+        eval/bench/wait_sparse.sh "$(cat "$STATE/metrics_url")" >"$OUT/encode-wait-$ds.txt" || exit 1 ;;
+    esac
     "$PY" eval/bench/bench.py --cache "$CACHE" run --state "$STATE" --out "$OUT" "$ds" || exit 1
 done
 "$PY" eval/bench/reference.py --cache "$CACHE" "$OUT" "$@" || exit 1

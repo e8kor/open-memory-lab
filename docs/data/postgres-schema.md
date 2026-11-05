@@ -1381,7 +1381,7 @@ CREATE TABLE search_postings (
     token_id    bigint   NOT NULL,   -- kind 1: oml_token_id(lexeme)
     weight      real     NOT NULL,   -- kind 1: the lexeme's term frequency
     doc_len     integer  NOT NULL,   -- kind 1: the version's search_len
-    kind        smallint NOT NULL,   -- 1 lexeme term frequency; 2 kept for a learned sparse encoder
+    kind        smallint NOT NULL,   -- 1 lexeme term frequency; 2 learned sparse weight (0022)
     memory_kind smallint NOT NULL,   -- 1 memory, 2 derived_fact
     state       smallint NOT NULL    -- 0 held, 1 served (promoted tip, no retirement), 2 off
 ) PARTITION BY LIST (tenant_id);     -- search_postings_t_<tenant id, 32 hex>
@@ -1449,6 +1449,45 @@ would rank by rows the key cannot read. Frequent words are pruned from the posti
 rescored for the candidates the others reach; when every word is pruned the `bm25` scan answers
 (`search.access: "scan"`); [retrieval](../architecture/retrieval.md) has the rule and its
 constants.
+
+### learned sparse postings and their queue (ADR-0052 d14, d15)
+
+*Introduced in v0.5.7, built in `migrations/0022_search_sparse_queue.sql`.*
+
+Kind 2 rows of `search_postings` hold the learned sparse encoder's weights: `token_id` is the
+model's vocabulary index (0 to 30,521, the same for every tenant, so no tenant's word is in it),
+`weight` the model's weight of that token for the version (at least 0.1, at most 128 per version),
+and `doc_len` 1 when the version's own tokens hold the token, 0 when the model added it (its
+expansion, which a hit's `matched.expanded` names). Kind 2 keeps no counts: the query side's weights
+ship with the model, so no corpus statistic is read. The encoder writes them after the version's
+own write commits, through a queue the same trigger fills:
+
+```sql
+CREATE TABLE search_sparse_queue (
+    tenant_id   uuid        NOT NULL REFERENCES tenants (id),
+    memory_id   uuid        NOT NULL,
+    enqueued_at timestamptz NOT NULL DEFAULT clock_timestamp(),  -- its turn, and its write's guard
+    attempts    integer     NOT NULL DEFAULT 0,                  -- failed encodes
+    next_at     timestamptz NOT NULL DEFAULT clock_timestamp(),  -- the next try, 2^attempts s, at most 1 h
+    last_error  text,                                            -- the last failure, which doctor names
+    PRIMARY KEY (tenant_id, memory_id)
+);
+CREATE INDEX search_sparse_queue_due ON search_sparse_queue (tenant_id, next_at, enqueued_at);
+-- ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the
+-- serving role; SET STATISTICS 0 (FR-45)
+CREATE OR REPLACE FUNCTION oml_search_postings_fold() ...;     -- 0021's, enqueueing too
+CREATE OR REPLACE FUNCTION oml_search_postings_refill(t uuid) ...;  -- kind 1 rebuilt, kind 2 kept
+```
+
+`oml_search_postings_fold` enqueues a version in the transaction that writes its kind 1 postings,
+enqueues it again with a new `enqueued_at` when its words change, and takes it off the queue when
+its postings leave (erasure, deletion, no longer a hit kind). A state flip moves every kind's
+postings. The encoder deletes an entry only when its `enqueued_at` is the one it read, reads the
+version's state `FOR SHARE`, and writes the kind 2 rows with that state, all in one transaction.
+The refill rebuilds kind 1 from the stored lexemes, brings kind 2's states to their versions',
+drops kind 2 rows of versions that have no postings any more, and queues any version with none.
+0022 queues every existing version that has postings, oldest first. A deployment that serves no
+sparse pipeline runs no encoder, so its queue keeps one row per version until it does.
 
 ## upload_sessions
 
