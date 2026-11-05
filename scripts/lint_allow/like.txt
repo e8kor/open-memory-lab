@@ -1,0 +1,1 @@
+# path:line of a LIKE reviewed against row security (none yet). Prefer a lint:allow-like comment.
