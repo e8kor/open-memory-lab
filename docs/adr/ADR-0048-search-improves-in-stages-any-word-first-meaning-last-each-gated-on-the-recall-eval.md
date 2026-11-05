@@ -17,7 +17,7 @@ names and its default rule with ADR-0049 d9's; S6 introduced in v0.5.6 as
 opt-in `bm25-rerank`; the default since v0.5.6 is
 [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)'s
 `bm25-postings`. S4 (filters) and S5 (author keywords) are not built and not assigned; S7
-(meaning) is ADR-0052's learned sparse kind, not built. Open questions 1, 2, 4, 5 and 6 are
+(meaning) is ADR-0052's learned sparse kind, introduced in v0.5.7 as the opt-in `sparse` and `bm25-sparse`. Open questions 1, 2, 4, 5 and 6 are
 answered by what shipped ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0013 (d4, at S7 only), ADR-0025 (d8: the score; d9: the read digest; d13),

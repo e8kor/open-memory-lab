@@ -25,13 +25,13 @@ were run against v0.3.1 on Linux x86_64, with cosign, without it and with `lates
 Linux:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.6/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.7/scripts/install/install.sh | sh
 ```
 
 Windows, in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.6/scripts/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.7/scripts/install/install.ps1 | iex
 ```
 
 **What a piped install trusts** (ADR-0041 d5):
@@ -42,7 +42,7 @@ irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.6/scripts/insta
   before it runs, download it, read it, then run it:
 
     ```sh
-    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.6/scripts/install/install.sh
+    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.7/scripts/install/install.sh
     less install.sh
     sh install.sh
     ```
