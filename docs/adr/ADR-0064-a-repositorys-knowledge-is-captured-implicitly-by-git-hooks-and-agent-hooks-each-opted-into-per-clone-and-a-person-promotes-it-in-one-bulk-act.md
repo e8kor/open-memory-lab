@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0064-a-repositorys-knowledge-is-captured-implicitly-by-git-hooks-and-agent-hooks-each-opted-into-per-clone-and-a-person-promotes-it-in-one-bulk-act
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-05
 answers: how source-code knowledge is captured with no new step for the agent or the person; the two capture modes (git hooks and agent-session hooks), what each does alone and what changes when both are on; the one-time setup and who marks the parent that agents may create children under; per-repository or per-branch workareas in v0.6.1; what the session-start hook resolves and recalls; how the pre-tool hook fills an anchor and an origin on oml_write and which file it chooses; how touched paths are checked at Stop and confirmed only by reviewed supersession; when and how a background sync runs, its queue, its lock and its guards; how the git-hook layer and the agent layer de-duplicate, through the sync identity and idempotency keys; how a chat fact about code carries both its turn and its code anchor; how a person promotes; how other harnesses map onto the shared dispatcher; the latency and friction budgets; what is never read or stored; the evaluation that gates any default; the rejected alternatives, open questions, tests, doctor lines and the phased build
 -->
 
 # ADR-0064 — A repository's knowledge is captured implicitly by git hooks and agent hooks, each opted into per clone, and a person promotes it in one bulk act
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-05 · planned for v0.6.1 · its nine questions decided by the operator on 2026-11-05 at their recommendations ([the answers](#the-operators-answers-of-2026-11-05))
 
 **Release:** planned for v0.6.1 (the minimal phase, d19); later phases not assigned
 
@@ -615,20 +615,21 @@ Each step is closed by the tests named, each written red first.
   cases and the call map; releases (v0.6.1); and the Status lines of ADR-0029, ADR-0030, ADR-0038,
   ADR-0044, ADR-0047, ADR-0057 and ADR-0063.
 
-## Open questions for the operator
+## The operator's answers of 2026-11-05
 
-Each is decided above at its recommendation; the operator may take another answer.
+The operator accepted this record on 2026-11-05 and decided each question at its recommendation; the decisions above already state those answers.
 
-| # | Question | Options | Recommended |
+| # | Question | Options | Answer |
 |---|---|---|---|
-| 1 | May v0.6.1 build capture before the evaluation result? | a. build opt-in beside the harness, default waits (d20); b. harness first, capture after (ADR-0047 d17 as written) | a: the operator scheduled the build for v0.6.1, and opt-in changes no session that did not ask |
-| 2 | Is claim kind `code` (ADR-0047 d2) still needed? | a. not in v0.6.1: `origin.kind` and the filters do its work, revisited if the gate shows recall crowded; b. build it now | a |
-| 3 | What does an anchor say when the file differs from `HEAD`? | a. `rev` is `HEAD`, the hash the working tree's span (d15); b. no hash until the edit is committed; c. defer the write | a: the claim reads `fresh` at the commit that lands the edit; b checks nothing; c loses the fact |
-| 4 | What anchors a fact that names no unique definition? | a. the file with no hash, never stale (d15); b. the file's whole-text hash, stale on every edit (ADR-0047 d4's fallback) | a: b prompts at every edit of a touched file |
-| 5 | Who marks the code parent? | a. the person's reviewer key (d3); b. an admin (ADR-0047 d15 b as written) | a: in a user root the person is the reviewer |
-| 6 | When does the person promote? | a. `oml review commit` at a merge or release, committing and re-marking (d18); b. approve only, never commit, so nothing leaves the repository workarea | a |
-| 7 | What is `oml setup repo`'s default mode? | a. `both`, with the reasons printed (d1); b. `agent`; c. no default, ask | a |
-| 8 | Who holds the sync identity? | a. one sync key per person for every repository (d10); b. one per repository | a: one key file to keep; b when CI takes a repository over |
+| 1 | May v0.6.1 build capture before the evaluation result? | a. build opt-in beside the harness, default waits (d20); b. harness first, capture after (ADR-0047 d17 as written) | a: the operator scheduled the build for v0.6.1, and opt-in changes no session that did not ask; decided by the operator, 2026-11-05 |
+| 2 | Is claim kind `code` (ADR-0047 d2) still needed? | a. not in v0.6.1: `origin.kind` and the filters do its work, revisited if the gate shows recall crowded; b. build it now | a; decided by the operator, 2026-11-05 |
+| 3 | What does an anchor say when the file differs from `HEAD`? | a. `rev` is `HEAD`, the hash the working tree's span (d15); b. no hash until the edit is committed; c. defer the write | a: the claim reads `fresh` at the commit that lands the edit; b checks nothing; c loses the fact; decided by the operator, 2026-11-05 |
+| 4 | What anchors a fact that names no unique definition? | a. the file with no hash, never stale (d15); b. the file's whole-text hash, stale on every edit (ADR-0047 d4's fallback) | a: b prompts at every edit of a touched file; decided by the operator, 2026-11-05 |
+| 5 | Who marks the code parent? | a. the person's reviewer key (d3); b. an admin (ADR-0047 d15 b as written) | a: in a user root the person is the reviewer; decided by the operator, 2026-11-05 |
+| 6 | When does the person promote? | a. `oml review commit` at a merge or release, committing and re-marking (d18); b. approve only, never commit, so nothing leaves the repository workarea | a; decided by the operator, 2026-11-05 |
+| 7 | What is `oml setup repo`'s default mode? | a. `both`, with the reasons printed (d1); b. `agent`; c. no default, ask | a; decided by the operator, 2026-11-05 |
+| 8 | Who holds the sync identity? | a. one sync key per person for every repository (d10); b. one per repository | a: one key file to keep; b when CI takes a repository over; decided by the operator, 2026-11-05 |
+| 9 | How does a chat fact about code carry both origins? | a. one claim, the code anchor primary, the turn in `origin.turn` (d16); b. two anchors; c. `derives_from` a chat claim | a: one anchor stays the one origin that filters and staleness read; decided by the operator, 2026-11-05 |
 
 ## Rejected alternatives
 
