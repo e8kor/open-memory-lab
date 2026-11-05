@@ -37,14 +37,14 @@ from .generated.api.workareas import get_workarea
 from .generated.client import Client
 from .generated.models import (
     Anchor,
-    Origin,
-    OriginKind,
     EventsPage,
     ListMemoriesKind,
     ListMemoriesState,
     Memory,
     MemoryPage,
     MemorySummary,
+    Origin,
+    OriginKind,
     RecallRequest,
     RecallRequestKindsItem,
     RecallRequestMatch,
