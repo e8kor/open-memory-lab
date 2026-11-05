@@ -87,11 +87,12 @@ pub struct Config {
     pub search: SearchConfig,
 }
 
-/// `search.enabled`'s default: every pipeline but `keyword-all`, which the
-/// recall eval runs for comparison when a deployment enables it
-/// (configuration.md search.enabled; ADR-0049 d4).
-pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 3] =
-    [Pipeline::KeywordAny, Pipeline::Bm25, Pipeline::Bm25Trigram];
+/// `search.enabled`'s default: the pipelines that need no extension.
+/// `keyword-all`, which the recall eval runs for comparison, and
+/// `bm25-trigram`, which needs `pg_trgm`, are served only where a
+/// deployment enables them, so a database without the extension starts
+/// (configuration.md search.enabled; ADR-0049 d4, d12).
+pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 2] = [Pipeline::KeywordAny, Pipeline::Bm25];
 
 /// `search.default`'s default: `bm25`, chosen on the recall eval's gate
 /// together with the external sets: it passes its gate, ranks best on
@@ -1171,6 +1172,10 @@ mod tests {
         assert!(
             !cfg.search.serves(Pipeline::KeywordAll),
             "keyword-all is opt-in"
+        );
+        assert!(
+            !cfg.search.serves(Pipeline::Bm25Trigram),
+            "bm25-trigram, which needs pg_trgm, is opt-in"
         );
         let cfg = load(&[
             ("OML_SEARCH__ENABLED", "keyword-all, keyword-any"),

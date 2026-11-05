@@ -8373,7 +8373,7 @@ async fn a_search_the_deployment_does_not_serve_is_refused_naming_search() {
         return;
     };
     let router = &rig.router;
-    for name in ["hybrid", "keyword-all"] {
+    for name in ["hybrid", "keyword-all", "bm25-trigram"] {
         let (status, refusal) =
             recall_over_http(router, &reader, None, json!({"query": "x", "search": name})).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{refusal}");
@@ -8381,7 +8381,7 @@ async fn a_search_the_deployment_does_not_serve_is_refused_naming_search() {
         assert_eq!(refusal["error"]["details"]["field"], "/search", "{refusal}");
         assert_eq!(
             refusal["error"]["details"]["served"],
-            json!(["keyword-any", "bm25", "bm25-trigram"]),
+            json!(["keyword-any", "bm25"]),
             "{refusal}"
         );
     }
@@ -8422,7 +8422,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     assert_eq!(
         settings,
         json!({
-            "enabled": ["keyword-any", "bm25", "bm25-trigram"],
+            "enabled": ["keyword-any", "bm25"],
             "deployment_default": "bm25",
             "tenant_default": null,
             "effective": "bm25",
@@ -8490,7 +8490,7 @@ async fn did_you_mean_is_offered_only_when_a_recall_is_empty_or_thin() {
     {
         promoted_over_http(router, &agent, &dreamer, &format!("dym-{i}"), body).await;
     }
-    for search in ["bm25", "keyword-any", "bm25-trigram"] {
+    for search in ["bm25", "keyword-any"] {
         let thick = recall_ok(
             router,
             &reader,
@@ -8532,4 +8532,51 @@ async fn did_you_mean_is_offered_only_when_a_recall_is_empty_or_thin() {
     }
 
     drop_db(&rig.db_name).await;
+}
+
+/// A lead with the shipped search settings starts on a database without
+/// `pg_trgm`, since the pipelines enabled by default need none, and serves
+/// `bm25`; one whose `search.enabled` names `bm25-trigram` is refused at
+/// start naming the extension (ADR-0049 d8, d12; configuration.md
+/// search.enabled).
+#[tokio::test]
+async fn a_lead_with_the_shipped_search_starts_without_pg_trgm_and_one_naming_bm25_trigram_is_refused()
+ {
+    let Some(db) = fresh_database().await else {
+        return;
+    };
+    let store = serving_store(&db).await;
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    owner
+        .execute("DROP EXTENSION IF EXISTS pg_trgm")
+        .await
+        .expect("the owner drops pg_trgm, which no index needs");
+    drop(owner);
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let started = start_lead(&store, signing.clone(), None).await;
+    assert!(started.is_ok(), "{:?}", started.err());
+    let named = oml_app::search::SearchConfig::new(
+        &[
+            oml_app::search::Pipeline::Bm25,
+            oml_app::search::Pipeline::Bm25Trigram,
+        ],
+        oml_app::search::Pipeline::Bm25,
+    )
+    .expect("a configuration naming bm25-trigram");
+    let refused = oml_server_lead::start_lead_with(
+        &store,
+        signing,
+        None,
+        oml_fetch::PinnedFetcher,
+        oml_transport_http::traffic::Traffic::default(),
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        Some(named),
+    )
+    .await;
+    let err = refused.err().expect("refused without pg_trgm");
+    assert!(err.contains("pg_trgm"), "{err}");
+    drop_db(&db).await;
 }
