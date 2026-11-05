@@ -366,6 +366,8 @@ async fn the_lead_serves_exactly_web_routes() {
             "grant_curation",
             "review_next",
             "verdict",
+            "bulk_confirm",
+            "bulk_verdict",
             "curate",
             "supersede",
             "cut_off"

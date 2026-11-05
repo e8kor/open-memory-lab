@@ -133,8 +133,12 @@ Decided, and built on `feat/bulk-review` for v0.5.7 with this record proposed.
   plan then walks the index, reads one `memories` row by its key and stops: 0.17 ms on the same
   rows. The listing uses the same predicate and order; a page of 200 takes 12 to 30 ms, and a
   filter that matches nothing reads the whole queue, 160 ms at 45,000 held. The end-to-end
-  numbers, approving 600 items in bulk and `review next` at 45,000 held after the change, are in
-  the Consequences.
+  numbers, through the HTTP router in process with a release build, 45,000 held rows loaded
+  through the write route, one reviewer key, load average 12 to 15 on 8 cores while two other
+  branches built (2026-11-05, `review_scale_measurement` in `tests/bulk_review.rs`): `review next`
+  p50 3.2 ms and p95 12.8 ms, `next` then a single approve 79.5 items a second; listing 600 items
+  0.04 s and approving them through `POST /v2/review/verdicts/bulk`, 200 a request, 7.06 s, 85
+  items a second. Before the change six keys approved 2 to 14 a second at 45,000 held (FR-87).
 
 - **d10 — The admin page lists, selects, confirms and shows each outcome.** `GET
   /web/admin?view=held` renders the listing of d2 through the person's `<user>-review` key with
