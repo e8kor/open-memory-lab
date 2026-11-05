@@ -78,6 +78,11 @@ struct Observed {
     answered: Option<(&'static str, &'static str, f64)>,
     /// A verdict and the seconds its memory waited for it (ADR-0054 d1).
     verdict: Option<(&'static str, f64)>,
+    /// Hits served labelled `unreviewed`, a mode set and a curator act
+    /// (ADR-0030 d5).
+    unreviewed_hits: u64,
+    mode_set: Option<&'static str>,
+    curation: Option<&'static str>,
 }
 
 impl Scope {
@@ -224,6 +229,18 @@ impl RequestObserver for ScopeObserver {
 
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
         self::verdict(verdict, waited_seconds);
+    }
+
+    fn unreviewed_hits(&self, n: u64) {
+        in_scope(|scope| scope.update(|o, _| o.unreviewed_hits += n));
+    }
+
+    fn mode_set(&self, mode: &'static str) {
+        in_scope(|scope| scope.update(|o, _| o.mode_set = Some(mode)));
+    }
+
+    fn curation(&self, act: &'static str) {
+        in_scope(|scope| scope.update(|o, _| o.curation = Some(act)));
     }
 }
 
@@ -508,6 +525,15 @@ pub(crate) async fn layer(
     }
     if let Some((verdict, waited)) = observed.verdict {
         traffic.metrics.verdict(verdict, waited);
+    }
+    if observed.unreviewed_hits > 0 {
+        traffic.metrics.unreviewed_hits(observed.unreviewed_hits);
+    }
+    if let Some(mode) = observed.mode_set {
+        traffic.metrics.mode_set(mode);
+    }
+    if let Some(act) = observed.curation {
+        traffic.metrics.curation(act);
     }
     response
 }

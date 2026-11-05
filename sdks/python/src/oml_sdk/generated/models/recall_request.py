@@ -44,8 +44,10 @@ class RecallRequest:
                 path starts with it, unanchored rows left out (ADR-0057 d4).
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
-                filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held;
-                they count against k and max_tokens. Rules: docs/architecture/retrieval.md. Default: False.
+                filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held
+                and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every
+                author's held memories on the served nodes join too, and absent means true there; absent means false everywhere
+                else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
@@ -69,7 +71,7 @@ class RecallRequest:
     include_text: bool | Unset = True
     anchor_repo: str | Unset = UNSET
     anchor_path_prefix: str | Unset = UNSET
-    include_unreviewed: bool | Unset = False
+    include_unreviewed: bool | Unset = UNSET
     max_tokens: int | Unset = UNSET
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY

@@ -17,7 +17,8 @@ answers: what an in-progress workarea is and who may mark it (a person's key, ne
 ADR-0009 (d3: a transition on a node inside an in-progress subtree waits for its commit),
 ADR-0025 (d3, d4: the readability test and `include_unreviewed`'s reach inside),
 ADR-0039 (d4: `include_unreviewed`'s default inside; the claim item gains `unreviewed`),
-ADR-0044 (d10: the served node set beside `universe`'s claims), ADR-0055 (d1: the commit is the
+ADR-0044 (d10: the served node set beside `universe`'s claims), ADR-0045 (d1, d9: the user
+page's action `workarea_mode`), ADR-0055 (d1: the commit is the
 act bulk review prepares), ADR-0057 (d14: a draft workarea may be in progress)
 
 ## Context
@@ -59,7 +60,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
 ## Decision
 
 - **d1 — A workarea's `mode` is `standard` or `in_progress`; only a person's key sets it, and
-  setting it is journalled.** `workareas.mode` defaults to `standard`. `PUT
+  setting it is journalled.** `workareas.mode` defaults to `standard`. `POST
   /v2/workareas/{workarea}/mode` with `{mode}` sets it and journals `workarea.mode_set`
   `{workarea_id, mode, from}` under the calling key; `oml workareas mode <workarea>
   in_progress|standard` and the admin and user pages' toggle ride it. The caller must hold a
@@ -88,8 +89,9 @@ Questions revision 1 left open are settled below at their recommended answers, e
   leaves the whole subtree out, promoted rows included, until the commit (d6): nothing leaves.
   A **read by id** (get, the lineage of one row, an attachment) is at the row's own node and
   passes the boundary, so a key with reader access on an ancestor can get an inside claim by id;
-  d3 decides whether a held one is served. A pointer (`derives_from`, `replaces`) or an edge
-  endpoint that fails the boundary at the read's scope is omitted, never named.
+  d3 decides whether a held one is served. A write's `derives_from` target is read at the
+  write's node, so a target inside a subtree the write is not inside answers `access.not_found`
+  (d7).
   `oml-domain` holds the rule as one pure function beside `effective_roles`, over the marks the
   tree read already returns; nothing is stamped on a memory row, so a mark, a commit and a later
   re-mark write no row. The rule is applied to the node list the store statement receives, so
@@ -223,17 +225,18 @@ Questions revision 1 left open are settled below at their recommended answers, e
   mark without the commit's precondition. Work abandoned inside is rejected in bulk by a person
   (ADR-0055 d8) with a reason; its bytes stay (R4), served to no one but their authors. A
   workarea left in progress with nothing held may simply be committed; one left with held rows
-  stays in progress, read only inside, for as long as nobody commits it. The `oml doctor` line
-  of d14 names in-progress roots with no held version and no write for 30 days, so an abandoned
-  scope is visible rather than silently kept.
+  stays in progress, read only inside, for as long as nobody commits it. An abandoned scope stays
+  visible: its root is named on every node read inside it (`in_progress_root`), and `oml doctor`
+  reports it for a key whose default workarea lies inside.
 
 - **d13 — The surfaces.** `GET /v2/workareas/{workarea}` and the tree read gain `mode` and
-  `in_progress_root` (`{id, name}` or null); `PUT /v2/workareas/{workarea}/mode` (d1, d6); the
+  `in_progress_root` (`{id, name}` or null); `POST /v2/workareas/{workarea}/mode` (d1, d6); the
   claim item gains `unreviewed` (d4); `RecallRequest.include_unreviewed` becomes optional (d4);
   `KeyIssue.profile` and the key read's `profile` (d8). `oml_workarea` (ADR-0039 d9) serves the
   two workarea fields, so an agent learns that it works in progress; no MCP tool is added. CLI:
-  `oml workareas mode`, `oml keys issue --profile curator`. Pages: the workarea's mode with a
-  toggle for a person's session key. Codes, each in the errors tables and the `ErrorCode` enum:
+  `oml workareas mode`, `oml keys issue --profile curator`. Pages: the user page's workarea view shows each node's mode,
+  and its closed action set gains `workarea_mode`, acting as the person's `<user>-review` session
+  key (amending ADR-0045 d1, d9). Codes, each in the errors tables and the `ErrorCode` enum:
   `workarea.in_progress_refused` (409, reasons `status`, `universe`, `nested`, `commit_first`,
   `edge_crosses`), `workarea.held_remaining` (409); `access.verb_ceiling` gains reasons
   `mode_is_human_only`, `curator_narrow_only` and `curator_outside_in_progress`. The SDKs are
@@ -243,9 +246,12 @@ Questions revision 1 left open are settled below at their recommended answers, e
   NULL DEFAULT 'standard'`, checked) and `api_keys.profile` (nullable, checked); both default to
   today's behaviour, so the migration rewrites no row's meaning and is safe on live. It is
   numbered after main's highest and the open lanes' (`0027_in_progress.sql`, noted for
-  renumbering at merge). `oml doctor` gains: the in-progress roots the key reads, each with its
-  held count, and those idle 30 days (d12); a curator key whose grants reach no in-progress node
-  (it can do nothing); and, for a person's key, whether it can set the mode.
+  renumbering at merge). `oml doctor` gains: whether the key's default workarea lies inside an
+  in-progress workarea, and its root; for a person's reviewer key, that it may set the mode and
+  how many held items it can review block the commit (one page of `GET /v2/review/held`); and a
+  curator key whose default workarea is not in progress, which can do nothing there. Naming
+  in-progress roots idle 30 days (d12) waits for a tenant-wide read of the marks and is opened
+  as a follow-up.
 
 - **d15 — Laws, each proven red first by breaking its clause.**
     1. Unreviewed rows are visible inside an in-progress scope, to another author's reader key,

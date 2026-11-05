@@ -208,6 +208,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workareas/{workarea}/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.
+         */
+        post: operations["setWorkareaMode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/crews": {
         parameters: {
             query?: never;
@@ -1063,7 +1083,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.in_progress_refused" | "workarea.held_remaining" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1150,6 +1170,8 @@ export interface components {
             kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
+            /** @description True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4). */
+            unreviewed: boolean;
             /**
              * @description On kind guardrail alone, except a retirement version (ADR-0037 d2).
              * @enum {string}
@@ -1222,10 +1244,7 @@ export interface components {
             include_text?: boolean;
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
-            /**
-             * @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they count against k and max_tokens. Rules: docs/architecture/retrieval.md.
-             * @default false
-             */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -1564,6 +1583,13 @@ export interface components {
         WorkareaCrewUpdate: {
             crew: components["schemas"]["CrewRef"];
         };
+        WorkareaModeSet: {
+            /**
+             * @description in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6).
+             * @enum {string}
+             */
+            mode: "in_progress" | "standard";
+        };
         Workarea: {
             id: string;
             /** @description Unique in the tenant and never changed; universe for the root (ADR-0026 d1, d6). */
@@ -1578,11 +1604,18 @@ export interface components {
             crew?: components["schemas"]["Crew"] | null;
             /** @description Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11). */
             user_root?: boolean;
+            /**
+             * @description in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2).
+             * @enum {string}
+             */
+            mode?: "standard" | "in_progress";
             /** Format: date-time */
             created_at?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkareaView: components["schemas"]["Workarea"] & {
+            /** @description The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13). */
+            in_progress_root?: components["schemas"]["WhoamiRef"] | null;
             /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea. */
             stale_versions: number;
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
@@ -1890,6 +1923,11 @@ export interface components {
             principal?: string;
             guardrail_scope?: components["schemas"]["GuardrailScope"];
             /**
+             * @description curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9).
+             * @enum {string}
+             */
+            profile?: "curator";
+            /**
              * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
              */
@@ -1928,6 +1966,11 @@ export interface components {
              */
             credential?: "bearer" | "connection" | "session";
             guardrail_scope?: components["schemas"]["GuardrailScope"];
+            /**
+             * @description The key's profile as key.issued journals it; null for none (ADR-0030 d8).
+             * @enum {string|null}
+             */
+            profile?: "curator" | null;
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
         };
@@ -2051,6 +2094,11 @@ export interface components {
             /** @description The key's stored grants, each with its epoch and without its deny masks. */
             grants: components["schemas"]["WhoamiGrant"][];
             guardrail_scope?: components["schemas"]["GuardrailScope"];
+            /**
+             * @description The key's profile; null for none (ADR-0030 d8).
+             * @enum {string|null}
+             */
+            profile?: "curator" | null;
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -3059,6 +3107,50 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Workarea"];
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkareaMode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "mode": "in_progress"
+                 *     }
+                 */
+                "application/json": components["schemas"]["WorkareaModeSet"];
+            };
+        };
+        responses: {
+            /** @description The node as the key reads it. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkareaView"];
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
