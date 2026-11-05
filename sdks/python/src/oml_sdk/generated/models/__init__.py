@@ -42,6 +42,16 @@ from .brief_edge_proposal import BriefEdgeProposal
 from .brief_edge_state import BriefEdgeState
 from .build import Build
 from .build_profile import BuildProfile
+from .bulk_verdict_request import BulkVerdictRequest
+from .bulk_verdict_request_verdict import BulkVerdictRequestVerdict
+from .bulk_verdict_result import BulkVerdictResult
+from .bulk_verdict_result_items_item import BulkVerdictResultItemsItem
+from .bulk_verdict_result_items_item_details_type_0 import (
+    BulkVerdictResultItemsItemDetailsType0,
+)
+from .bulk_verdict_result_items_item_outcome import BulkVerdictResultItemsItemOutcome
+from .bulk_verdict_result_items_item_state import BulkVerdictResultItemsItemState
+from .bulk_verdict_result_summary import BulkVerdictResultSummary
 from .claim_edge import ClaimEdge
 from .claim_edge_proposal import ClaimEdgeProposal
 from .claim_edge_state import ClaimEdgeState
@@ -91,6 +101,8 @@ from .guardrail_scope import GuardrailScope
 from .guardrail_set import GuardrailSet
 from .guardrail_set_own_held_item import GuardrailSetOwnHeldItem
 from .health import Health
+from .held_page import HeldPage
+from .held_page_items_item import HeldPageItemsItem
 from .journal_event import JournalEvent
 from .journal_event_payload import JournalEventPayload
 from .key import Key
@@ -239,6 +251,14 @@ __all__ = (
     "BriefEdgeState",
     "Build",
     "BuildProfile",
+    "BulkVerdictRequest",
+    "BulkVerdictRequestVerdict",
+    "BulkVerdictResult",
+    "BulkVerdictResultItemsItem",
+    "BulkVerdictResultItemsItemDetailsType0",
+    "BulkVerdictResultItemsItemOutcome",
+    "BulkVerdictResultItemsItemState",
+    "BulkVerdictResultSummary",
     "ClaimEdge",
     "ClaimEdgeProposal",
     "ClaimEdgeState",
@@ -282,6 +302,8 @@ __all__ = (
     "GuardrailSet",
     "GuardrailSetOwnHeldItem",
     "Health",
+    "HeldPage",
+    "HeldPageItemsItem",
     "JournalEvent",
     "JournalEventPayload",
     "Key",

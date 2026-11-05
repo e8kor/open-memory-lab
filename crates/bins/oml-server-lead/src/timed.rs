@@ -26,10 +26,10 @@ use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
     AdminSearch, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
-    ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord,
-    KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord, PinOutcome,
-    QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter, HeldRow, KeyAccess,
+    KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
+    PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -345,6 +345,28 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed(
             "review_claimed",
             self.inner.review_claimed(tenant_id, reviewer_key_id),
+        )
+    }
+
+    fn review_held(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<HeldRow>, StoreError>> + Send {
+        timed(
+            "review_held",
+            self.inner.review_held(
+                tenant_id,
+                reviewer_principal,
+                reviewer_key_id,
+                filter,
+                after,
+                limit,
+            ),
         )
     }
 

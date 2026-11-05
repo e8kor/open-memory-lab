@@ -42,11 +42,12 @@ use crate::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
-    CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, KeyAccess, KeyRecord,
-    KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
-    OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth,
-    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
+    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
+    WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -2298,6 +2299,69 @@ impl JournalStore for MemStore {
             .map(|e| e.memory_id)
             .take(2)
             .collect())
+    }
+
+    async fn review_held(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> Result<Vec<HeldRow>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let memories = &state.memories;
+        // The double keeps no `held_since`: a row is held when it is
+        // captured, so its `created_at` stands in for it.
+        let mut rows: Vec<HeldRow> = state
+            .queue
+            .iter()
+            .filter(|e| e.claimed_by.is_none_or(|k| k == reviewer_key_id))
+            .filter_map(|e| memories.get(&e.memory_id))
+            .filter(|m| filter.nodes.contains(&m.workarea_id))
+            .filter(|m| {
+                !m.lineage_principals.iter().any(|p| p == reviewer_principal)
+                    && !m.lineage_key_ids.contains(&reviewer_key_id)
+            })
+            .filter(|m| {
+                m.replaces.is_none()
+                    || !memories.values().any(|r| {
+                        r.memory_id != m.memory_id
+                            && r.status == MemoryStatus::Held
+                            && r.replaces == m.replaces
+                            && r.workarea_id == m.workarea_id
+                            && r.claim_key == m.claim_key
+                            && (r.author_key_id == reviewer_key_id
+                                || r.author_principal == reviewer_principal)
+                    })
+            })
+            .filter(|m| filter.author_key_id.is_none_or(|k| k == m.author_key_id))
+            .filter(|m| {
+                filter
+                    .claim_key_prefix
+                    .as_deref()
+                    .is_none_or(|p| m.claim_key.starts_with(p))
+            })
+            .filter(|m| {
+                after.is_none_or(|a| {
+                    (m.created_at.as_str(), m.memory_id) > (a.created_at.as_str(), a.artifact_id)
+                })
+            })
+            .map(|m| HeldRow {
+                memory: m.clone(),
+                held_since: m.created_at.clone(),
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.held_since.as_str(), a.memory.memory_id)
+                .cmp(&(b.held_since.as_str(), b.memory.memory_id))
+        });
+        rows.truncate(limit);
+        Ok(rows)
     }
 
     async fn key_by_hash(&self, key_hash: &str) -> Result<Option<KeyRecord>, StoreError> {

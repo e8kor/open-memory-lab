@@ -1644,6 +1644,19 @@ connection at its next request or refresh, and each needs a new connect code),
 `oauth_authorizations` (pages in progress start again), `oauth_clients` (documents are fetched
 again; registered clients register again) and `web_sessions` (every person signs in again).
 
+### The review queue's order (0024)
+
+```sql
+CREATE INDEX review_queue_order ON review_queue (tenant_id, held_since, memory_id);
+```
+
+`review next` and the held listing serve the queue oldest first, `held_since` then
+`memory_id`; walked in this order, a call reads the queue's head and stops at the first row the
+reviewer may judge, where before it joined and sorted every held row of the tenant: 100 ms
+against 0.17 ms at 45,000 held
+([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
+d9).
+
 ## Migrations
 
 The schema reaches a database only as **sqlx migrations**: plain-SQL files under `migrations/`,

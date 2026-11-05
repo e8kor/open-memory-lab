@@ -22,9 +22,11 @@ use oml_app::types::{
     RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, Verdict,
     VerdictRequest, WebEmailRequest, WebSessionRecord,
 };
+use oml_app::types::{BULK_VERDICT_MAX, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest};
 
 use super::page::{attr, form, hidden, input, select, shell, short, state_tag, text, textarea};
 use crate::error::{ApiError, ErrorContext, map_app_error};
+use crate::oauth::percent_encode;
 use crate::{ApiState, retry_chain};
 
 /// The public server the plugins and the agent kit connect to unless told
@@ -97,6 +99,47 @@ impl Fields {
         })
     }
 
+    /// The ids a listing's boxes picked, `pick_000` to `pick_199`, in the
+    /// listing's order (ADR-0055 d10).
+    fn picks(&self) -> Result<Vec<Uuid>, ApiError> {
+        let mut picked: Vec<(&str, &str)> = self
+            .0
+            .iter()
+            .filter(|(name, value)| name.starts_with("pick_") && !value.is_empty())
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        picked.sort_unstable();
+        picked
+            .into_iter()
+            .map(|(name, value)| {
+                Uuid::parse_str(value).map_err(|_| {
+                    ApiError::validation(format!("{name} is not an id"))
+                        .with_details(json!({ "field": name }))
+                })
+            })
+            .collect()
+    }
+
+    /// [`Self::only`] that also admits the `pick_NNN` boxes of a listing.
+    fn only_picks(&self, allowed: &[&str]) -> Result<(), ApiError> {
+        for name in self.0.keys() {
+            let pick = name
+                .strip_prefix("pick_")
+                .is_some_and(|n| n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()));
+            if !pick
+                && name != "action"
+                && name != "csrf_token"
+                && !allowed.contains(&name.as_str())
+            {
+                return Err(
+                    ApiError::validation(format!("this action takes no field {name}"))
+                        .with_details(json!({ "field": name })),
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn yes(&self, field: &str) -> bool {
         matches!(self.get(field), Some("yes" | "true" | "on"))
     }
@@ -126,11 +169,12 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     tabs
 }
 
-const ADMIN_TABS: [(&str, &str); 6] = [
+const ADMIN_TABS: [(&str, &str); 7] = [
     ("/web/admin", "People"),
     ("/web/admin?view=queue", "Queue"),
     ("/web/admin?view=memories", "Memories"),
     ("/web/admin?view=review", "Review"),
+    ("/web/admin?view=held", "Bulk review"),
     ("/web/admin?view=curate", "Curate"),
     ("/web", "Your page"),
 ];
@@ -736,6 +780,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 self.admin_memories_view(&admin, query, &csrf).await?,
             ),
             "review" => ("/web/admin?view=review", review_start("/web/admin", &csrf)),
+            "held" => (
+                "/web/admin?view=held",
+                self.held_view(session, query, &csrf).await?,
+            ),
             "curate" => (
                 "/web/admin?view=curate",
                 self.curate_view(&admin, query, &csrf).await?,
@@ -750,6 +798,279 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             query.get("done"),
             &body,
         ))
+    }
+
+    /// The bulk review listing (ADR-0055 d10): the rows the person's
+    /// reviewer key may judge, filtered by workarea, author key and claim
+    /// key prefix, each with its text and a box to pick it; "select all"
+    /// renders the page with every box checked, since the page carries no
+    /// script. Picking leads to `bulk_confirm`, never straight to a verdict.
+    async fn held_view(
+        &self,
+        session: &WebSessionRecord,
+        query: &Fields,
+        csrf: &str,
+    ) -> Result<String, ApiError> {
+        let review = self.caller(session, Capacity::Review).await?;
+        let reference = |field: &'static str| -> Result<Option<Reference>, ApiError> {
+            query
+                .get(field)
+                .map(|v| {
+                    Reference::parse(v).map_err(|e| {
+                        ApiError::validation(e.to_string()).with_details(json!({ "field": field }))
+                    })
+                })
+                .transpose()
+        };
+        let req = HeldListingRequest {
+            workarea: reference("workarea")?,
+            author_key: reference("author_key")?,
+            claim_key_prefix: query.get("claim_key_prefix").map(ToOwned::to_owned),
+            cursor: query.get("cursor").map(ToOwned::to_owned),
+            limit: HELD_PAGE_DEFAULT,
+        };
+        let page = self
+            .app
+            .review_held(Bearer::Session(&review), &req)
+            .await
+            .map_err(app_error)?;
+        let all = query.get("select") == Some("all");
+        let filters = [
+            ("workarea", query.get("workarea").unwrap_or("")),
+            ("author_key", query.get("author_key").unwrap_or("")),
+            (
+                "claim_key_prefix",
+                query.get("claim_key_prefix").unwrap_or(""),
+            ),
+        ];
+        let kept: String = filters
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| format!("&amp;{k}={}", attr(&percent_encode(v))))
+            .collect();
+        let cursor = query.get("cursor").map_or(String::new(), |c| {
+            format!("&amp;cursor={}", attr(&percent_encode(c)))
+        });
+        let mut body = format!(
+            r#"<p class="label">Bulk review</p><h1>Held for you to review</h1><p class="lede">The memories your reviewer key may judge, oldest first, {HELD_PAGE_DEFAULT} a page. Pick the ones you have read; the next step shows what you picked before anything is recorded. Each picked memory gets its own verdict, as if you had reviewed it alone. A memory your reviewer key wrote, or that derives from one, is never listed.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="held">{}{}{}<button type="submit">Filter</button></form><p><a href="/web/admin?view=held{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="/web/admin?view=held{kept}{cursor}">Clear</a></p>"#,
+            input("workarea", "workarea", filters[0].1, false),
+            input("author_key", "author key", filters[1].1, false),
+            input("claim_key_prefix", "claim key prefix", filters[2].1, false),
+        );
+        let mut rows = String::from(
+            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th></tr>",
+        );
+        if page.items.is_empty() {
+            rows.push_str(
+                r#"<tr><td colspan="6" class="dim">Nothing waits for you here.</td></tr>"#,
+            );
+        }
+        for (i, item) in page.items.iter().enumerate() {
+            let m = &item.served.memory;
+            let _ = write!(
+                rows,
+                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td></tr>"#,
+                m.memory_id,
+                if all { " checked" } else { "" },
+                short(&m.claim_key),
+                short(item.served.workarea_path.as_deref().unwrap_or("")),
+                short(&m.author_principal),
+                if item.same_user { " (you)" } else { "" },
+                short(item.held_since.as_str()),
+                text(&m.body)
+            );
+        }
+        rows.push_str("</table>");
+        body.push_str(&form(
+            "/web/admin",
+            "bulk_confirm",
+            csrf,
+            &format!(
+                "{rows}{}{}",
+                select(
+                    "verdict",
+                    "verdict",
+                    &[("approve", "approve"), ("reject", "reject")]
+                ),
+                input("reason", "reason (required to reject)", "", false)
+            ),
+            "Review the picked memories",
+            true,
+        ));
+        if let Some(next) = &page.next_cursor {
+            let _ = write!(
+                body,
+                r#"<p><a href="/web/admin?view=held{kept}&amp;cursor={}">Next page</a></p>"#,
+                attr(&percent_encode(next))
+            );
+        }
+        Ok(body)
+    }
+
+    /// `bulk_confirm` and `bulk_verdict` (ADR-0055 d10): the first shows
+    /// what was picked and asks again, carrying the ids, the verdict, the
+    /// reason and an idempotency key minted from them; the second records
+    /// one verdict per id as the person's reviewer key and shows each
+    /// outcome. A resubmitted confirmation replays.
+    async fn bulk_act(
+        &self,
+        token: &str,
+        session: &WebSessionRecord,
+        action: &str,
+        fields: &Fields,
+    ) -> Result<Outcome, ApiError> {
+        let review = self.caller(session, Capacity::Review).await?;
+        let csrf = csrf_token(token);
+        let verdict = match fields.need("verdict")? {
+            "approve" => Verdict::Approve,
+            "reject" => Verdict::Reject,
+            _ => {
+                return Err(ApiError::validation("verdict is approve or reject")
+                    .with_details(json!({"field": "verdict"})));
+            }
+        };
+        let reason = fields.get("reason").map(ToOwned::to_owned);
+        let refused = |reason: &str| {
+            ApiError::validation(reason.to_owned()).with_details(json!({"field": "artifact_ids"}))
+        };
+        let ids: Vec<Uuid> = if action == "bulk_confirm" {
+            fields.only_picks(&["verdict", "reason"])?;
+            fields.picks()?
+        } else {
+            fields.only(&["verdict", "reason", "artifact_ids", "idempotency_key"])?;
+            fields
+                .need("artifact_ids")?
+                .split(' ')
+                .map(|id| {
+                    Uuid::parse_str(id)
+                        .map_err(|_| refused("artifact_ids holds a value that is not an id"))
+                })
+                .collect::<Result<_, _>>()?
+        };
+        if ids.is_empty() {
+            return Err(refused("pick at least one memory"));
+        }
+        if ids.len() > BULK_VERDICT_MAX {
+            return Err(refused("a page picks at most 200 memories"));
+        }
+        if verdict == Verdict::Reject && reason.is_none() {
+            return Err(ApiError::validation("reason is required to reject")
+                .with_details(json!({"field": "reason"})));
+        }
+        let verdict_word = if verdict == Verdict::Approve {
+            "approve"
+        } else {
+            "reject"
+        };
+        let joined = ids
+            .iter()
+            .map(Uuid::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if action == "bulk_confirm" {
+            let digest = oml_app::domain::Sha256Hash::digest(
+                format!(
+                    "{verdict_word}\n{}\n{joined}",
+                    reason.as_deref().unwrap_or("")
+                )
+                .as_bytes(),
+            );
+            let mut body = format!(
+                r#"<p class="label">Bulk review</p><h1>{} {} memories?</h1><p class="lede">Each gets its own verdict as your reviewer key, as if you had reviewed it alone. A memory that is no longer held, or that your reviewer key may not judge, is skipped and shown as skipped.</p><table><tr><th>Artifact</th></tr>"#,
+                if verdict == Verdict::Approve {
+                    "Approve"
+                } else {
+                    "Reject"
+                },
+                ids.len()
+            );
+            for id in &ids {
+                let _ = write!(body, r#"<tr><td class="mono">{id}</td></tr>"#);
+            }
+            body.push_str("</table>");
+            if let Some(reason) = &reason {
+                let _ = write!(body, r#"<p>Reason: {}</p>"#, text(reason));
+            }
+            body.push_str(&form(
+                "/web/admin",
+                "bulk_verdict",
+                &csrf,
+                &format!(
+                    "{}{}{}{}",
+                    hidden("verdict", verdict_word),
+                    hidden("reason", reason.as_deref().unwrap_or("")),
+                    hidden("artifact_ids", &joined),
+                    hidden(
+                        "idempotency_key",
+                        &format!("web-bulk-{}", &digest.to_prefixed()[7..39])
+                    ),
+                ),
+                &format!("Yes, {verdict_word} {}", ids.len()),
+                true,
+            ));
+            body.push_str(r#"<p><a href="/web/admin?view=held">Back to the list</a></p>"#);
+            return Ok(Outcome::Page(shell(
+                "Bulk review",
+                &self.who(session).await,
+                &ADMIN_TABS,
+                "/web/admin?view=held",
+                None,
+                &body,
+            )));
+        }
+        let req = BulkVerdictRequest {
+            verdict,
+            artifact_ids: ids,
+            reason,
+            idempotency_key: fields.need("idempotency_key")?.to_owned(),
+        };
+        let items = self
+            .app
+            .review_bulk(Bearer::Session(&review), &req)
+            .await
+            .map_err(app_error)?;
+        let answer = crate::bulk_json(items);
+        let mut body = format!(
+            r#"<p class="label">Bulk review</p><h1>Recorded</h1><p class="lede">{} approved, {} rejected, {} skipped.</p><table><tr><th>Artifact</th><th>Outcome</th><th>Detail</th></tr>"#,
+            answer["summary"]["approved"],
+            answer["summary"]["rejected"],
+            answer["summary"]["skipped"]
+        );
+        for item in answer["items"].as_array().into_iter().flatten() {
+            let detail = match item["code"].as_str() {
+                Some(code) => format!("{}: {}", code, item["message"].as_str().unwrap_or_default()),
+                None => format!(
+                    "journal seq {}{}{}",
+                    item["journal_seq"],
+                    if item["same_user"] == true {
+                        ", same user"
+                    } else {
+                        ""
+                    },
+                    if item["replayed"] == true {
+                        ", replayed"
+                    } else {
+                        ""
+                    }
+                ),
+            };
+            let _ = write!(
+                body,
+                r#"<tr><td class="mono">{}</td><td>{}</td><td class="mono">{}</td></tr>"#,
+                short(item["artifact_id"].as_str().unwrap_or_default()),
+                state_tag(item["outcome"].as_str().unwrap_or_default()),
+                short(&detail)
+            );
+        }
+        body.push_str(r#"</table><p><a href="/web/admin?view=held">Back to the list</a></p>"#);
+        Ok(Outcome::Page(shell(
+            "Bulk review",
+            &self.who(session).await,
+            &ADMIN_TABS,
+            "/web/admin?view=held",
+            None,
+            &body,
+        )))
     }
 
     async fn people_view(
@@ -1015,6 +1336,9 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 return self
                     .review_act("/web/admin", token, session, action, fields)
                     .await;
+            }
+            "bulk_confirm" | "bulk_verdict" => {
+                return self.bulk_act(token, session, action, fields).await;
             }
             "curate" => {
                 fields.only(&["source", "text", "claim_key"])?;

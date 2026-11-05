@@ -72,8 +72,8 @@ pub const USER_ACTIONS: &[&str] = &[
     "sign_out",
 ];
 
-/// The admin page's closed `action` set (ADR-0045 d1, d10, d11, d12); `demote`
-/// joins it with its verb in v0.6.0.
+/// The admin page's closed `action` set (ADR-0045 d1, d10, d11, d12;
+/// ADR-0055 d10); `demote` joins it with its verb in v0.6.0.
 pub const ADMIN_ACTIONS: &[&str] = &[
     "allow_email",
     "remove_email",
@@ -82,6 +82,8 @@ pub const ADMIN_ACTIONS: &[&str] = &[
     "grant_curation",
     "review_next",
     "verdict",
+    "bulk_confirm",
+    "bulk_verdict",
     "curate",
     "supersede",
     "cut_off",

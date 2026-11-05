@@ -65,6 +65,9 @@ use oml_app::types::{
     RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
     VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
 };
+use oml_app::types::{
+    BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
+};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
@@ -90,6 +93,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/guardrails"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
+    ("GET", "/v2/review/held"),
+    ("POST", "/v2/review/verdicts/bulk"),
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
@@ -292,6 +297,8 @@ where
             ("GET", "/v1/guardrails") => get(Self::guardrails),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
+            ("GET", "/v2/review/held") => get(Self::review_held),
+            ("POST", "/v2/review/verdicts/bulk") => post(Self::review_bulk),
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
@@ -1093,6 +1100,119 @@ where
                 .insert("idempotency-replay", HeaderValue::from_static("true"));
         }
         Ok(response)
+    }
+
+    /// `GET /v2/review/held`: the held rows this person's reviewer key may
+    /// judge, with their text, a page at a time (ADR-0055 d2).
+    async fn review_held(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::review_held_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    async fn review_held_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let mut seen = HashSet::new();
+        let mut req = HeldListingRequest {
+            limit: HELD_PAGE_DEFAULT,
+            ..HeldListingRequest::default()
+        };
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "workarea" => req.workarea = Some(reference("workarea", value)?),
+                "author_key" => req.author_key = Some(reference("author_key", value)?),
+                "claim_key_prefix" => req.claim_key_prefix = Some(value.clone()),
+                "limit" => req.limit = page_limit(value)?,
+                "cursor" => req.cursor = Some(value.clone()),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "unknown query parameter {other:?}"
+                    )));
+                }
+            }
+        }
+        let page = st
+            .app
+            .review_held(&token, &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        Ok(json_response(StatusCode::OK, &held_page_json(&page)))
+    }
+
+    /// `POST /v2/review/verdicts/bulk`: one verdict per named id, each
+    /// judged and journalled as a single verdict, answered per item
+    /// (ADR-0055 d3, d4).
+    async fn review_bulk(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(&rid, Self::review_bulk_inner(&st, &headers, &body).await)
+    }
+
+    async fn review_bulk_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let idem_key = idempotency_key(headers)?;
+        let req: BulkBody = parse_json(headers, body)?;
+        let verdict = match req.verdict.as_str() {
+            "approve" => Verdict::Approve,
+            "reject" => Verdict::Reject,
+            other => {
+                return Err(ApiError::validation(format!(
+                    "verdict must be approve or reject, not {other:?}"
+                ))
+                .with_details(json!({ "field": "/verdict" })));
+            }
+        };
+        let artifact_ids = req
+            .artifact_ids
+            .iter()
+            .map(|id| {
+                Uuid::parse_str(id).map_err(|_| {
+                    ApiError::validation(format!("artifact_ids holds {id:?}, which is not an id"))
+                        .with_details(json!({ "field": "/artifact_ids" }))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let request = BulkVerdictRequest {
+            verdict,
+            artifact_ids,
+            reason: req.reason.clone(),
+            idempotency_key: idem_key,
+        };
+        let items = st
+            .app
+            .review_bulk(&token, &request)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        for item in &items {
+            st.traffic.metrics().bulk_item(bulk_outcome(item));
+        }
+        Ok(json_response(StatusCode::OK, &bulk_json(items)))
     }
 
     async fn issue_key(
@@ -2281,6 +2401,91 @@ struct EdgeBody {
     to_artifact_id: Option<String>,
     to_workarea_id: Option<String>,
     label: Option<String>,
+}
+
+/// `POST /v2/review/verdicts/bulk`'s body (ADR-0055 d3): the ids as
+/// strings, each parsed after the body so a refusal names the field.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BulkBody {
+    verdict: String,
+    artifact_ids: Vec<String>,
+    reason: Option<String>,
+}
+
+/// One bulk item's outcome label: `approved`, `rejected` or `skipped`
+/// (ADR-0055 d4, d13).
+#[must_use]
+pub fn bulk_outcome(item: &BulkItem) -> &'static str {
+    match &item.result {
+        Ok(outcome) if outcome.state == oml_app::domain::MemoryStatus::Promoted => "approved",
+        Ok(_) => "rejected",
+        Err(_) => "skipped",
+    }
+}
+
+/// A bulk verdict's answer: one outcome per id in the order named, a
+/// skipped one with the refusal a single verdict naming it would have
+/// answered, and the counts (ADR-0055 d4).
+#[must_use]
+pub fn bulk_json(items: Vec<BulkItem>) -> Value {
+    let mut counts = [0_u64; 3];
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|item| {
+            let outcome = bulk_outcome(&item);
+            match outcome {
+                "approved" => counts[0] += 1,
+                "rejected" => counts[1] += 1,
+                _ => counts[2] += 1,
+            }
+            match item.result {
+                Ok(o) => json!({
+                    "artifact_id": item.memory_id,
+                    "outcome": outcome,
+                    "state": o.state.as_str(),
+                    "version": o.version,
+                    "journal_seq": o.journal_seq,
+                    "same_user": o.same_user,
+                    "replayed": o.replayed,
+                }),
+                Err(e) => {
+                    let refusal = map_app_error(e, ErrorContext::Review);
+                    json!({
+                        "artifact_id": item.memory_id,
+                        "outcome": outcome,
+                        "code": refusal.code,
+                        "message": refusal.message,
+                        "details": refusal.details,
+                    })
+                }
+            }
+        })
+        .collect();
+    json!({
+        "items": rows,
+        "summary": {
+            "approved": counts[0],
+            "rejected": counts[1],
+            "skipped": counts[2],
+        },
+    })
+}
+
+/// The held listing's page as `GET /v2/review/held` serves it.
+#[must_use]
+pub fn held_page_json(page: &HeldPage) -> Value {
+    json!({
+        "items": page.items.iter().map(|item| {
+            let mut value = memory_json(&item.served, true);
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("held_since".to_owned(), json!(item.held_since.as_str()));
+                obj.insert("same_user".to_owned(), json!(item.same_user));
+            }
+            value
+        }).collect::<Vec<_>>(),
+        "next_cursor": page.next_cursor,
+    })
 }
 
 #[derive(Deserialize)]

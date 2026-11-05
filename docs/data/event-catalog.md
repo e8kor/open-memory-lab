@@ -279,14 +279,20 @@ Visibility and existence changes. Each enqueues its outbox row in the same trans
   "workarea_id": "…", "claim_key": "deploy-runbook",
   "ratification_event_id": "…",
   "previous_tip_version": null,
-  "self_signed": false
+  "self_signed": false,
+  "same_user": false
 }
 ```
 
 Ratified content becomes readable by others and silver materialization is enqueued. Journalled for
 a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
 journals `lifecycle.supersede` instead
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). `same_user` is `true` when the
+reviewing key and the authoring key name one user, read from each key's row, and `false` when
+either is a tenant key; a verdict from a bulk review journals this event per item, the same as a
+single verdict
+([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
+d4, d7). A record a server before v0.5.7 journalled carries no `same_user`.
 
 ### lifecycle.demote
 
@@ -333,7 +339,8 @@ declared in [audit-and-lineage](../architecture/audit-and-lineage.md) (D4).
   "replaces_artifact_id": "…", "replaces_version": 3,
   "retirement": false,
   "ratification_event_id": "…",
-  "self_signed": false
+  "self_signed": false,
+  "same_user": false
 }
 ```
 
@@ -341,7 +348,7 @@ Journalled at ratification, after the compare-and-set that the replaced version 
 under the successor's own `workarea_id` and `claim_key`, so the one `workarea_id` names both
 versions: it promotes the successor and flips the tip in one event, so the tip flip is a single
 journalled fact rather than a demote/promote pair to correlate. `self_signed` carries the
-successor's mark exactly as `lifecycle.promote` carries a first version's
+successor's marks, `self_signed` and `same_user`, exactly as `lifecycle.promote` carries a first version's
 ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5): it is the promotion event of the version it
 names, so the mark reaches the journal, the `memories.self_signed` fold and the
 [events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip

@@ -38,11 +38,11 @@ use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, KeyAccess, KeyRecord,
-    KeyReferences, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
-    OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, HeldFilter, HeldRow,
+    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
+    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth,
+    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -4174,7 +4174,11 @@ impl JournalStore for PgStore {
         // successors, ADR-0025 d10; R2 proper re-runs at verdict time). A
         // re-claim by the same key matches its own held_by_key row again.
         // Every reference to memories names the tenant, so the plan keeps
-        // its partition alone (ADR-0034 d11).
+        // its partition alone (ADR-0034 d11). The order walks
+        // review_queue_order (migration 0024) and stops at the first row
+        // this reviewer may judge; the rival check runs only for a
+        // successor, so a first version never costs an anti-join over every
+        // held row (ADR-0055 d9).
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM review_queue q \
              JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
@@ -4183,12 +4187,12 @@ impl JournalStore for PgStore {
                AND (q.held_by_key IS NULL OR q.held_by_key = $2) \
                AND NOT (m.lineage_principals @> ARRAY[$3]::text[]) \
                AND NOT (m.lineage_key_ids @> ARRAY[$2]::uuid[]) \
-               AND NOT EXISTS ( \
+               AND (m.replaces_artifact_id IS NULL OR NOT EXISTS ( \
                    SELECT 1 FROM memories r \
                    WHERE r.tenant_id = $1 AND r.id <> m.id AND r.status = 'held' \
                      AND r.replaces_artifact_id = m.replaces_artifact_id \
                      AND r.workarea_id = m.workarea_id AND r.claim_key = m.claim_key \
-                     AND (r.author_key_id = $2 OR r.author_principal = $3)) \
+                     AND (r.author_key_id = $2 OR r.author_principal = $3))) \
              ORDER BY q.held_since ASC, q.memory_id ASC \
              LIMIT 1 \
              FOR NO KEY UPDATE OF q SKIP LOCKED"
@@ -4242,6 +4246,91 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(ids)
+    }
+
+    async fn review_held(
+        &self,
+        tenant_id: Uuid,
+        reviewer_principal: &str,
+        reviewer_key_id: Uuid,
+        filter: &HeldFilter,
+        after: Option<&ListingPosition>,
+        limit: usize,
+    ) -> Result<Vec<HeldRow>, StoreError> {
+        if filter.nodes.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        // review_claim_next's predicate, unclaimed, a page at a time
+        // (ADR-0055 d2): the same rows in the same order, so a listing
+        // never shows what review would not serve this key. The order walks
+        // review_queue_order (migration 0024) and stops at the page.
+        let mut sql = QueryBuilder::<Postgres>::new(format!(
+            "SELECT {MEMORY_COLUMNS}, \
+             to_char(q.held_since AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             AS held_since_signed \
+             FROM review_queue q \
+             JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
+             WHERE q.tenant_id = "
+        ));
+        sql.push_bind(tenant_id)
+            .push(" AND m.tenant_id = ")
+            .push_bind(tenant_id)
+            .push(" AND m.workarea_id = ANY(")
+            .push_bind(filter.nodes.clone())
+            .push("::uuid[]) AND (q.held_by_key IS NULL OR q.held_by_key = ")
+            .push_bind(reviewer_key_id)
+            .push(") AND NOT (m.lineage_principals @> ARRAY[")
+            .push_bind(reviewer_principal.to_owned())
+            .push("]::text[]) AND NOT (m.lineage_key_ids @> ARRAY[")
+            .push_bind(reviewer_key_id)
+            .push(
+                "]::uuid[]) AND (m.replaces_artifact_id IS NULL OR NOT EXISTS ( \
+                 SELECT 1 FROM memories r WHERE r.tenant_id = ",
+            )
+            .push_bind(tenant_id)
+            .push(
+                " AND r.id <> m.id AND r.status = 'held' \
+                 AND r.replaces_artifact_id = m.replaces_artifact_id \
+                 AND r.workarea_id = m.workarea_id AND r.claim_key = m.claim_key \
+                 AND (r.author_key_id = ",
+            )
+            .push_bind(reviewer_key_id)
+            .push(" OR r.author_principal = ")
+            .push_bind(reviewer_principal.to_owned())
+            .push(")))");
+        if let Some(author) = filter.author_key_id {
+            sql.push(" AND m.author_key_id = ").push_bind(author);
+        }
+        // A literal prefix: no LIKE, so `_` and `%` match only themselves.
+        if let Some(prefix) = &filter.claim_key_prefix {
+            sql.push(" AND left(m.claim_key, char_length(")
+                .push_bind(prefix.clone())
+                .push(")) = ")
+                .push_bind(prefix.clone());
+        }
+        if let Some(after) = after {
+            sql.push(" AND (q.held_since, q.memory_id) > ((")
+                .push_bind(after.created_at.as_str().to_owned())
+                .push(")::timestamptz, ")
+                .push_bind(after.artifact_id)
+                .push(")");
+        }
+        sql.push(" ORDER BY q.held_since ASC, q.memory_id ASC LIMIT ")
+            .push_bind(i64::try_from(limit).unwrap_or(i64::MAX));
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sql.build().fetch_all(&mut *tx).await.map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                Ok(HeldRow {
+                    memory: memory_from_row(row)?,
+                    held_since: event_time_column(row, "held_since_signed")?.ok_or_else(|| {
+                        StoreError::Backend("review_queue.held_since is null".to_owned())
+                    })?,
+                })
+            })
+            .collect()
     }
 
     async fn key_by_hash(&self, key_hash: &str) -> Result<Option<KeyRecord>, StoreError> {

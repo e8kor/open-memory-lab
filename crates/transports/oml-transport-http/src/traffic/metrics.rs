@@ -50,6 +50,11 @@ struct RerankLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct BulkLabels {
+    outcome: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -66,6 +71,7 @@ pub struct Metrics {
     oauth_tokens: Family<TokenLabels, Counter>,
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
+    bulk_items: Family<BulkLabels, Counter>,
 }
 
 impl Default for Metrics {
@@ -82,6 +88,7 @@ impl Default for Metrics {
         let oauth_tokens = Family::<TokenLabels, Counter>::default();
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
+        let bulk_items = Family::<BulkLabels, Counter>::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -122,6 +129,13 @@ impl Default for Metrics {
             "reranking stages by outcome, and why a skipped one was skipped",
             reranks.clone(),
         );
+        // The outcome is a closed set: approved, rejected or skipped
+        // (ADR-0055 d13).
+        registry.register(
+            "oml_review_bulk_items",
+            "items of bulk verdicts by outcome",
+            bulk_items.clone(),
+        );
         Self {
             registry,
             http,
@@ -131,6 +145,7 @@ impl Default for Metrics {
             oauth_tokens,
             recalls,
             reranks,
+            bulk_items,
         }
     }
 }
@@ -176,6 +191,16 @@ impl Metrics {
                 })
                 .inc();
         }
+    }
+
+    /// One item of a bulk verdict: `approved`, `rejected` or `skipped`
+    /// (ADR-0055 d13).
+    pub(crate) fn bulk_item(&self, outcome: &'static str) {
+        self.bulk_items
+            .get_or_create(&BulkLabels {
+                outcome: outcome.to_owned(),
+            })
+            .inc();
     }
 
     /// One recall, by the pipeline that ranked it and how its lists were

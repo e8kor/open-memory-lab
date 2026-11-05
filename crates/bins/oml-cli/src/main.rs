@@ -805,24 +805,61 @@ struct EventsArgs {
 enum ReviewCommand {
     /// Serve one held item (claims it for this key).
     Next,
+    /// List the held items this key may judge, with their text, oldest
+    /// first; claims nothing. A dreamer key held by a person only
+    /// (ADR-0055 d2, d11).
+    List(ReviewListArgs),
     /// Verdict: promote. Omitted, the serve is the one item this key has
-    /// claimed (ADR-0039 d10).
+    /// claimed (ADR-0039 d10); with --ids, every listed id, each its own
+    /// verdict (ADR-0055 d11).
     Approve {
         /// The serve_id `oml review next` printed.
+        #[arg(conflicts_with = "ids")]
         serve_id: Option<String>,
         /// A note journalled with the verdict.
         #[arg(long)]
         note: Option<String>,
+        /// Artifact ids, as a file of one per line (`oml review list
+        /// --ids-only` writes one), `-` for standard input, or id,id,…
+        #[arg(long)]
+        ids: Option<String>,
     },
     /// Verdict: reject, with the reason. Omitted, the serve is the one
-    /// item this key has claimed (ADR-0039 d10).
+    /// item this key has claimed (ADR-0039 d10); with --ids, every listed
+    /// id, each its own verdict with the one reason (ADR-0055 d8, d11).
     Reject {
         /// The serve_id `oml review next` printed.
+        #[arg(conflicts_with = "ids")]
         serve_id: Option<String>,
         /// Why the item is rejected; required.
         #[arg(long)]
         reason: String,
+        /// Artifact ids, as for approve.
+        #[arg(long)]
+        ids: Option<String>,
     },
+}
+
+#[derive(Args)]
+struct ReviewListArgs {
+    /// Only this workarea's subtree, by id or name.
+    #[arg(long)]
+    workarea: Option<String>,
+    /// Only rows this key wrote, by id or name.
+    #[arg(long)]
+    author_key: Option<String>,
+    /// Only claim keys that start with this text, taken literally.
+    #[arg(long)]
+    claim_key_prefix: Option<String>,
+    /// Rows a page, 1 to 200.
+    #[arg(long, default_value_t = 50)]
+    limit: u32,
+    /// Every page, not only the first.
+    #[arg(long)]
+    all: bool,
+    /// Print only the ids, one per line, for `--ids`.
+    #[arg(long)]
+    ids_only: bool,
 }
 
 #[derive(Subcommand)]
@@ -2070,12 +2107,23 @@ fn run_review(
 ) -> Result<ExitCode, CliError> {
     match command {
         ReviewCommand::Next => run_review_next(cli, stored),
-        ReviewCommand::Approve { serve_id, note } => {
+        ReviewCommand::List(args) => run_review_list(cli, stored, args),
+        ReviewCommand::Approve {
+            ids: Some(ids),
+            note,
+            ..
+        } => run_bulk(cli, stored, "approve", ids, note.as_deref()),
+        ReviewCommand::Reject {
+            ids: Some(ids),
+            reason,
+            ..
+        } => run_bulk(cli, stored, "reject", ids, Some(reason)),
+        ReviewCommand::Approve { serve_id, note, .. } => {
             run_verdict(cli, stored, "approve", serve_id.as_deref(), note.as_deref())
         }
-        ReviewCommand::Reject { serve_id, reason } => {
-            run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason))
-        }
+        ReviewCommand::Reject {
+            serve_id, reason, ..
+        } => run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason)),
     }
 }
 
@@ -2119,6 +2167,173 @@ fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError
         println!("  verdict with: oml review approve [--note …] | oml review reject --reason …");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `oml review list`: `GET /v2/review/held`, one page or with `--all`
+/// every page, printed as a table, as ids one per line with `--ids-only`,
+/// or as the pages' items with `--json` (ADR-0055 d11).
+fn run_review_list(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &ReviewListArgs,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut query = vec![format!("limit={}", args.limit)];
+    for (name, value) in [
+        ("workarea", &args.workarea),
+        ("author_key", &args.author_key),
+        ("claim_key_prefix", &args.claim_key_prefix),
+    ] {
+        if let Some(value) = value {
+            query.push(format!("{name}={}", encode(value)));
+        }
+    }
+    let mut items: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut q = query.clone();
+        if let Some(c) = &cursor {
+            q.push(format!("cursor={}", encode(c)));
+        }
+        let (_, page) = client.get(&format!("/v2/review/held?{}", q.join("&")))?;
+        items.extend(page["items"].as_array().cloned().unwrap_or_default());
+        match page["next_cursor"].as_str() {
+            Some(next) if args.all => cursor = Some(next.to_owned()),
+            _ => break,
+        }
+    }
+    if cli.json {
+        print_json(&json!({ "items": items }));
+    } else if args.ids_only {
+        for item in &items {
+            println!("{}", field(item, "artifact_id"));
+        }
+    } else {
+        println!("{} held item(s) you may judge", items.len());
+        for item in &items {
+            println!();
+            println!(
+                "  {}  {}  {}  from {}{}",
+                field(item, "artifact_id"),
+                field(item, "claim_key"),
+                field(item, "workarea_path"),
+                field(item, "principal"),
+                if item["same_user"] == true {
+                    " (you)"
+                } else {
+                    ""
+                }
+            );
+            println!("    | {}", field(item, "text").replace('\n', "\n    | "));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The ids `--ids` names: a file of one per line, `-` for standard input,
+/// or a comma-separated list; blank lines and `#` comments are skipped.
+fn bulk_ids(spec: &str) -> Result<Vec<String>, CliError> {
+    let text = if spec == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .map_err(|e| CliError::local(format!("reading ids from standard input: {e}")))?;
+        buf
+    } else if std::path::Path::new(spec).is_file() {
+        std::fs::read_to_string(spec)
+            .map_err(|e| CliError::local(format!("reading ids from {spec}: {e}")))?
+    } else {
+        spec.replace(',', "\n")
+    };
+    let ids: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+    if ids.is_empty() {
+        return Err(CliError::local("--ids names no id"));
+    }
+    Ok(ids)
+}
+
+/// `oml review approve --ids` and `oml review reject --ids`: the ids in
+/// requests of 200 to `POST /v2/review/verdicts/bulk`, each under an
+/// idempotency key derived from the whole list, the verdict, the reason
+/// and the request's position, so a rerun of the same command replays;
+/// one line per item and a summary; exit 1 when any item was skipped
+/// (ADR-0055 d11, d12).
+fn run_bulk(
+    cli: &Cli,
+    stored: &Credentials,
+    verdict: &str,
+    spec: &str,
+    reason: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    use sha2::Digest as _;
+    let client = resolve(cli, stored)?;
+    let ids = bulk_ids(spec)?;
+    let digest = sha2::Sha256::digest(
+        format!("{verdict}\n{}\n{}", reason.unwrap_or(""), ids.join("\n")).as_bytes(),
+    );
+    let run: String = digest[..12].iter().map(|b| format!("{b:02x}")).collect();
+    let mut all = Vec::new();
+    let mut counts = [0_u64; 3];
+    for (n, chunk) in ids.chunks(200).enumerate() {
+        let mut body = json!({ "verdict": verdict, "artifact_ids": chunk });
+        if let Some(reason) = reason {
+            body["reason"] = json!(reason);
+        }
+        let (_, answer) = client.post_keyed(
+            "/v2/review/verdicts/bulk",
+            &body,
+            &format!("bulk-{run}-{n}"),
+        )?;
+        for (i, key) in ["approved", "rejected", "skipped"].iter().enumerate() {
+            counts[i] += answer["summary"][key].as_u64().unwrap_or(0);
+        }
+        all.extend(answer["items"].as_array().cloned().unwrap_or_default());
+    }
+    if cli.json {
+        print_json(&json!({
+            "items": all,
+            "summary": { "approved": counts[0], "rejected": counts[1], "skipped": counts[2] },
+        }));
+    } else {
+        for item in &all {
+            match item["code"].as_str() {
+                Some(code) => println!(
+                    "  {}  skipped  {code}: {}",
+                    field(item, "artifact_id"),
+                    field(item, "message")
+                ),
+                None => println!(
+                    "  {}  {}  journal seq {}{}{}",
+                    field(item, "artifact_id"),
+                    field(item, "outcome"),
+                    item["journal_seq"],
+                    if item["same_user"] == true {
+                        "  same user"
+                    } else {
+                        ""
+                    },
+                    if item["replayed"] == true {
+                        "  replayed"
+                    } else {
+                        ""
+                    }
+                ),
+            }
+        }
+        println!(
+            "{} approved, {} rejected, {} skipped",
+            counts[0], counts[1], counts[2]
+        );
+    }
+    Ok(if counts[2] == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 /// One `POST /v2/review/verdicts`: `serve_id` only when named, so the server
@@ -3413,6 +3628,25 @@ fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
 /// `GET /v2/whoami` and the events tail only when that same source also
 /// holds the key. No URL in the first source sends nothing and fails; a URL
 /// without its key warns, naming the missing setting.
+/// Whether this key may review in bulk, for a dreamer key only (ADR-0055
+/// d1, d13): a key a person holds may; one held by an agent or a service is
+/// refused, which a person holding such a key otherwise learns mid-import.
+/// A crew's key is meant to be refused, so the line is a note, not a
+/// warning.
+fn review_doctor(me: Option<&Value>) -> Option<String> {
+    let me = me?;
+    if me["role"] != "dreamer" {
+        return None;
+    }
+    Some(match me["held_by"].as_str() {
+        Some("human") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
+        held_by => format!(
+            "note bulk review: refused for this key, held by {}: bulk review is a person's act (access.verb_ceiling, bulk_review_is_human_only); a person reviews in bulk with a dreamer key issued --held-by human, or on the admin page (ADR-0055 d1)",
+            held_by.unwrap_or("unknown")
+        ),
+    })
+}
+
 fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let source = first_source(cli, stored);
     let url_source = source
@@ -3496,6 +3730,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         .and_then(|u| postings_recall_counts(u.trim_end_matches('/')));
     let search = search_doctor(ready.as_ref(), search_settings.as_ref(), recall_counts);
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
+    let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -3547,6 +3782,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "oauth_discovery": oauth,
             "web": web,
             "search": search,
+            "review": review,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -3645,6 +3881,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &search {
             println!("search      : {line}");
+        }
+        if let Some(line) = &review {
+            println!("review      : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {

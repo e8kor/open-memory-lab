@@ -27,6 +27,28 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased
+
+### 2026-11-05 — ADR-0055 proposed: a person reviews a listed set of held items in one act
+
+What changes for someone using OML, once released with v0.5.7:
+
+- **Review in bulk.** A person lists the memories their reviewer key may judge, with filters by
+  workarea, author key and claim-key prefix, picks them, confirms, and gets one verdict per
+  memory, each journalled and signed as a single approval is, with an outcome for each: on the
+  admin page, or with `oml review list` and `oml review approve --ids` / `reject --ids`. Agent
+  keys, a crew's reviewer keys and MCP never reach it.
+- **The review queue no longer slows as it grows**: `review next` took 100 ms a call with 45,000
+  held and takes 0.17 ms after migration `0024`.
+- **A claim's approval says whether reviewer and author are one person** (`same_user` on
+  `lifecycle.promote` and `lifecycle.supersede`).
+
+Pages: [ADR-0055](adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md),
+[HTTP API](api/http-api.md#review), [CLI reference](cli/reference.md), [event
+catalog](data/event-catalog.md), [Postgres schema](data/postgres-schema.md); `openapi.yaml` gains
+`reviewHeld` and `postBulkVerdict`, members added and none removed; `info.version` moves at the
+release.
+
 ## 0.5.6-design
 
 Opened for release v0.5.6, which carries this revision: [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) and
