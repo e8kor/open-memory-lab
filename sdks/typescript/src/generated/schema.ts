@@ -38,8 +38,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+         * Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked.
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -718,6 +718,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The search pipelines served, the deployment's default, the tenant's and the one in effect.
+         * @description Requires: admin key role (ADR-0049 d4). Since v0.5.5.
+         */
+        get: operations["searchSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/search/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set the tenant's default search pipeline, or clear it with null; in force from the next request.
+         * @description Requires: admin key role (ADR-0049 d4). The pipeline must be one the deployment serves, else request.validation with details.field /search. Journalled as search.default_set with the name and the admin key; setting the default the tenant already has journals nothing. Since v0.5.5.
+         */
+        post: operations["setSearchDefault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/web": {
         parameters: {
             query?: never;
@@ -1057,18 +1097,62 @@ export interface components {
              * @description Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
              */
             max_tokens?: number;
+            /**
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @enum {string}
+             */
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            /**
+             * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
+             * @default any
+             * @enum {string}
+             */
+            match?: "any" | "all";
         };
         RecallResponse: {
             /** @description Applicable steering, ordered structurally and never cut by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8). */
             steering: components["schemas"]["Memory"][];
             hits: {
                 memory: components["schemas"]["Memory"];
-                /** @description The store rank; ties break by artifact_id ascending. */
+                /** @description The pipeline's score, comparable within one answer only; ties break by artifact_id ascending. */
                 score: number;
+                matched: components["schemas"]["RecallMatched"];
             }[];
             /** @description Present if and only if max_tokens was sent. */
             budget?: components["schemas"]["RecallBudget"];
-            query_digest?: components["schemas"]["Digest"];
+            query_digest: components["schemas"]["Digest"];
+            search: components["schemas"]["RecallSearch"];
+        };
+        /** @description Why a hit matched (ADR-0049 d6). */
+        RecallMatched: {
+            /** @description The query words the row holds, as the pipeline reads words. */
+            terms: string[];
+            /** @description How many words the query had. */
+            of: number;
+            /** @description The retrievers whose lists held the row. */
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram")[];
+        };
+        /** @description What ran and how the query was read (ADR-0049 d5, d6). */
+        RecallSearch: {
+            /** @enum {string} */
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            /** @enum {string} */
+            match: "any" | "all";
+            terms: string[];
+            /** @description any_term when match all found no row with every word and the any-word hits were served; null otherwise. */
+            fallback: string | null;
+            /** @description Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty. */
+            did_you_mean: string[];
+        };
+        SearchSettings: {
+            /** @description The pipelines the deployment serves (search.enabled). */
+            enabled: string[];
+            /** @description search.default. */
+            deployment_default: string;
+            /** @description The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. */
+            tenant_default: string | null;
+            /** @description The pipeline a recall naming none runs now. */
+            effective: string;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.
@@ -4228,6 +4312,94 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    searchSettings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "enabled": [
+                     *         "keyword-any",
+                     *         "bm25",
+                     *         "bm25-trigram"
+                     *       ],
+                     *       "deployment_default": "bm25-trigram",
+                     *       "tenant_default": null,
+                     *       "effective": "bm25-trigram"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SearchSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setSearchDefault: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "pipeline": "bm25"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description A served pipeline, or null to follow the deployment's default. */
+                    pipeline?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The settings as they now are. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };

@@ -17,18 +17,19 @@ use uuid::Uuid;
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{RefreshDecision, TokenKind};
 use oml_app::domain::web::Provider;
-use oml_app::domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope};
+use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, StoreError, TailScan, WebStore,
+    JournalStore, Retriever, StoreError, TailScan, WebStore,
 };
+use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
     AdminSearch, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
     ClaimEdgeSelection, ClaimKeyState, ClientDescription, ConnectCodeRecord, ConnectGrant,
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, KeyAccess, KeyRecord,
     KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord, PinOutcome,
-    QueueDepth, RecallCandidate, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord,
+    TransitionRecord, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -60,6 +61,38 @@ fn timed<F: Future>(method: &'static str, call: F) -> impl Future<Output = F::Ou
         let out = call.instrument(span).await;
         store_call(started.elapsed());
         out
+    }
+}
+
+impl<J: Retriever> Retriever for Timed<J> {
+    fn retrievers(&self) -> Vec<RetrieverKind> {
+        self.inner.retrievers()
+    }
+
+    fn retrieve(
+        &self,
+        tenant_id: Uuid,
+        kind: RetrieverKind,
+        scope: &CandidateScope,
+        query: RetrievalQuery<'_>,
+    ) -> impl Future<Output = Result<Retrieved, StoreError>> + Send {
+        timed(
+            "retrieve",
+            self.inner.retrieve(tenant_id, kind, scope, query),
+        )
+    }
+
+    fn suggest(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        words: &[String],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send {
+        timed(
+            "suggest",
+            self.inner.suggest(tenant_id, scope, words, limit),
+        )
     }
 }
 
@@ -208,17 +241,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("memories", self.inner.memories(tenant_id, memory_ids))
     }
 
-    fn recall_fts(
+    fn tenant_search_default(
         &self,
         tenant_id: Uuid,
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send {
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send {
         timed(
-            "recall_fts",
-            self.inner.recall_fts(tenant_id, readable, query, kinds, k),
+            "tenant_search_default",
+            self.inner.tenant_search_default(tenant_id),
         )
     }
 
@@ -231,22 +260,6 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed(
             "guardrail_rows",
             self.inner.guardrail_rows(tenant_id, nodes, author_key_id),
-        )
-    }
-
-    fn recall_own_held(
-        &self,
-        tenant_id: Uuid,
-        author_key_ids: &[Uuid],
-        readable: &[Uuid],
-        query: &str,
-        kinds: &[MemoryKind],
-        k: usize,
-    ) -> impl Future<Output = Result<Vec<RecallCandidate>, StoreError>> + Send {
-        timed(
-            "recall_own_held",
-            self.inner
-                .recall_own_held(tenant_id, author_key_ids, readable, query, kinds, k),
         )
     }
 

@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::cursor::CursorError;
 use crate::ports::StoreError;
+use crate::search::{MatchMode, Pipeline, RetrieverKind};
 
 /// The tenant a provider-level key resolves under. Its row names no tenant
 /// (postgres-schema.md `api_keys.tenant_id` NULL), and no tenant holds the
@@ -1371,21 +1372,12 @@ pub struct RecallRequest {
     /// The budget in budget tokens under counter `oml-tc/1`; `None` is no
     /// budget (retrieval.md token budgets; ADR-0025 d7).
     pub max_tokens: Option<u64>,
-}
-
-/// One recall candidate as the store ranks it, before the `k` and budget
-/// cuts: its id, the clear `body_bytes` its budget-token count derives
-/// from, and the store's score. It carries no body, so a row the cuts drop
-/// is never hydrated; the served rows hydrate in one set-wise read
-/// (retrieval.md token budgets; ADR-0024 d4, ADR-0025 d7).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecallCandidate {
-    pub memory_id: Uuid,
-    pub body_bytes: u64,
-    /// The store's rank: `ts_rank` in Postgres, the count of distinct query
-    /// terms matched in the in-memory store (retrieval.md, the
-    /// recall-ordering contract).
-    pub score: f32,
+    /// `search`: the pipeline by name; `None` is the tenant's default, or
+    /// the deployment's. A name the deployment does not serve is
+    /// [`AppError::SearchUnavailable`] (ADR-0049 d4).
+    pub search: Option<String>,
+    /// `match`: any term (the default) or every term (ADR-0049 d5).
+    pub match_mode: MatchMode,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1394,10 +1386,15 @@ pub struct RecallCandidate {
 #[derive(Debug, Clone)]
 pub struct RecallHit {
     pub served: ServedMemory,
-    /// The store's rank: `ts_rank` in Postgres, the count of distinct query
-    /// terms matched in the in-memory store (retrieval.md, the
-    /// recall-ordering contract).
+    /// The pipeline's score: one retriever's own score, or the fused
+    /// reciprocal-rank score; comparable only within one result
+    /// (retrieval.md, the recall-ordering contract; ADR-0049 d3).
     pub score: f32,
+    /// `matched.terms`: the query terms the row holds, as the pipeline's
+    /// retrievers read terms (ADR-0049 d6).
+    pub matched: Vec<String>,
+    /// `matched.via`: the retrievers whose lists held the row.
+    pub via: Vec<RetrieverKind>,
 }
 
 impl core::ops::Deref for RecallHit {
@@ -1428,6 +1425,18 @@ pub struct RecallResult {
     /// present with its default applied (retrieval.md, the read log;
     /// ADR-0025 d9).
     pub query_digest: String,
+    /// The pipeline that ranked the hits (ADR-0049 d4).
+    pub pipeline: Pipeline,
+    /// The query's terms as the pipeline read them: `matched.of`'s
+    /// denominator (ADR-0049 d6).
+    pub terms: Vec<String>,
+    /// Set when `match: all` found no row with every term and the any-term
+    /// list was served instead (ADR-0049 d5).
+    pub fallback: bool,
+    /// Spellings from readable rows for terms no hit matched, from a
+    /// pipeline with a trigram list, when no hit holds every term
+    /// (`explain.did_you_mean`; ADR-0049 d6).
+    pub did_you_mean: Vec<String>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
@@ -2103,6 +2112,13 @@ pub enum AppError {
         "max_tokens counts text that include_text false would not send (retrieval.md token budgets, request.validation)"
     )]
     BudgetWithoutBodies,
+    /// `search` names a pipeline this deployment does not serve: unknown to
+    /// the build, or not in `search.enabled` (ADR-0049 d4). `served` lists
+    /// the names it does serve.
+    #[error(
+        "search {name:?} is not served here; served: {served} (configuration.md search.enabled, request.validation)"
+    )]
+    SearchUnavailable { name: String, served: String },
     #[error(
         "after_seq {after_seq} is beyond head_seq {head_seq} (http-api.md events tail, request.validation)"
     )]

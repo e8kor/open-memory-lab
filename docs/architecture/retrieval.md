@@ -2,14 +2,14 @@
 id: architecture/retrieval
 tier: engineering
 status: design draft for review · decided, not built
-answers: where reads are served from and in what order; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
+answers: where reads are served from and in what order; how recall ranks, through which pipelines, and how a deployment, a tenant or a request picks one; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
 -->
 
 # Retrieval: reads are served from Postgres, journalled
 
 **Status:** design draft for review · decided, not built
 
-**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0 ([releases](../product/releases.md)).
+**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines planned for v0.5.5 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the read path (D12): where reads
 are served from, how the serving indexes are laid out, what order results come
@@ -108,6 +108,10 @@ that does not yet serve `terms` or `expand_terms` refuses them by name with
 
 ### Text handling
 
+*Since v0.5.5 the `bm25` pipelines index `simple` and `english` lexemes together over identifier
+parts ([search pipelines](#search-pipelines)); this section describes the `simple` index the
+keyword pipelines read.*
+
 `memories_fts` rows are built with the Postgres text-search configuration named
 by the deployment setting `search.fts_config`
 ([configuration](../operations/configuration.md)), **default `simple`**. The
@@ -186,6 +190,67 @@ are removed from live tables, and their persistence in base backups and WAL
 until the named backup retention window expires is stated honestly where the
 inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
 
+## Search pipelines
+
+*Planned for v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](https://github.com/e8kor/open-memory-lab/blob/feat/code-map/docs/adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
+
+**How recall ranks.** A recall's hits come from a **pipeline**: one or more retrievers, each
+producing a ranked list, merged by a fusion the core runs. The core computes what may be ranked
+before any retriever runs, and does everything after: steering, the `k` cut, the budget cut,
+the re-check of every served row.
+
+```text
+request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held keys when asked)
+              │
+              ├── steering_in_force(ancestors)            first, unranked, never cut
+              │
+              └── pipeline (search, else tenant default, else search.default)
+                     ├── Retriever.retrieve(kind, scope, query)   one ranked list per kind
+                     ├── fuse: single | reciprocal rank (60)      pure, in the core
+                     └── match all → every word; none → any word, fallback: any_term
+              │
+          k cut → budget cut → hydrate the served rows → re-check each (R3) → answer
+```
+
+| Pipeline | What ranks | Fusion |
+|---|---|---|
+| `keyword-all` | every query word, exactly, under `simple`, by `ts_rank`: the recall served up to v0.5.0 | one list |
+| `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
+| `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
+| `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
+
+**Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
+`search.default` the default ([configuration](../operations/configuration.md)); a tenant's admin
+sets the tenant's own default among them, journalled, with no restart (`oml search
+set-default`); a request names one with `search`. A name the deployment does not serve is
+refused naming `/search`, never replaced. `match: "all"` keeps only rows holding every word and,
+when none does, serves the any-word hits with `search.fallback: "any_term"`.
+
+**What the answer says.** `search.pipeline`, `search.terms` (the query's words as read),
+`search.fallback`, and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
+than its `k`), spellings for the words no hit holds, under every pipeline but `keyword-all`. They
+come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
+same transaction that promotes, replaces or retires a version; a recall reads the readable
+nodes' vocabulary and never a row, so no spelling names a word only an unreadable row says. Each hit carries `matched`: the
+words it holds, `of` how many the query had, and `via` the retrievers that found it. Scores
+compare within one answer only.
+
+**What a retriever may not do.** It ranks the scope it is handed and nothing else: it never
+widens it, never reads a verdict, a reviewer or `promoted_at`, and computes any statistic over
+the scope alone, so a row the key cannot read never moves another row's rank. Steering never
+enters a retriever. The laws every adapter passes, the in-memory test store and PostgreSQL
+alike, are in `oml-port-contracts` (ADR-0049 d7).
+
+**Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
+default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
+NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
+with the date, commit and host of each run: [benchmarks](../api/benchmarks/index.md). `bm25` is
+the default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
+misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
+enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
+role's reads (ADR-0034 d13), so 0020 builds none and a recall's cost grows with the rows in its
+scope; the scale page shows by how much.
+
 ## The recall-ordering contract: steering rows first, unranked
 
 *Available since v0.2.0 · [releases](../product/releases.md)*
@@ -227,12 +292,14 @@ Membership and order of both segments are fixed
   `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
   narrows the hits to those kinds, and one that omits it also receives
   opted-in vocabulary hits. The order is total: score descending,
-  then `artifact_id` ascending in byte order. The score is the store's fused
-  score; where a store ranks by full text alone, as the PoC does, it is to be
-  `ts_rank(to_tsvector('simple', body), plainto_tsquery('simple', query))`
-  with normalization 0, compared as `float4`; in the in-memory test store it
-  is the count of distinct query terms matched. Equal order across stores is
-  not asserted. A superseded version is never a hit; it stays fetchable by id
+  then `artifact_id` ascending in byte order. The score is the
+  [pipeline](#search-pipelines)'s: one retriever's score, or the fused
+  reciprocal-rank score, compared as `float4`. Under `keyword-all` it is
+  `ts_rank(to_tsvector('simple', claim), plainto_tsquery('simple', query))`
+  with normalization 0, v0.5.0's; in the in-memory test store, which serves
+  the two keyword pipelines with PostgreSQL's semantics on plain words, it
+  is the count of distinct query terms matched. The two stores agree on the
+  set of hits and on the tie order, not on every rank (ADR-0049 d7). A superseded version is never a hit; it stays fetchable by id
   as history.
 - **Served tip**, in both bullets above: for a key in a simulation's
   audience, a claim's served tip is its overlay tip for that simulation where

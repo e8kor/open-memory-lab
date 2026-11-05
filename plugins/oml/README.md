@@ -250,10 +250,9 @@ run. See the
 *Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
 
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
-to it, or you ask for it with `@agent-oml:librarian`. Recall matches every word exactly, with no
-stemming, so one query that finds nothing proves little; the librarian runs up to eight, the
-subject's own words and then their variants (plural, other verb forms, other spellings of an
-identifier), and returns each finding with its `artifact_id`, `claim_key`, workarea and time,
+to it, or you ask for it with `@agent-oml:librarian`. One query that finds nothing proves
+little; the librarian runs up to eight, the subject's own words and then their variants
+(synonyms, abbreviations, the most distinctive word alone), and returns each finding with its `artifact_id`, `claim_key`, workarea and time,
 under the same data line the hooks use, with the queries it ran. Its only tool is `oml_read`: it
 cannot call `oml_write`, edit a file or run a command. It runs on Haiku, so the searching costs
 less than on the main conversation's model and its raw results stay out of that conversation's

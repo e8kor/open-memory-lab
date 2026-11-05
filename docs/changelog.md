@@ -27,6 +27,51 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased — search pipelines (v0.5.5, planned)
+
+*2026-11-04 ·* [ADR-0049](adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) *(proposed).* Recall ranks through a named search
+pipeline behind a `Retriever` port; the deployment enables pipelines (`search.enabled`,
+`search.default`), a tenant's admin picks the tenant's default (`GET /v2/search`, `POST
+/v2/search/default`, `oml search show|set-default`, journalled as `search.default_set`), and a
+recall may name one with `search`. Pages: retrieval, HTTP API, MCP plugin and `mcp-tools.json`,
+`openapi.yaml`, configuration, CLI reference, observability, postgres-schema (migration 0020),
+event catalog, releases. **Breaks**, each with its migration:
+
+- The default recall matches any word (`bm25`), where v0.5.0 required every word. To keep
+  the old behaviour per request send `match: "all"`, or `search: "keyword-all"` where the
+  deployment enables it.
+- The recall answer gains `search` and each hit `matched`; a client refusing unknown members must
+  accept them. The SDKs' generated layers are regenerated.
+- `query_digest` digests `search` and `match`, so a digest from before the upgrade does not match
+  one after.
+- `bm25-trigram` needs `pg_trgm` and is served only where `search.enabled` names it: migration
+  0020 creates the extension as the owner role where it owns the database; elsewhere create it
+  once as a role with `CREATE` on the database. A lead naming it without the extension refuses
+  to start, naming both; the default set (`keyword-any`, `bm25`) needs no extension.
+- The store port's `recall_fts` and `recall_own_held` are replaced by `Retriever::retrieve`.
+- The server instructions, the `oml_read` description, the `oml-memory` skill, the librarian and
+  the session-start line no longer ask for "2-4 exact keywords".
+
+*2026-11-04 · ADR-0049 d12.* Migration 0020 stores each version's search lexemes
+(`memories.search_vector`, `search_len`) and a per-workarea vocabulary (`search_vocabulary`, kept
+by a trigger); `bm25` scores from the stored lexemes, counts each occurrence once, scores a word
+by its best form and drops a query's English stop words when it has other words; `did_you_mean`
+is offered only when a recall finds fewer than three hits, from the vocabulary, under every
+pipeline but `keyword-all`; `bm25` is the shipped `search.default`. Generated benchmark pages
+join the API section (`docs/api/benchmarks/`, `scripts/gen_bench_pages.py`, checked in
+docs-checks.yml). FR-86 and FR-87 are opened. **Breaks**, each with its migration:
+
+- `search.default` is `bm25`, not `bm25-trigram`: a misspelt word no longer finds its memory by
+  default. Send `search: "bm25-trigram"`, or set it as the tenant's or the deployment's default.
+- `search.terms` under `bm25` and `bm25-trigram` leaves out English stop words when the query has
+  other words, and `match: "all"` requires every word but those.
+- `did_you_mean` is `[]` for a recall with three or more hits, even when a word matched nothing,
+  and offers only words of the kinds recall serves.
+- *Review fixes, 2026-11-05:* an inflected word's stem counts once (it counted twice); the
+  lexemes are set once per write by a trigger instead of two generated columns; 0020 builds no
+  text or trigram index, since none serves the serving role under row security; the vocabulary
+  takes only `memory` and `derived_fact`; the trigger functions pin `search_path`.
+
 ## 0.5.2-design
 
 Opened for release v0.5.2, which carries this revision: the workarea lifecycle, labelled links

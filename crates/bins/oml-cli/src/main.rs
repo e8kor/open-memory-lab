@@ -138,6 +138,12 @@ enum Command {
         #[command(subcommand)]
         command: WebCommand,
     },
+    /// The search pipelines the server serves, and the tenant's default
+    /// among them (admin key role; ADR-0049 d4).
+    Search {
+        #[command(subcommand)]
+        command: SearchCommand,
+    },
     /// An administrator's reads of every memory's text and attribution,
     /// each recorded in the history (admin key role; ADR-0045 d21).
     Admin {
@@ -604,6 +610,20 @@ enum AdminCommand {
 }
 
 #[derive(Subcommand)]
+enum SearchCommand {
+    /// The served pipelines, the deployment's default, the tenant's and the
+    /// one a recall naming none runs.
+    Show,
+    /// Set the tenant's default pipeline (search.default_set), journalled;
+    /// recalls use it from the next request, no restart.
+    SetDefault {
+        /// A pipeline the server serves; `deployment` clears the tenant's
+        /// own default, so the deployment's applies.
+        pipeline: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum WebCommand {
     /// Add an email to the list, or change its user or admin flag
     /// (web.email_allowed, web.email_changed); a change ends its sessions.
@@ -728,6 +748,14 @@ struct ReadArgs {
     /// Let the recall return this key's own held rows beside promoted hits.
     #[arg(long, requires = "query")]
     include_unreviewed: bool,
+    /// The search pipeline the recall runs, among those the server serves
+    /// (`oml search show`); omitted, the tenant's default.
+    #[arg(long, requires = "query")]
+    search: Option<String>,
+    /// any (the default) or all: every query word must match, and when no
+    /// memory has them all the any-word hits come back marked fallback.
+    #[arg(long = "match", requires = "query")]
+    match_mode: Option<String>,
     /// The subtree read, by id or name; omitted, the key's default
     /// workarea, or for the own listing every workarea the key wrote in.
     #[arg(long, conflicts_with = "artifact_id")]
@@ -1441,6 +1469,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Crews { command } => run_crews(cli, &stored, command),
         Command::Web { command } => run_web(cli, &stored, command),
+        Command::Search { command } => run_search(cli, &stored, command),
         Command::Admin { command } => run_admin(cli, &stored, command),
 
         Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
@@ -1732,6 +1761,12 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         }
         if args.include_unreviewed {
             body["include_unreviewed"] = json!(true);
+        }
+        if let Some(search) = &args.search {
+            body["search"] = json!(search);
+        }
+        if let Some(mode) = &args.match_mode {
+            body["match"] = json!(mode);
         }
         let read = CallOpts {
             auth: true,
@@ -2512,6 +2547,51 @@ fn run_admin(
 /// The allowlist verbs, admin key role throughout (cli/reference.md `oml
 /// web`; http-api.md web pages; ADR-0045 d2). The email travels in a body,
 /// never a path; `oml web list` reads every page.
+/// `oml search show` and `oml search set-default` (ADR-0049 d4).
+fn run_search(
+    cli: &Cli,
+    stored: &Credentials,
+    command: &SearchCommand,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let settings = match command {
+        SearchCommand::Show => client.get("/v2/search")?.1,
+        SearchCommand::SetDefault { pipeline } => {
+            let name = (pipeline != "deployment").then_some(pipeline.as_str());
+            client
+                .post(
+                    "/v2/search/default",
+                    &json!({ "pipeline": name }),
+                    &write_opts(),
+                )?
+                .1
+        }
+    };
+    if cli.json {
+        print_json(&settings);
+    } else {
+        let enabled: Vec<&str> = settings["enabled"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        println!("effective: {}", field(&settings, "effective"));
+        println!(
+            "tenant default: {}",
+            settings["tenant_default"]
+                .as_str()
+                .unwrap_or("(the deployment's)")
+        );
+        println!(
+            "deployment default: {}",
+            field(&settings, "deployment_default")
+        );
+        println!("enabled: {}", enabled.join(", "));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     let entry_line = |entry: &Value| {
@@ -3358,6 +3438,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut default_node: Option<Value> = None;
+    let mut search_settings: Option<Value> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -3398,10 +3479,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             if pages_on && is_admin {
                 admin_emails = count_admin_emails(&client);
             }
+            // The tenant's search default, read by an admin key (ADR-0049
+            // d8).
+            if is_admin {
+                search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
+            }
         }
     }
     let web = web_doctor(ready.as_ref(), admin_emails);
     let web_warn = web.iter().any(|line| line.starts_with("warn"));
+    let search = search_doctor(ready.as_ref(), search_settings.as_ref());
+    let search_warn = search.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
         .as_ref()
@@ -3413,7 +3501,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let whoami_ok = !matches!(me, Some(Err(_)));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
-    } else if me.is_none() || reads_universe == Some(false) || web_warn {
+    } else if me.is_none() || reads_universe == Some(false) || web_warn || search_warn {
         "warn"
     } else {
         "ok"
@@ -3452,6 +3540,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             })),
             "oauth_discovery": oauth,
             "web": web,
+            "search": search,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -3548,6 +3637,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         for line in &web {
             println!("web         : {line}");
         }
+        for line in &search {
+            println!("search      : {line}");
+        }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
             (_, Some(version)) => println!("server      : oml-server-lead {version}"),
@@ -3602,6 +3694,45 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
         })
         .collect();
     Some((admins, keyless))
+}
+
+/// The search doctor lines (ADR-0049 d8): the deployment's default and
+/// the served pipelines from `/readyz`; a warning when the default is the
+/// comparison pipeline `keyword-all`; and, read by an admin key, a warning
+/// when the tenant's journalled default is one the deployment no longer
+/// serves, so the deployment's applies instead. A pipeline whose retriever
+/// the database lacks (`pg_trgm`) never reaches here: the lead refuses to
+/// start, naming it.
+fn search_doctor(ready: Option<&(u16, Value)>, settings: Option<&Value>) -> Vec<String> {
+    let Some((_, body)) = ready else {
+        return Vec::new();
+    };
+    let Some(default) = body["search"]["default"].as_str() else {
+        return vec!["not reported by /readyz (a server before 0.5.3)".to_owned()];
+    };
+    let enabled: Vec<&str> = body["search"]["enabled"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let mut lines = vec![format!("default {default}; enabled {}", enabled.join(", "))];
+    if default == "keyword-all" {
+        lines.push(
+            "warn search: the default is keyword-all, every word exactly, kept for comparison; set search.default"
+                .to_owned(),
+        );
+    }
+    if let Some(settings) = settings
+        && let Some(tenant) = settings["tenant_default"].as_str()
+        && settings["effective"].as_str() != Some(tenant)
+    {
+        lines.push(format!(
+            "warn search: this tenant's default {tenant} is not served here, so {} applies; oml search set-default <pipeline>",
+            settings["effective"].as_str().unwrap_or("the deployment's")
+        ));
+    }
+    lines
 }
 
 /// The web pages' doctor lines (ADR-0045 d18): off when `/readyz` names no

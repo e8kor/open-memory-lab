@@ -214,6 +214,8 @@ fn recall_req(query: &str) -> RecallRequest {
         include_text: true,
         include_unreviewed: false,
         max_tokens: None,
+        search: None,
+        match_mode: oml_app::search::MatchMode::Any,
     }
 }
 
@@ -4585,12 +4587,13 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     };
 
     // Every member is present with its default applied, the scope the
-    // resolved node (retrieval.md, the read log; ADR-0025 d9).
+    // resolved node and the search the pipeline that ran (retrieval.md,
+    // the read log; ADR-0025 d9, ADR-0049 d6).
     let base = digest(recall_req("canary")).await;
     let canonical = format!(
         "{{\"expand_terms\":\"none\",\"include_bodies\":true,\"include_own_held\":false,\
-         \"k\":10,\"kinds\":[],\"max_tokens\":null,\"query\":\"canary\",\
-         \"scope\":\"{crew}\",\"terms\":[]}}"
+         \"k\":10,\"kinds\":[],\"match\":\"any\",\"max_tokens\":null,\"query\":\"canary\",\
+         \"scope\":\"{crew}\",\"search\":\"keyword-any\",\"terms\":[]}}"
     );
     assert_eq!(base, sha256_digest_string(canonical.as_bytes()));
     assert_eq!(
@@ -13151,4 +13154,335 @@ async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_read
     assert_eq!(next.items[0].edge_id, first);
     assert_eq!(next.items[0].state, "ratified");
     assert!(next.next_cursor.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Search pipelines (ADR-0049)
+// ---------------------------------------------------------------------------
+
+/// A recall naming `search`, under `match`.
+fn searched(query: &str, search: Option<&str>, all: bool) -> RecallRequest {
+    RecallRequest {
+        search: search.map(ToOwned::to_owned),
+        match_mode: if all {
+            oml_app::search::MatchMode::All
+        } else {
+            oml_app::search::MatchMode::Any
+        },
+        ..recall_req(query)
+    }
+}
+
+#[tokio::test]
+async fn keyword_any_matches_any_word_where_keyword_all_needs_every_word() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let both = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m1", "deploy on monday"),
+    )
+    .await;
+    let one = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m2", "deploy rarely"),
+    )
+    .await;
+
+    let all = app
+        .recall(
+            &reader.value,
+            &searched("deploy monday", Some("keyword-all"), false),
+        )
+        .await
+        .expect("keyword-all");
+    assert_eq!(hit_ids_of(&all), vec![both], "keyword-all needs every word");
+    assert_eq!(all.pipeline.as_str(), "keyword-all");
+    let any = app
+        .recall(
+            &reader.value,
+            &searched("deploy monday", Some("keyword-any"), false),
+        )
+        .await
+        .expect("keyword-any");
+    assert_eq!(
+        hit_ids_of(&any),
+        vec![both, one],
+        "keyword-any keeps a row with any word, more words first"
+    );
+    assert_eq!(
+        any.hits[0].matched,
+        vec!["deploy".to_owned(), "monday".to_owned()]
+    );
+    assert_eq!(any.hits[1].matched, vec!["deploy".to_owned()]);
+    assert_eq!(any.terms, vec!["deploy".to_owned(), "monday".to_owned()]);
+}
+
+#[tokio::test]
+async fn match_all_falls_back_to_any_word_and_says_so() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let both = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m1", "deploy on monday"),
+    )
+    .await;
+    let one = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m2", "deploy rarely"),
+    )
+    .await;
+
+    let narrowed = app
+        .recall(
+            &reader.value,
+            &searched("deploy monday", Some("keyword-any"), true),
+        )
+        .await
+        .expect("match all");
+    assert_eq!(
+        hit_ids_of(&narrowed),
+        vec![both],
+        "every word, when a row has them all"
+    );
+    assert!(!narrowed.fallback);
+    let fell_back = app
+        .recall(
+            &reader.value,
+            &searched("deploy friday", Some("keyword-any"), true),
+        )
+        .await
+        .expect("match all, no row has every word");
+    assert!(
+        fell_back.fallback,
+        "the any-word list is served and flagged"
+    );
+    let mut ids = hit_ids_of(&fell_back);
+    ids.sort();
+    let mut expected = vec![both, one];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert_ne!(
+        narrowed.query_digest,
+        app.recall(
+            &reader.value,
+            &searched("deploy monday", Some("keyword-any"), false)
+        )
+        .await
+        .expect("match any")
+        .query_digest,
+        "match is digested"
+    );
+}
+
+#[tokio::test]
+async fn a_search_the_deployment_does_not_serve_is_refused_naming_it() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let reader = issue(&app, &boot.admin_key.value, Role::Reader, "rhea", crew).await;
+    for name in ["hybrid", "bm25"] {
+        let err = app
+            .recall(&reader.value, &searched("deploy", Some(name), false))
+            .await
+            .expect_err("not served");
+        match err {
+            AppError::SearchUnavailable {
+                name: refused,
+                served,
+            } => {
+                assert_eq!(refused, name);
+                assert_eq!(served, "keyword-all, keyword-any");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_admin_sets_the_tenants_default_pipeline_journalled_and_recall_follows_without_a_restart()
+ {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m1", "deploy rarely"),
+    )
+    .await;
+
+    let before = app
+        .recall(&reader.value, &recall_req("deploy monday"))
+        .await
+        .expect("recall");
+    assert_eq!(
+        before.pipeline.as_str(),
+        "keyword-any",
+        "the deployment's default"
+    );
+    assert_eq!(before.hits.len(), 1);
+
+    let refused = app
+        .set_search_default(&reader.value, Some("keyword-all"))
+        .await;
+    assert!(
+        matches!(refused, Err(AppError::VerbCeiling { .. })),
+        "{refused:?}"
+    );
+    let unserved = app.set_search_default(admin, Some("bm25")).await;
+    assert!(
+        matches!(unserved, Err(AppError::SearchUnavailable { .. })),
+        "{unserved:?}"
+    );
+
+    let events = journal(&store, boot.tenant_id).await.len();
+    let settings = app
+        .set_search_default(admin, Some("keyword-all"))
+        .await
+        .expect("set");
+    assert_eq!(settings.tenant_default.as_deref(), Some("keyword-all"));
+    assert_eq!(settings.effective.as_str(), "keyword-all");
+    let journalled = journal(&store, boot.tenant_id).await;
+    assert_eq!(journalled.len(), events + 1);
+    assert_eq!(
+        journalled.last().expect("event").envelope.event_type,
+        "search.default_set"
+    );
+    let again = app
+        .set_search_default(admin, Some("keyword-all"))
+        .await
+        .expect("unchanged");
+    assert_eq!(again, settings);
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        events + 1,
+        "no change, no event"
+    );
+
+    let after = app
+        .recall(&reader.value, &recall_req("deploy monday"))
+        .await
+        .expect("recall");
+    assert_eq!(after.pipeline.as_str(), "keyword-all");
+    assert!(
+        after.hits.is_empty(),
+        "every word now, from the next request"
+    );
+    let named = app
+        .recall(
+            &reader.value,
+            &searched("deploy monday", Some("keyword-any"), false),
+        )
+        .await
+        .expect("a request still names its own");
+    assert_eq!(named.hits.len(), 1);
+
+    let cleared = app.set_search_default(admin, None).await.expect("clear");
+    assert_eq!(cleared.tenant_default, None);
+    assert_eq!(cleared.effective.as_str(), "keyword-any");
+}
+
+#[tokio::test]
+async fn steering_stays_first_and_unranked_under_every_pipeline() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let steer = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind("s1", MemoryKind::Steering, "nothing about the query", crew),
+    )
+    .await;
+    promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m1", "deploy rarely"),
+    )
+    .await;
+    for search in ["keyword-all", "keyword-any"] {
+        for all in [false, true] {
+            let recall = app
+                .recall(&reader.value, &searched("deploy monday", Some(search), all))
+                .await
+                .expect("recall");
+            assert_eq!(steering_ids(&recall), vec![steer], "{search} all={all}");
+        }
+    }
+}
+
+/// A recall reads each served workarea's ancestry once, however many of its
+/// hits it serves: the path and the universe test of every hit in one
+/// workarea come from one read, so serving more hits adds no ancestry reads
+/// (retrieval.md; ADR-0024 d4, "never N+1"; ADR-0049 d12).
+#[tokio::test]
+async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it_serves() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    for i in 0..6 {
+        promoted(
+            &app,
+            &writer.value,
+            &dreamer.value,
+            &submit_into(
+                &format!("a{i}"),
+                &format!("the canary rollout step {i}"),
+                crew,
+            ),
+        )
+        .await;
+    }
+    let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let reads = |k: usize| {
+        let (app, store, key) = (&app, &store, reader.value.clone());
+        async move {
+            let before = store.ancestry_reads();
+            let recall = app
+                .recall(
+                    key.as_str(),
+                    &RecallRequest {
+                        k,
+                        search: Some("keyword-any".to_owned()),
+                        ..recall_req("canary")
+                    },
+                )
+                .await
+                .expect("recall");
+            assert_eq!(recall.hits.len(), k);
+            store.ancestry_reads() - before
+        }
+    };
+    assert_eq!(
+        reads(6).await,
+        reads(1).await,
+        "six hits read what one hit reads"
+    );
 }

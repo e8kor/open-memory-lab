@@ -1,0 +1,8 @@
+# The harness's Python dependencies, for a scratch venv (never the system's):
+#   uv venv /srv/build/bench-venv && uv pip install --python /srv/build/bench-venv/bin/python -r eval/bench/requirements.txt
+ir_measures==0.4.3
+pytrec-eval-terrier==0.5.11
+ir_datasets==0.6.3
+# reference.py only (the offline BM25 reference):
+bm25s==0.3.16
+PyStemmer==3.1.0

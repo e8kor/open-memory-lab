@@ -15,7 +15,12 @@
     {
       "name": "oml_write",
       "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped.",
-      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -33,13 +38,22 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["memory", "derived_fact", "steering", "term", "term_mapping", "vocab_release"],
+            "enum": [
+              "memory",
+              "derived_fact",
+              "steering",
+              "term",
+              "term_mapping",
+              "vocab_release"
+            ],
             "default": "memory",
             "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact and steering are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md)."
           },
           "derives_from": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Artifact ids this claim derives from, each readable by the key; non-empty, a submission is journalled learn. With replaces the target is included implicitly."
           },
           "workarea": {
@@ -60,13 +74,16 @@
             "description": "With replaces, the reason for the change. Refused without replaces."
           }
         },
-        "required": ["text", "idempotency_key"],
+        "required": [
+          "text",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "oml_read",
-      "description": "Search the team's reviewed memory for facts, decisions and known pitfalls before non-trivial work, on a project term you do not know, and after a failed command: pass query with 2-4 exact keywords, such as an identifier, an error code, a module or a file name; every word must match, without stemming, so try other words before concluding nothing is stored. Find, fetch or list claims; the fields present choose the mode. artifact_id fetches one version (GET /v1/memories/{artifact_id}): the calling key's own rows in any state, others' promoted versions within read access, anything else access.not_found. query recalls (POST /v1/memories/recall): promoted claims in a workarea subtree, steering first and never ranked or cut by max_tokens, and with include_unreviewed the key's own held rows flagged state held. Neither lists (GET /v1/memories): own true, the default, is everything the key wrote, newest first, in any state, so state tells an agent whether its write was approved or rejected; own false is the promoted tips of a workarea. An argument outside the chosen mode, or artifact_id and query together, is refused with request.validation naming it in details.field. Every mode answers claim items with their text under mode: get, recall or listing.",
+      "description": "Search the team's reviewed memory for facts, decisions and known pitfalls before non-trivial work, on a project term you do not know, and after a failed command: pass query with the words a note would use, or a question, such as an identifier, an error code, a module or a file name; any word may match, an identifier matches by its parts and a word by its stem, rows holding more of the words rank higher, each hit's matched lists the words it holds, and a recall that finds little offers did_you_mean spellings, so try other words before concluding nothing is stored. Find, fetch or list claims; the fields present choose the mode. artifact_id fetches one version (GET /v1/memories/{artifact_id}): the calling key's own rows in any state, others' promoted versions within read access, anything else access.not_found. query recalls (POST /v1/memories/recall): promoted claims in a workarea subtree, steering first and never ranked or cut by max_tokens, and with include_unreviewed the key's own held rows flagged state held. Neither lists (GET /v1/memories): own true, the default, is everything the key wrote, newest first, in any state, so state tells an agent whether its write was approved or rejected; own false is the promoted tips of a workarea. An argument outside the chosen mode, or artifact_id and query together, is refused with request.validation naming it in details.field. Every mode answers claim items with their text under mode: get, recall or listing.",
       "annotations": {
         "readOnlyHint": true,
         "idempotentHint": true,
@@ -81,7 +98,7 @@
           },
           "query": {
             "type": "string",
-            "description": "Recall mode: the search text, matched by full-text search, the only search mode served."
+            "description": "Recall mode: the search text, ranked by the search pipeline that search names, or by the tenant's default."
           },
           "workarea": {
             "type": "string",
@@ -115,6 +132,25 @@
             "minimum": 1,
             "maximum": 9007199254740991,
             "description": "Recall: a budget in budget tokens (counter oml-tc/1, not a model's count), at most 2^53 - 1 as on the ring. Steering is never cut; the hits served are the longest rank prefix that fits, and budget reports the cut."
+          },
+          "search": {
+            "type": "string",
+            "enum": [
+              "keyword-all",
+              "keyword-any",
+              "bm25",
+              "bm25-trigram"
+            ],
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all"
+            ],
+            "default": "any",
+            "description": "Recall, default any. all: only rows holding every query word are hits; when none does, the any-word hits are served and search.fallback says any_term."
           },
           "own": {
             "type": "boolean",

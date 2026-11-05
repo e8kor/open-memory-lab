@@ -1284,6 +1284,86 @@ ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant i
 - **Stays open** (FR-45): each partition's `reltuples`, bound and name give every role one
   tenant's row count and id.
 
+### search (ADR-0049)
+
+**Status:** planned for v0.5.5, built in `migrations/0020_search.sql`
+([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d12).
+
+```sql
+-- one normaliser for the query, the trigram retriever and the vocabulary: the text, then its identifier parts
+CREATE FUNCTION oml_search_split(t text) RETURNS text ...;   -- CamelCase and . _ / : # @ - split
+CREATE FUNCTION oml_search_text(t text) RETURNS text RETURN t || ' ' || oml_search_split(t);
+-- the bm25 lexemes, each occurrence once: simple, then the parts the text lacks, then the english
+-- stems neither holds, stemmed from the text and from the parts it lacks
+CREATE FUNCTION oml_search_exact(t text) RETURNS tsvector
+    RETURN to_tsvector('simple', t)
+        || ts_delete(to_tsvector('simple', oml_search_split(t)), tsvector_to_array(to_tsvector('simple', t)));
+CREATE FUNCTION oml_search_stems(t text) RETURNS tsvector
+    RETURN to_tsvector('english', t)
+        || ts_delete(to_tsvector('english', oml_search_split(t)), tsvector_to_array(to_tsvector('english', t)));
+CREATE FUNCTION oml_search_vector(t text) RETURNS tsvector
+    RETURN oml_search_exact(t) || ts_delete(oml_search_stems(t), tsvector_to_array(oml_search_exact(t)));
+ALTER TABLE memories ADD COLUMN search_vector tsvector NOT NULL, ADD COLUMN search_len integer NOT NULL;
+-- set once per write; an update naming the claim or either column recomputes them
+CREATE TRIGGER memories_search_vector BEFORE INSERT OR UPDATE OF claim, search_vector, search_len
+    ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_vector_fold();
+-- did_you_mean's words: per workarea, the simple words of its promoted served tips of kind memory or derived_fact
+CREATE TABLE search_vocabulary (
+    tenant_id   uuid    NOT NULL REFERENCES tenants (id),
+    workarea_id uuid    NOT NULL,
+    word        text    NOT NULL,
+    rows        integer NOT NULL CHECK (rows > 0),   -- served tips that say it
+    PRIMARY KEY (tenant_id, workarea_id, word)
+);   -- ENABLE and FORCE ROW LEVEL SECURITY, tenant_isolation; SELECT, INSERT, UPDATE, DELETE to the serving role
+CREATE TRIGGER memories_search_vocabulary AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim,
+    workarea_id, kind OR DELETE ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_vocabulary_fold();
+CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- where the owner may; for bm25-trigram and did_you_mean only
+ALTER TABLE tenants ADD COLUMN search_default text;   -- folded from search.default_set
+```
+
+`search_vector` and `search_len` are set by `oml_search_vector_fold`, a `BEFORE` trigger, so the
+vector is computed once per write and no read rebuilds it; a write naming either column gets its
+claim's lexemes regardless. 0020 fills both for every existing row, each tenant under its own row
+security, then sets them `NOT NULL`; a partition created later takes the columns through `LIKE …
+INCLUDING ALL` and both triggers through `ATTACH PARTITION`. Both trigger functions are `SECURITY
+INVOKER` with `search_path` pinned to `public, pg_temp`, so the role split's definer check holds.
+`memories_claim_fts` stays: the `keyword-all` and `keyword-any` pipelines read it. The `bm25`
+statement reads `search_vector` and `search_len` and no row's claim; it computes the row count,
+the average length and each form's document frequency per query over the rows the candidate scope
+admits, never from a stored statistic, so no table holds term counts across workareas a key may
+not read.
+
+No text or trigram index is built on these columns or on the vocabulary: `@@`, `%` and `<%` are
+not leakproof, so under row security the planner would use none for the serving role's reads,
+which scan the scope (ADR-0034 d13), and each would cost every write. The measurements behind
+this are in ADR-0049 d12.
+
+`search_vocabulary` is kept by `oml_search_vocabulary_fold` inside the write's own transaction:
+a version of kind `memory` or `derived_fact` adds one to each of its words when it becomes a
+promoted served tip that is no retirement version, and takes one away when it stops being one
+(replaced, retired, demoted); a word leaves at zero. Words are taken in byte order, and every fold
+runs under the tenant's commit lock, so two writes never race on a count. It is derived and never
+journalled; 0020 fills it for the rows already promoted, each tenant under its own row security.
+A held row's words, another workarea's, another kind's and a replaced version's are never in a
+workarea's vocabulary, so `did_you_mean`, which reads only the readable nodes' vocabulary, never
+names a word only an unreadable row says or recall cannot find.
+
+The stored lexemes depend on the `english` text-search configuration and the database's
+character classes; changing either needs them recomputed, which an update of each row's claim to
+itself does through the trigger. Erasure, when it is built, must rewrite the claim, so that the
+trigger rewrites the lexemes; erasing by status alone would leave the text in `search_vector`.
+
+`pg_trgm` is a trusted extension; where the owner role cannot create it or the contrib package is
+absent, 0020 goes on without it, `did_you_mean` answers `[]`, the default pipelines (`keyword-any`,
+`bm25`) are served, and a configuration naming `bm25-trigram` stops the start naming the
+extension. `tenants.search_default` is the tenant's default pipeline by name, `NULL` for the
+deployment's.
+
+A learned sparse leg, or the integer token table the operator chose on 2026-11-05 as the next
+step for text search, would sit beside these columns as a table of its own under the same
+partitioning and row security: nothing here holds the lexical leg's statistics in a shape another
+leg would have to share.
+
 ## upload_sessions
 
 Resumable attachment uploads (D3, declared in [storage](../architecture/storage.md)).
@@ -1435,7 +1515,7 @@ incrementally from a cursor); a metadata repair is exactly such a journalled re-
 | `memories` | submission, review, lifecycle, simulation events |
 | `workareas` | workarea create / re-parent / status / crew events, `system.names_assigned` |
 | `crews` | `crew.created`, `crew.updated`, `system.names_assigned` |
-| `tenants` | the provider chain's `tenant.created`, `system.names_assigned` |
+| `tenants` | the provider chain's `tenant.created`, `system.names_assigned`; `search_default` from the tenant chain's `search.default_set` |
 | `workarea_edges`, `claim_edges` | relate / ratify events |
 | `workarea_transitions` | `workarea.status_proposed`, `workarea.status_transition` |
 | `vocab_prefixes` | workarea.create events carrying a prefix (ADR-0021) |

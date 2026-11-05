@@ -127,21 +127,30 @@ from .ready_checks import ReadyChecks
 from .ready_status import ReadyStatus
 from .recall_budget import RecallBudget
 from .recall_budget_counter import RecallBudgetCounter
+from .recall_matched import RecallMatched
+from .recall_matched_via_item import RecallMatchedViaItem
 from .recall_request import RecallRequest
 from .recall_request_kinds_item import RecallRequestKindsItem
+from .recall_request_match import RecallRequestMatch
+from .recall_request_search import RecallRequestSearch
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
+from .recall_search import RecallSearch
+from .recall_search_match import RecallSearchMatch
+from .recall_search_pipeline import RecallSearchPipeline
 from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
 from .review_next_body import ReviewNextBody
 from .review_policy import ReviewPolicy
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
+from .search_settings import SearchSettings
 from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
+from .set_search_default_body import SetSearchDefaultBody
 from .severity import Severity
 from .submit_accepted import SubmitAccepted
 from .submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
@@ -301,21 +310,30 @@ __all__ = (
     "ReadyStatus",
     "RecallBudget",
     "RecallBudgetCounter",
+    "RecallMatched",
+    "RecallMatchedViaItem",
     "RecallRequest",
     "RecallRequestKindsItem",
+    "RecallRequestMatch",
+    "RecallRequestSearch",
     "RecallResponse",
     "RecallResponseHitsItem",
+    "RecallSearch",
+    "RecallSearchMatch",
+    "RecallSearchPipeline",
     "RemoveWebEmailBody",
     "RemoveWebEmailResponse200",
     "ReviewNextBody",
     "ReviewPolicy",
     "RevokeConnectionBody",
     "Role",
+    "SearchSettings",
     "Serve",
     "ServedDigests",
     "ServedGuardrail",
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemHeldBy",
+    "SetSearchDefaultBody",
     "Severity",
     "SubmitAccepted",
     "SubmitAcceptedReplacesType0",

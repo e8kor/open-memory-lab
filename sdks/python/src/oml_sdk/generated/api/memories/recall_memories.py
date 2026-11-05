@@ -82,7 +82,8 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
-    """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
+    """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
+    unranked.
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
     by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
@@ -90,7 +91,9 @@ def sync_detailed(
     request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
-    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+    truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
+    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -132,7 +135,8 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
-    """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
+    """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
+    unranked.
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
     by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
@@ -140,7 +144,9 @@ def sync(
     request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
-    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+    truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
+    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -177,7 +183,8 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | RecallResponse]:
-    """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
+    """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
+    unranked.
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
     by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
@@ -185,7 +192,9 @@ async def asyncio_detailed(
     request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
-    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+    truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
+    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -225,7 +234,8 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | RecallResponse | None:
-    """Ranked retrieval (FTS + vector) over promoted rows; steering rows precede hits, unranked.
+    """Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits,
+    unranked.
 
      Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea,
     by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers
@@ -233,7 +243,9 @@ async def asyncio(
     request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
-    truncation and the canonical request digest (D12, ADR-0025 d9). Recall quality unmeasured — FR-4.
+    truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
+    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):

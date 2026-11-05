@@ -6,8 +6,10 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod search;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use search::SearchSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;
@@ -25,7 +27,7 @@ use oml_domain::access::{
     effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::brief::{brief_cut, brief_order};
-use oml_domain::budget::{budget_tokens, cut, hit_order};
+use oml_domain::budget::{budget_tokens, cut};
 use oml_domain::claim_edges::{
     LabelRefusal, Ratifier, RatifyRefusal, check_label, check_ratifier, check_term_curies,
 };
@@ -85,6 +87,11 @@ use crate::types::{
     TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows,
     Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
     WorkareaStatusView,
+};
+
+use crate::search::{
+    CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fusion, MatchMode, OwnHeldScope, Pipeline,
+    RetrievalQuery, SearchConfig, fuse, query_terms,
 };
 
 const EVENTS_PAGE: usize = 512;
@@ -151,6 +158,8 @@ pub struct App<J, S, C, I, Sc> {
     /// `brief.max_tokens`: the budget a workarea's brief is cut to
     /// (ADR-0046 d8; FR-77).
     brief_max_tokens: u64,
+    /// The pipelines this deployment serves and its default (ADR-0049 d4).
+    search: SearchConfig,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -671,7 +680,12 @@ fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
 /// the vocabulary filter is unbuilt, and a request that sends either is
 /// refused before it reaches a recall (retrieval.md, the read log; ADR-0025
 /// d9, d16).
-fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<String, AppError> {
+fn recall_query_digest(
+    query: &str,
+    req: &RecallRequest,
+    scope: Uuid,
+    pipeline: Pipeline,
+) -> Result<String, AppError> {
     let mut kinds: Vec<&str> = req.kinds.iter().map(|kind| kind.as_str()).collect();
     kinds.sort_unstable();
     kinds.dedup();
@@ -685,6 +699,11 @@ fn recall_query_digest(query: &str, req: &RecallRequest, scope: Uuid) -> Result<
         "terms": [],
         "expand_terms": "none",
         "scope": scope.to_string(),
+        "search": pipeline.as_str(),
+        "match": match req.match_mode {
+            MatchMode::Any => "any",
+            MatchMode::All => "all",
+        },
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
 }
@@ -954,6 +973,7 @@ where
             connect_code_failures: AtomicU64::new(0),
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+            search: SearchConfig::default(),
         }
     }
 
@@ -965,6 +985,20 @@ where
             brief_max_tokens: max_tokens,
             ..self
         }
+    }
+
+    /// The app serving the search pipelines `search` names (configuration.md
+    /// `search.*`; ADR-0049 d4). The composition checks the store serves
+    /// their retrievers before it serves (`SearchConfig::require_supported`).
+    #[must_use]
+    pub fn with_search(self, search: SearchConfig) -> Self {
+        Self { search, ..self }
+    }
+
+    /// The deployment's search settings.
+    #[must_use]
+    pub fn search_config(&self) -> &SearchConfig {
+        &self.search
     }
 
     /// The app that tells `observer` what each request resolved: the key
@@ -1328,11 +1362,12 @@ where
     /// `derives_from` hides (http-api.md get; ADR-0025 d3). The path is the
     /// ancestry's names from the root, joined with `.` (ADR-0025 d14).
     ///
-    /// Not set-wise yet: each ancestor, the replaced version and the path
-    /// are read for this one row, so recall, get and every listing issue
-    /// those reads once per served row, against ADR-0024 d4 ("never N+1").
-    /// Only the rows themselves hydrate set-wise (`JournalStore::memories`).
-    /// The cost is unmeasured (FR-7, FR-25).
+    /// Not set-wise yet: each ancestor and the replaced version are read for
+    /// this one row, so recall, get and every listing issue those reads once
+    /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
+    /// path once per workarea ([`Self::served_in`]). Only the rows
+    /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
+    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (FR-7, FR-25).
     ///
     /// A version in `universe` is served to every key outside its authoring
     /// key set without its source: no principal, no `derives_from`, its
@@ -1342,13 +1377,32 @@ where
     async fn served(
         &self,
         caller: &Caller,
+        memory: MemoryRecord,
+    ) -> Result<ServedMemory, AppError> {
+        self.served_in(caller, memory, &mut BTreeMap::new()).await
+    }
+
+    /// [`Self::served`] with the workarea ancestries already read, by node:
+    /// a use case serving many rows reads each workarea's ancestry once
+    /// (ADR-0024 d4; ADR-0049 d12).
+    async fn served_in(
+        &self,
+        caller: &Caller,
         mut memory: MemoryRecord,
+        ancestries: &mut BTreeMap<Uuid, Option<Vec<WorkareaRecord>>>,
     ) -> Result<ServedMemory, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let ancestry = self
-            .journal
-            .workarea_ancestry(tenant_id, memory.workarea_id)
-            .await?;
+        let ancestry = match ancestries.get(&memory.workarea_id) {
+            Some(read) => read.clone(),
+            None => {
+                let read = self
+                    .journal
+                    .workarea_ancestry(tenant_id, memory.workarea_id)
+                    .await?;
+                ancestries.insert(memory.workarea_id, read.clone());
+                read
+            }
+        };
         // `universe` is the one node with no parent.
         let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
             && memory.author_key_id != caller.key.key_id;
@@ -4312,31 +4366,53 @@ where
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
-        let mut candidates = self
-            .journal
-            .recall_fts(key.tenant_id, &hit_nodes, &query, &kinds, req.k)
+        // The candidate scope is the core's, never an adapter's: the
+        // readable hit nodes, the kinds, and the own held rows only when
+        // asked — the own key set is the calling key alone until rotation is
+        // built (roles-and-keys.md#own), on the readable set, which already
+        // excludes the key's global denials (ADR-0025 d4; ADR-0049 d2).
+        let candidate_scope = CandidateScope {
+            promoted_nodes: hit_nodes.clone(),
+            kinds: kinds.clone(),
+            own_held: req.include_unreviewed.then(|| OwnHeldScope {
+                author_key_ids: vec![key.key_id],
+                nodes: readable.clone(),
+            }),
+        };
+        let pipeline = self
+            .pipeline_for(key.tenant_id, req.search.as_deref())
             .await?;
-        if req.include_unreviewed {
-            // The own key set is the calling key alone until rotation is
-            // built (roles-and-keys.md#own); the readable set already
-            // excludes the key's global denials.
-            candidates.extend(
-                self.journal
-                    .recall_own_held(
-                        key.tenant_id,
-                        &[key.key_id],
-                        &readable,
-                        &query,
-                        &kinds,
-                        req.k,
-                    )
-                    .await?,
-            );
-        }
-        // One total order over both lists, then the k cut, then the budget
-        // cut over the counts `body_bytes` gives without any body read.
-        hit_order(&mut candidates, |c| (c.score, c.memory_id));
+        let (mut candidates, terms, fallback) = self
+            .run_pipeline(key.tenant_id, pipeline, &candidate_scope, &query, req)
+            .await?;
+        self.observer.search(pipeline.as_str(), fallback);
+        // The k cut, then the budget cut over the counts `body_bytes` gives
+        // without any body read; steering is never cut and spent first
+        // (ADR-0025 d7).
         candidates.truncate(req.k);
+        // Spellings only for an empty or thin result, fewer hits than
+        // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
+        // budget cut, for the
+        // words no hit holds, from the vocabulary of the readable nodes
+        // alone, under any pipeline but v0.5.0's (ADR-0049 d6, d12).
+        let did_you_mean =
+            if pipeline.suggests() && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k) {
+                let unmatched: Vec<String> = terms
+                    .iter()
+                    .filter(|t| !candidates.iter().any(|c| c.matched.contains(t)))
+                    .cloned()
+                    .collect();
+                if unmatched.is_empty() {
+                    Vec::new()
+                } else {
+                    self.journal
+                        .suggest(key.tenant_id, &candidate_scope, &unmatched, 3)
+                        .await?
+                }
+            } else {
+                Vec::new()
+            };
+
         let steering_counts: Vec<u64> = steering
             .iter()
             .map(|m| budget_tokens(m.body_bytes))
@@ -4349,7 +4425,6 @@ where
         if let Some(budget) = &budget {
             candidates.truncate(budget.hits_served);
         }
-
         let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
         let mut rows: BTreeMap<Uuid, MemoryRecord> = self
             .journal
@@ -4359,9 +4434,10 @@ where
             .map(|m| (m.memory_id, m))
             .collect();
         let mut served_ids: Vec<Uuid> = steering.iter().map(|m| m.memory_id).collect();
+        let mut ancestries = BTreeMap::new();
         let mut served_steering = Vec::with_capacity(steering.len());
         for m in steering {
-            served_steering.push(self.served(&caller, m).await?);
+            served_steering.push(self.served_in(&caller, m, &mut ancestries).await?);
         }
         let mut hits = Vec::with_capacity(candidates.len());
         for candidate in &candidates {
@@ -4387,8 +4463,10 @@ where
             if admitted && !m.retirement && kinds.contains(&m.kind) {
                 served_ids.push(m.memory_id);
                 hits.push(RecallHit {
-                    served: self.served(&caller, m).await?,
+                    served: self.served_in(&caller, m, &mut ancestries).await?,
                     score: candidate.score,
+                    matched: candidate.matched.clone(),
+                    via: candidate.via.clone(),
                 });
             }
         }
@@ -4397,7 +4475,11 @@ where
             hits,
             budget,
             served_ids,
-            query_digest: recall_query_digest(&query, req, scope)?,
+            query_digest: recall_query_digest(&query, req, scope, pipeline)?,
+            pipeline,
+            terms,
+            fallback,
+            did_you_mean,
         })
     }
 
@@ -4595,6 +4677,94 @@ where
             });
         }
         Ok(out)
+    }
+
+    /// The pipeline a recall runs: the request's `search` when it names a
+    /// served one, else the tenant's journalled default while the
+    /// deployment still serves it, else the deployment's (ADR-0049 d4). A
+    /// name the deployment does not serve, unknown or disabled, is refused
+    /// naming the field, never replaced by another pipeline.
+    async fn pipeline_for(
+        &self,
+        tenant_id: Uuid,
+        requested: Option<&str>,
+    ) -> Result<Pipeline, AppError> {
+        if let Some(name) = requested {
+            return Pipeline::parse(name)
+                .filter(|p| self.search.serves(*p))
+                .ok_or_else(|| AppError::SearchUnavailable {
+                    name: name.to_owned(),
+                    served: self.served_pipelines(),
+                });
+        }
+        let tenant_default = self
+            .journal
+            .tenant_search_default(tenant_id)
+            .await?
+            .and_then(|name| Pipeline::parse(&name))
+            .filter(|p| self.search.serves(*p));
+        Ok(tenant_default.unwrap_or_else(|| self.search.default_pipeline()))
+    }
+
+    /// The served pipeline names, comma-separated, for a refusal's text.
+    fn served_pipelines(&self) -> String {
+        self.search
+            .enabled()
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Runs `pipeline` over the scope: each retriever's list, read
+    /// `FUSION_DEPTH` deep when the lists are fused, then the core's fusion
+    /// (ADR-0049 d3). Under `match: all` every retriever keeps only rows
+    /// with every term; when that leaves nothing, the any-term lists are
+    /// served and `fallback` says so (d5). The hits come back in the total
+    /// order of hits, uncut.
+    async fn run_pipeline(
+        &self,
+        tenant_id: Uuid,
+        pipeline: Pipeline,
+        scope: &CandidateScope,
+        query: &str,
+        req: &RecallRequest,
+    ) -> Result<(Vec<crate::search::Fused>, Vec<String>, bool), AppError> {
+        let depth = match pipeline.fusion() {
+            Fusion::Single => req.k,
+            Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
+        };
+        let mut modes = vec![req.match_mode];
+        if req.match_mode == MatchMode::All && pipeline != Pipeline::KeywordAll {
+            modes.push(MatchMode::Any);
+        }
+        let mut last = (Vec::new(), Vec::new());
+        for (attempt, mode) in modes.into_iter().enumerate() {
+            let mut lists = Vec::with_capacity(pipeline.retrievers().len());
+            for &kind in pipeline.retrievers() {
+                let list = self
+                    .journal
+                    .retrieve(
+                        tenant_id,
+                        kind,
+                        scope,
+                        RetrievalQuery {
+                            query,
+                            match_mode: mode,
+                            k: depth,
+                        },
+                    )
+                    .await?;
+                lists.push((kind, list));
+            }
+            let fused = fuse(&lists, pipeline.fusion());
+            let terms = query_terms(&lists);
+            if !fused.is_empty() {
+                return Ok((fused, terms, attempt > 0));
+            }
+            last = (fused, terms);
+        }
+        Ok((last.0, last.1, false))
     }
 
     /// Get one memory: the authoring key sees its own rows in every state,

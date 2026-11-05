@@ -391,7 +391,7 @@ naming it in `details.field`:
 | Mode | Arguments | Output | Rides |
 |---|---|---|---|
 | `get` | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `{mode, items}`, one item with `derives_from` and `attachments` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
-| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens` | `{mode, steering, hits, budget?}` | `POST /v1/memories/recall` |
+| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
 | `listing` | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `{mode, items, next_cursor}` | `GET /v1/memories` |
 
 - **get** answers the calling key's own rows in any state and others'
@@ -403,6 +403,20 @@ naming it in `details.field`:
   that fits, and `budget` reports the cut. `include_unreviewed: true`
   (default `false`) adds the key's own held rows that match, flagged
   `state: "held"`; it is the one flag for unreviewed rows (d4).
+- **recall's search** *(planned for v0.5.5, [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md))*:
+  `search` names the pipeline (`keyword-all`, `keyword-any`, `bm25`,
+  `bm25-trigram`) among those the server serves; omitted, the
+  organisation's default runs, `bm25` as shipped. Any word may match: an
+  identifier matches by its parts and a word by its stem; English stop words
+  are not read when the query has other words; `bm25-trigram` also matches a
+  misspelling by its letters. `match: "all"` keeps only memories holding
+  every word, and when none does serves the any-word hits with
+  `search.fallback: "any_term"`. The answer's `search` names the pipeline,
+  the query's words as read and, when fewer than three hits are found,
+  `did_you_mean` spellings for the words no hit holds, from the words of
+  promoted memories the key may read; each hit carries
+  `matched` (`terms`, `of`, `via`). A pipeline the server does not serve is
+  `request.validation` naming `/search`. The three tools stay three.
 - **listing** with `own: true`, the default, is everything the key wrote,
   newest first, in every state and every workarea it wrote in; with
   `own: false` it is the promoted tips of the workarea's subtree. `since`

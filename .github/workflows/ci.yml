@@ -332,6 +332,51 @@ jobs:
           claude plugin validate --strict plugins/oml
           claude plugin validate --strict plugins/oml-admin
 
+  recall-eval:
+    # The recall eval through the served oml_read, once per search pipeline,
+    # gated (ADR-0049 d9): the job fails when the default pipeline misses
+    # its gate or a category of it falls by more than one query against the
+    # committed results, or when keyword-all does not reproduce v0.5.0.
+    name: recall eval per search pipeline (served)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build --release --locked --bin oml-server-lead --bin oml
+      - name: Run and gate
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: oml
+          PGPASSWORD: oml_dev_only
+        run: bash eval/recall/served.sh "$RUNNER_TEMP/recall-eval"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recall-eval-results
+          path: ${{ runner.temp }}/recall-eval/*.json
+
+  recall-eval-data:
+    name: recall eval data parses and its labels resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python eval/recall/check_data.py
+
   chart:
     # The Helm chart (deploy/helm/oml; docs/adr/ADR-0033-interim-helm-chart.md
     # d10): rendered and checked, then installed on kind against Postgres in

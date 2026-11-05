@@ -44,6 +44,8 @@ from .generated.models import (
     MemorySummary,
     RecallRequest,
     RecallRequestKindsItem,
+    RecallRequestMatch,
+    RecallRequestSearch,
     RecallResponse,
     Serve,
     SubmitAccepted,
@@ -77,7 +79,16 @@ UNRESOLVED_RULE = (
 
 # The arguments of `read`'s recall and listing modes: oml_read's (ADR-0039
 # d4), and include_text, which the HTTP recall serves beside them.
-READ_RECALL = ("workarea", "k", "kinds", "include_text", "include_unreviewed", "max_tokens")
+READ_RECALL = (
+    "workarea",
+    "k",
+    "kinds",
+    "include_text",
+    "include_unreviewed",
+    "max_tokens",
+    "search",
+    "match",
+)
 READ_LISTING = (
     "own",
     "workarea",
@@ -319,6 +330,8 @@ class OmlClient:
         include_text: bool | None = None,
         include_unreviewed: bool | None = None,
         max_tokens: int | None = None,
+        search: str | None = None,
+        match: str | None = None,
         own: bool | None = None,
         claim_key: str | None = None,
         state: str | None = None,
@@ -344,6 +357,8 @@ class OmlClient:
             "include_text": include_text,
             "include_unreviewed": include_unreviewed,
             "max_tokens": max_tokens,
+            "search": search,
+            "match": match,
         }
         listing = {
             "own": own,
@@ -378,6 +393,8 @@ class OmlClient:
                 include_text=_opt(include_text),
                 include_unreviewed=_opt(include_unreviewed),
                 max_tokens=_opt(max_tokens),
+                search=RecallRequestSearch(search) if search is not None else UNSET,
+                match=RecallRequestMatch(match) if match is not None else UNSET,
             )
             return self._send(
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)

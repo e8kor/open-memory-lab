@@ -25,9 +25,10 @@ use oml_app::domain::{EventTime, KeySet};
 use oml_app::ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use oml_app::oauth_fetch::CappedFetcher;
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, DocumentFetcher, IdGen, KeyringError, KeyringStore, ScanOutcome,
-    Scanner, Signer,
+    AdmissionEnvelope, Clock, DocumentFetcher, IdGen, KeyringError, KeyringStore, Retriever as _,
+    ScanOutcome, Scanner, Signer,
 };
+use oml_app::search::{Pipeline, SearchConfig};
 use oml_app::types::AssignedNames;
 use oml_fetch::PinnedFetcher;
 use oml_fetch::signin::{ClientCredentials, ProviderClients};
@@ -81,6 +82,29 @@ pub struct Config {
     /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
     pub brief_max_tokens: u64,
+    /// `search.enabled` and `search.default`: the pipelines served and the
+    /// default (ADR-0049 d4).
+    pub search: SearchConfig,
+}
+
+/// `search.enabled`'s default: the pipelines that need no extension.
+/// `keyword-all`, which the recall eval runs for comparison, and
+/// `bm25-trigram`, which needs `pg_trgm`, are served only where a
+/// deployment enables them, so a database without the extension starts
+/// (configuration.md search.enabled; ADR-0049 d4, d12).
+pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 2] = [Pipeline::KeywordAny, Pipeline::Bm25];
+
+/// `search.default`'s default: `bm25`, chosen on the recall eval's gate
+/// together with the external sets: it passes its gate, ranks best on
+/// SciFact, NFCorpus and LoCoMo, and answers in a fraction of
+/// `bm25-trigram`'s time (ADR-0049 d9, d12; eval/bench/REPORT.md).
+pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25;
+
+/// The search settings of a deployment that sets none.
+#[must_use]
+pub fn default_search() -> SearchConfig {
+    SearchConfig::new(&DEFAULT_SEARCH_ENABLED, DEFAULT_SEARCH_PIPELINE)
+        .expect("the default pipeline is among the default enabled set")
 }
 
 /// Why a configuration is refused: `postgres.owner_url` unset is the role
@@ -108,6 +132,8 @@ const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
 const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
 const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
+const KEY_SEARCH_ENABLED: &str = "search.enabled";
+const KEY_SEARCH_DEFAULT: &str = "search.default";
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -276,6 +302,53 @@ impl Config {
                 ))
             })?,
         };
+        // A TOML array in the file, comma-separated in the environment; an
+        // unknown name, an empty set or a default outside it stops the start
+        // (configuration.md search.*; ADR-0049 d4).
+        let enabled_names: Option<Vec<String>> = match env(&env_name(KEY_SEARCH_ENABLED)) {
+            Some(list) => Some(
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|e| !e.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            None => match doc.as_ref().and_then(|d| file_lookup(d, KEY_SEARCH_ENABLED)) {
+                None => None,
+                Some(toml::Value::Array(entries)) => Some(
+                    entries
+                        .iter()
+                        .map(|e| {
+                            e.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                                ConfigError::Invalid(format!(
+                                    "{KEY_SEARCH_ENABLED} entries are pipeline names (configuration.md)"
+                                ))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?,
+                ),
+                Some(_) => {
+                    return Err(ConfigError::Invalid(format!(
+                        "{KEY_SEARCH_ENABLED} is an array of pipeline names (configuration.md)"
+                    )));
+                }
+            },
+        };
+        let enabled = match enabled_names {
+            None => DEFAULT_SEARCH_ENABLED.to_vec(),
+            Some(names) => SearchConfig::parse_names(&names)
+                .map_err(|e| ConfigError::Invalid(e.to_string()))?,
+        };
+        let default = match lookup(KEY_SEARCH_DEFAULT) {
+            None => DEFAULT_SEARCH_PIPELINE,
+            Some(name) => Pipeline::parse(name.trim()).ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_SEARCH_DEFAULT} {name:?} is not a pipeline this build serves (configuration.md)"
+                ))
+            })?,
+        };
+        let search = SearchConfig::new(&enabled, default)
+            .map_err(|e| ConfigError::Invalid(e.to_string()))?;
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -288,6 +361,7 @@ impl Config {
             web_google,
             web_github,
             brief_max_tokens,
+            search,
         })
     }
 
@@ -807,6 +881,16 @@ pub fn pg_ping(pool: PgPool) -> DbPing {
 /// (ADR-0023 d13).
 #[must_use]
 pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
+    // The lead's default search where the store can run it; a store probed
+    // before 0020 created `pg_trgm` serves the app's keyword pipelines. The
+    // start sets the configured search after refusing what the store cannot
+    // run (ADR-0049 d8).
+    let search = default_search();
+    let search = if search.require_supported(&store.retrievers()).is_ok() {
+        search
+    } else {
+        SearchConfig::default()
+    };
     App::new(
         Timed::new(store.clone()),
         LeadSigner::new(signing_key),
@@ -815,6 +899,7 @@ pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
         MarkerScanner,
     )
     .with_observer(Arc::new(ScopeObserver))
+    .with_search(search)
 }
 
 /// The lead composition: one store handle drives the app and the transport's
@@ -902,6 +987,7 @@ pub async fn start_lead(
         Traffic::default(),
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        None,
     )
     .await
 }
@@ -910,6 +996,10 @@ pub async fn start_lead(
 /// caps in place of [`PinnedFetcher`], so a test sees what the composed
 /// page asks of the network without reaching it, and the request line
 /// configured by `traffic` (ADR-0042 d7), as `main` starts it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per setting main composes"
+)]
 pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     store: &PgStore,
     signing_key: SigningKey,
@@ -918,12 +1008,27 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
     traffic: Traffic,
     web: Option<WebPages>,
     brief_max_tokens: u64,
+    search: Option<SearchConfig>,
 ) -> Result<LeadStart, String> {
+    // The retrievers the database can run decide which pipelines may be
+    // served: a configuration naming one it cannot run stops the start,
+    // naming the pipeline and what is missing (ADR-0049 d8).
+    let store = &store
+        .clone()
+        .with_search_probe()
+        .await
+        .map_err(|e| format!("search probe: {e}"))?;
+    let search = search.unwrap_or_else(default_search);
+    search
+        .require_supported(&store.retrievers())
+        .map_err(|e| e.to_string())?;
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
-    let app = lead_app(store, signing_key).with_brief_max_tokens(brief_max_tokens);
+    let app = lead_app(store, signing_key)
+        .with_brief_max_tokens(brief_max_tokens)
+        .with_search(search);
     let app = match oauth_issuer {
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
@@ -1046,6 +1151,56 @@ mod tests {
             .expect("env-over-file config loads");
         assert_eq!(cfg.postgres_url, "postgres://env/db");
         assert_eq!(cfg.listen, "0.0.0.0:9999");
+    }
+
+    /// `search.enabled` and `search.default` default to the gate's choice,
+    /// read a TOML array or a comma list, and stop the start on an unknown
+    /// name or a default outside the set (ADR-0049 d4, d8).
+    #[test]
+    fn search_settings_default_to_the_gated_pipeline_and_refuse_what_is_not_served() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let load = |extra: &[(&str, &str)]| {
+            let env = env_of(&[base.as_slice(), extra].concat());
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let cfg = load(&[]).expect("defaults load");
+        assert_eq!(cfg.search, default_search());
+        assert_eq!(cfg.search.default_pipeline(), Pipeline::Bm25);
+        assert!(
+            !cfg.search.serves(Pipeline::KeywordAll),
+            "keyword-all is opt-in"
+        );
+        assert!(
+            !cfg.search.serves(Pipeline::Bm25Trigram),
+            "bm25-trigram, which needs pg_trgm, is opt-in"
+        );
+        let cfg = load(&[
+            ("OML_SEARCH__ENABLED", "keyword-all, keyword-any"),
+            ("OML_SEARCH__DEFAULT", "keyword-any"),
+        ])
+        .expect("a comma list loads");
+        assert_eq!(
+            cfg.search.enabled(),
+            [Pipeline::KeywordAll, Pipeline::KeywordAny]
+        );
+        let file = "[postgres]\nurl = \"postgres://f/db\"\nowner_url = \"postgres://o@f/db\"\n[search]\nenabled = [\"bm25\"]\ndefault = \"bm25\"\n";
+        let cfg = Config::from_sources(Some(file), &|_| None).expect("a TOML array loads");
+        assert_eq!(cfg.search.enabled(), [Pipeline::Bm25]);
+        for (extra, says) in [
+            (&[("OML_SEARCH__ENABLED", "hybrid")][..], "hybrid"),
+            (
+                &[("OML_SEARCH__ENABLED", "keyword-any")][..],
+                "search.default bm25",
+            ),
+            (&[("OML_SEARCH__DEFAULT", "dense")][..], "dense"),
+            (&[("OML_SEARCH__ENABLED", " , ")][..], "empty"),
+        ] {
+            let err = load(extra).expect_err("refused");
+            assert!(err.to_string().contains(says), "{err}");
+        }
     }
 
     #[test]

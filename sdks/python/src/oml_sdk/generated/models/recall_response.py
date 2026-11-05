@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.memory import Memory
     from ..models.recall_budget import RecallBudget
     from ..models.recall_response_hits_item import RecallResponseHitsItem
+    from ..models.recall_search import RecallSearch
 
 
 T = TypeVar("T", bound="RecallResponse")
@@ -24,18 +25,20 @@ class RecallResponse:
         steering (list[Memory]): Applicable steering, ordered structurally and never cut by a budget — membership and
             order declared in docs/architecture/retrieval.md (ADR-0025 d8).
         hits (list[RecallResponseHitsItem]):
+        query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
+        search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6).
         budget (RecallBudget | Unset): How the max_tokens cut was applied (docs/architecture/retrieval.md, Token
             budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the
             90-token hit is not, because the cut is a strict rank prefix. Example: {'max_tokens': 500, 'counter': 'oml-
             tc/1', 'steering_tokens': 120, 'used_tokens': 420, 'truncated': True, 'hits_omitted': 2, 'next_hit_tokens':
             250}.
-        query_digest (str | Unset): SHA-256 of plaintext unless a field says ciphertext.
     """
 
     steering: list[Memory]
     hits: list[RecallResponseHitsItem]
+    query_digest: str
+    search: RecallSearch
     budget: RecallBudget | Unset = UNSET
-    query_digest: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,11 +52,13 @@ class RecallResponse:
             hits_item = hits_item_data.to_dict()
             hits.append(hits_item)
 
+        query_digest = self.query_digest
+
+        search = self.search.to_dict()
+
         budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.budget, Unset):
             budget = self.budget.to_dict()
-
-        query_digest = self.query_digest
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -61,12 +66,12 @@ class RecallResponse:
             {
                 "steering": steering,
                 "hits": hits,
+                "query_digest": query_digest,
+                "search": search,
             }
         )
         if budget is not UNSET:
             field_dict["budget"] = budget
-        if query_digest is not UNSET:
-            field_dict["query_digest"] = query_digest
 
         return field_dict
 
@@ -75,6 +80,7 @@ class RecallResponse:
         from ..models.memory import Memory
         from ..models.recall_budget import RecallBudget
         from ..models.recall_response_hits_item import RecallResponseHitsItem
+        from ..models.recall_search import RecallSearch
 
         d = dict(src_dict)
         steering = []
@@ -91,6 +97,10 @@ class RecallResponse:
 
             hits.append(hits_item)
 
+        query_digest = d.pop("query_digest")
+
+        search = RecallSearch.from_dict(d.pop("search"))
+
         _budget = d.pop("budget", UNSET)
         budget: RecallBudget | Unset
         if isinstance(_budget, Unset):
@@ -98,13 +108,12 @@ class RecallResponse:
         else:
             budget = RecallBudget.from_dict(_budget)
 
-        query_digest = d.pop("query_digest", UNSET)
-
         recall_response = cls(
             steering=steering,
             hits=hits,
-            budget=budget,
             query_digest=query_digest,
+            search=search,
+            budget=budget,
         )
 
         recall_response.additional_properties = d

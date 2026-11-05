@@ -103,6 +103,14 @@ nav:
       - MCP plugin: api/mcp-plugin.md
       - Errors: api/errors.md
       - Reviewer crews: api/reviewer-crews.md
+      - Benchmarks:
+          - Overview: api/benchmarks/index.md
+          - Synthetic recall set: api/benchmarks/recall-synthetic.md
+          - BEIR SciFact: api/benchmarks/beir-scifact.md
+          - BEIR NFCorpus: api/benchmarks/beir-nfcorpus.md
+          - LoCoMo: api/benchmarks/locomo.md
+          - SciFact ×10: api/benchmarks/beir-scifact-x10.md
+          - Latency at scale: api/benchmarks/scale.md
   - CLI:
       - Reference: cli/reference.md
       - Sessions: cli/sessions.md
@@ -173,3 +181,4 @@ nav:
       - ADR-0044: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md
       - ADR-0045: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md
       - ADR-0046: adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md
+      - ADR-0049: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md

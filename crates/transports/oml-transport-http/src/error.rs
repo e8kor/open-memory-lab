@@ -350,6 +350,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::DefaultUncovered { workarea } => ApiError::validation(format!(
             "default_workarea_id {workarea} is covered by no grant of the key"
         )),
+        AppError::SearchUnavailable { name, served } => ApiError::validation(format!(
+            "search {name:?} is not served here; served: {served}"
+        ))
+        .with_details(json!({ "field": "/search", "served": served.split(", ").collect::<Vec<_>>() })),
         AppError::BudgetWithoutBodies => ApiError::validation(
             "max_tokens is refused with include_text false: a budget counts text that would not be sent",
         ),

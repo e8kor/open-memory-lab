@@ -217,6 +217,7 @@ async fn lead(store: &PgStore, key: &SigningKey, providers: &MemSignIn) -> Route
             providers.clone(),
         )),
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        None,
     )
     .await
     .expect("the lead starts")

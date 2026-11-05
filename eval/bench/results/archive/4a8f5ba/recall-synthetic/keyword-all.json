@@ -1,0 +1,134 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "recall-synthetic",
+ "suite_version": "eval/recall data version 1",
+ "kind": "recall",
+ "method": "keyword-all",
+ "date": "2026-11-04",
+ "commit": "9a6a0d0",
+ "environment": {
+  "host": "8 vCPU / 15 GB",
+  "postgres": "17.9",
+  "build": "release"
+ },
+ "n_queries": 121,
+ "n_docs": 200,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.156,
+  "recall@10": 0.125,
+  "recall@100": null,
+  "mrr@10": 0.174,
+  "success@1": 0.174,
+  "success@5": 0.174,
+  "zero_result_rate": 0.826
+ },
+ "per_category": {
+  "exact": {
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "recall@10": 0.561,
+   "mrr@10": 1.0,
+   "ndcg@10": 0.84,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "paraphrase": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "inflection": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "partial": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "typo": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "identifier": {
+   "success@1": 0.727,
+   "success@5": 0.727,
+   "recall@10": 0.682,
+   "mrr@10": 0.727,
+   "ndcg@10": 0.711,
+   "zero_result_rate": 0.273,
+   "n_queries": 11
+  },
+  "question": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "long": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "negation": {
+   "success@1": 0.182,
+   "success@5": 0.182,
+   "recall@10": 0.136,
+   "mrr@10": 0.182,
+   "ndcg@10": 0.166,
+   "zero_result_rate": 0.818,
+   "n_queries": 11
+  },
+  "temporal": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  },
+  "multihop": {
+   "success@1": 0.0,
+   "success@5": 0.0,
+   "recall@10": 0.0,
+   "mrr@10": 0.0,
+   "ndcg@10": 0.0,
+   "zero_result_rate": 1.0,
+   "n_queries": 11
+  }
+ },
+ "latency_ms": {
+  "p50": 14.63,
+  "p95": 18.71,
+  "p99": 32.56
+ },
+ "reference": null,
+ "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured."
+}

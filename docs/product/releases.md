@@ -47,6 +47,7 @@ Nothing in this section is released. Each row is the plan of 2026-11-03 as revis
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
+| **v0.5.5** | planned | Recall finds a memory by any of its words, by the parts of a code name, by another form of a word and despite a misspelling, ranking rarer words higher; each hit says which words it matched. An organisation's administrator can choose how its recalls search, without a restart, and the shipped default is the search that scored best on OML's recall test. A recall that sent many words and relied on every one being required now gets more results. | [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) (proposed) |
 | **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
@@ -122,6 +123,7 @@ many memories in one request. A web console beyond the two pages of ADR-0045 is 
 | Workarea lifecycle: development, committed, validated | introduced in v0.5.2 (workareas carry the development status since v0.1.0) |
 | Labelled links between memories | introduced in v0.5.2 |
 | A brief for each workarea | introduced in v0.5.2 |
+| Recall by any word, code-name parts, word forms and misspellings, chosen per organisation | planned for v0.5.5 |
 | Demotion on the admin page | planned for v0.6.0 |
 | In-progress workareas | planned for v0.6.0 |
 | Ontology crews, shared vocabularies | parked |
@@ -180,5 +182,6 @@ which part is still decided, not built.
 | [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) request logs, metrics and traces | accepted | Introduced in v0.4.1. |
 | [ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) the default server | accepted | Introduced in v0.4.1. |
 | [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) a workarea of one's own for each person, and a curated shared area | accepted | Introduced in v0.5.0. |
+| [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) search pipelines | proposed | Planned for v0.5.5 (increment 1, with ADR-0048's first three stages); later increments not assigned. |
 | [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) sign-in to a user page and an admin page | accepted | Introduced in v0.5.0: sign-in, sessions, the email list, the user page with its keys, setup, memories, workareas and review of one's own agents' work, and the admin page's list, capacities, queue, review, curation, replacing memories and reading any memory with its attribution. Demotion on the admin page is planned for v0.6.0, since it waits for a verb that is not built. |
 | [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) the lifecycle, claim edges and the brief in v0.5.2 | accepted | Introduced in v0.5.2; the `oml_write` `links` field and a view on the web pages are planned for a later record. |
