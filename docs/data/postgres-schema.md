@@ -1286,7 +1286,7 @@ ALTER TABLE memories ATTACH PARTITION memories_t_<…> FOR VALUES IN ('<tenant i
 
 ### search (ADR-0049)
 
-**Status:** planned for v0.5.5, built in `migrations/0020_search.sql`
+**Status:** introduced in v0.5.5, built in `migrations/0020_search.sql`
 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d12).
 
 ```sql
