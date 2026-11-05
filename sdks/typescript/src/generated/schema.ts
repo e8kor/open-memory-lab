@@ -1158,7 +1158,7 @@ export interface components {
             /** @description The calling key wrote it. */
             own: boolean;
         };
-        /** @description Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d13). Present only when the request sent timings true, which a deployment serves only with search.timings on. */
+        /** @description Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request sent timings true, which a deployment serves only with search.timings on. */
         RecallTimings: {
             /** @description Keys from the closed set scope, retrieve_keyword_all, retrieve_keyword_any, retrieve_bm25, retrieve_trigram, retrieve_bm25_postings, retrieve_sparse, fuse, rerank, suggest, hydrate, cut; a stage that did not run is absent. */
             stages_ms: {
@@ -1279,7 +1279,7 @@ export interface components {
              */
             match?: "any" | "all";
             feedback?: components["schemas"]["Feedback"];
-            /** @description Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9. */
+            /** @description Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9. */
             timings?: boolean;
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */

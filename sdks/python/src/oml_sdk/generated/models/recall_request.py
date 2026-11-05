@@ -62,7 +62,7 @@ class RecallRequest:
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
             timings (bool | Unset): Omitted, false. true serves the answer's per-stage timings; refused with
-                request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since
+                request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since
                 v0.5.9.
     """
 

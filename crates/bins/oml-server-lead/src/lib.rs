@@ -440,7 +440,7 @@ const KEY_SEARCH_DEFAULT: &str = "search.default";
 const KEY_RERANK_MODEL: &str = "search.rerank.model";
 const KEY_RERANK_MODEL_DIR: &str = "search.rerank.model_dir";
 const KEY_RERANK_FETCH: &str = "search.rerank.fetch";
-/// Whether a recall may ask for its per-stage timings (ADR-0049 d13).
+/// Whether a recall may ask for its per-stage timings (ADR-0049 d14).
 const KEY_SEARCH_TIMINGS: &str = "search.timings";
 const KEY_RERANK_DEPTH: &str = "search.rerank.depth";
 const KEY_RERANK_FLOOR: &str = "search.rerank.floor";

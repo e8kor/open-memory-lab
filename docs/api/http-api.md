@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.5.7-design`), from which moment the covenant — and this section's definition of
+(currently `0.5.8-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -834,7 +834,7 @@ recall is not run; past 1,000 feedback members from one key in a UTC day, refuse
 1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
 
-*Since v0.5.9 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13):* a body sending `timings: true` receives
+*Since v0.5.9 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d14):* a body sending `timings: true` receives
 `timings: {stages_ms, total_ms}`, each stage's milliseconds in the order they ran (`scope`,
 `retrieve_<retriever>` per list, `fuse`, `rerank`, `suggest`, `hydrate`, `cut`), where the
 deployment sets `search.timings`; elsewhere it is `request.validation` naming `/timings`. Every

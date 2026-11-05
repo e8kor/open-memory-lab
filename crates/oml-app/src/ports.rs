@@ -1687,7 +1687,7 @@ pub trait RequestObserver: Send + Sync {
     }
 
     /// A recall through `pipeline` spent `seconds` in `stage`, one of
-    /// [`crate::search::Stage`]'s names (ADR-0049 d13). Telling no one is
+    /// [`crate::search::Stage`]'s names (ADR-0049 d14). Telling no one is
     /// the default.
     fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
         let _ = (pipeline, stage, seconds);

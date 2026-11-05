@@ -9,7 +9,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; since v0.5.8 each list `bm25-sparse` fuses is capped at its depth before fusion (ADR-0049 d13); d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's

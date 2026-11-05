@@ -1,4 +1,4 @@
-//! A recall's per-stage timing trace (ADR-0049 d13): always measured, and
+//! A recall's per-stage timing trace (ADR-0049 d14): always measured, and
 //! served in the answer only on request where the deployment serves it.
 
 use oml_app::App;

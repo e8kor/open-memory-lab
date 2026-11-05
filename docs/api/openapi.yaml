@@ -2721,7 +2721,7 @@ components:
     RecallTimings:
       type: object
       additionalProperties: false
-      description: "Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d13). Present only when the request sent timings true, which a deployment serves only with search.timings on."
+      description: "Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request sent timings true, which a deployment serves only with search.timings on."
       required: [stages_ms, total_ms]
       properties:
         stages_ms:
@@ -2857,7 +2857,7 @@ components:
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
-        timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d13). Since v0.5.9." }
+        timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9." }
 
     Feedback:
       type: object

@@ -31,7 +31,7 @@ class RecallResponse:
         query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
         search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
         timings (RecallTimings | Unset): Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049
-            d13). Present only when the request sent timings true, which a deployment serves only with search.timings on.
+            d14). Present only when the request sent timings true, which a deployment serves only with search.timings on.
         budget (RecallBudget | Unset): How the max_tokens cut was applied (docs/architecture/retrieval.md, Token
             budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the
             90-token hit is not, because the cut is a strict rank prefix. Example: {'max_tokens': 500, 'counter': 'oml-

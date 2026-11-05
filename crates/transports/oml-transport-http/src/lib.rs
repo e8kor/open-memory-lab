@@ -850,7 +850,7 @@ where
             obj.insert("budget".to_owned(), budget_json(budget));
         }
         // The timings block is present if and only if timings was sent
-        // true, which only a deployment serving them admits (ADR-0049 d13).
+        // true, which only a deployment serving them admits (ADR-0049 d14).
         if req.timings == Some(true)
             && let Some(obj) = response.as_object_mut()
         {
@@ -2414,7 +2414,7 @@ where
 }
 
 /// openapi.yaml `RecallTimings`: each stage's milliseconds, in the order
-/// the stages ran, and their sum (ADR-0049 d13).
+/// the stages ran, and their sum (ADR-0049 d14).
 fn timings_json(timings: &oml_app::search::Timings) -> Value {
     let ms = |seconds: f64| (seconds * 1_000_000.0).round() / 1000.0;
     let stages: serde_json::Map<String, Value> = timings
@@ -2532,7 +2532,7 @@ struct RecallBody {
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
     /// The answer's per-stage `timings`, where the deployment serves them
-    /// (`search.timings`; ADR-0049 d13).
+    /// (`search.timings`; ADR-0049 d14).
     timings: Option<bool>,
     /// The origin filters (ADR-0057 d4).
     anchor_repo: Option<String>,

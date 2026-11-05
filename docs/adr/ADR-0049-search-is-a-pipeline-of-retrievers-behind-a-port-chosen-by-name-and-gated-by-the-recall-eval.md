@@ -9,8 +9,9 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 **Status:** proposed · 2026-11-04
 
-**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13
-proposed for v0.5.9; later increments not assigned ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
+each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
+for v0.5.9; later increments not assigned ([releases](../product/releases.md#decisions))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
@@ -380,7 +381,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
   stop at the depth; the cap is the guard for the next one.
 
 
-- **d13 — Every recall measures its stages, records them by pipeline and stage, and serves them
+- **d14 — Every recall measures its stages, records them by pipeline and stage, and serves them
   on request where an operator allows** (added 2026-11-05, v0.5.9; adopted from basic-memory's
   per-stage search trace, `repository/search_trace.py`, which records `fts_ms`, `fusion_ms` and
   the ranks before and after reranking). A recall times its stages, each a value of

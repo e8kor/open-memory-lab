@@ -14,7 +14,7 @@ T = TypeVar("T", bound="RecallTimings")
 
 @_attrs_define
 class RecallTimings:
-    """Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d13). Present only when the request
+    """Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request
     sent timings true, which a deployment serves only with search.timings on.
 
         Attributes:

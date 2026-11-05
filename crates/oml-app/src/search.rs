@@ -283,7 +283,7 @@ impl fmt::Display for Pipeline {
 }
 
 /// A stage of a recall, as its timing trace and the stage histogram name it
-/// (ADR-0049 d13): a closed set, so the metric's labels stay bounded.
+/// (ADR-0049 d14): a closed set, so the metric's labels stay bounded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stage {
     /// The scope: the ancestry, the readable nodes and the steering in force.
@@ -342,7 +342,7 @@ impl Stage {
 }
 
 /// A recall's per-stage durations, in seconds, in the order the stages ran
-/// (ADR-0049 d13). A stage that did not run is absent; a stage that ran
+/// (ADR-0049 d14). A stage that did not run is absent; a stage that ran
 /// twice, as a retriever's list under a fallback, is summed.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Timings {
@@ -512,14 +512,14 @@ impl SearchConfig {
     }
 
     /// The configuration with recall timings served on request or not
-    /// (`search.timings`; ADR-0049 d13).
+    /// (`search.timings`; ADR-0049 d14).
     #[must_use]
     pub fn with_timings(self, timings: bool) -> Self {
         Self { timings, ..self }
     }
 
     /// Whether a recall may ask for its per-stage `timings` block. The
-    /// stage histogram is recorded either way (ADR-0049 d13).
+    /// stage histogram is recorded either way (ADR-0049 d14).
     #[must_use]
     pub fn timings(&self) -> bool {
         self.timings

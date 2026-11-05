@@ -4993,7 +4993,7 @@ where
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
         // Timings are served only where the deployment serves them, and a
-        // request for them elsewhere is refused by name (ADR-0049 d13).
+        // request for them elsewhere is refused by name (ADR-0049 d14).
         if req.timings && !self.search.timings() {
             return Err(AppError::TimingsOff);
         }

@@ -220,7 +220,7 @@ Decided, not built.
     | `oml_recall_events_total` | counter | `outcome` (`written`, `dropped_queue_full`, `dropped_store_error`, `dropped_no_partition`) | 4 |
     | `oml_usage_credits_total` | counter | `outcome` (`counted`, `author`, `duplicate`, `rate_limited`, `unreadable_source`) | 5 |
     | `oml_labeller_lag_seconds` | gauge | none | 1 |
-    | `oml_recall_stage_duration_seconds` | histogram, ADR-0042 d12's 17 bounds (ADR-0049 d13, added 2026-11-05) | `pipeline`, `stage` (ADR-0049 d13's 12 values; a pipeline observes only its own) | ≤ 95 per served pipeline |
+    | `oml_recall_stage_duration_seconds` | histogram, ADR-0042 d12's 17 bounds (ADR-0049 d14, added 2026-11-05) | `pipeline`, `stage` (ADR-0049 d14's 12 values; a pipeline observes only its own) | ≤ 95 per served pipeline |
     | `oml_remember_similar_total` | counter | `relation` (`none`, `same_text`, `near_copy`; ADR-0050 r2's d1), `on_similar` (`hold`, `refuse`) | 6 |
     | `oml_remember_similar_duration_seconds` | histogram, ADR-0042 d12's 17 bounds (added 2026-11-05) | none | 19 |
     | `oml_remember_warnings_total` | counter | `finding` (ADR-0050 d6's six `quality.*` classes) | 6 |
@@ -229,7 +229,7 @@ Decided, not built.
     | `oml_keys_rejection_share` | histogram over keys with ≥ 10 verdicts in 7 days, bounds 0.05 … 1.0 by 0.05 | none | 22 |
     | `oml_memories_unrecalled` | gauge, refreshed by the labeller every 10 minutes | `promoted_for` (`7d`, `30d`, `90d`, `older`) | 4 |
 
-    The budget is 400 new series per lead, about 300 used above; the stage and similar-check histograms added on 2026-11-05 (ADR-0049 d13, ADR-0050 d1) take about 115 more at the default pipeline, so the budget is 520; a law holds every label of
+    The budget is 400 new series per lead, about 300 used above; the stage and similar-check histograms added on 2026-11-05 (ADR-0049 d14, ADR-0050 d1) take about 115 more at the default pipeline, so the budget is 520; a law holds every label of
     these families to its declared set (d13). Gauges that need a query are refreshed by the
     labeller and read from memory at scrape, so a scrape runs no SQL (ADR-0042 d12's reason for
     leaving such gauges designed). The Grafana dashboard `oml-quality`, committed under

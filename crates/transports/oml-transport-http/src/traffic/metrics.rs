@@ -497,7 +497,7 @@ impl Metrics {
             .observe(seconds);
     }
 
-    /// One recall stage's seconds (ADR-0049 d13).
+    /// One recall stage's seconds (ADR-0049 d14).
     pub(crate) fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
         self.quality
             .stages

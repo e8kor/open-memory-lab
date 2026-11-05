@@ -81,7 +81,7 @@ struct Observed {
     /// A write's similar check: the best relation named, `on_similar`, and
     /// its seconds (ADR-0050 d1; ADR-0054 d1).
     similar: Option<(&'static str, &'static str, f64)>,
-    /// A recall's stages: pipeline, stage and seconds (ADR-0049 d13).
+    /// A recall's stages: pipeline, stage and seconds (ADR-0049 d14).
     stages: Vec<(&'static str, &'static str, f64)>,
 }
 
@@ -186,7 +186,7 @@ pub fn similar_checked(relation: &'static str, on_similar: &'static str, seconds
     in_scope(|scope| scope.update(|o, _| o.similar = Some((relation, on_similar, seconds))));
 }
 
-/// The request's recall spent `seconds` in `stage` (ADR-0049 d13).
+/// The request's recall spent `seconds` in `stage` (ADR-0049 d14).
 pub fn recall_stage(pipeline: &'static str, stage: &'static str, seconds: f64) {
     in_scope(|scope| scope.update(|o, _| o.stages.push((pipeline, stage, seconds))));
 }

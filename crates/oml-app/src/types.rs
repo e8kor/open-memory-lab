@@ -1576,7 +1576,7 @@ pub struct RecallRequest {
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
     /// The answer's per-stage `timings` block, refused unless the
-    /// deployment serves it (`search.timings`; ADR-0049 d13).
+    /// deployment serves it (`search.timings`; ADR-0049 d14).
     pub timings: bool,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
@@ -1705,7 +1705,7 @@ pub struct RecallResult {
     pub pruned: Vec<String>,
     /// Each stage's duration, always measured; served in the answer only
     /// when the request asked and the deployment serves it, and recorded in
-    /// the stage histogram always (ADR-0049 d13).
+    /// the stage histogram always (ADR-0049 d14).
     pub timings: crate::search::Timings,
 }
 
@@ -2526,7 +2526,7 @@ pub enum AppError {
     )]
     SimilarExists(Vec<SimilarItem>),
     #[error(
-        "timings is refused: this deployment does not serve recall timings (search.timings; ADR-0049 d13, request.validation)"
+        "timings is refused: this deployment does not serve recall timings (search.timings; ADR-0049 d14, request.validation)"
     )]
     TimingsOff,
     #[error("deterministic scan veto: {0} (admission.md — a refusal that journals nothing)")]
