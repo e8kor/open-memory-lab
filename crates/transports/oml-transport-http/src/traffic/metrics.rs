@@ -137,7 +137,7 @@ impl Default for Metrics {
         // over every tenant with no tenant label.
         registry.register(
             "oml_sparse_encoded",
-            "versions the learned sparse encoder wrote postings for, or failed to",
+            "versions the learned sparse encoder wrote postings for, failed to, or parked as dead letters",
             sparse_encoded.clone(),
         );
         registry.register(
@@ -226,9 +226,10 @@ impl Metrics {
             .inc();
     }
 
-    /// One encoder pass's versions: `written` and `failed` (ADR-0052 d15).
-    pub fn sparse_pass(&self, written: u64, failed: u64) {
-        for (outcome, n) in [("written", written), ("failed", failed)] {
+    /// One encoder pass's versions: `written`, `failed`, and of those
+    /// `parked` at the attempts' ceiling (ADR-0052 d15).
+    pub fn sparse_pass(&self, written: u64, failed: u64, parked: u64) {
+        for (outcome, n) in [("written", written), ("failed", failed), ("parked", parked)] {
             if n > 0 {
                 self.sparse_encoded
                     .get_or_create(&SparseLabels {

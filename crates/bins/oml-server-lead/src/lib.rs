@@ -112,8 +112,17 @@ pub const DEFAULT_SPARSE_THREADS: usize = 2;
 /// d15).
 pub const SPARSE_PASS_PER_TENANT: usize = 16;
 
-/// How long the encoder task waits after a pass that found nothing.
+/// The shortest wait after a pass that found nothing; each idle pass in a
+/// row doubles it up to [`SPARSE_IDLE_MAX_SECONDS`], and a pass with work
+/// resets it, so an idle encoder costs one read every half minute
+/// (ADR-0052 d15; MEDIUM-3 on review).
 pub const SPARSE_IDLE_SECONDS: u64 = 1;
+
+/// The longest wait between idle passes.
+pub const SPARSE_IDLE_MAX_SECONDS: u64 = 30;
+
+/// How often the backlog gauge is read, whatever the passes find.
+pub const SPARSE_GAUGE_SECONDS: u64 = 30;
 
 impl Default for SparseSettings {
     fn default() -> Self {
@@ -183,6 +192,8 @@ pub fn spawn_sparse_encoder(
     metrics: Arc<oml_transport_http::traffic::Metrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut idle = SPARSE_IDLE_SECONDS;
+        let mut gauged: Option<std::time::Instant> = None;
         loop {
             let busy = match oml_app::app::encode_sparse_pass(
                 &store,
@@ -192,12 +203,13 @@ pub fn spawn_sparse_encoder(
             .await
             {
                 Ok(pass) => {
-                    metrics.sparse_pass(pass.written, pass.failed);
+                    metrics.sparse_pass(pass.written, pass.failed, pass.parked);
                     if pass.failed > 0 {
                         tracing::warn!(
                             event = "sparse_encode_failed",
                             failed = pass.failed,
-                            "versions failed to encode; they stay queued with their reason (search_sparse_queue.last_error)"
+                            parked = pass.parked,
+                            "versions failed to encode; they stay queued with their reason, and one failing too often is parked (search_sparse_queue.last_error, parked_at)"
                         );
                     }
                     pass.busy()
@@ -207,11 +219,17 @@ pub fn spawn_sparse_encoder(
                     false
                 }
             };
-            if let Ok(waiting) = store.sparse_backlog().await {
-                metrics.sparse_backlog(waiting);
+            if gauged.is_none_or(|t| t.elapsed().as_secs() >= SPARSE_GAUGE_SECONDS) {
+                if let Ok(waiting) = store.sparse_backlog().await {
+                    metrics.sparse_backlog(waiting);
+                }
+                gauged = Some(std::time::Instant::now());
             }
-            if !busy {
-                tokio::time::sleep(std::time::Duration::from_secs(SPARSE_IDLE_SECONDS)).await;
+            if busy {
+                idle = SPARSE_IDLE_SECONDS;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(idle)).await;
+                idle = (idle * 2).min(SPARSE_IDLE_MAX_SECONDS);
             }
         }
     })
@@ -1483,6 +1501,23 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     search
         .require_sparse(sparse.is_some())
         .map_err(|e| e.to_string())?;
+    // A lead serving no sparse pipeline turns every tenant's sparse queue
+    // off and empties it, so nothing is queued for an encoder no one runs;
+    // one serving one turns them on through its encoder's backfill
+    // (ADR-0052 d15, HIGH-1 on review).
+    if !search.needs_sparse() {
+        let off = store
+            .sparse_off()
+            .await
+            .map_err(|e| format!("search.sparse: turning the queue off: {e}"))?;
+        if off > 0 {
+            tracing::info!(
+                event = "sparse_queue_off",
+                tenants = off,
+                "no sparse pipeline is served: the learned sparse queue is off and empty"
+            );
+        }
+    }
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;

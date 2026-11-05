@@ -493,14 +493,23 @@ mod model {
         fn encode_documents(&self, texts: Vec<String>) -> SparseFuture<'_> {
             Box::pin(async move {
                 let this = self.clone();
+                // Each text alone, a panic included, so one bad claim fails
+                // its own entry and never its batch (ADR-0052 d15).
                 tokio::task::spawn_blocking(move || {
                     texts
                         .iter()
-                        .map(|t| this.document(t))
-                        .collect::<Result<Vec<_>, String>>()
+                        .map(|t| {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                this.document(t)
+                            }))
+                            .unwrap_or_else(|_| {
+                                Err("the encoder panicked on this claim".to_owned())
+                            })
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())
             })
         }
     }

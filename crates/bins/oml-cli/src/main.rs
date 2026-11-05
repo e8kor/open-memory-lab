@@ -3788,7 +3788,18 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
         .copied()
         .filter(|p| matches!(*p, "sparse" | "bm25-sparse"))
         .collect();
+    let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
+    let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
     if sparse.is_empty() {
+        // A backlog where no sparse pipeline is served has nothing to drain
+        // it: another lead serving one is enqueueing, or this lead has not
+        // restarted since one stopped (ADR-0052 d15).
+        if n("sparse_backlog") > 0 {
+            return vec![format!(
+                "warn search_sparse_undrained: {} memory versions wait for a sparse encoder and this lead serves no sparse pipeline, so nothing drains them; serve sparse or bm25-sparse on every lead, or restart the leads without it, whose start turns the queue off and empties it (ADR-0052 d15)",
+                n("sparse_backlog")
+            )];
+        }
         return Vec::new();
     }
     let mut lines = Vec::new();
@@ -3798,8 +3809,6 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
             sparse.join(", ")
         )];
     };
-    let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
-    let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
     match h {
         Some(_) => lines.push(format!("sparse {model}, backlog {}", n("sparse_backlog"))),
         None => lines.push(format!("sparse {model}")),
@@ -3810,9 +3819,15 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
             n("sparse_backlog")
         ));
     }
+    if n("sparse_parked") > 0 {
+        lines.push(format!(
+            "warn search_sparse_parked: {} memory versions failed to encode too often and are parked, so sparse lists never hold them until they are written again; search_sparse_queue.last_error names each reason (oml_sparse_encoded_total{{outcome=\"parked\"}})",
+            n("sparse_parked")
+        ));
+    }
     if n("sparse_failing") > 0 {
         lines.push(format!(
-            "warn search_sparse_failed: {} memory versions failed to encode and are retried after at most an hour; search_sparse_queue.last_error names each reason, and the lead's log event sparse_encode_failed counts them",
+            "warn search_sparse_failed: {} memory versions failed to encode and are retried after at most an hour, each parked after five failures; search_sparse_queue.last_error names each reason, and the lead's log event sparse_encode_failed counts them",
             n("sparse_failing")
         ));
     }

@@ -3,7 +3,11 @@
 -- transaction, and the encoder writes its kind 2 postings later, off the
 -- commit path (ADR-0052 d15). Replaces 0021's trigger function, so the
 -- enqueue rides the same trigger, and 0021's refill, so a refill rebuilds
--- kind 1 alone and keeps the encoder's kind 2 rows.
+-- kind 1 alone and keeps the encoder's kind 2 rows. Nothing is queued for a
+-- tenant until a lead serving a sparse pipeline turns its sparse state on
+-- (search_sparse_state), so a deployment on the default pipelines keeps no
+-- queue; that lead backfills the tenant's existing versions in bounded,
+-- resumable steps (amended on review, 2026-11-05).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file
 -- is edited. Normative shapes: docs/data/postgres-schema.md "search
 -- postings (ADR-0052)".
@@ -25,13 +29,17 @@ CREATE TABLE search_sparse_queue (
     attempts    integer     NOT NULL DEFAULT 0,
     next_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_error  text,
+    parked_at   timestamptz,
     CONSTRAINT search_sparse_queue_pkey PRIMARY KEY (tenant_id, memory_id),
     CONSTRAINT search_sparse_queue_tenant_id_fkey
         FOREIGN KEY (tenant_id) REFERENCES tenants (id),
     CONSTRAINT search_sparse_queue_attempts CHECK (attempts >= 0)
 );
 
-CREATE INDEX search_sparse_queue_due ON search_sparse_queue (tenant_id, next_at, enqueued_at);
+-- Oldest first, the order the drain takes; a parked entry (a dead letter,
+-- kept for doctor) is never taken.
+CREATE INDEX search_sparse_queue_order ON search_sparse_queue (tenant_id, enqueued_at, memory_id)
+    WHERE parked_at IS NULL;
 
 ALTER TABLE search_sparse_queue
     ALTER COLUMN tenant_id   SET STATISTICS 0,
@@ -45,13 +53,49 @@ CREATE POLICY tenant_isolation ON search_sparse_queue
     USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid);
 
+-- The lead's encoder finds the tenants with due entries in one statement,
+-- under the transaction-local marker 0003's tenants policy reads: the
+-- serving role is the only role connecting, and it reads ids and times
+-- (ADR-0052 d15, MEDIUM-3 on review).
+CREATE POLICY lead_sparse_enumeration ON search_sparse_queue FOR SELECT
+    USING (current_setting('oml.startup_check', true) = 'on');
+
 COMMENT ON TABLE search_sparse_queue IS
     'Versions waiting for the learned sparse encoder, which writes their kind 2 postings off the '
     'commit path (ADR-0052 d15). Owning page: docs/data/postgres-schema.md.';
 
+------------------------------------------------------------------------------
+-- search_sparse_state — per tenant, whether a lead serving a sparse
+-- pipeline has turned the queue on, and how far its backfill of the
+-- versions written before then has gone: the last version id it read
+-- (backfill_after) and when it finished (backfilled_at). The trigger
+-- enqueues only for a tenant whose row is enabled; a lead serving no
+-- sparse pipeline turns every row off and empties the queue.
+------------------------------------------------------------------------------
+CREATE TABLE search_sparse_state (
+    tenant_id      uuid        NOT NULL,
+    enabled        boolean     NOT NULL,
+    backfill_after uuid,
+    backfilled_at  timestamptz,
+    CONSTRAINT search_sparse_state_pkey PRIMARY KEY (tenant_id),
+    CONSTRAINT search_sparse_state_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+);
+ALTER TABLE search_sparse_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE search_sparse_state FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON search_sparse_state
+    USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid);
+CREATE POLICY lead_sparse_enumeration ON search_sparse_state FOR SELECT
+    USING (current_setting('oml.startup_check', true) = 'on');
+COMMENT ON TABLE search_sparse_state IS
+    'Per tenant, whether the learned sparse queue is on and how far its backfill went (ADR-0052 d15). '
+    'Owning page: docs/data/postgres-schema.md.';
+
 DO $$
 BEGIN
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON search_sparse_queue TO %I',
+                   current_setting('oml.serving_role'));
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON search_sparse_state TO %I',
                    current_setting('oml.serving_role'));
 END $$;
 
@@ -102,10 +146,13 @@ BEGIN
                GREATEST(cardinality(u.positions), 1), NEW.search_len, 1,
                oml_search_memory_kind(NEW.kind), new_state
           FROM unnest(NEW.search_vector) u;
-        INSERT INTO search_sparse_queue (tenant_id, memory_id) VALUES (NEW.tenant_id, NEW.id)
+        INSERT INTO search_sparse_queue (tenant_id, memory_id)
+        SELECT NEW.tenant_id, NEW.id
+         WHERE EXISTS (SELECT 1 FROM search_sparse_state s
+                        WHERE s.tenant_id = NEW.tenant_id AND s.enabled)
         ON CONFLICT (tenant_id, memory_id)
         DO UPDATE SET enqueued_at = clock_timestamp(), attempts = 0, next_at = clock_timestamp(),
-                      last_error = NULL;
+                      last_error = NULL, parked_at = NULL;
     ELSE
         UPDATE search_postings p SET state = new_state
          WHERE p.tenant_id = NEW.tenant_id AND p.memory_id = NEW.id;
@@ -128,7 +175,7 @@ $$;
 -- function of the stored lexemes and is rebuilt from them; kind 2 is the
 -- encoder's, so its rows keep their weights, take their versions' current
 -- state, leave with a version that has no postings any more, and a version
--- with none is enqueued (ADR-0052 d15). Same checks and lock as 0021's.
+-- with none is enqueued where the tenant's sparse state is on (ADR-0052 d15). Same checks and lock as 0021's.
 ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION oml_search_postings_refill(t uuid) RETURNS void
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
@@ -164,6 +211,7 @@ BEGIN
     INSERT INTO search_sparse_queue (tenant_id, memory_id)
     SELECT m.tenant_id, m.id FROM memories m
      WHERE m.tenant_id = t
+       AND EXISTS (SELECT 1 FROM search_sparse_state s WHERE s.tenant_id = t AND s.enabled)
        AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM search_postings p
                         WHERE p.tenant_id = t AND p.memory_id = m.id AND p.kind = 2)
@@ -183,21 +231,6 @@ END
 $$;
 REVOKE EXECUTE ON FUNCTION oml_search_postings_refill(uuid) FROM PUBLIC;
 
--- Every existing version with postings waits for the encoder, oldest
--- first, under each tenant's row security.
-DO $$
-DECLARE
-    t uuid;
-BEGIN
-    PERFORM set_config('oml.startup_check', 'on', true);
-    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
-        PERFORM set_config('oml.tenant_id', t::text, true);
-        INSERT INTO search_sparse_queue (tenant_id, memory_id, enqueued_at, next_at)
-        SELECT m.tenant_id, m.id, m.created_at, m.created_at FROM memories m
-         WHERE m.tenant_id = t
-           AND oml_search_state(m.status, m.is_tip, m.retirement, m.kind) IS NOT NULL;
-    END LOOP;
-    PERFORM set_config('oml.tenant_id', '', true);
-    PERFORM set_config('oml.startup_check', '', true);
-END
-$$;
+-- No fill here: nothing is queued until a lead serving a sparse pipeline
+-- turns a tenant's state on, and that lead backfills the tenant's existing
+-- versions itself, in bounded, resumable steps (ADR-0052 d15).

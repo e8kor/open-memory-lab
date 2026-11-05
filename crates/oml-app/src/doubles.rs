@@ -4031,12 +4031,15 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
             if let Some(reason) = &self.fail {
                 return Err(reason.clone());
             }
-            if let Some(word) = &self.poison
-                && texts.iter().any(|t| Self::words(t).contains(word))
-            {
-                return Err(format!("the model failed on a claim saying {word}"));
-            }
-            Ok(texts.iter().map(|t| Self::document(t)).collect())
+            Ok(texts
+                .iter()
+                .map(|t| match &self.poison {
+                    Some(word) if Self::words(t).contains(word) => {
+                        Err(format!("the model failed on a claim saying {word}"))
+                    }
+                    _ => Ok(Self::document(t)),
+                })
+                .collect())
         })
     }
 }

@@ -47,6 +47,8 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 // (ADR-0052 d15).
                 "sparse_backlog": h.sparse_backlog,
                 "sparse_failing": h.sparse_failing,
+                "sparse_parked": h.sparse_parked,
+                "sparse_enabled": h.sparse_enabled,
             }),
         );
     }

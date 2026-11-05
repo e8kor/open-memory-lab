@@ -543,11 +543,16 @@ pub struct PostingsHealth {
     pub workarea_drift: u64,
     pub term_drift: u64,
     pub terms_checked: u64,
-    /// Versions waiting for the sparse encoder, due now or later
-    /// (ADR-0052 d15).
+    /// Versions waiting for the sparse encoder, due now or later, parked
+    /// ones aside (ADR-0052 d15).
     pub sparse_backlog: u64,
     /// Of them, the ones whose last encode or write failed.
     pub sparse_failing: u64,
+    /// Versions parked after their attempts' ceiling: dead letters, kept
+    /// with their reason and never retried until written again.
+    pub sparse_parked: u64,
+    /// Whether the tenant's sparse queue is on.
+    pub sparse_enabled: bool,
 }
 
 /// One retrieval: the query, whether every term must match, and how many
@@ -579,6 +584,14 @@ pub struct SparsePosting {
     pub token_id: u32,
     pub weight: f32,
     pub in_text: bool,
+}
+
+/// A tenant the encoder's pass has work for: whether its sparse state is
+/// to be turned on or its backfill continued (ADR-0052 d15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SparseTenant {
+    pub tenant_id: Uuid,
+    pub backfill: bool,
 }
 
 /// A version waiting for the sparse encoder: its claim, and the

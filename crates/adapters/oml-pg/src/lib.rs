@@ -32,7 +32,7 @@ use oml_app::ports::{
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, PostingsHealth, RetrievalQuery,
-    Retrieved, RetrieverKind, SparsePending, SparsePosting,
+    Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
 };
 use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -915,10 +915,60 @@ pub fn sparse_sql() -> String {
         .to_owned()
 }
 
-/// The sparse queue's health for one tenant (ADR-0052 d15): its entries,
-/// and those whose last encode failed.
-const SPARSE_QUEUE_HEALTH: &str = "SELECT count(*)::int8, count(*) FILTER (WHERE attempts > 0)::int8 \
+/// The sparse queue's health for one tenant (ADR-0052 d15): its entries
+/// waiting, those whose last encode failed, the parked ones, and whether
+/// its state is on.
+const SPARSE_QUEUE_HEALTH: &str = "SELECT count(*) FILTER (WHERE parked_at IS NULL)::int8, \
+            count(*) FILTER (WHERE parked_at IS NULL AND attempts > 0)::int8, \
+            count(*) FILTER (WHERE parked_at IS NOT NULL)::int8, \
+            EXISTS (SELECT 1 FROM search_sparse_state s WHERE s.tenant_id = $1 AND s.enabled) \
      FROM search_sparse_queue WHERE tenant_id = $1";
+
+/// The tenants the encoder's pass has work for, every tenant in one read
+/// (under `oml.startup_check`): a due entry, by the oldest-first index, or
+/// a sparse state not on yet or a backfill unfinished; with whether to run
+/// a backfill step (ADR-0052 d15).
+const SPARSE_TENANTS: &str = "SELECT t.id, \
+            (s.tenant_id IS NULL OR NOT s.enabled OR s.backfilled_at IS NULL) AS backfill \
+       FROM tenants t LEFT JOIN search_sparse_state s ON s.tenant_id = t.id \
+      WHERE s.tenant_id IS NULL OR NOT s.enabled OR s.backfilled_at IS NULL \
+         OR EXISTS (SELECT 1 FROM search_sparse_queue q \
+                     WHERE q.tenant_id = t.id AND q.parked_at IS NULL \
+                       AND q.next_at <= clock_timestamp()) \
+      ORDER BY t.id";
+
+/// One bounded backfill step (ADR-0052 d15): the tenant `$1`'s next `$3`
+/// versions after `$2` by id, the ones with postings and no kind 2 queued;
+/// answers the last id read, how many were read and how many queued, so
+/// the next step resumes there.
+const SPARSE_BACKFILL_STEP: &str = "WITH batch AS ( \
+         SELECT m.id, m.created_at, \
+                oml_search_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
+           FROM memories m WHERE m.tenant_id = $1 AND ($2::uuid IS NULL OR m.id > $2) \
+          ORDER BY m.id LIMIT $3), \
+     ins AS (INSERT INTO search_sparse_queue (tenant_id, memory_id, enqueued_at, next_at) \
+             SELECT $1, b.id, b.created_at, clock_timestamp() FROM batch b \
+              WHERE b.state IS NOT NULL \
+                AND NOT EXISTS (SELECT 1 FROM search_postings p \
+                                 WHERE p.tenant_id = $1 AND p.memory_id = b.id AND p.kind = 2) \
+             ON CONFLICT (tenant_id, memory_id) DO NOTHING RETURNING 1) \
+     SELECT (SELECT id FROM batch ORDER BY id DESC LIMIT 1), \
+            (SELECT count(*) FROM batch)::int8, (SELECT count(*) FROM ins)::int8";
+
+/// Up to `$2` due entries of tenant `$1`, oldest first, skipping any
+/// another pass holds, leased for `$3` seconds so another lead's pass skips
+/// them until then; each with its version's claim (ADR-0052 d15).
+const SPARSE_PENDING: &str = "WITH due AS ( \
+         SELECT q.memory_id FROM search_sparse_queue q \
+          WHERE q.tenant_id = $1 AND q.parked_at IS NULL AND q.next_at <= clock_timestamp() \
+          ORDER BY q.enqueued_at, q.memory_id LIMIT $2 FOR UPDATE SKIP LOCKED), \
+     leased AS (UPDATE search_sparse_queue q \
+                   SET next_at = clock_timestamp() + make_interval(secs => $3) \
+                  FROM due WHERE q.tenant_id = $1 AND q.memory_id = due.memory_id \
+                RETURNING q.memory_id, q.enqueued_at) \
+     SELECT l.memory_id, m.claim, (extract(epoch FROM l.enqueued_at) * 1000000)::int8 \
+       FROM leased l JOIN memories m ON m.tenant_id = $1 AND m.id = l.memory_id \
+      ORDER BY l.enqueued_at, l.memory_id";
 
 /// The postings health statement (ADR-0052 d12), as the serving role under
 /// `$1`'s row security, `$2` its partition's name: whether the partition
@@ -3650,8 +3700,13 @@ impl Retriever for PgStore {
             RetrieverKind::KeywordAll | RetrieverKind::KeywordAny => {
                 Some("SELECT tsvector_to_array(to_tsvector('simple', $1))".to_owned())
             }
-            RetrieverKind::Bm25 | RetrieverKind::Trigram => Some(search_terms_sql()),
-            RetrieverKind::Bm25Postings | RetrieverKind::Sparse => None,
+            // A sparse list reads the query's words as `bm25` does, so the
+            // answer's terms and did_you_mean never hold a word piece
+            // (ADR-0052 d17; L2 on review).
+            RetrieverKind::Bm25 | RetrieverKind::Trigram | RetrieverKind::Sparse => {
+                Some(search_terms_sql())
+            }
+            RetrieverKind::Bm25Postings => None,
         };
         let mut terms: Vec<String> = match terms_sql {
             Some(sql) => sqlx::query_scalar(&sql)
@@ -3685,12 +3740,11 @@ impl Retriever for PgStore {
             }
             RetrieverKind::Sparse => {
                 access = Access::Postings;
-                let mut pieces: Vec<String> =
-                    query.sparse.iter().map(|t| t.piece.clone()).collect();
-                pieces.sort_unstable();
-                pieces.dedup();
-                terms = pieces;
-                self.sparse_list(&mut tx, &scoped, query).await?
+                let mut list = self.sparse_list(&mut tx, &scoped, query).await?;
+                for c in &mut list {
+                    c.matched.retain(|piece| terms.contains(piece));
+                }
+                list
             }
             RetrieverKind::KeywordAny | RetrieverKind::Bm25 | RetrieverKind::Trigram => {
                 if kind == RetrieverKind::Trigram {
@@ -3766,7 +3820,7 @@ impl Retriever for PgStore {
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
-        let queued: (i64, i64) = sqlx::query_as(SPARSE_QUEUE_HEALTH)
+        let queued: (i64, i64, i64, bool) = sqlx::query_as(SPARSE_QUEUE_HEALTH)
             .bind(tenant_id)
             .fetch_one(&mut *tx)
             .await
@@ -3785,38 +3839,111 @@ impl Retriever for PgStore {
             terms_checked: count("terms_checked")?,
             sparse_backlog: u64::try_from(queued.0).map_err(backend)?,
             sparse_failing: u64::try_from(queued.1).map_err(backend)?,
+            sparse_parked: u64::try_from(queued.2).map_err(backend)?,
+            sparse_enabled: queued.3,
         }))
     }
 
-    async fn sparse_tenants(&self) -> Result<Vec<Uuid>, StoreError> {
+    async fn sparse_tenants(&self) -> Result<Vec<SparseTenant>, StoreError> {
+        // One statement for every tenant, under the transaction-local
+        // marker that lets the serving role read ids and times across
+        // tenants (0003, 0022): an idle pass costs this read alone.
         let mut tx = self.pool.begin().await.map_err(backend)?;
         sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
             .execute(&mut *tx)
             .await
             .map_err(backend)?;
-        let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
+        let rows: Vec<(Uuid, bool)> = sqlx::query_as(SPARSE_TENANTS)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        let mut due = Vec::new();
-        for tenant_id in tenants {
-            let mut tx = self.pool.begin().await.map_err(backend)?;
-            set_tenant(&mut tx, tenant_id).await?;
-            let any: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM search_sparse_queue \
-                  WHERE tenant_id = $1 AND next_at <= clock_timestamp())",
-            )
+        Ok(rows
+            .into_iter()
+            .map(|(tenant_id, backfill)| SparseTenant {
+                tenant_id,
+                backfill,
+            })
+            .collect())
+    }
+
+    async fn sparse_backfill(
+        &self,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> Result<(u64, bool), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // On, from now: a state turned on again starts its backfill over.
+        let (after,): (Option<Uuid>,) = sqlx::query_as(
+            "INSERT INTO search_sparse_state (tenant_id, enabled) VALUES ($1, true) \
+             ON CONFLICT (tenant_id) DO UPDATE SET enabled = true, \
+                 backfill_after = CASE WHEN search_sparse_state.enabled \
+                                       THEN search_sparse_state.backfill_after END, \
+                 backfilled_at = CASE WHEN search_sparse_state.enabled \
+                                      THEN search_sparse_state.backfilled_at END \
+             RETURNING backfill_after",
+        )
+        .bind(tenant_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let (last, read, queued): (Option<Uuid>, i64, i64) = sqlx::query_as(SPARSE_BACKFILL_STEP)
             .bind(tenant_id)
+            .bind(after)
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
+        let done = usize::try_from(read).unwrap_or(0) < limit;
+        sqlx::query(
+            "UPDATE search_sparse_state SET backfill_after = COALESCE($2, backfill_after), \
+                    backfilled_at = CASE WHEN $3 THEN clock_timestamp() END \
+              WHERE tenant_id = $1",
+        )
+        .bind(tenant_id)
+        .bind(last)
+        .bind(done)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok((u64::try_from(queued).map_err(backend)?, done))
+    }
+
+    async fn sparse_off(&self) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let on: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT s.tenant_id FROM search_sparse_state s WHERE s.enabled \
+             UNION SELECT DISTINCT q.tenant_id FROM search_sparse_queue q",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        for tenant_id in &on {
+            let mut tx = self.pool.begin().await.map_err(backend)?;
+            set_tenant(&mut tx, *tenant_id).await?;
+            sqlx::query(
+                "UPDATE search_sparse_state SET enabled = false, backfill_after = NULL, \
+                        backfilled_at = NULL WHERE tenant_id = $1",
+            )
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+            sqlx::query("DELETE FROM search_sparse_queue WHERE tenant_id = $1")
+                .bind(tenant_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
             tx.commit().await.map_err(backend)?;
-            if any {
-                due.push(tenant_id);
-            }
         }
-        Ok(due)
+        Ok(on.len() as u64)
     }
 
     async fn sparse_pending(
@@ -3826,20 +3953,13 @@ impl Retriever for PgStore {
     ) -> Result<Vec<SparsePending>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(
-            "SELECT q.memory_id, m.claim, \
-                    (extract(epoch FROM q.enqueued_at) * 1000000)::int8 \
-               FROM search_sparse_queue q \
-               JOIN memories m ON m.tenant_id = q.tenant_id AND m.id = q.memory_id \
-              WHERE q.tenant_id = $1 AND q.next_at <= clock_timestamp() \
-              ORDER BY q.enqueued_at, q.memory_id \
-              LIMIT $2",
-        )
-        .bind(tenant_id)
-        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(SPARSE_PENDING)
+            .bind(tenant_id)
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+            .bind(SPARSE_LEASE_SECS as f64)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(rows
             .into_iter()
@@ -3931,52 +4051,43 @@ impl Retriever for PgStore {
         tenant_id: Uuid,
         pending: &SparsePending,
         reason: &str,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        sqlx::query(
+        let parked: Option<bool> = sqlx::query_scalar(
             "UPDATE search_sparse_queue \
                 SET attempts = attempts + 1, last_error = left($3, 500), \
                     next_at = clock_timestamp() \
-                      + make_interval(secs => least(power(2, least(attempts + 1, 20)), $4)) \
-              WHERE tenant_id = $1 AND memory_id = $2",
+                      + make_interval(secs => least(power(2, least(attempts + 1, 20)), $4)), \
+                    parked_at = CASE WHEN attempts + 1 >= $5 THEN clock_timestamp() END \
+              WHERE tenant_id = $1 AND memory_id = $2 \
+             RETURNING parked_at IS NOT NULL",
         )
         .bind(tenant_id)
         .bind(pending.memory_id)
         .bind(reason)
         .bind(SPARSE_RETRY_MAX_SECS as f64)
-        .execute(&mut *tx)
+        .bind(SPARSE_MAX_ATTEMPTS)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        Ok(())
+        Ok(parked.unwrap_or(false))
     }
 
     async fn sparse_backlog(&self) -> Result<u64, StoreError> {
-        let mut total = 0_u64;
         let mut tx = self.pool.begin().await.map_err(backend)?;
         sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
             .execute(&mut *tx)
             .await
             .map_err(backend)?;
-        let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(backend)?;
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM search_sparse_queue WHERE parked_at IS NULL")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        for tenant_id in tenants {
-            let mut tx = self.pool.begin().await.map_err(backend)?;
-            set_tenant(&mut tx, tenant_id).await?;
-            let n: i64 =
-                sqlx::query_scalar("SELECT count(*) FROM search_sparse_queue WHERE tenant_id = $1")
-                    .bind(tenant_id)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(backend)?;
-            tx.commit().await.map_err(backend)?;
-            total += u64::try_from(n).map_err(backend)?;
-        }
-        Ok(total)
+        u64::try_from(n).map_err(backend)
     }
 }
 
@@ -4063,11 +4174,24 @@ pub enum SparseWriteStep {
 
 /// The order a drain's write takes its locks in; exported so the suite
 /// interleaves a version's removal with exactly this order.
+/// The trigger's order: the version's row first (an UPDATE or DELETE of
+/// it holds it before its trigger touches the queue), then the queue
+/// entry, so the drain and a version's removal never wait on each other in
+/// opposite orders (ADR-0052 d15; MEDIUM-1 on review).
 pub const SPARSE_WRITE_ORDER: [SparseWriteStep; 2] =
-    [SparseWriteStep::TakeEntry, SparseWriteStep::HoldVersion];
+    [SparseWriteStep::HoldVersion, SparseWriteStep::TakeEntry];
 
 /// The longest a failed encode waits before its next try (ADR-0052 d15).
 pub const SPARSE_RETRY_MAX_SECS: i64 = 3_600;
+
+/// The attempts after which a failing entry is parked, a dead letter kept
+/// with its reason for doctor and never taken again until its version is
+/// written again (ADR-0052 d15; HIGH-2 on review).
+pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
+
+/// How long a pass's lease on the entries it took lasts: another lead's
+/// pass skips them meanwhile (ADR-0052 d15; L1 on review).
+pub const SPARSE_LEASE_SECS: i64 = 300;
 
 impl JournalStore for PgStore {
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
