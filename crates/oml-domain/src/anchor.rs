@@ -217,7 +217,7 @@ impl Anchor {
     }
 
     /// The fields the scan reads, with the pointer each names: `repo`,
-    /// `uri`, `path` and `fragment` (ADR-0057 d2).
+    /// `uri` and a page's `rev`, `path` and `fragment` (ADR-0057 d2).
     #[must_use]
     pub fn scanned(&self) -> Vec<(&'static str, &str)> {
         let mut out = Vec::with_capacity(3);
@@ -226,7 +226,12 @@ impl Anchor {
                 out.push(("/anchor/repo", repo.as_str()));
                 out.push(("/anchor/path", path.as_str()));
             }
-            Origin::Uri { uri, .. } => out.push(("/anchor/uri", uri.as_str())),
+            Origin::Uri { uri, rev } => {
+                out.push(("/anchor/uri", uri.as_str()));
+                if let Some(rev) = rev {
+                    out.push(("/anchor/rev", rev.as_str()));
+                }
+            }
         }
         if let Some(fragment) = &self.fragment {
             out.push(("/anchor/fragment", fragment.as_str()));

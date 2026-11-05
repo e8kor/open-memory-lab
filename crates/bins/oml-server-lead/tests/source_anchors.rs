@@ -118,10 +118,6 @@ struct Rig {
     db_name: String,
 }
 
-async fn fresh_rig() -> Option<Rig> {
-    fresh_rig_with(None).await
-}
-
 /// A rig whose store chooses the anchor-first plan for at most
 /// `anchor_first_max` readable anchored rows, the store's own bound when
 /// `None` (ADR-0057 d4).
@@ -1368,13 +1364,13 @@ async fn anchor_fixture(w: &World) -> Vec<String> {
             }
         }
     }
-    for i in 0..5 {
+    for (i, text) in words.iter().enumerate() {
         ids.push(
             w.written(
                 &w.writer,
                 w.node,
                 &format!("plain-{i}"),
-                &format!("{} plain", words[i]),
+                &format!("{text} plain"),
                 None,
             )
             .await,
@@ -1538,7 +1534,8 @@ async fn the_anchor_filter_is_an_index_range_for_the_serving_role_under_row_secu
         .expect("set");
     for (repo, prefix) in [(true, true), (false, true), (true, false)] {
         let sql = oml_pg::anchored_ids_sql(repo, prefix);
-        let mut explain = sqlx::query(&format!("EXPLAIN {sql}"))
+        let explained = format!("EXPLAIN {sql}");
+        let mut explain = sqlx::query(&explained)
             .bind(tenant)
             .bind(vec![w.node])
             .bind(vec!["memory"])

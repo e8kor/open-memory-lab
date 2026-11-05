@@ -1029,6 +1029,8 @@ export interface components {
             user?: string | null;
             /** Format: date-time */
             created_at: string;
+            /** @description The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2). */
+            anchor?: components["schemas"]["Anchor"] | null;
         };
         /** @description An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page. */
         WebEmail: {
@@ -1581,6 +1583,8 @@ export interface components {
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkareaView: components["schemas"]["Workarea"] & {
+            /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea. */
+            stale_versions: number;
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;

@@ -4114,7 +4114,6 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         state(wa).await,
         ClaimKeyState {
             greatest_version: Some(1),
-            latest_live_version: Some(1),
             live: true,
         },
         "a held version holds the key"
@@ -4132,7 +4131,6 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         state(wa).await,
         ClaimKeyState {
             greatest_version: Some(1),
-            latest_live_version: None,
             live: false,
         },
         "a rejected version is counted and releases the key"
@@ -4152,7 +4150,6 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         state(wa).await,
         ClaimKeyState {
             greatest_version: Some(3),
-            latest_live_version: Some(3),
             live: true,
         },
         "a promoted version holds the key"

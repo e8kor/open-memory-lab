@@ -2467,6 +2467,11 @@ components:
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
+        anchor:
+          description: The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2).
+          oneOf:
+            - { $ref: '#/components/schemas/Anchor' }
+            - { type: 'null' }
 
     WebEmail:
       type: object
@@ -3209,8 +3214,9 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Workarea' }
         - type: object
-          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief]
+          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
           properties:
+            stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea." }
             children:
               type: array
               description: The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name.

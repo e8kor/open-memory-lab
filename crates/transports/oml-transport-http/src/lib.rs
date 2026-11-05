@@ -3811,6 +3811,7 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
             json!(info.my_effective_verbs),
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
+        obj.insert("stale_versions".to_owned(), json!(info.stale_versions));
         obj.insert("policy".to_owned(), info.policy.clone());
         obj.insert(
             "pending_transitions".to_owned(),

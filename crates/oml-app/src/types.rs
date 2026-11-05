@@ -919,6 +919,10 @@ pub struct WorkareaInfo {
     /// The node's brief as this key may read it; empty for an admin key,
     /// which reads no claim content (ADR-0046 d9).
     pub brief: Brief,
+    /// The promoted served tips on the node whose source changed or went
+    /// away since they were reviewed; 0 for an admin key, which reads no
+    /// claim (ADR-0057 d17).
+    pub stale_versions: u64,
 }
 
 /// One node of a workarea tree read, with its derived path and the crew
@@ -1113,10 +1117,6 @@ pub struct GuardrailFields {
 /// (audit-and-lineage.md supersession chains; ADR-0025 d10, d18).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimKeyState {
-    /// The greatest `version` among the key's held and promoted versions,
-    /// the claim's latest live version a supersession names (ADR-0057 d19);
-    /// `None` when none is.
-    pub latest_live_version: Option<u32>,
     /// The greatest `version` of any row of the key, whatever its state;
     /// `None` when no row carries the key.
     pub greatest_version: Option<u32>,

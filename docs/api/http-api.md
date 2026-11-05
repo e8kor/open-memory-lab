@@ -1007,7 +1007,8 @@ over: an omitted `kind` makes the successor take the target's, and an omitted `a
 **A guardrail successor** re-sends its `severity`, and its `rule` if it keeps one; a retirement
 sends neither ([Guardrails](#guardrails-get-v1guardrails)).
 
-**Retirement.** The same call with `retirement: true` proposes retiring the claim, open to the
+**Retirement.** The same call with `retirement: true`, and the `expected_version` every
+supersession names, proposes retiring the claim, open to the
 same keys as any supersession ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
 d11). `body` is required and states why; it is scanned, normalized, bounded and digested like
 any body, and it is what the reviewer judges. Its refusals are [errors](errors.md)'
@@ -1031,8 +1032,11 @@ reserved and refused. Every memory item carries `anchor` (or `null`), `stale` an
 
 **Filters.** Recall and `GET /v1/memories` take `anchor_repo` (equal to the anchor's `repo`) and
 `anchor_path_prefix` (a byte prefix of its `path`), combined by AND with every other filter; either
-leaves out unanchored rows. Both run inside the candidate statement under row security, before
-ranking's cut, so a filtered recall never under-returns.
+leaves out unanchored rows. Both run inside each retriever's candidate statement under row
+security, before scoring and the cut: a narrow filter reads the readable anchored ids by the
+anchor index and scores only them, a broad one joins the indexed columns; the repository is an
+equality and the prefix a range on leakproof operators. The statistics a score uses are the
+unfiltered ones, so a filtered recall is the unfiltered list filtered then cut.
 
 **Source check — `POST /v1/memories/{artifact_id}/source-check`.** `{rev, result, hash?, path?,
 fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed`; `path` (and
@@ -1040,7 +1044,9 @@ fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed
 (else `request.validation`, `details.field` `/artifact_id`), from the version's author key or a
 dreamer on its workarea (a writer that can read it and did not author it is `403
 access.author_only`; a key that cannot read it, `access.not_found`). Journals `source.checked`;
-changes no text and no anchor. `200 {artifact_id, stale, source_checked, journal_seq}`. `stale`
+changes no text and no anchor. A `moved` check's `path` and `fragment` are scanned as an anchor
+is, and a finding is `submission.scan_veto` naming `/path` or `/fragment`. `200 {artifact_id,
+stale, source_checked, journal_seq}`. `stale`
 is `changed` or `removed` from the latest check of the served version, else `null`; it is never
 derived from a held version. `Idempotency-Key` required.
 

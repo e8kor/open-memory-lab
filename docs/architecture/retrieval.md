@@ -311,10 +311,15 @@ for a convex combination, at least the rerank depth) is a cap the core enforces 
 whatever an adapter returns, so no retriever contributes more candidates than another.
 
 **Filtered by origin, marked by the source.** *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d4, d5):*
-`anchor_repo` and `anchor_path_prefix` are a predicate of the candidate scope, combined by AND
-with every other filter; either leaves out unanchored rows. The PostgreSQL store reads a filtered
-list whole, keeps the rows the filters admit in its order, then cuts at the list's depth, so a
-filtered recall never under-returns; FR-115 measures the cost. Every served item carries its
+`anchor_repo` and `anchor_path_prefix` are a predicate of each retriever's candidate statement,
+combined by AND with every other filter; either leaves out unanchored rows. The PostgreSQL store
+first reads the readable anchored ids by the anchor index, up to `ANCHOR_FIRST_MAX` (2,000): within
+it, a list scores only those ids' postings or rows (anchor-first); above it, the statement joins
+the filter on the indexed columns (postings-first). The repository is an equality and the prefix
+the range `[prefix, upper)` on `text_pattern_ops`' leakproof `~>=~` and `~<~`, so the index
+serves the serving role under row security. Corpus statistics and document frequencies stay the
+unfiltered ones, so a filtered list is the unfiltered list filtered then cut; FR-115 records the
+latency. Every served item carries its
 `anchor`, and `stale` (`changed` or `removed`) from its latest source check: checks are recorded
 only on promoted served tips, so a mark never derives from a held version and tells no reader
 that one exists (R3).

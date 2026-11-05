@@ -45,9 +45,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
-    WorkareaRecord, WorkareaRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow,
+    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry,
+    WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -2203,16 +2203,49 @@ impl JournalStore for MemStore {
             .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
             .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
-                latest_live_version: if matches!(
-                    m.status,
-                    MemoryStatus::Held | MemoryStatus::Promoted
-                ) {
-                    acc.latest_live_version.max(Some(m.version))
-                } else {
-                    acc.latest_live_version
-                },
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.workarea_id == workarea_id && served_tip(m))
+            .filter(|m| {
+                m.source_check
+                    .as_deref()
+                    .and_then(SourceCheck::stale)
+                    .is_some()
+            })
+            .count() as u64)
+    }
+
+    async fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+    ) -> Result<Option<u32>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
+            .filter(|m| {
+                m.status == MemoryStatus::Promoted
+                    || (m.status == MemoryStatus::Held && own_key_ids.contains(&m.author_key_id))
+            })
+            .map(|m| m.version)
+            .max())
     }
 
     async fn claim_tip(
