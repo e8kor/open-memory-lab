@@ -124,6 +124,7 @@ nav:
       - Restore: operations/restore.md
       - Disaster recovery: operations/disaster-recovery.md
       - Capacity: operations/capacity.md
+      - Production (memory.doublegate.io): operations/production.md
   - Engineering:
       - Workspace plan: engineering/workspace-plan.md
       - Test strategy: engineering/test-strategy.md
@@ -187,3 +188,4 @@ nav:
       - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
       - ADR-0054: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md
       - ADR-0055: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md
+      - ADR-0058: adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md
