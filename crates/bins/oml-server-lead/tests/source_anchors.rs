@@ -29,9 +29,10 @@ const ENROLLMENT: &str = "enr_test_fixture_token";
 // Throwaway database + rig (the oml-pg test pattern)
 // ---------------------------------------------------------------------------
 
+/// The throwaway cluster `DATABASE_URL` names; this suite has no default,
+/// so it never reaches a cluster nobody named.
 fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+    std::env::var("DATABASE_URL").expect("DATABASE_URL names a throwaway cluster")
 }
 
 const PAIR_PASSWORD: &str = "oml_test_pair";
@@ -118,6 +119,13 @@ struct Rig {
 }
 
 async fn fresh_rig() -> Option<Rig> {
+    fresh_rig_with(None).await
+}
+
+/// A rig whose store chooses the anchor-first plan for at most
+/// `anchor_first_max` readable anchored rows, the store's own bound when
+/// `None` (ADR-0057 d4).
+async fn fresh_rig_with(anchor_first_max: Option<usize>) -> Option<Rig> {
     let db_name = format!(
         "oml_test_anchor_{}_{}_{}",
         std::process::id(),
@@ -131,6 +139,10 @@ async fn fresh_rig() -> Option<Rig> {
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db_name));
+    let store = match anchor_first_max {
+        Some(n) => store.with_anchor_first_max(n),
+        None => store,
+    };
     store
         .migrate(&owner_url(&db_name))
         .await
@@ -310,11 +322,11 @@ struct World {
 }
 
 async fn world() -> Option<World> {
-    if std::env::var("DATABASE_URL").is_err() {
-        println!("did not run: DATABASE_URL names no throwaway cluster");
-        return None;
-    }
-    let rig = fresh_rig().await?;
+    world_with(None).await
+}
+
+async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
+    let rig = fresh_rig_with(anchor_first_max).await?;
     let (admin, root) = bootstrap(&rig.router).await;
     let node = create_workarea(&rig.router, &admin, root, "docs").await;
     let other = create_workarea(&rig.router, &admin, root, "elsewhere").await;
@@ -818,10 +830,10 @@ async fn anchor_filters_respect_row_security_and_never_serve_anothers_held_rows(
             &format!("own=false&workarea={}&anchor_repo={REPO}", w.other),
         )
         .await;
-    assert_ne!(
-        outside["items"],
-        json!([theirs]),
-        "an unreadable workarea serves nothing: {outside}"
+    assert_eq!(
+        error_code(&outside),
+        "access.not_found",
+        "an unreadable workarea serves nothing, {theirs} included: {outside}"
     );
     // The own listing by origin lists the key's own rows in every state.
     let (_, own_rows) = w
@@ -1007,6 +1019,19 @@ async fn stale_is_the_latest_source_check_of_the_served_version() {
         .recall(&w.reader, json!({"query": "rollback", "workarea": w.node}))
         .await;
     assert_eq!(recall["hits"][0]["memory"]["stale"], "changed", "{recall}");
+    // The workarea read counts its stale served versions, the doctor's
+    // line (ADR-0057 d17).
+    let (status, node) = send(
+        &w.rig.router,
+        "GET",
+        &format!("/v2/workareas/{}", w.node),
+        Some(&w.reader),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{node}");
+    assert_eq!(node["stale_versions"], 1, "{node}");
     // A newer check supersedes the mark: a reverted source reads fresh.
     let (status, _) = w
         .check(
@@ -1213,5 +1238,341 @@ async fn mcp_oml_write_and_oml_read_carry_the_anchor_with_no_new_tool() {
     )
     .await;
     assert_eq!(list["result"]["tools"].as_array().expect("tools").len(), 3);
+    w.done().await;
+}
+
+#[tokio::test]
+async fn a_version_conflict_never_names_a_version_the_caller_cannot_read() {
+    let Some(w) = world().await else { return };
+    let v1 = w
+        .written(&w.writer, w.node, "k", "the first text", None)
+        .await;
+    w.approve(std::slice::from_ref(&v1)).await;
+    // The answer a writer gets before anyone else proposes.
+    let (status, before) = w.supersede(&w.writer, &v1, "polling", Some(2), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{before}");
+    // A person's edit-as-proposal: held, authored by another key, which the
+    // writer cannot read.
+    let (status, edit) = w
+        .supersede(&w.reviewer, &v1, "the reviewer's edit", Some(1), None)
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
+    let edit = edit["artifact_id"].as_str().expect("id").to_owned();
+    let (status, _) = send(
+        &w.rig.router,
+        "GET",
+        &format!("/v1/memories/{edit}"),
+        Some(&w.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Polling learns nothing: the same refusal, naming the version it can read.
+    let (status, after) = w.supersede(&w.writer, &v1, "polling", Some(2), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{after}");
+    assert_eq!(after["error"]["details"], before["error"]["details"]);
+    assert_eq!(after["error"]["details"]["current_version"], 1);
+    // And naming what it read passes the check.
+    let (status, body) = w
+        .supersede(&w.writer, &v1, "the writer's revision", Some(1), None)
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    // The writer's own held version is its latest from now on (d19).
+    let (status, body) = w
+        .supersede(&w.writer, &v1, "a second session", Some(1), None)
+        .await;
+    assert_eq!(
+        (status, error_code(&body)),
+        (StatusCode::CONFLICT, "submission.version_conflict"),
+        "{body}"
+    );
+    w.done().await;
+}
+
+#[tokio::test]
+async fn a_moved_checks_path_and_fragment_are_scanned_like_an_anchor() {
+    let Some(w) = world().await else { return };
+    let v1 = w
+        .written(
+            &w.writer,
+            w.node,
+            "k",
+            "the deploy runbook",
+            Some(anchor("docs/deploy.md", "d1")),
+        )
+        .await;
+    w.approve(std::slice::from_ref(&v1)).await;
+    for (body, field) in [
+        (
+            json!({"rev": REV2, "result": "moved", "hash": HASH, "path": "deploy/.env.production"}),
+            "/path",
+        ),
+        (
+            json!({"rev": REV2, "result": "moved", "hash": HASH, "path": "docs/deploy.md", "fragment": "[oml:hold]"}),
+            "/fragment",
+        ),
+    ] {
+        let (status, refused) = w.check(&w.writer, &v1, body.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}: {refused}"
+        );
+        assert_eq!(error_code(&refused), "submission.scan_veto");
+        assert_eq!(refused["error"]["details"]["field"], field);
+    }
+    assert_eq!(
+        w.get(&w.reader, &v1).await["source_checked"],
+        Value::Null,
+        "nothing was kept"
+    );
+    w.done().await;
+}
+
+/// The anchor fixture of the regression law: three repositories, nested
+/// paths, and words shared across them so every filter cuts a ranked list.
+async fn anchor_fixture(w: &World) -> Vec<String> {
+    let repos = ["github.com/a/one", "github.com/a/two", "gitlab.com/b/three"];
+    let paths = [
+        "docs/adr/x.md",
+        "docs/ops/y.md",
+        "src/store.rs",
+        "docs/adr/z.md",
+        "README.md",
+    ];
+    let words = [
+        "rollback drains the canary",
+        "canary settles before rollback",
+        "the store keeps postings",
+        "postings rollback budget",
+        "a canary for the store",
+    ];
+    let mut ids = Vec::new();
+    for (r, repo) in repos.iter().enumerate() {
+        for (p, path) in paths.iter().enumerate() {
+            for (i, text) in words.iter().enumerate() {
+                let key = format!("f-{r}-{p}-{i}");
+                let anchor =
+                    json!({"repo": repo, "rev": REV, "path": path, "fragment": format!("s{i}")});
+                ids.push(
+                    w.written(
+                        &w.writer,
+                        w.node,
+                        &key,
+                        &format!("{text} {key}"),
+                        Some(anchor),
+                    )
+                    .await,
+                );
+            }
+        }
+    }
+    for i in 0..5 {
+        ids.push(
+            w.written(
+                &w.writer,
+                w.node,
+                &format!("plain-{i}"),
+                &format!("{} plain", words[i]),
+                None,
+            )
+            .await,
+        );
+    }
+    w.approve(&ids).await;
+    ids
+}
+
+/// Every fixture query under every filter shape, for each single-list
+/// pipeline the lead serves: the filtered recall equals the unfiltered
+/// list filtered then cut, in order and score (ADR-0057 d4).
+async fn filtered_equals_filter_then_cut(anchor_first_max: Option<usize>) {
+    let Some(w) = world_with(anchor_first_max).await else {
+        return;
+    };
+    anchor_fixture(&w).await;
+    let anchors: std::collections::BTreeMap<String, Value> = {
+        let (_, page) = w
+            .list(
+                &w.reader,
+                &format!("own=false&workarea={}&limit=200", w.node),
+            )
+            .await;
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| {
+                (
+                    m["artifact_id"].as_str().expect("id").to_owned(),
+                    m["anchor"].clone(),
+                )
+            })
+            .collect()
+    };
+    let filters: [(Option<&str>, Option<&str>); 6] = [
+        (Some("github.com/a/one"), None),
+        (None, Some("docs/")),
+        (Some("github.com/a/two"), Some("docs/adr/")),
+        (Some("gitlab.com/b/three"), Some("src/store.rs")),
+        (None, Some("README")),
+        (Some("github.com/none/here"), None),
+    ];
+    for search in ["bm25-postings", "bm25", "keyword-any"] {
+        for query in [
+            "rollback",
+            "canary rollback",
+            "store postings",
+            "settles",
+            "budget canary store",
+        ] {
+            let (status, all) = w
+                .recall(
+                    &w.reader,
+                    json!({"query": query, "workarea": w.node, "k": 100, "search": search}),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{all}");
+            for (repo, prefix) in filters {
+                for k in [1, 3, 8] {
+                    let mut body =
+                        json!({"query": query, "workarea": w.node, "k": k, "search": search});
+                    if let Some(repo) = repo {
+                        body["anchor_repo"] = json!(repo);
+                    }
+                    if let Some(prefix) = prefix {
+                        body["anchor_path_prefix"] = json!(prefix);
+                    }
+                    let (status, got) = w.recall(&w.reader, body).await;
+                    assert_eq!(status, StatusCode::OK, "{got}");
+                    let expected: Vec<(String, Value)> = all["hits"]
+                        .as_array()
+                        .expect("hits")
+                        .iter()
+                        .filter(|h| {
+                            let a = &anchors[h["memory"]["artifact_id"].as_str().expect("id")];
+                            !a.is_null()
+                                && repo.is_none_or(|r| a["repo"] == r)
+                                && prefix.is_none_or(|p| {
+                                    a["path"].as_str().is_some_and(|x| x.starts_with(p))
+                                })
+                        })
+                        .take(k)
+                        .map(|h| {
+                            (
+                                h["memory"]["artifact_id"].as_str().expect("id").to_owned(),
+                                h["score"].clone(),
+                            )
+                        })
+                        .collect();
+                    let served: Vec<(String, Value)> = got["hits"]
+                        .as_array()
+                        .expect("hits")
+                        .iter()
+                        .map(|h| {
+                            (
+                                h["memory"]["artifact_id"].as_str().expect("id").to_owned(),
+                                h["score"].clone(),
+                            )
+                        })
+                        .collect();
+                    assert_eq!(
+                        served, expected,
+                        "{search} {query:?} {repo:?} {prefix:?} k {k}"
+                    );
+                }
+            }
+        }
+    }
+    w.done().await;
+}
+
+#[tokio::test]
+async fn an_anchor_first_filtered_recall_equals_filter_then_cut() {
+    filtered_equals_filter_then_cut(None).await;
+}
+
+#[tokio::test]
+async fn a_postings_first_filtered_recall_equals_filter_then_cut() {
+    filtered_equals_filter_then_cut(Some(0)).await;
+}
+
+#[tokio::test]
+async fn the_anchor_filter_is_an_index_range_for_the_serving_role_under_row_security() {
+    let Some(w) = world().await else { return };
+    w.written(
+        &w.writer,
+        w.node,
+        "k",
+        "one anchored claim",
+        Some(anchor("docs/a.md", "d1")),
+    )
+    .await;
+    let tenant: Uuid = {
+        let mut admin = PgConnection::connect(&super_url(&w.rig.db_name))
+            .await
+            .expect("connect");
+        sqlx::query_scalar("SELECT tenant_id FROM memories LIMIT 1")
+            .fetch_one(&mut admin)
+            .await
+            .expect("tenant")
+    };
+    let mut serving = PgConnection::connect(&serving_url(&w.rig.db_name))
+        .await
+        .expect("serving");
+    let (bypass,): (bool,) =
+        sqlx::query_as("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            .fetch_one(&mut serving)
+            .await
+            .expect("role");
+    assert!(!bypass, "the serving role is bound by row security");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+        .bind(tenant.to_string())
+        .execute(&mut serving)
+        .await
+        .expect("tenant");
+    sqlx::query("SET enable_seqscan = off")
+        .execute(&mut serving)
+        .await
+        .expect("set");
+    for (repo, prefix) in [(true, true), (false, true), (true, false)] {
+        let sql = oml_pg::anchored_ids_sql(repo, prefix);
+        let mut explain = sqlx::query(&format!("EXPLAIN {sql}"))
+            .bind(tenant)
+            .bind(vec![w.node])
+            .bind(vec!["memory"])
+            .bind(Vec::<Uuid>::new())
+            .bind(Vec::<Uuid>::new());
+        if repo {
+            explain = explain.bind(REPO);
+        }
+        if prefix {
+            explain = explain.bind("docs/").bind("docs0");
+        }
+        explain = explain.bind(10_i64);
+        let plan: Vec<String> = explain
+            .fetch_all(&mut serving)
+            .await
+            .expect("explain")
+            .iter()
+            .map(|r| sqlx::Row::get::<String, _>(r, 0))
+            .collect();
+        let plan = plan.join("\n");
+        assert!(
+            plan.contains("Index") && plan.contains("anchor"),
+            "an anchor index serves it: {plan}"
+        );
+        if prefix {
+            assert!(
+                plan.contains("Index Cond") && plan.contains("anchor_path ~>=~"),
+                "the prefix is an index range, not a heap filter: {plan}"
+            );
+        }
+        if repo {
+            assert!(plan.contains("anchor_repo ="), "{plan}");
+        }
+    }
+    drop(serving);
     w.done().await;
 }
