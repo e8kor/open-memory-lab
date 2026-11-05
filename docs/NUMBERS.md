@@ -49,11 +49,9 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0025 | `main` |  | the agent only memory surface | used |
 | adr | 0026 | `main` |  | names are keys | used |
 | adr | 0028 | `main` |  | agent key issuance | used |
-| adr | 0029 | `feat/temporality` | #19 | session start hook | open |
 | adr | 0029 | `main` |  | session start hook | used |
 | adr | 0030 | `feat/in-progress-r2` | #79 | an in progress workarea serves unreviewed memories inside it and nothi | open |
 | adr | 0031 | `main` |  | oauth connections by connect code | used |
-| adr | 0033 | `feat/temporality` | #19 | interim helm chart | open |
 | adr | 0033 | `main` |  | interim helm chart | used |
 | adr | 0034 | `main` |  | the lead serves as a role that owns nothing | used |
 | adr | 0036 | `feat/temporality` | #19 | time lives in the journal and every read of the past applies todays ac | open |
@@ -67,7 +65,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0044 | `main` |  | every user works under a root of their own and universe serves curated | used |
 | adr | 0045 | `main` |  | people sign in to a user page and an admin page on the servers own ori | used |
 | adr | 0046 | `main` |  | the lifecycle claim edges and the brief ship in v0 5 2 inside user roo | used |
-| adr | 0047 | `design/delta-mapping` | #74 | project knowledge and a code skeleton follow the development lifecycle | open |
 | adr | 0047 | `main` |  | project knowledge and a code skeleton follow the development lifecycle | used |
 | adr | 0048 | `main` |  | search improves in stages any word first meaning last each gated on th | used |
 | adr | 0049 | `main` |  | search is a pipeline of retrievers behind a port chosen by name and ga | used |
@@ -78,7 +75,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0054 | `main` |  | recall is measured by what readers do next and only other readers use  | used |
 | adr | 0055 | `main` |  | a person reviews a listed set of held items in one act each item judge | used |
 | adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
-| adr | 0057 | `design/delta-mapping` | #74 | a memory carries the source anchor its author declares and oml sync ke | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
 | adr | 0059 | `feat/valid-time` | #73 | a memory states when it is true recall hides what has ended and search | open |
@@ -87,7 +83,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory` | #78 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
-| adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes secrets and h | open |
+| adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -99,7 +95,6 @@ is a collision: the branch that reserved later renumbers.
 | fr | 9 | `main` |  | The scoped market claim on the [positioning page](positioning.md) — no | used |
 | fr | 10 | `main` |  | The agent surface fails the only-memory test: recall excludes the call | used |
 | fr | 11 | `main` |  | Retrieval counts rows (`k`), not tokens; agents assemble prompts under | used |
-| fr | 12 | `feat/temporality` | #19 | There is no batch write path and no client SDK: one memory per POST, a | open |
 | fr | 12 | `main` |  | There is no batch write path and no client SDK: one memory per POST, a | used |
 | fr | 13 | `main` |  | Dataset onboarding ([ADR-0020](../adr/ADR-0020-dataset-onboarding.md)) | used |
 | fr | 14 | `main` |  | Import performance and its retrieval cost are unmeasured: capture-side | used |
@@ -121,7 +116,6 @@ is a collision: the branch that reserved later renumbers.
 | fr | 30 | `main` |  | Recall budgets count text by a fixed rule (four bytes of text per budg | used |
 | fr | 31 | `main` |  | When an agent starts a new claim under a name another claim in the sam | used |
 | fr | 32 | `main` |  | The background repair service holds a key with the role reviewers hold | used |
-| fr | 33 | `feat/temporality` | #19 | When Claude Code starts, resumes, clears, compacts or forks a session, | open |
 | fr | 33 | `main` |  | When Claude Code starts, resumes, clears, compacts or forks a session, | used |
 | fr | 34 | `main` |  | Connecting Claude's own apps — claude.ai, Claude Desktop and the Claud | used |
 | fr | 35 | `main` |  | When OML turns a request away because it carries no valid key, the ans | used |
@@ -159,11 +153,8 @@ is a collision: the branch that reserved later renumbers.
 | fr | 75 | `main` |  | Nothing records when a key was last used, so the user page, since rele | used |
 | fr | 76 | `main` |  | The sign-in pages of release 0.5.0 ([ADR-0045](../adr/ADR-0045-people- | used |
 | fr | 77 | `main` |  | A workarea's brief is cut to `brief.max_tokens`, 400 budget tokens unl | used |
-| fr | 78 | `design/delta-mapping` | #74 | Whether project knowledge and the code skeleton help an agent is unmea | open |
 | fr | 78 | `main` |  | Whether project knowledge and the code skeleton help an agent is unmea | used |
-| fr | 79 | `design/delta-mapping` | #74 | ADR-0047's capture cap of 5 entries per session and its batch cap of 2 | open |
 | fr | 79 | `main` |  | ADR-0047's capture cap of 5 entries per session and its batch cap of 2 | used |
-| fr | 80 | `design/delta-mapping` | #74 | ADR-0047 creates one workarea per branch and deletes none, so a reposi | open |
 | fr | 80 | `main` |  | ADR-0047 creates one workarea per branch and deletes none, so a reposi | used |
 | fr | 81 | `main` |  | The proposed [ADR-0048](../adr/ADR-0048-search-improves-in-stages-any- | used |
 | fr | 82 | `main` |  | ADR-0048's stage S7: the indexer lag after a promotion, the latency a  | used |
@@ -198,13 +189,9 @@ is a collision: the branch that reserved later renumbers.
 | fr | 111 | `design/claim-formats` | #63 | A write in a non-prose format parses its source and stores a search te | open |
 | fr | 112 | `design/claim-formats` | #63 | Whether diagram and fragment claims help an agent is unmeasured: the r | open |
 | fr | 113 | `design/claim-formats` | #63 | The per-format thresholds of `quality.many_claims` (12 relations in a  | open |
-| fr | 114 | `design/delta-mapping` | #74 | The proposed [ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-an | open |
 | fr | 114 | `main` |  | The proposed [ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-an | used |
-| fr | 115 | `design/delta-mapping` | #74 | The origin filters `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4 | open |
 | fr | 115 | `main` |  | The origin filters `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4 | used |
-| fr | 116 | `design/delta-mapping` | #74 | A document sync writes up to 200 items a run for one person to review  | open |
 | fr | 116 | `main` |  | A document sync writes up to 200 items a run for one person to review  | used |
-| fr | 117 | `design/delta-mapping` | #74 | A claim edge whose statement leaves the documents (an `Amends:` line e | open |
 | fr | 117 | `main` |  | A claim edge whose statement leaves the documents (an `Amends:` line e | used |
 | fr | 118 | `main` |  | The learned sparse leg reads every posting of each query token among t | used |
 | fr | 130 | `design/rust-adapter` | #70 | The proposed [ADR-0061](../adr/ADR-0061-oml-sync-reads-a-rust-workspac | open |

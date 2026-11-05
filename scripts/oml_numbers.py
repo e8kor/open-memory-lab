@@ -122,6 +122,8 @@ def scan_rows(root: Path, remote: str = "origin", main: str = "main") -> list[di
             continue  # only branches with an open pull request hold numbers
         pr = f"#{prs[name]}" if name in prs else ""
         for (k, n), t in numbers_added(root, f"{remote}/{main}", b).items():
+            if on_main.get((k, n)) == t:
+                continue  # already merged: the branch only needs a rebase
             rows.append({"kind": k, "number": n, "branch": name, "pr": pr, "title": t, "state": "open"})
         for r in registry_at(root, b):
             if r["state"] == "reserved" and r["branch"] == name:
