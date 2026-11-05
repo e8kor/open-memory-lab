@@ -206,12 +206,23 @@ async fn tenant(store: &PgStore, key: &SigningKey, name: &str) -> BootstrapResul
 
 /// The lead over `store` with GitHub sign-in on through `providers`.
 async fn lead(store: &PgStore, key: &SigningKey, providers: &MemSignIn) -> Router {
+    lead_traced(store, key, providers, Traffic::default()).await
+}
+
+/// [`lead`] whose request lines and metrics go to `traffic`, which the
+/// caller keeps to read the metrics back.
+async fn lead_traced(
+    store: &PgStore,
+    key: &SigningKey,
+    providers: &MemSignIn,
+    traffic: Traffic,
+) -> Router {
     start_lead_with(
         store,
         key.clone(),
         Some(Issuer::parse(ISSUER).expect("a public origin")),
         PinnedFetcher,
-        Traffic::default(),
+        traffic,
         Some(WebPages::new(
             vec![(Provider::GitHub, "github-client".to_owned())],
             providers.clone(),
@@ -532,7 +543,8 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
     let key = SigningKey::from_bytes(&OsIds.new_secret());
     let boot = tenant(&store, &key, "oml").await;
     let providers = MemSignIn::new();
-    let router = lead(&store, &key, &providers).await;
+    let traffic = Traffic::default();
+    let router = lead_traced(&store, &key, &providers, traffic.clone()).await;
     let admin = boot.admin_key.value.clone();
     let (status, _, body) = send(
         &router,
@@ -643,6 +655,19 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
     .await;
     assert_eq!(status, StatusCode::OK, "{confirm}");
     assert!(confirm.contains("Approve 2 memories?"), "{confirm}");
+    // Each picked item is shown by its claim key and first line, so the
+    // person sees what they confirm, not bare ids (ADR-0055 d10).
+    for claim_key in ["adr-0001-d1", "adr-0001-d2"] {
+        assert!(confirm.contains(&format!(">{claim_key}<")), "{confirm}");
+        assert!(
+            confirm.contains(&format!("Decision {claim_key}.")),
+            "{confirm}"
+        );
+    }
+    assert!(
+        !confirm.contains("adr-0001-rejected"),
+        "only the picks: {confirm}"
+    );
     let (_, _, still) = send(&router, get("/web/admin?view=held")).await;
     assert!(
         ids.iter().all(|id| still.contains(id.as_str())),
@@ -674,5 +699,32 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
     );
     let (_, _, left) = send(&router, get("/web/admin?view=held")).await;
     assert!(left.contains(&ids[2]) && !left.contains(&ids[0]), "{left}");
+    // An empty reason is journalled as none, as on the API.
+    let events = store
+        .events_range(boot.tenant_id, 1, 1_000)
+        .await
+        .expect("journal");
+    let approvals: Vec<_> = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "review.approve")
+        .collect();
+    assert_eq!(approvals.len(), 2);
+    assert!(
+        approvals
+            .iter()
+            .all(|e| e.envelope.payload["reason"].is_null()),
+        "{:?}",
+        approvals
+            .iter()
+            .map(|e| &e.envelope.payload)
+            .collect::<Vec<_>>()
+    );
+    // The page's verdicts are counted, once each: the replayed resubmission
+    // adds nothing (ADR-0055 d13).
+    let metrics = traffic.metrics().encode();
+    assert!(
+        metrics.contains(r#"oml_review_bulk_items_total{outcome="approved"} 2"#),
+        "{metrics}"
+    );
     drop_db(&db).await;
 }

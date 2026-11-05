@@ -541,15 +541,37 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
         .collect();
     names.sort_unstable();
     assert_eq!(names, ["oml_read", "oml_workarea", "oml_write"]);
-    for tool in ["oml_review_bulk", "oml_review", "oml_approve"] {
-        let called = mcp(
-            r,
-            &w.agent,
-            "tools/call",
-            json!({"name": tool, "arguments": {"artifact_ids": [a], "verdict": "approve"}}),
-        )
-        .await;
-        assert_eq!(called["error"]["code"], -32602, "{tool}: {called}");
+    // Every key an agent may hold, the writer and the crew's dreamer, and
+    // the person's own reviewer key too: /mcp names no review tool for any
+    // of them, and a call naming one is an unknown tool.
+    for (who, token) in [
+        ("writer", &w.agent),
+        ("crew dreamer", &w.agent_dreamer),
+        ("person's reviewer", &w.reviewer),
+    ] {
+        let listed = mcp(r, token, "tools/list", json!({})).await;
+        if let Some(tools) = listed["result"]["tools"].as_array() {
+            assert!(
+                tools.iter().all(|t| {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    !name.contains("review") && !name.contains("approve") && !name.contains("bulk")
+                }),
+                "{who}: {listed}"
+            );
+        }
+        for tool in ["oml_review_bulk", "oml_review", "oml_approve"] {
+            let called = mcp(
+                r,
+                token,
+                "tools/call",
+                json!({"name": tool, "arguments": {"artifact_ids": [a], "verdict": "approve"}}),
+            )
+            .await;
+            assert!(
+                called["error"]["code"] == -32602 || called["result"]["isError"] == true,
+                "{who} {tool}: {called}"
+            );
+        }
     }
 
     // The row is still held: the person's reviewer key is listed it.

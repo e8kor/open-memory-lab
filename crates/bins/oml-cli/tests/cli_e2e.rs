@@ -6310,5 +6310,26 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
         skipped.contains("0 approved, 0 rejected, 1 skipped"),
         "{skipped}"
     );
+
+    // `oml doctor` says which reviewer key may review in bulk: an ok line
+    // for the person's key, a warning naming the fix for a crew's key held
+    // by an agent, and no line for a key that does not review (ADR-0055 d13).
+    let crew = issue("crew-review", "dreamer", "agent", "crew/review", "dreamer");
+    let (_, person, _) = lab.json(Some(&reviewer), &["doctor"]);
+    assert!(
+        person["review"]
+            .as_str()
+            .is_some_and(|l| l.starts_with("ok bulk review")),
+        "{person}"
+    );
+    let (_, crew_doctor, _) = lab.json(Some(&crew), &["doctor"]);
+    let line = crew_doctor["review"].as_str().unwrap_or_default();
+    assert!(
+        line.starts_with("warn bulk review") && line.contains("--held-by human"),
+        "{crew_doctor}"
+    );
+    assert_eq!(crew_doctor["verdict"], "warn", "{crew_doctor}");
+    let (_, writer_doctor, _) = lab.json(Some(&loader), &["doctor"]);
+    assert!(writer_doctor["review"].is_null(), "{writer_doctor}");
     lab.stop().await;
 }
