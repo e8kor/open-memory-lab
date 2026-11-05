@@ -447,6 +447,7 @@ where
                         max_tokens: None,
                         search: None,
                         match_mode: oml_app::search::MatchMode::Any,
+                        anchor: oml_app::types::AnchorFilter::default(),
                     },
                 )
                 .await
@@ -474,6 +475,7 @@ where
                     until: None,
                     limit: 50,
                     cursor: None,
+                    anchor: oml_app::types::AnchorFilter::default(),
                 },
             )
             .await
@@ -499,6 +501,7 @@ where
                     until: None,
                     limit: 50,
                     cursor: None,
+                    anchor: oml_app::types::AnchorFilter::default(),
                 },
             )
             .await;
@@ -1246,8 +1249,11 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 "supersede",
                 csrf,
                 &format!(
-                    "{}{}{}",
+                    "{}{}{}{}",
                     hidden("memory", &read.memory.memory_id.to_string()),
+                    // The version this page rendered: the edit is refused
+                    // if the claim moved on since (ADR-0057 d19).
+                    hidden("expected_version", &read.memory.version.to_string()),
                     textarea("text", "new text", &read.memory.body),
                     select(
                         "retirement",
@@ -1381,6 +1387,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     derives_from: vec![source],
                     severity: None,
                     rule: None,
+                    anchor: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1391,8 +1398,17 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 ));
             }
             "supersede" => {
-                fields.only(&["memory", "text", "retirement"])?;
+                fields.only(&["memory", "expected_version", "text", "retirement"])?;
                 let target = fields.id("memory")?;
+                let expected_version = fields
+                    .need("expected_version")?
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|v| *v >= 1)
+                    .ok_or_else(|| {
+                        ApiError::validation("expected_version is the version this page rendered")
+                            .with_details(json!({"field": "expected_version"}))
+                    })?;
                 let body = fields.need("text")?.to_owned();
                 let retirement = fields.yes("retirement");
                 let admin = self.caller(session, Capacity::Admin).await?;
@@ -1427,6 +1443,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
+                    anchor: None,
+                    expected_version,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await

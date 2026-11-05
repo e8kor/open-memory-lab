@@ -186,6 +186,7 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 /// idempotency key, so distinct submissions never collide (ADR-0025 d18).
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
+        anchor: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -207,6 +208,7 @@ fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
 
 fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
+        anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
         workarea: None,
@@ -223,6 +225,8 @@ fn recall_req(query: &str) -> RecallRequest {
 /// no kind sent, no retirement, no ancestor beyond the target.
 fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
+        anchor: None,
+        expected_version: 1,
         idempotency_key: idem.to_owned(),
         target_id: target,
         body: body.to_owned(),
@@ -5703,6 +5707,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
         app.list_memories(
             admin,
             &ListRequest {
+                anchor: oml_app::types::AnchorFilter::default(),
                 own: false,
                 workarea: Some(by_name("crew")),
                 state: None,

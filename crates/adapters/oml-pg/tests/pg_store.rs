@@ -372,6 +372,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                     rig.tenant_id,
                     RetrieverKind::KeywordAll,
                     &CandidateScope {
+                        anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
@@ -7222,6 +7223,7 @@ async fn bm25_list(
             tenant,
             RetrieverKind::Bm25,
             &CandidateScope {
+                anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
@@ -8004,6 +8006,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                     tenant,
                     RetrieverKind::Bm25Postings,
                     &CandidateScope {
+                        anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {

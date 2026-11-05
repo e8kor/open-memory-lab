@@ -277,6 +277,7 @@ nothing else.
 | `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
 | `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
+| `anchor`, `stale`, `source_checked` | *Since v0.5.8 (ADR-0057 d1, d5):* the version's declared origin or null; `changed` or `removed` from the served version's latest source check, else null, never from a held version; and that check `{rev, at, result, moved_to}` or null. `oml_read` takes `anchor_repo` and `anchor_path_prefix` in recall and listing modes and refuses them in get mode. |
 | `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1, and null when the calling key cannot read the replaced version, under the same test as `derives_from` ([http-api](http-api.md#get-get-v1memoriesartifact_id)) |
 | `workarea` | The workarea node id; null when the calling key holds no role on the node, which only an own row an admin moved there can show ([naming a node](../architecture/roles-and-keys.md#own)) |
 | `workarea_path` | The derived path of that node; null wherever `workarea` is |
@@ -319,8 +320,8 @@ and `idempotency_key` are required:
 
 | Mode | Chosen by | Takes | Refused, each `request.validation` naming it in `details.field` | Rides |
 |---|---|---|---|---|
-| `submit` | no `replaces` | `claim_key`, `kind` (default `memory`), `derives_from`, `workarea` | `retirement`, `reason` | `POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty and `submission.remember` otherwise |
-| `supersede` | `replaces` | `kind`, `derives_from`, `workarea`, `retirement`, `reason` | `claim_key` (the new version takes the target's); a `kind` other than `memory`, `derived_fact` or `steering`; a `workarea` not the target's; a target of a vocabulary kind | `POST /v1/memories/{replaces}/supersede`; `retirement: true` is ADR-0025 d11's retire-proposal, `text` stating why |
+| `submit` | no `replaces` | `claim_key`, `kind` (default `memory`), `derives_from`, `workarea`, `anchor` (ADR-0057 d1) | `retirement`, `reason`, `expected_version` | `POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty and `submission.remember` otherwise |
+| `supersede` | `replaces` | `expected_version` (required; ADR-0057 d19), `kind`, `derives_from`, `workarea`, `retirement`, `reason`, `anchor` | `claim_key` (the new version takes the target's); a `kind` other than `memory`, `derived_fact` or `steering`; a `workarea` not the target's; a target of a vocabulary kind | `POST /v1/memories/{replaces}/supersede`; `retirement: true` is ADR-0025 d11's retire-proposal, `text` stating why |
 
 ```json
 {

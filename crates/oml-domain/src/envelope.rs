@@ -64,6 +64,10 @@ pub mod event_types {
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
     /// A promoted supersession takes the tip from the version it replaces.
     pub const LIFECYCLE_SUPERSEDE: &str = "lifecycle.supersede";
+    /// A statement that a promoted version's anchored span was compared
+    /// with its source at a commit; it changes no text and no anchor and
+    /// moves nothing through review (ADR-0057 d5, d18).
+    pub const SOURCE_CHECKED: &str = "source.checked";
     /// Crypto-shredding erasure (vector 3 of chain-format.md).
     pub const LIFECYCLE_ERASE: &str = "lifecycle.erase";
     /// Deployment signing-key rotation, first event the new key signs.

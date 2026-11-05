@@ -13,6 +13,7 @@
 pub mod telemetry;
 
 use oml_app::domain::access::{Covers, Grant, KeyDenial};
+use oml_app::domain::anchor::{Anchor, CheckResult, Origin};
 use oml_app::domain::budget::hit_order;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
@@ -43,8 +44,9 @@ use oml_app::types::{
     DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth,
-    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
+    RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
+    TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -1612,6 +1614,9 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
      m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.severity, m.rule, \
+     m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
+     m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
+     m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1660,7 +1665,80 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
+        anchor: anchor_from_row(row)?.map(Box::new),
+        source_check: source_check_from_row(row)?.map(Box::new),
     })
+}
+
+/// A row's anchor columns, as the author declared them (ADR-0057 d1).
+fn anchor_from_row(row: &PgRow) -> Result<Option<Anchor>, StoreError> {
+    let text =
+        |name: &str| -> Result<Option<String>, StoreError> { row.try_get(name).map_err(backend) };
+    let origin = match (text("anchor_repo")?, text("anchor_uri")?) {
+        (Some(repo), None) => Origin::Repo {
+            repo,
+            rev: text("anchor_rev")?
+                .ok_or_else(|| StoreError::Backend("a repo anchor without a rev".to_owned()))?,
+            path: text("anchor_path")?
+                .ok_or_else(|| StoreError::Backend("a repo anchor without a path".to_owned()))?,
+        },
+        (None, Some(uri)) => Origin::Uri {
+            uri,
+            rev: text("anchor_rev")?,
+        },
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => {
+            return Err(StoreError::Backend(
+                "an anchor with both repo and uri".to_owned(),
+            ));
+        }
+    };
+    let hash = match (text("anchor_hash")?, text("anchor_hasher")?) {
+        (Some(hash), Some(hasher)) => Some((hash, hasher)),
+        _ => None,
+    };
+    Ok(Some(Anchor {
+        origin,
+        fragment: text("anchor_fragment")?,
+        hash,
+    }))
+}
+
+/// A row's latest source check (ADR-0057 d5, d18).
+fn source_check_from_row(row: &PgRow) -> Result<Option<SourceCheck>, StoreError> {
+    let text =
+        |name: &str| -> Result<Option<String>, StoreError> { row.try_get(name).map_err(backend) };
+    let Some(result) = text("source_check_result")? else {
+        return Ok(None);
+    };
+    let result = CheckResult::parse(&result)
+        .ok_or_else(|| StoreError::Backend(format!("unknown source check {result:?}")))?;
+    let at = text("source_check_at")?
+        .ok_or_else(|| StoreError::Backend("a source check without its time".to_owned()))?;
+    Ok(Some(SourceCheck {
+        rev: text("source_check_rev")?
+            .ok_or_else(|| StoreError::Backend("a source check without its rev".to_owned()))?,
+        result,
+        hash: text("source_check_hash")?,
+        moved_to: text("source_check_path")?
+            .map(|path| Ok::<_, StoreError>((path, text("source_check_fragment")?)))
+            .transpose()?,
+        at: EventTime::parse(&at).map_err(backend)?,
+    }))
+}
+
+/// A `LIKE` pattern matching every string that starts with `prefix`, its
+/// `%`, `_` and `\\` escaped (ADR-0057 d4).
+fn like_prefix(prefix: &str) -> String {
+    let mut pattern = String::with_capacity(prefix.len() + 1);
+    for c in prefix.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern.push('%');
+    pattern
 }
 
 /// A recall candidate from a row of `id`, `body_bytes` and `score`, and
@@ -2002,14 +2080,17 @@ async fn insert_memory(
     let version = i32::try_from(m.version).map_err(backend)?;
     let body_bytes = i32::try_from(m.body_bytes).map_err(backend)?;
     let promoted_at = m.promoted_at.as_ref().map(EventTime::as_str);
+    let anchor = m.anchor.as_deref();
     sqlx::query(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule) \
+         severity, rule, anchor_repo, anchor_uri, anchor_rev, anchor_path, anchor_fragment, \
+         anchor_hash, anchor_hasher) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24)",
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24, $25, $26, $27, $28, \
+         $29, $30, $31)",
     )
     .bind(m.memory_id)
     .bind(m.tenant_id)
@@ -2035,6 +2116,19 @@ async fn insert_memory(
     .bind(m.replaces)
     .bind(m.guardrail.as_ref().map(|g| g.severity.as_str()))
     .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()))
+    .bind(anchor.and_then(Anchor::repo))
+    .bind(anchor.and_then(|a| match &a.origin {
+        Origin::Uri { uri, .. } => Some(uri.as_str()),
+        Origin::Repo { .. } => None,
+    }))
+    .bind(anchor.and_then(|a| match &a.origin {
+        Origin::Repo { rev, .. } => Some(rev.as_str()),
+        Origin::Uri { rev, .. } => rev.as_deref(),
+    }))
+    .bind(anchor.and_then(Anchor::path))
+    .bind(anchor.and_then(|a| a.fragment.as_deref()))
+    .bind(anchor.and_then(|a| a.hash.as_ref().map(|(h, _)| h.as_str())))
+    .bind(anchor.and_then(|a| a.hash.as_ref().map(|(_, h)| h.as_str())))
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
@@ -2815,6 +2909,28 @@ async fn apply_fold(
         }
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
+        }
+        MetadataFold::SourceChecked { memory_id, check } => {
+            // The version's latest check; the journal keeps every one
+            // (ADR-0057 d5). The application admitted a promoted tip.
+            let (path, fragment) = check.moved_to.map_or((None, None), |(p, f)| (Some(p), f));
+            sqlx::query(
+                "UPDATE memories SET source_check_rev = $3, source_check_result = $4, \
+                 source_check_hash = $5, source_check_path = $6, source_check_fragment = $7, \
+                 source_check_at = $8 \
+                 WHERE tenant_id = $1 AND id = $2 AND status = 'promoted'",
+            )
+            .bind(tenant_id)
+            .bind(memory_id)
+            .bind(&check.rev)
+            .bind(check.result.as_str())
+            .bind(check.hash.as_deref())
+            .bind(path)
+            .bind(fragment)
+            .bind(check.at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
         }
         MetadataFold::TipSuperseded {
             successor,
@@ -3721,6 +3837,15 @@ impl Retriever for PgStore {
             .map_or((Vec::new(), Vec::new()), |own| {
                 (own.author_key_ids.clone(), own.nodes.clone())
             });
+        // The origin filters narrow the scope before any cut: the list is
+        // read whole, the rows the filters admit kept in its order, then
+        // cut at `k`, so a filtered recall never under-returns (ADR-0057
+        // d4; FR-115 measures what reading it whole costs).
+        let wanted = query.k;
+        let mut query = query;
+        if !scope.anchor.is_empty() {
+            query.k = usize::MAX;
+        }
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -3816,6 +3941,32 @@ impl Retriever for PgStore {
                     .map(candidate_from_row)
                     .collect::<Result<Vec<_>, _>>()?
             }
+        };
+        let candidates = if scope.anchor.is_empty() {
+            candidates
+        } else {
+            let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
+            let admitted: BTreeSet<Uuid> = sqlx::query_scalar(
+                "SELECT m.id FROM memories m \
+                 WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) \
+                   AND ($3::text IS NULL OR m.anchor_repo = $3) \
+                   AND ($4::text IS NULL OR m.anchor_path LIKE $4 ESCAPE '\\')",
+            )
+            .bind(tenant_id)
+            .bind(&ids)
+            .bind(scope.anchor.repo.as_deref())
+            .bind(scope.anchor.path_prefix.as_deref().map(like_prefix))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?
+            .into_iter()
+            .collect();
+            let mut kept: Vec<Candidate> = candidates
+                .into_iter()
+                .filter(|c| admitted.contains(&c.memory_id))
+                .collect();
+            kept.truncate(wanted);
+            kept
         };
         tx.commit().await.map_err(backend)?;
         Ok(Retrieved {
@@ -4629,6 +4780,15 @@ impl JournalStore for PgStore {
         if let Some(claim_key) = &filter.claim_key {
             sql.push(" AND m.claim_key = ").push_bind(claim_key.clone());
         }
+        // The origin filters, read by `memories_anchor` (ADR-0057 d4).
+        if let Some(repo) = &filter.anchor.repo {
+            sql.push(" AND m.anchor_repo = ").push_bind(repo.clone());
+        }
+        if let Some(prefix) = &filter.anchor.path_prefix {
+            sql.push(" AND m.anchor_path LIKE ")
+                .push_bind(like_prefix(prefix))
+                .push(" ESCAPE '\\'");
+        }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")
                 .push_bind(since.as_str().to_owned())
@@ -4666,6 +4826,7 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let row = sqlx::query(
             "SELECT max(version) AS greatest, \
+                    max(version) FILTER (WHERE status IN ('held', 'promoted')) AS latest_live, \
                     coalesce(bool_or(status IN ('held', 'promoted', 'demoted')), false) AS live \
              FROM memories WHERE tenant_id = $1 AND workarea_id = $2 AND claim_key = $3",
         )
@@ -4677,13 +4838,14 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         let greatest: Option<i32> = row.try_get("greatest").map_err(backend)?;
+        let latest_live: Option<i32> = row.try_get("latest_live").map_err(backend)?;
+        let version = |v: i32| {
+            u32::try_from(v)
+                .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
+        };
         Ok(ClaimKeyState {
-            greatest_version: greatest
-                .map(|v| {
-                    u32::try_from(v)
-                        .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
-                })
-                .transpose()?,
+            greatest_version: greatest.map(version).transpose()?,
+            latest_live_version: latest_live.map(version).transpose()?,
             live: row.try_get("live").map_err(backend)?,
         })
     }
