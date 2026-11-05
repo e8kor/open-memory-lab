@@ -16,7 +16,7 @@
    "mrr": 1.0,
    "ndcg10": 0.965,
    "zero": 0.0,
-   "median_latency_ms": 37.0,
+   "median_latency_ms": 11.9,
    "n": 11
   },
   "paraphrase": {
@@ -26,7 +26,7 @@
    "mrr": 0.5,
    "ndcg10": 0.502,
    "zero": 0.0,
-   "median_latency_ms": 48.4,
+   "median_latency_ms": 14.7,
    "n": 11
   },
   "inflection": {
@@ -36,17 +36,17 @@
    "mrr": 0.939,
    "ndcg10": 0.967,
    "zero": 0.0,
-   "median_latency_ms": 37.4,
+   "median_latency_ms": 12.8,
    "n": 11
   },
   "partial": {
-   "s1": 0.818,
+   "s1": 0.909,
    "s5": 1.0,
    "r10": 1.0,
-   "mrr": 0.882,
-   "ndcg10": 0.907,
+   "mrr": 0.927,
+   "ndcg10": 0.94,
    "zero": 0.0,
-   "median_latency_ms": 39.0,
+   "median_latency_ms": 14.9,
    "n": 11
   },
   "typo": {
@@ -56,7 +56,7 @@
    "mrr": 0.818,
    "ndcg10": 0.818,
    "zero": 0.0,
-   "median_latency_ms": 33.2,
+   "median_latency_ms": 13.2,
    "n": 11
   },
   "identifier": {
@@ -66,7 +66,7 @@
    "mrr": 1.0,
    "ndcg10": 0.997,
    "zero": 0.0,
-   "median_latency_ms": 58.5,
+   "median_latency_ms": 14.0,
    "n": 11
   },
   "question": {
@@ -76,7 +76,7 @@
    "mrr": 0.939,
    "ndcg10": 0.931,
    "zero": 0.0,
-   "median_latency_ms": 23.5,
+   "median_latency_ms": 14.3,
    "n": 11
   },
   "long": {
@@ -86,7 +86,7 @@
    "mrr": 1.0,
    "ndcg10": 0.957,
    "zero": 0.0,
-   "median_latency_ms": 30.1,
+   "median_latency_ms": 11.0,
    "n": 11
   },
   "negation": {
@@ -96,7 +96,7 @@
    "mrr": 1.0,
    "ndcg10": 0.971,
    "zero": 0.0,
-   "median_latency_ms": 21.4,
+   "median_latency_ms": 13.1,
    "n": 11
   },
   "temporal": {
@@ -106,7 +106,7 @@
    "mrr": 0.636,
    "ndcg10": 0.757,
    "zero": 0.0,
-   "median_latency_ms": 21.5,
+   "median_latency_ms": 10.3,
    "n": 11
   },
   "multihop": {
@@ -116,17 +116,17 @@
    "mrr": 0.874,
    "ndcg10": 0.828,
    "zero": 0.0,
-   "median_latency_ms": 23.2,
+   "median_latency_ms": 11.8,
    "n": 11
   },
   "overall": {
-   "s1": 0.826,
+   "s1": 0.835,
    "s5": 0.934,
    "r10": 0.91,
-   "mrr": 0.872,
-   "ndcg10": 0.873,
+   "mrr": 0.876,
+   "ndcg10": 0.876,
    "zero": 0.0,
-   "median_latency_ms": 31.9,
+   "median_latency_ms": 13.0,
    "n": 121
   }
  },
@@ -161,7 +161,7 @@
     "truncated": false,
     "used_tokens": 265
    },
-   "latency_ms": 42.72,
+   "latency_ms": 9.81,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -204,7 +204,7 @@
     "truncated": false,
     "used_tokens": 249
    },
-   "latency_ms": 48.3,
+   "latency_ms": 10.44,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -251,7 +251,7 @@
     "truncated": false,
     "used_tokens": 306
    },
-   "latency_ms": 25.54,
+   "latency_ms": 8.3,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -286,7 +286,7 @@
     "truncated": false,
     "used_tokens": 136
    },
-   "latency_ms": 25.32,
+   "latency_ms": 8.43,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -319,7 +319,7 @@
     "truncated": false,
     "used_tokens": 71
    },
-   "latency_ms": 53.08,
+   "latency_ms": 12.6,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -366,7 +366,7 @@
     "truncated": false,
     "used_tokens": 308
    },
-   "latency_ms": 51.93,
+   "latency_ms": 14.03,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -407,7 +407,7 @@
     "truncated": false,
     "used_tokens": 200
    },
-   "latency_ms": 32.98,
+   "latency_ms": 12.74,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -448,7 +448,7 @@
     "truncated": false,
     "used_tokens": 249
    },
-   "latency_ms": 39.96,
+   "latency_ms": 11.87,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -485,7 +485,7 @@
     "truncated": false,
     "used_tokens": 137
    },
-   "latency_ms": 36.97,
+   "latency_ms": 13.1,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -503,12 +503,12 @@
     "m037",
     "m068",
     "m053",
-    "m184",
     "m177",
+    "m184",
     "m163",
     "m175",
-    "m168",
-    "m088"
+    "m088",
+    "m168"
    ],
    "scores_raw": [
     16.49267578125,
@@ -532,7 +532,7 @@
     "truncated": false,
     "used_tokens": 327
    },
-   "latency_ms": 28.93,
+   "latency_ms": 11.68,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -579,7 +579,7 @@
     "truncated": false,
     "used_tokens": 295
    },
-   "latency_ms": 31.7,
+   "latency_ms": 13.13,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -614,7 +614,7 @@
     "truncated": false,
     "used_tokens": 121
    },
-   "latency_ms": 48.35,
+   "latency_ms": 13.34,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -661,7 +661,7 @@
     "truncated": false,
     "used_tokens": 325
    },
-   "latency_ms": 34.92,
+   "latency_ms": 14.72,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -708,7 +708,7 @@
     "truncated": false,
     "used_tokens": 320
    },
-   "latency_ms": 56.96,
+   "latency_ms": 15.47,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -755,7 +755,7 @@
     "truncated": false,
     "used_tokens": 314
    },
-   "latency_ms": 59.04,
+   "latency_ms": 16.15,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -800,7 +800,7 @@
     "truncated": false,
     "used_tokens": 272
    },
-   "latency_ms": 55.9,
+   "latency_ms": 15.44,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -847,7 +847,7 @@
     "truncated": false,
     "used_tokens": 315
    },
-   "latency_ms": 30.92,
+   "latency_ms": 16.18,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -884,7 +884,7 @@
     "truncated": false,
     "used_tokens": 155
    },
-   "latency_ms": 18.16,
+   "latency_ms": 12.44,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -898,8 +898,8 @@
   "q019": {
    "sent": "who gets woken up at night when something breaks",
    "ranked": [
-    "m064",
     "m177",
+    "m064",
     "m152",
     "m134",
     "m067",
@@ -931,7 +931,7 @@
     "truncated": false,
     "used_tokens": 307
    },
-   "latency_ms": 31.82,
+   "latency_ms": 15.98,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -978,7 +978,7 @@
     "truncated": false,
     "used_tokens": 334
    },
-   "latency_ms": 48.93,
+   "latency_ms": 12.88,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1025,7 +1025,7 @@
     "truncated": false,
     "used_tokens": 276
    },
-   "latency_ms": 45.95,
+   "latency_ms": 13.96,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1072,7 +1072,7 @@
     "truncated": false,
     "used_tokens": 314
    },
-   "latency_ms": 89.56,
+   "latency_ms": 14.14,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1119,7 +1119,7 @@
     "truncated": false,
     "used_tokens": 313
    },
-   "latency_ms": 37.38,
+   "latency_ms": 13.23,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1141,7 +1141,8 @@
     "m193",
     "m171",
     "m190",
-    "m094"
+    "m094",
+    "m089"
    ],
    "scores_raw": [
     10.215739250183104,
@@ -1152,7 +1153,8 @@
     3.579448699951172,
     3.141212224960327,
     3.047921895980835,
-    3.003324508666992
+    3.003324508666992,
+    2.645148515701294
    ],
    "steering": 0,
    "budget": {
@@ -1162,9 +1164,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 287
+    "used_tokens": 319
    },
-   "latency_ms": 41.62,
+   "latency_ms": 15.17,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1185,8 +1187,8 @@
     "m173",
     "m174",
     "m110",
-    "m115",
     "m161",
+    "m115",
     "m077"
    ],
    "scores_raw": [
@@ -1211,7 +1213,7 @@
     "truncated": false,
     "used_tokens": 325
    },
-   "latency_ms": 37.28,
+   "latency_ms": 11.59,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1258,7 +1260,7 @@
     "truncated": false,
     "used_tokens": 331
    },
-   "latency_ms": 46.62,
+   "latency_ms": 13.35,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1297,7 +1299,7 @@
     "truncated": false,
     "used_tokens": 193
    },
-   "latency_ms": 42.28,
+   "latency_ms": 11.6,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1338,7 +1340,7 @@
     "truncated": false,
     "used_tokens": 239
    },
-   "latency_ms": 37.97,
+   "latency_ms": 12.2,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1385,7 +1387,7 @@
     "truncated": false,
     "used_tokens": 303
    },
-   "latency_ms": 34.62,
+   "latency_ms": 13.03,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1432,7 +1434,7 @@
     "truncated": false,
     "used_tokens": 333
    },
-   "latency_ms": 37.06,
+   "latency_ms": 11.44,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1473,7 +1475,7 @@
     "truncated": false,
     "used_tokens": 225
    },
-   "latency_ms": 25.2,
+   "latency_ms": 10.2,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1520,7 +1522,7 @@
     "truncated": false,
     "used_tokens": 317
    },
-   "latency_ms": 45.03,
+   "latency_ms": 12.84,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1567,7 +1569,7 @@
     "truncated": false,
     "used_tokens": 302
    },
-   "latency_ms": 23.96,
+   "latency_ms": 14.99,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -1587,8 +1589,8 @@
     "m027",
     "m025",
     "m123",
-    "m026",
     "m126",
+    "m026",
     "m028"
    ],
    "scores_raw": [
@@ -1612,14 +1614,14 @@
     "truncated": false,
     "used_tokens": 296
    },
-   "latency_ms": 52.95,
+   "latency_ms": 13.28,
    "fallback": null,
    "scores": {
     "s1": 0.0,
     "s5": 1.0,
     "r10": 1.0,
     "mrr": 0.2,
-    "ndcg10": 0.4114350473367146,
+    "ndcg10": 0.4065138679803724,
     "zero": 0.0
    }
   },
@@ -1659,7 +1661,7 @@
     "truncated": false,
     "used_tokens": 274
    },
-   "latency_ms": 38.58,
+   "latency_ms": 12.52,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1692,7 +1694,7 @@
     "truncated": false,
     "used_tokens": 92
    },
-   "latency_ms": 37.3,
+   "latency_ms": 11.46,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1721,7 +1723,7 @@
     "truncated": false,
     "used_tokens": 31
    },
-   "latency_ms": 37.99,
+   "latency_ms": 14.47,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1758,7 +1760,7 @@
     "truncated": false,
     "used_tokens": 135
    },
-   "latency_ms": 24.97,
+   "latency_ms": 16.13,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1789,7 +1791,7 @@
     "truncated": false,
     "used_tokens": 61
    },
-   "latency_ms": 27.95,
+   "latency_ms": 23.75,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1803,10 +1805,28 @@
   "q040": {
    "sent": "e-invoic italy",
    "ranked": [
-    "m157"
+    "m157",
+    "m143",
+    "m189",
+    "m089",
+    "m145",
+    "m146",
+    "m043",
+    "m131",
+    "m107",
+    "m142"
    ],
    "scores_raw": [
-    11.343144416809082
+    11.343144416809082,
+    2.5070362091064453,
+    2.3403100967407227,
+    2.2031667232513428,
+    2.2031667232513428,
+    2.1581292152404785,
+    2.13629412651062,
+    1.907614588737488,
+    1.8095245361328125,
+    1.779031753540039
    ],
    "steering": 0,
    "budget": {
@@ -1816,9 +1836,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 29
+    "used_tokens": 322
    },
-   "latency_ms": 39.0,
+   "latency_ms": 17.38,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1851,7 +1871,7 @@
     "truncated": false,
     "used_tokens": 87
    },
-   "latency_ms": 39.99,
+   "latency_ms": 15.57,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1898,7 +1918,7 @@
     "truncated": false,
     "used_tokens": 266
    },
-   "latency_ms": 47.01,
+   "latency_ms": 15.96,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1929,7 +1949,7 @@
     "truncated": false,
     "used_tokens": 65
    },
-   "latency_ms": 43.91,
+   "latency_ms": 10.83,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -1943,8 +1963,8 @@
   "q044": {
    "sent": "2fa admins",
    "ranked": [
-    "m074",
-    "m078"
+    "m078",
+    "m074"
    ],
    "scores_raw": [
     4.796937465667725,
@@ -1960,14 +1980,14 @@
     "truncated": false,
     "used_tokens": 47
    },
-   "latency_ms": 40.0,
+   "latency_ms": 14.94,
    "fallback": null,
    "scores": {
-    "s1": 0.0,
+    "s1": 1.0,
     "s5": 1.0,
     "r10": 1.0,
-    "mrr": 0.5,
-    "ndcg10": 0.6309297535714574,
+    "mrr": 1.0,
+    "ndcg10": 1.0,
     "zero": 0.0
    }
   },
@@ -2001,7 +2021,7 @@
     "truncated": false,
     "used_tokens": 214
    },
-   "latency_ms": 16.94,
+   "latency_ms": 15.27,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2046,7 +2066,7 @@
     "truncated": false,
     "used_tokens": 281
    },
-   "latency_ms": 38.01,
+   "latency_ms": 16.35,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2079,7 +2099,7 @@
     "truncated": false,
     "used_tokens": 94
    },
-   "latency_ms": 31.96,
+   "latency_ms": 15.27,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2126,7 +2146,7 @@
     "truncated": false,
     "used_tokens": 306
    },
-   "latency_ms": 43.04,
+   "latency_ms": 12.0,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2167,7 +2187,7 @@
     "truncated": false,
     "used_tokens": 248
    },
-   "latency_ms": 44.93,
+   "latency_ms": 12.59,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2200,7 +2220,7 @@
     "truncated": false,
     "used_tokens": 100
    },
-   "latency_ms": 43.69,
+   "latency_ms": 13.22,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2231,7 +2251,7 @@
     "truncated": false,
     "used_tokens": 69
    },
-   "latency_ms": 12.25,
+   "latency_ms": 21.86,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2264,7 +2284,7 @@
     "truncated": false,
     "used_tokens": 103
    },
-   "latency_ms": 36.3,
+   "latency_ms": 15.69,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -2303,7 +2323,7 @@
     "truncated": false,
     "used_tokens": 170
    },
-   "latency_ms": 33.09,
+   "latency_ms": 12.73,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2340,7 +2360,7 @@
     "truncated": false,
     "used_tokens": 154
    },
-   "latency_ms": 23.27,
+   "latency_ms": 9.34,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2387,7 +2407,7 @@
     "truncated": false,
     "used_tokens": 317
    },
-   "latency_ms": 33.25,
+   "latency_ms": 7.93,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2420,7 +2440,7 @@
     "truncated": false,
     "used_tokens": 84
    },
-   "latency_ms": 44.37,
+   "latency_ms": 7.36,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2467,7 +2487,7 @@
     "truncated": false,
     "used_tokens": 318
    },
-   "latency_ms": 29.52,
+   "latency_ms": 10.04,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2514,7 +2534,7 @@
     "truncated": false,
     "used_tokens": 301
    },
-   "latency_ms": 36.25,
+   "latency_ms": 13.18,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2553,7 +2573,7 @@
     "truncated": false,
     "used_tokens": 182
    },
-   "latency_ms": 33.3,
+   "latency_ms": 15.36,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2571,14 +2591,24 @@
     "m130",
     "m045",
     "m079",
-    "m099"
+    "m058",
+    "m052",
+    "m099",
+    "m195",
+    "m143",
+    "m043"
    ],
    "scores_raw": [
     9.901196479797363,
     4.752758979797363,
     4.640539646148682,
     3.629037618637085,
-    3.0586044788360596
+    3.6238396167755127,
+    3.520805835723877,
+    3.0586044788360596,
+    3.0284481048583984,
+    2.617832899093628,
+    2.5648603439331055
    ],
    "steering": 0,
    "budget": {
@@ -2588,9 +2618,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 164
+    "used_tokens": 337
    },
-   "latency_ms": 84.36,
+   "latency_ms": 12.67,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2637,7 +2667,7 @@
     "truncated": false,
     "used_tokens": 323
    },
-   "latency_ms": 67.0,
+   "latency_ms": 13.98,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2656,9 +2686,9 @@
     "m012",
     "m109",
     "m170",
-    "m159",
     "m092",
     "m117",
+    "m159",
     "m116",
     "m179"
    ],
@@ -2684,7 +2714,7 @@
     "truncated": false,
     "used_tokens": 290
    },
-   "latency_ms": 51.97,
+   "latency_ms": 15.07,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2731,7 +2761,7 @@
     "truncated": false,
     "used_tokens": 314
    },
-   "latency_ms": 92.04,
+   "latency_ms": 15.4,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2778,7 +2808,7 @@
     "truncated": false,
     "used_tokens": 257
    },
-   "latency_ms": 88.51,
+   "latency_ms": 14.63,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2801,7 +2831,7 @@
     "m180",
     "m156",
     "m148",
-    "m177"
+    "m088"
    ],
    "scores_raw": [
     14.362723350524902,
@@ -2823,9 +2853,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 327
+    "used_tokens": 322
    },
-   "latency_ms": 58.48,
+   "latency_ms": 12.39,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2872,7 +2902,7 @@
     "truncated": false,
     "used_tokens": 304
    },
-   "latency_ms": 64.49,
+   "latency_ms": 15.26,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2889,11 +2919,13 @@
     "m053",
     "m163",
     "m179",
-    "m168",
     "m088",
+    "m168",
     "m043",
     "m052",
-    "m199"
+    "m102",
+    "m199",
+    "m106"
    ],
    "scores_raw": [
     14.664015769958496,
@@ -2903,7 +2935,9 @@
     3.003324508666992,
     2.9600131511688232,
     2.917933225631714,
-    2.6886043548583984
+    2.901697874069214,
+    2.6886043548583984,
+    2.677234172821045
    ],
    "steering": 0,
    "budget": {
@@ -2913,9 +2947,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 269
+    "used_tokens": 332
    },
-   "latency_ms": 55.78,
+   "latency_ms": 14.34,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2962,7 +2996,7 @@
     "truncated": false,
     "used_tokens": 321
    },
-   "latency_ms": 61.29,
+   "latency_ms": 13.83,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -2995,7 +3029,7 @@
     "truncated": false,
     "used_tokens": 93
    },
-   "latency_ms": 80.5,
+   "latency_ms": 12.38,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3016,8 +3050,8 @@
     "m016",
     "m021",
     "m017",
-    "m013",
     "m088",
+    "m013",
     "m004"
    ],
    "scores_raw": [
@@ -3042,7 +3076,7 @@
     "truncated": false,
     "used_tokens": 312
    },
-   "latency_ms": 30.35,
+   "latency_ms": 11.43,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -3083,7 +3117,7 @@
     "truncated": false,
     "used_tokens": 230
    },
-   "latency_ms": 6.21,
+   "latency_ms": 10.19,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3130,7 +3164,7 @@
     "truncated": false,
     "used_tokens": 325
    },
-   "latency_ms": 7.89,
+   "latency_ms": 16.17,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3177,7 +3211,7 @@
     "truncated": false,
     "used_tokens": 315
    },
-   "latency_ms": 9.59,
+   "latency_ms": 15.63,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3224,7 +3258,7 @@
     "truncated": false,
     "used_tokens": 320
    },
-   "latency_ms": 10.54,
+   "latency_ms": 15.44,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3239,11 +3273,27 @@
    "sent": "What language and framework is the api written in?",
    "ranked": [
     "m066",
-    "m160"
+    "m160",
+    "m102",
+    "m106",
+    "m188",
+    "m107",
+    "m101",
+    "m104",
+    "m062",
+    "m170"
    ],
    "scores_raw": [
     7.186746120452881,
-    5.0523529052734375
+    5.0523529052734375,
+    2.901697874069214,
+    2.677234172821045,
+    2.647761344909668,
+    2.0612258911132812,
+    2.0612258911132812,
+    2.0612258911132812,
+    2.0612258911132812,
+    1.960420608520508
    ],
    "steering": 0,
    "budget": {
@@ -3253,9 +3303,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 40
+    "used_tokens": 241
    },
-   "latency_ms": 40.85,
+   "latency_ms": 14.79,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3273,8 +3323,8 @@
     "m015",
     "m080",
     "m021",
-    "m133",
     "m082",
+    "m133",
     "m153",
     "m174",
     "m176"
@@ -3300,7 +3350,7 @@
     "truncated": false,
     "used_tokens": 296
    },
-   "latency_ms": 23.54,
+   "latency_ms": 16.31,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3321,8 +3371,8 @@
     "m131",
     "m128",
     "m125",
-    "m159",
     "m041",
+    "m159",
     "m003"
    ],
    "scores_raw": [
@@ -3347,7 +3397,7 @@
     "truncated": false,
     "used_tokens": 285
    },
-   "latency_ms": 22.97,
+   "latency_ms": 13.0,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3394,7 +3444,7 @@
     "truncated": false,
     "used_tokens": 323
    },
-   "latency_ms": 21.48,
+   "latency_ms": 9.36,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3441,7 +3491,7 @@
     "truncated": false,
     "used_tokens": 306
    },
-   "latency_ms": 10.61,
+   "latency_ms": 8.07,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3488,7 +3538,7 @@
     "truncated": false,
     "used_tokens": 318
    },
-   "latency_ms": 10.9,
+   "latency_ms": 9.45,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3535,7 +3585,7 @@
     "truncated": false,
     "used_tokens": 335
    },
-   "latency_ms": 6.41,
+   "latency_ms": 8.01,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3582,7 +3632,7 @@
     "truncated": false,
     "used_tokens": 327
    },
-   "latency_ms": 6.22,
+   "latency_ms": 11.09,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3629,7 +3679,7 @@
     "truncated": false,
     "used_tokens": 316
    },
-   "latency_ms": 32.7,
+   "latency_ms": 11.0,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3676,7 +3726,7 @@
     "truncated": false,
     "used_tokens": 312
    },
-   "latency_ms": 33.96,
+   "latency_ms": 11.23,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3723,7 +3773,7 @@
     "truncated": false,
     "used_tokens": 313
    },
-   "latency_ms": 30.77,
+   "latency_ms": 11.84,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3742,8 +3792,8 @@
     "m057",
     "m163",
     "m133",
-    "m115",
     "m161",
+    "m115",
     "m072",
     "m157",
     "m183"
@@ -3770,7 +3820,7 @@
     "truncated": false,
     "used_tokens": 322
    },
-   "latency_ms": 33.1,
+   "latency_ms": 10.0,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3817,7 +3867,7 @@
     "truncated": false,
     "used_tokens": 299
    },
-   "latency_ms": 34.99,
+   "latency_ms": 14.35,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3864,7 +3914,7 @@
     "truncated": false,
     "used_tokens": 300
    },
-   "latency_ms": 30.08,
+   "latency_ms": 16.66,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3907,7 +3957,7 @@
     "truncated": false,
     "used_tokens": 245
    },
-   "latency_ms": 16.34,
+   "latency_ms": 14.6,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3927,8 +3977,8 @@
     "m016",
     "m021",
     "m017",
-    "m013",
     "m088",
+    "m013",
     "m004",
     "m001"
    ],
@@ -3954,7 +4004,7 @@
     "truncated": false,
     "used_tokens": 324
    },
-   "latency_ms": 14.99,
+   "latency_ms": 15.07,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -3977,7 +4027,7 @@
     "m117",
     "m108",
     "m173",
-    "m186"
+    "m195"
    ],
    "scores_raw": [
     14.15533447265625,
@@ -3989,7 +4039,7 @@
     3.891894817352295,
     3.4076082706451416,
     3.361250162124634,
-    2.796968698501587
+    3.0284481048583984
    ],
    "steering": 0,
    "budget": {
@@ -3999,9 +4049,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 306
+    "used_tokens": 310
    },
-   "latency_ms": 25.91,
+   "latency_ms": 16.98,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4036,7 +4086,7 @@
     "truncated": false,
     "used_tokens": 126
    },
-   "latency_ms": 21.45,
+   "latency_ms": 10.96,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4057,7 +4107,9 @@
     "m062",
     "m143",
     "m036",
-    "m117"
+    "m117",
+    "m106",
+    "m066"
    ],
    "scores_raw": [
     14.724628448486328,
@@ -4067,7 +4119,9 @@
     5.877680778503418,
     4.227084159851074,
     3.629037618637085,
-    3.5152008533477783
+    3.5152008533477783,
+    2.677234172821045,
+    2.1343932151794434
    ],
    "steering": 0,
    "budget": {
@@ -4077,9 +4131,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 240
+    "used_tokens": 286
    },
-   "latency_ms": 29.11,
+   "latency_ms": 10.76,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4095,14 +4149,14 @@
    "ranked": [
     "m044",
     "m186",
-    "m073",
     "m140",
+    "m073",
     "m142",
     "m169",
-    "m063",
     "m029",
+    "m063",
     "m065",
-    "m038"
+    "m111"
    ],
    "scores_raw": [
     23.515445709228516,
@@ -4124,9 +4178,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 275
+    "used_tokens": 274
    },
-   "latency_ms": 26.22,
+   "latency_ms": 9.71,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4173,7 +4227,7 @@
     "truncated": false,
     "used_tokens": 307
    },
-   "latency_ms": 24.59,
+   "latency_ms": 12.24,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4216,7 +4270,7 @@
     "truncated": false,
     "used_tokens": 247
    },
-   "latency_ms": 15.93,
+   "latency_ms": 13.57,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4255,7 +4309,7 @@
     "truncated": false,
     "used_tokens": 200
    },
-   "latency_ms": 26.5,
+   "latency_ms": 10.86,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4302,7 +4356,7 @@
     "truncated": false,
     "used_tokens": 291
    },
-   "latency_ms": 15.5,
+   "latency_ms": 13.06,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4349,7 +4403,7 @@
     "truncated": false,
     "used_tokens": 299
    },
-   "latency_ms": 11.09,
+   "latency_ms": 14.13,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4372,7 +4426,7 @@
     "m016",
     "m021",
     "m017",
-    "m013"
+    "m088"
    ],
    "scores_raw": [
     8.024696350097656,
@@ -4394,9 +4448,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 307
+    "used_tokens": 309
    },
-   "latency_ms": 14.11,
+   "latency_ms": 11.49,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4443,7 +4497,7 @@
     "truncated": false,
     "used_tokens": 341
    },
-   "latency_ms": 13.7,
+   "latency_ms": 6.79,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4462,8 +4516,8 @@
     "m179",
     "m011",
     "m199",
-    "m184",
     "m177",
+    "m184",
     "m175",
     "m174",
     "m176"
@@ -4490,7 +4544,7 @@
     "truncated": false,
     "used_tokens": 337
    },
-   "latency_ms": 29.97,
+   "latency_ms": 6.78,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4507,13 +4561,25 @@
     "m050",
     "m045",
     "m116",
-    "m105"
+    "m105",
+    "m102",
+    "m106",
+    "m188",
+    "m066",
+    "m107",
+    "m101"
    ],
    "scores_raw": [
     10.541879653930664,
     4.640539646148682,
     4.022336959838867,
-    3.5835928916931152
+    3.5835928916931152,
+    2.901697874069214,
+    2.677234172821045,
+    2.647761344909668,
+    2.1343932151794434,
+    2.0612258911132812,
+    2.0612258911132812
    ],
    "steering": 0,
    "budget": {
@@ -4523,9 +4589,9 @@
     "next_hit_tokens": null,
     "steering_tokens": 0,
     "truncated": false,
-    "used_tokens": 128
+    "used_tokens": 282
    },
-   "latency_ms": 31.93,
+   "latency_ms": 6.64,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4572,7 +4638,7 @@
     "truncated": false,
     "used_tokens": 332
    },
-   "latency_ms": 19.06,
+   "latency_ms": 8.35,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4619,7 +4685,7 @@
     "truncated": false,
     "used_tokens": 302
    },
-   "latency_ms": 27.53,
+   "latency_ms": 10.98,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4634,8 +4700,8 @@
    "sent": "most recent incident",
    "ranked": [
     "m179",
-    "m184",
     "m177",
+    "m184",
     "m175",
     "m174",
     "m176"
@@ -4658,7 +4724,7 @@
     "truncated": false,
     "used_tokens": 212
    },
-   "latency_ms": 20.29,
+   "latency_ms": 10.33,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4678,8 +4744,8 @@
     "m152",
     "m192",
     "m106",
-    "m001",
-    "m110"
+    "m110",
+    "m001"
    ],
    "scores_raw": [
     24.247652053833008,
@@ -4701,7 +4767,7 @@
     "truncated": false,
     "used_tokens": 246
    },
-   "latency_ms": 40.05,
+   "latency_ms": 13.31,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4746,7 +4812,7 @@
     "truncated": false,
     "used_tokens": 260
    },
-   "latency_ms": 20.42,
+   "latency_ms": 10.33,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4793,7 +4859,7 @@
     "truncated": false,
     "used_tokens": 280
    },
-   "latency_ms": 27.94,
+   "latency_ms": 13.94,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4811,11 +4877,11 @@
     "m075",
     "m199",
     "m074",
-    "m106",
     "m022",
+    "m106",
     "m194",
-    "m102",
     "m017",
+    "m102",
     "m185"
    ],
    "scores_raw": [
@@ -4840,7 +4906,7 @@
     "truncated": false,
     "used_tokens": 307
    },
-   "latency_ms": 21.49,
+   "latency_ms": 14.2,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4887,7 +4953,7 @@
     "truncated": false,
     "used_tokens": 299
    },
-   "latency_ms": 16.11,
+   "latency_ms": 14.88,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4907,8 +4973,8 @@
     "m150",
     "m181",
     "m056",
-    "m182",
     "m163",
+    "m182",
     "m123",
     "m043"
    ],
@@ -4934,7 +5000,7 @@
     "truncated": false,
     "used_tokens": 294
    },
-   "latency_ms": 7.31,
+   "latency_ms": 13.22,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -4967,7 +5033,7 @@
     "truncated": false,
     "used_tokens": 121
    },
-   "latency_ms": 6.66,
+   "latency_ms": 11.77,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -4987,8 +5053,8 @@
     "m079",
     "m082",
     "m175",
-    "m020",
     "m179",
+    "m020",
     "m043",
     "m163"
    ],
@@ -5014,7 +5080,7 @@
     "truncated": false,
     "used_tokens": 347
    },
-   "latency_ms": 25.58,
+   "latency_ms": 13.37,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5061,7 +5127,7 @@
     "truncated": false,
     "used_tokens": 311
    },
-   "latency_ms": 30.96,
+   "latency_ms": 11.93,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5108,7 +5174,7 @@
     "truncated": false,
     "used_tokens": 299
    },
-   "latency_ms": 23.21,
+   "latency_ms": 11.61,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5155,7 +5221,7 @@
     "truncated": false,
     "used_tokens": 300
    },
-   "latency_ms": 30.7,
+   "latency_ms": 11.14,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5202,7 +5268,7 @@
     "truncated": false,
     "used_tokens": 281
    },
-   "latency_ms": 28.73,
+   "latency_ms": 16.68,
    "fallback": null,
    "scores": {
     "s1": 0.0,
@@ -5249,7 +5315,7 @@
     "truncated": false,
     "used_tokens": 318
    },
-   "latency_ms": 8.33,
+   "latency_ms": 9.27,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5294,7 +5360,7 @@
     "truncated": false,
     "used_tokens": 301
    },
-   "latency_ms": 25.14,
+   "latency_ms": 10.99,
    "fallback": null,
    "scores": {
     "s1": 1.0,
@@ -5327,7 +5393,7 @@
     "truncated": false,
     "used_tokens": 94
    },
-   "latency_ms": 20.29,
+   "latency_ms": 7.37,
    "fallback": null,
    "scores": {
     "s1": 1.0,
