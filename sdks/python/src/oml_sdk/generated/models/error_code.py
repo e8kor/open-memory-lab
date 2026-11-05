@@ -50,6 +50,7 @@ class ErrorCode(StrEnum):
     SUBMISSION_SIMULATION_ID_REQUIRED = "submission.simulation_id_required"
     SUBMISSION_TIP_CONFLICT = "submission.tip_conflict"
     SUBMISSION_UNIVERSE_REFUSED = "submission.universe_refused"
+    SUBMISSION_VERSION_CONFLICT = "submission.version_conflict"
     SYSTEM_INTERNAL = "system.internal"
     SYSTEM_UNAVAILABLE = "system.unavailable"
     UPLOAD_DIGEST_MISMATCH = "upload.digest_mismatch"

@@ -46,12 +46,12 @@ def test_a_held_version_cannot_be_superseded_and_the_promoted_one_can(
         f"The SDK README's canary rule, {marker}.", claim_key=f"tip-{marker}", workarea=review
     ).value
     with pytest.raises(SubmissionError) as refused:
-        agent.write("Drain, then wait five minutes.", replaces=held.artifact_id)
+        agent.write("Drain, then wait five minutes.", replaces=held.artifact_id, expected_version=1)
     assert refused.value.code == "submission.tip_conflict"
 
     assert reviewer.review_next().item.artifact_id == held.artifact_id
     assert reviewer.approve().value.state == "promoted"
-    successor = agent.write("Drain, then wait five minutes.", replaces=held.artifact_id).value
+    successor = agent.write("Drain, then wait five minutes.", replaces=held.artifact_id, expected_version=1).value
     assert (successor.state, successor.replaces.artifact_id) == ("held", held.artifact_id)
 
     assert reviewer.review_next().item.artifact_id == successor.artifact_id

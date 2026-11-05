@@ -12,6 +12,7 @@ from ..models.submit_request_verb import SubmitRequestVerb
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
 
 
@@ -53,6 +54,11 @@ class SubmitRequest:
                 namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
                 is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+            anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+                immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
+                shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
+                Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
+                or fragment is submission.scan_veto.
     """
 
     body: str
@@ -63,6 +69,7 @@ class SubmitRequest:
     rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
+    anchor: Anchor | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +103,10 @@ class SubmitRequest:
         if not isinstance(self.derives_from, Unset):
             derives_from = self.derives_from
 
+        anchor: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anchor, Unset):
+            anchor = self.anchor.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -117,11 +128,14 @@ class SubmitRequest:
             field_dict["workarea"] = workarea
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
 
         d = dict(src_dict)
@@ -166,6 +180,13 @@ class SubmitRequest:
 
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
+        _anchor = d.pop("anchor", UNSET)
+        anchor: Anchor | Unset
+        if isinstance(_anchor, Unset):
+            anchor = UNSET
+        else:
+            anchor = Anchor.from_dict(_anchor)
+
         submit_request = cls(
             body=body,
             verb=verb,
@@ -175,6 +196,7 @@ class SubmitRequest:
             rule=rule,
             workarea=workarea,
             derives_from=derives_from,
+            anchor=anchor,
         )
 
         submit_request.additional_properties = d
