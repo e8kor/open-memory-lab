@@ -3879,9 +3879,15 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/readyz",
             "/v2/whoami",
             "/v2/workareas/w1",
-            "/v2/events"
+            "/v2/events",
+            // The sync lines on the default workarea (ADR-0057 d17): the
+            // anchor filter probe, the stale count and the waiting edges.
+            "/v1/memories",
+            "/v1/memories",
+            "/v2/edges"
         ],
     );
+    assert!(seen[5..].iter().all(|(_, auth)| *auth == bearer("oml_file_key")));
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
     assert_eq!(seen[2].1, bearer("oml_file_key"));

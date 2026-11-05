@@ -587,8 +587,14 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
             ctx.workarea,
             short(&si.item.hash)
         )),
-        check: (!tip.retirement && tip.anchor.is_some())
-            .then(|| check(ctx, tip, key, "changed", Some(&si.item.hash), None)),
+        // A check names a hash only where the anchor carries one, in this
+        // repository (the source-check route refuses it otherwise).
+        check: (!tip.retirement
+            && tip
+                .anchor
+                .as_ref()
+                .is_some_and(|a| a.repo.as_deref() == Some(ctx.repo.as_str()) && a.hash.is_some()))
+        .then(|| check(ctx, tip, key, "changed", Some(&si.item.hash), None)),
         note,
         text: Some(si.item.text.clone()),
         ..bare(Outcome::Changed, key, &si.path)

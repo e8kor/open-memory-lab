@@ -533,7 +533,7 @@ memory.
 against what the workarea holds and writes the difference through the HTTP API under the
 caller's key, one request per memory, each anchored to the repository, commit, path, fragment and
 `oml-md/1` hash of the span it came from
-(ADR-0057 ([#64](https://github.com/e8kor/open-memory-lab/pull/64))
+([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
 d6–d11, d14, d18–d21). It reads git's object store at `--rev`, never the working tree, so an
 uncommitted, untracked or ignored file is never read, and a file whose name matches a secret
 pattern (`.env*`, `*.pem`, `*.key`, `id_*`, `*credentials*`, `*secret*`) is reported `unreadable`
@@ -658,7 +658,7 @@ what to do next. Both emit the same four named signals — the contract that
 | Verb | Does |
 |---|---|
 | `oml status` | The four signals, one screen, plus chain-head seq and last reconciler run per tenant. |
-| `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. Since v0.5.8 its `sync` lines warn of a server that does not accept anchors, an `origin` remote carrying credentials in its URL, the public server without `--allow-public-server` recorded for the clone, and count the default workarea's served versions marked `stale` and claim edges waiting for a second key (ADR-0057 ([#64](https://github.com/e8kor/open-memory-lab/pull/64)) d17). *Designed with review availability, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* review availability also warns when `universe` holds curated claims and no dreamer outside their lineage can review them; the user-key lines `oml doctor` prints [above](#start-settings) are built since v0.5.0. |
+| `oml doctor` | Each signal against its threshold with a verdict (`ok`/`warn`/`fail`) and the next action — the named command or the runbook anchor. Exit `1` on any `fail`, so probes and CI can consume it. Since v0.5.8 its `sync` lines warn of a server that does not accept anchors, an `origin` remote carrying credentials in its URL, the public server without `--allow-public-server` recorded for the clone, and count the default workarea's served versions marked `stale` and claim edges waiting for a second key ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d17). *Designed with review availability, not built ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d14):* review availability also warns when `universe` holds curated claims and no dreamer outside their lineage can review them; the user-key lines `oml doctor` prints [above](#start-settings) are built since v0.5.0. |
 
 ## The `oml-admin` plugin
 
