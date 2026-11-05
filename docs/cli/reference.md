@@ -546,10 +546,11 @@ written anchor and text are never erased; a run that passes the flag records
 
 | Verb | Does |
 |---|---|
-| `oml sync <source> --workarea <workarea> [--adapter adr\|headings\|lines] [--rev <commit>] [--repo <repo>] [--dry-run] [--json] [--max-writes <n>] [--adopt] [--allow-rollback] [--allow-public-server]` | Diff and write. Each item and each listed claim gets one outcome: `new` (submitted), `changed` (a source check `changed`, then a supersession naming the claim's latest version), `removed` (a source check `removed`, then a retirement whose anchor has no hash), `unchanged` (a source check `fresh`), `moved` (the span's hash and text found at another path or fragment: a source check `moved` naming where, nothing written), `pending` (a held version waits for review), `rollback` (the source equals an older promoted version: nothing written unless `--allow-rollback`), `diverged` (the tip has no anchor in this repository: `--adopt` supersedes it), `foreign` (another key's tip) and `conflict` (another key holds the claim key). A run writes at most `--max-writes` memories (alias `--batch`), 200 unless set, the bulk-review request cap, and the next run continues; it ends by printing the `oml review list … --author-key <key>` command for what it wrote. `--dry-run` sends nothing and prints the plan, which `--json` prints as one object, the same plan the run executes. Idempotency keys are `sync:<workarea>:<claim_key>:<outcome>:` and the first 16 hex digits of the span hash, so a retried run replays. Exit `0` when every planned write was accepted, `1` on any `diverged`, `foreign`, `conflict`, `rollback`, `unreadable` or refused item, `2` for a usage error. |
+| `oml sync <source> --workarea <workarea> [--adapter adr\|headings\|lines] [--rev <commit>] [--repo <repo>] [--dry-run] [--json] [--max-writes <n>] [--exclude <glob> …] [--adopt] [--allow-rollback] [--allow-public-server]` | Diff and write. Each item and each listed claim gets one outcome: `new` (submitted), `changed` (a source check `changed`, then a supersession naming the claim's latest version), `removed` (a source check `removed`, then a retirement whose anchor has no hash), `unchanged` (a source check `fresh`), `moved` (the span's hash and text found at another path or fragment: a source check `moved` naming where, nothing written), `pending` (a held version waits for review), `rollback` (the source equals an older promoted version: nothing written unless `--allow-rollback`), `diverged` (the tip has no anchor in this repository: `--adopt` supersedes it), `foreign` (another key's tip) and `conflict` (another key holds the claim key). A run writes at most `--max-writes` memories (alias `--batch`), 200 unless set, the bulk-review request cap, and the next run continues; it ends by printing the `oml review list … --author-key <key>` command for what it wrote. `--dry-run` sends nothing and prints the plan, which `--json` prints as one object, the same plan the run executes. Idempotency keys are `sync:<workarea>:<claim_key>:<outcome>:` and the first 16 hex digits of the span hash, so a retried run replays. A run from a checkout older than the commit the workarea's claims of this source were read at, or from a clone that does not hold that commit, is refused before anything is sent unless `--allow-rollback` (d20). A file that cannot be read keeps its claims (`skipped`, never retired); a file two of whose items, or which with another file, yield one claim key is reported `unreadable`. Exit `0` when every planned write was accepted, `1` on any `diverged`, `foreign`, `conflict`, `rollback`, `unreadable` or refused item, `2` for a usage error. |
 | `oml sync <source> --workarea <workarea> --check [--record]` | Write no memory: print each anchored claim as `fresh`, `moved`, `stale`, `removed`, `pending`, `untracked` or `unhashed` and each stated edge as `stated`, `waiting`, `unresolved` or `unstated`; exit `1` on `stale`, `removed` or `untracked`, so CI can run it after every merge. `--record` records the source checks, under the version's author key or a dreamer on the workarea. |
 | `oml sync <source> --workarea <workarea> --edges [--ratify]` | Under a person's dreamer key: propose, through `POST /v2/edges`, each `amends` or `supersedes` edge the records state between two promoted tips that has none; an end not yet promoted is `waiting`, one in neither the source nor the workarea `unresolved`. `--ratify`, under a second dreamer key of another principal, ratifies each pending edge the source states that another key proposed. |
 | `oml sync <source> --workarea <workarea> --pr <n> --rev <head> [--base <branch>]` · `… --pr <n> --retire-all` | Drafts: load the records pull request `<n>` adds or changes between the merge base of `--base` (`origin/main` unless set) and `--rev` into the child workarea `<workarea>-pr-<n>`, which a sync of `<workarea>` never diffs; when the pull request closes, `--retire-all` proposes retiring every claim this key wrote there under the source. |
+| `oml anchor <path>[#<fragment>] [--rev <commit>] [--repo <repo>] [--adapter adr\|headings\|lines]` | Print, as one JSON object, the anchor of a committed file or of one part of it at `--rev` (`HEAD` unless set), for `oml write --anchor`: the repository from `origin` without its credentials, the full commit, the path, the fragment (a decision handle, a heading's slug, or a line span `L<n>` or `L<n>-L<m>`) and the `oml-md/1` hash of its span. Reads git's object store, never the working tree; an unknown fragment is refused naming the ones the file has (exit `2`) (ADR-0057 d13, d21). |
 
 The adapters: `adr` reads `ADR-NNNN-*.md` and yields one claim per decision bullet under
 `## Decision` (key `adr-NNNN-dN`), a summary (`adr-NNNN-summary`: the title, the status, the
@@ -558,6 +559,28 @@ context's first paragraph and each decision's headline) and a rejected-alternati
 source holding such files. `headings` yields one claim per heading of level 2 to 4 with body text,
 its fragment the heading's slug as GitHub renders it and its key `doc/<path>/<slug>`. `lines` cuts
 blocks of at most 40 lines at blank lines, its fragment `L<n>-L<m>`. No text is cut.
+
+**What a source is synced with.** A run answers only for the claims of its adapter's namespace
+(`adr-NNNN-…` for `adr`, `doc/…` for `headings`, `doc/…/l<n>-l<m>` for `lines`): another
+memory anchored into the source, an agent's citation say, is reported `foreign` by `--check`,
+never compared, retired or marked. The adapter is the one the workarea's claims of the source
+were written by; a first run takes `--adapter` or infers it from the file names, and another
+adapter is refused unless `--change-adapter`, which retires the old adapter's claims.
+`--exclude <glob>` (repeatable; `**` any segments, `*` within one) leaves paths out of the
+source: never read, compared or retired. An exclude set that takes in paths this sync's claims
+live at is refused unless `--change-exclude`, which leaves those claims as they are; the set is
+recorded for the source in the clone's git config, and another set on that clone is refused
+unless `--change-exclude`. The operator's layout reads:
+
+```text
+e8kor
+└── oml-knowledge
+    ├── oml-design          oml sync docs/adr --workarea oml-design            (adr)
+    ├── oml-design-pr-<n>   oml sync docs/adr --workarea oml-design --pr <n> --rev origin/<branch>
+    │                       (drafts; the run names oml-design-pr-<n>, a child of oml-knowledge)
+    ├── oml-docs            oml sync docs --workarea oml-docs --exclude 'docs/adr/**'   (headings)
+    └── oml-code            the rust adapter, from v0.5.9
+```
 
 ## `oml review` — the review ceremony
 
