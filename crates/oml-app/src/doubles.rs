@@ -210,6 +210,9 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// `similar_candidates` ignores its scope (a store that regressed), so
+    /// a test proves the core admits by recall's rule on its own.
+    widen_similar: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
     /// How many ancestries `workarea_ancestry` has read, across every
@@ -357,6 +360,14 @@ impl MemStore {
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes `similar_candidates` ignore its scope and name every version of
+    /// the tenant that shares a key, as a store whose scope predicate
+    /// regressed would: the core's own admission is then the only filter
+    /// between the writer and a row it may not read (ADR-0050 d1).
+    pub fn widen_similar_candidates(&self) {
+        self.widen_similar.store(true, Ordering::SeqCst);
     }
 
     /// Sets a stored row's status, journalling nothing: the demoted or
@@ -1874,6 +1885,9 @@ impl Retriever for MemStore {
             .memories
             .values()
             .filter(|m| {
+                if self.widen_similar.load(Ordering::SeqCst) {
+                    return true;
+                }
                 if m.retirement || !SIMILAR_KINDS.contains(&m.kind) {
                     return false;
                 }

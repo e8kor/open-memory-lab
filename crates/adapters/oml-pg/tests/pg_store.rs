@@ -7879,6 +7879,113 @@ async fn an_erased_version_leaves_no_posting_and_no_count() {
     drop_dbs(&created).await;
 }
 
+/// The memories of `tenant` that hold similar keys, with how many, read as
+/// the owner under the tenant's row security.
+async fn similar_keys_of(store: &PgStore, tenant: Uuid) -> BTreeMap<Uuid, i64> {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+        "SELECT memory_id, count(*) FROM similar_keys WHERE tenant_id = $1 GROUP BY memory_id",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("similar keys");
+    rows.into_iter().collect()
+}
+
+/// A replaced, retired, rejected, demoted or erased version, and a deleted
+/// row, holds no similar key, and the keys the check reads never outlive the
+/// text they were made from; doctor finds neither a gap nor a drift
+/// afterwards (ADR-0050 d17, R4; ADR-0005 d4). A demotion or an erase that
+/// leaves `is_tip` set is covered as much as one that clears it.
+#[tokio::test]
+async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(574);
+    rig.seed_chain(&store, 0).await;
+    let (replaced, retired, demoted, rejected, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let before = similar_keys_of(&store, tenant).await;
+    for (what, id) in [
+        ("replaced", replaced),
+        ("retired", retired),
+        ("demoted", demoted),
+        ("rejected", rejected),
+        ("retirement version", Uuid::from_u128(0xB12)),
+    ] {
+        assert!(!before.contains_key(&id), "the {what} version holds no key");
+    }
+    for (what, id) in [
+        ("served tip", served),
+        ("successor", Uuid::from_u128(0xB11)),
+        ("held", Uuid::from_u128(0xB07)),
+        ("derived fact", Uuid::from_u128(0xB05)),
+        ("steering", Uuid::from_u128(0xB06)),
+    ] {
+        assert!(before.contains_key(&id), "the {what} version holds keys");
+    }
+    // A demotion and an erase that leave is_tip set.
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'demoted' WHERE tenant_id = $1 AND id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB05),
+    )
+    .await;
+    // A held row erased by deletion.
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM memories WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    let after = similar_keys_of(&store, tenant).await;
+    for id in [served, Uuid::from_u128(0xB05), Uuid::from_u128(0xB07)] {
+        assert!(!after.contains_key(&id), "{id}: no key is left");
+    }
+    assert_eq!(
+        after.keys().copied().collect::<Vec<_>>(),
+        vec![Uuid::from_u128(0xB06), Uuid::from_u128(0xB11)],
+        "the other versions keep theirs"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("PostgreSQL keeps keys");
+    assert_eq!(
+        (health.similar_unfilled, health.similar_drift),
+        (0, 0),
+        "{health:?}"
+    );
+    drop_dbs(&created).await;
+}
+
 /// The `bm25_postings` statement reads the postings by their token index as
 /// the serving role, under row security: integer equality is leakproof, so
 /// the policy leaves the index usable (ADR-0052 Context, d1).

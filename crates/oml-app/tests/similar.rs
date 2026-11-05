@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, MemoryKind, Role};
+use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{
     AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, OnSimilar, SimilarItem,
@@ -63,6 +63,8 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
 /// reads `crew` alone, and `judge` reviews both.
 struct World {
     app: TestApp,
+    store: MemStore,
+    tenant: Uuid,
     admin: String,
     alice: String,
     bob: String,
@@ -72,8 +74,12 @@ struct World {
 }
 
 async fn world() -> World {
+    world_on(MemStore::new()).await
+}
+
+async fn world_on(store: MemStore) -> World {
     let app = App::new(
-        MemStore::new(),
+        store.clone(),
         MemSigner::new(TEST_SEED),
         FixedClock::new(),
         SeqIdGen::new(),
@@ -113,6 +119,8 @@ async fn world() -> World {
     let judge = issue(&app, &admin, Role::Dreamer, both(Role::Dreamer)).await;
     World {
         app,
+        store,
+        tenant: boot.tenant_id,
         admin,
         alice,
         bob,
@@ -364,4 +372,63 @@ async fn a_supersession_never_lists_its_own_claim() {
         vec![other_copy],
         "bob's copy, never alice's own claim"
     );
+}
+
+#[tokio::test]
+async fn on_similar_refuse_fires_on_a_near_copy_as_on_the_same_text() {
+    let w = world().await;
+    let original = w.promoted(&w.alice, "a", LONG, w.crew).await;
+    let refused = w
+        .app
+        .submit_memory(
+            &w.bob,
+            &submit("b", &format!("Note: {LONG}"), w.crew, OnSimilar::Refuse),
+        )
+        .await
+        .expect_err("a near copy is refused");
+    let AppError::SimilarExists(similar) = refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(similar[0].artifact_id, original);
+    assert_eq!(similar[0].relation, "near_copy");
+}
+
+#[tokio::test]
+async fn the_core_admits_no_candidate_the_writer_may_not_read_even_from_a_store_that_names_it() {
+    let store = MemStore::new();
+    store.widen_similar_candidates();
+    let w = world_on(store).await;
+    // Alice's held row in crew, and her promoted row in other, which bob
+    // cannot read: a store that ignores the scope hands both to the core.
+    w.write(&w.alice, "a", LONG, w.crew).await;
+    w.promoted(&w.alice, "b", &format!("Note: {LONG}"), w.other)
+        .await;
+    let refused = w
+        .app
+        .submit_memory(&w.bob, &submit("c", LONG, w.crew, OnSimilar::Refuse))
+        .await
+        .expect("nothing readable is named, so nothing is refused");
+    assert!(refused.receipt.similar.is_empty(), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_replay_drops_a_row_the_writer_can_no_longer_read() {
+    let w = world().await;
+    let original = w.promoted(&w.alice, "a", LONG, w.crew).await;
+    let first = w
+        .app
+        .submit_memory(&w.bob, &submit("b", LONG, w.crew, OnSimilar::Hold))
+        .await
+        .expect("held");
+    assert_eq!(first.receipt.similar.len(), 1);
+    w.store
+        .set_status(w.tenant, original, MemoryStatus::Demoted);
+    let replay = w
+        .app
+        .submit_memory(&w.bob, &submit("b", LONG, w.crew, OnSimilar::Hold))
+        .await
+        .expect("replayed");
+    assert!(replay.replayed);
+    assert!(replay.receipt.similar.is_empty(), "{:?}", replay.receipt);
+    assert_eq!(replay.receipt.memory_id, first.receipt.memory_id);
 }

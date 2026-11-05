@@ -152,3 +152,28 @@ fn the_near_copy_check_meets_its_gates_on_the_labelled_set() {
     assert_eq!(by_label["short"].1, 0, "a short text is never named");
     assert_eq!(by_label["new"].1, 0, "a new fact names nothing");
 }
+
+/// Fingerprints of a text with ten distinct, ordinary words and of its
+/// first nine: the second is past neither guard's distinct-word floor.
+const TEN: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+const NINE: &str = "alpha bravo charlie delta echo foxtrot golf hotel india";
+
+#[test]
+fn a_text_below_the_distinct_word_floor_is_not_a_near_copy_from_either_side() {
+    let (ten, nine) = (Fingerprint::of(TEN), Fingerprint::of(NINE));
+    assert!(ten.may_be_near_copy() && !nine.may_be_near_copy());
+    // J = 9 / 10 = 0.9: the write passes the guard, the stored row does not.
+    assert_eq!(relate(&ten, &nine), None, "the row side is guarded");
+    assert_eq!(relate(&nine, &ten), None, "the write side is guarded");
+}
+
+#[test]
+fn a_repetition_of_few_characters_is_not_a_near_copy_though_it_has_ten_words() {
+    // Eleven and ten distinct words, J = 10 / 11 = 0.91, over two letters:
+    // far under 3.0 bits per character.
+    let low = Fingerprint::of("a b aa ab ba bb aaa aab aba abb baa");
+    let low_row = Fingerprint::of("a b aa ab ba bb aaa aab aba abb");
+    assert!(!low.may_be_near_copy() && !low_row.may_be_near_copy());
+    assert_eq!(relate(&low, &low_row), None);
+    assert_eq!(relate(&low, &low), Some((Relation::SameText, 1.0)));
+}
