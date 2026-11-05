@@ -2925,26 +2925,39 @@ async fn the_hook_output_never_contains_the_key_value() {
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that holds the key value, and matches the query.
+    // A body that holds the key value is refused by the scan, naming the
+    // rule and never the value (ADR-0065 d3, d8), so no row can carry it
+    // to the hook's recall.
+    let (code, refused, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+            "--claim-key",
+            "metals-key-note",
+            "--kind",
+            "memory",
+        ],
+    );
+    assert_ne!(code, 0, "{log}");
+    assert!(
+        log.contains("submission.scan_veto")
+            || refused.to_string().contains("submission.scan_veto"),
+        "{log}"
+    );
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
     crew.submit(
         &crew.agent,
         "memory",
-        "metals-key-note",
-        &format!("Metals desk key {} is in the vault.", crew.agent),
+        "metals-desk-note",
+        "Metals desk keys are in the vault.",
     );
     let stdin = session("startup", "/home/op/src/metals");
 
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
     assert_eq!(code, 0, "{stderr}");
-    let context = context_of(&stdout);
     assert!(!stdout.contains(&crew.agent), "no key on stdout: {stdout}");
     assert!(!stderr.contains(&crew.agent), "no key on stderr: {stderr}");
-    assert!(
-        section(&context, "Memories matching \"metals\":").contains(
-            &"- [held] metals-key-note: Metals desk key [OML_API_KEY] is in the vault.".to_owned()
-        ),
-        "the value is redacted where it was stored: {context}"
-    );
 
     // A refused key is not echoed either.
     let unknown = "oml_refusedkey0123456789abcdefghijklmnopqrstu";
@@ -3012,15 +3025,10 @@ async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() 
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that ends in the key value, which a key with a trailing
-    // space would still authenticate as (the server trims it) and would no
-    // longer match when the hook redacts.
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-key-tail",
-        &format!("Metals desk key {}.", crew.agent),
-    );
+    // A key with a trailing space would still authenticate as the key (the
+    // server trims it) and would no longer match when the hook redacts, so
+    // the hook sends nothing. (The scan refuses a body carrying a key value,
+    // ADR-0065 d3, so none is stored here.)
     let stdin = session("startup", "/home/op/src/metals");
     crew.lab.take_requests();
 
