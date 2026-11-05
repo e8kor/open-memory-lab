@@ -416,3 +416,28 @@ async fn a_pipeline_that_does_not_rerank_never_calls_the_reranker() {
     assert_eq!(r.hits.len(), 1, "no floor without a rerank");
     assert!(reranker.seen().is_empty());
 }
+
+fn not_a_number(_query: &str, _passage: &str) -> f32 {
+    f32::NAN
+}
+
+fn above_one(_query: &str, _passage: &str) -> f32 {
+    1.5
+}
+
+/// A score that is not a finite relevance in `[0, 1]` would sort first or
+/// serialise as null: the core refuses the whole list as `failed` and serves
+/// the first stage's order (ADR-0053 d5).
+#[tokio::test]
+async fn a_score_that_is_not_a_finite_relevance_skips_the_rerank_as_failed() {
+    for relevance in [not_a_number as fn(&str, &str) -> f32, above_one] {
+        let w = world(Arc::new(FakeReranker::scoring(relevance)), policy(20, None)).await;
+        let checklist = w.promoted("a", "deploy friday checklist", None).await;
+        let canary = w.promoted("b", "deploy behind a canary", None).await;
+
+        let r = w.recall(&w.reader, "deploy friday").await;
+        assert_eq!(r.rerank, RerankOutcome::Skipped("failed"));
+        assert_eq!(ids(&r), vec![checklist, canary]);
+        assert!(r.hits.iter().all(|h| h.rerank.is_none()));
+    }
+}

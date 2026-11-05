@@ -97,13 +97,19 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RerankSettings {
     pub model: oml_rerank::ModelSpec,
-    pub model_dir: PathBuf,
+    pub model_dir: Option<PathBuf>,
     pub fetch: bool,
     pub limits: oml_rerank::Limits,
 }
 
 /// `search.rerank.max_concurrent`'s default (ADR-0053 d5).
 pub const DEFAULT_RERANK_MAX_CONCURRENT: usize = 2;
+
+/// `search.rerank.threads`'s default (not built yet).
+pub const DEFAULT_RERANK_THREADS: usize = 2;
+
+/// `search.rerank.max_tokens`'s default (not built yet).
+pub const DEFAULT_RERANK_MAX_TOKENS: usize = 512;
 
 /// `search.rerank.timeout_ms`'s default (ADR-0053 d5).
 pub const DEFAULT_RERANK_TIMEOUT_MS: u64 = 1_000;
@@ -113,10 +119,12 @@ impl Default for RerankSettings {
         let model = oml_rerank::MINILM_L6;
         Self {
             model,
-            model_dir: PathBuf::from("oml-models").join(model.name),
+            model_dir: Some(PathBuf::from("oml-models").join(model.name)),
             fetch: false,
             limits: oml_rerank::Limits {
                 max_concurrent: DEFAULT_RERANK_MAX_CONCURRENT,
+                threads: DEFAULT_RERANK_THREADS,
+                max_tokens: DEFAULT_RERANK_MAX_TOKENS,
                 timeout: std::time::Duration::from_millis(DEFAULT_RERANK_TIMEOUT_MS),
             },
         }
@@ -165,8 +173,11 @@ pub fn load_reranker(
     if !search.needs_reranker() {
         return Ok(None);
     }
+    let model_dir = settings.model_dir.as_deref().ok_or_else(|| {
+        "search.rerank.model_dir is unset and no state directory is known".to_owned()
+    })?;
     if settings.fetch {
-        let fetched = oml_rerank::fetch_missing(&settings.model_dir, &settings.model, get)
+        let fetched = oml_rerank::fetch_missing(model_dir, &settings.model, get)
             .map_err(|e| e.to_string())?;
         if !fetched.is_empty() {
             tracing::info!(
@@ -177,9 +188,8 @@ pub fn load_reranker(
             );
         }
     }
-    let model =
-        oml_rerank::CrossEncoder::load(&settings.model_dir, &settings.model, settings.limits)
-            .map_err(|e| e.to_string())?;
+    let model = oml_rerank::CrossEncoder::load(model_dir, &settings.model, settings.limits)
+        .map_err(|e| e.to_string())?;
     Ok(Some(Arc::new(model)))
 }
 
@@ -476,10 +486,10 @@ impl Config {
                 ))
             })?,
         };
-        let model_dir = lookup(KEY_RERANK_MODEL_DIR).map_or_else(
+        let model_dir = Some(lookup(KEY_RERANK_MODEL_DIR).map_or_else(
             || PathBuf::from("oml-models").join(model.name),
             PathBuf::from,
-        );
+        ));
         let fetch = match lookup(KEY_RERANK_FETCH).as_deref().map(str::trim) {
             None | Some("false") => false,
             Some("true") => true,
@@ -514,6 +524,8 @@ impl Config {
             fetch,
             limits: oml_rerank::Limits {
                 max_concurrent,
+                threads: DEFAULT_RERANK_THREADS,
+                max_tokens: DEFAULT_RERANK_MAX_TOKENS,
                 timeout: std::time::Duration::from_millis(timeout_ms),
             },
         };
@@ -1401,7 +1413,10 @@ mod tests {
             Config::from_sources(None, &|k| env.get(k).cloned())
         };
         let cfg = load(&[]).expect("defaults load");
-        assert_eq!(cfg.rerank, RerankSettings::default());
+        assert_eq!(
+            cfg.rerank.model_dir, None,
+            "no state directory named, none assumed"
+        );
         assert_eq!(cfg.rerank.model, oml_rerank::MINILM_L6);
         assert!(!cfg.rerank.fetch, "no network at start unless asked");
         assert_eq!(
@@ -1416,7 +1431,7 @@ mod tests {
         let file = "[postgres]\nurl = \"postgres://f/db\"\nowner_url = \"postgres://o@f/db\"\n[search]\nenabled = [\"bm25\", \"bm25-rerank\"]\ndefault = \"bm25\"\n[search.rerank]\nmodel = \"ms-marco-MiniLM-L4-v2\"\nmodel_dir = \"/var/lib/oml/l4\"\nfetch = true\ndepth = 10\nfloor = 0.005\nmax_concurrent = 3\ntimeout_ms = 750\n";
         let cfg = Config::from_sources(Some(file), &|_| None).expect("the file loads");
         assert_eq!(cfg.rerank.model, oml_rerank::MINILM_L4);
-        assert_eq!(cfg.rerank.model_dir, PathBuf::from("/var/lib/oml/l4"));
+        assert_eq!(cfg.rerank.model_dir, Some(PathBuf::from("/var/lib/oml/l4")));
         assert!(cfg.rerank.fetch);
         assert_eq!(cfg.rerank.limits.max_concurrent, 3);
         assert_eq!(
@@ -1453,6 +1468,76 @@ mod tests {
         }
     }
 
+    /// `search.rerank.model_dir` is absolute: unset, it lies under the
+    /// process's state directory (systemd's `STATE_DIRECTORY`, else
+    /// `XDG_STATE_HOME/oml`, else `~/.local/state/oml`), never under the
+    /// working directory, and a relative value stops the start; the threads
+    /// and the token limit default to the measured values and refuse what is
+    /// out of range (ADR-0053 d2, d3, d5).
+    #[test]
+    fn the_model_dir_is_absolute_and_defaults_under_the_state_directory() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let load = |extra: &[(&str, &str)]| {
+            let env = env_of(&[base.as_slice(), extra].concat());
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let under = |extra: &[(&str, &str)]| load(extra).expect("loads").rerank.model_dir;
+        let l6 = oml_rerank::MINILM_L6.name;
+        assert_eq!(
+            under(&[("STATE_DIRECTORY", "/var/lib/oml"), ("HOME", "/home/u")]),
+            Some(PathBuf::from(format!("/var/lib/oml/models/{l6}")))
+        );
+        assert_eq!(
+            under(&[("XDG_STATE_HOME", "/x/state"), ("HOME", "/home/u")]),
+            Some(PathBuf::from(format!("/x/state/oml/models/{l6}")))
+        );
+        assert_eq!(
+            under(&[("HOME", "/home/u")]),
+            Some(PathBuf::from(format!(
+                "/home/u/.local/state/oml/models/{l6}"
+            )))
+        );
+        assert_eq!(
+            under(&[("HOME", "relative")]),
+            None,
+            "a relative home is no anchor"
+        );
+        let err = load(&[("OML_SEARCH__RERANK__MODEL_DIR", "oml-models/l6")])
+            .expect_err("a relative model_dir is refused");
+        assert!(err.to_string().contains("absolute"), "{err}");
+
+        let cfg = load(&[]).expect("defaults load");
+        assert_eq!(cfg.rerank.limits.threads, DEFAULT_RERANK_THREADS);
+        assert_eq!(cfg.rerank.limits.max_tokens, DEFAULT_RERANK_MAX_TOKENS);
+        let cfg = load(&[
+            ("OML_SEARCH__RERANK__THREADS", "4"),
+            ("OML_SEARCH__RERANK__MAX_TOKENS", "512"),
+        ])
+        .expect("loads");
+        assert_eq!(cfg.rerank.limits.threads, 4);
+        assert_eq!(cfg.rerank.limits.max_tokens, 512);
+        for (extra, says) in [
+            (
+                &[("OML_SEARCH__RERANK__THREADS", "0")][..],
+                "search.rerank.threads",
+            ),
+            (
+                &[("OML_SEARCH__RERANK__MAX_TOKENS", "513")][..],
+                "search.rerank.max_tokens",
+            ),
+            (
+                &[("OML_SEARCH__RERANK__MAX_TOKENS", "32")][..],
+                "search.rerank.max_tokens",
+            ),
+        ] {
+            let err = load(extra).expect_err("refused");
+            assert!(err.to_string().contains(says), "{err}");
+        }
+    }
+
     /// A configuration serving no reranking pipeline loads no model and
     /// reads no file; one serving `bm25-rerank` with the model absent is
     /// refused naming the file and the remedy, and fetches only when
@@ -1461,7 +1546,7 @@ mod tests {
     fn a_reranking_pipeline_without_its_model_stops_the_start_naming_the_file() {
         let dir = std::env::temp_dir().join(format!("oml-rerank-absent-{}", std::process::id()));
         let settings = RerankSettings {
-            model_dir: dir.clone(),
+            model_dir: Some(dir.clone()),
             ..RerankSettings::default()
         };
         let plain = default_search();

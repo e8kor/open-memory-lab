@@ -3844,9 +3844,32 @@ mod tests {
             "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
         );
         assert!(
-            lines[2]
-                .starts_with("warn search_rerank: reranks skipped since start (3 busy, 1 failed)"),
+            lines[2].starts_with("warn search_rerank: 3 reranks skipped since start (3 busy)"),
             "{lines:?}"
+        );
+        assert!(
+            lines[2].contains("search.rerank.max_concurrent"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].starts_with("warn search_rerank_failed: 1 rerank failed since start"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].contains("rerank_failed") && !lines[3].contains("max_concurrent"),
+            "a failure names the log event, not the cap: {lines:?}"
+        );
+        let floored = (
+            200,
+            json!({"search": {
+                "enabled": ["bm25-rerank"], "default": "bm25-rerank",
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005,
+                           "skipped": {"busy": 0, "timeout": 0, "failed": 0}},
+            }}),
+        );
+        assert_eq!(
+            search_doctor(Some(&floored), None)[1],
+            "rerank ms-marco-MiniLM-L6-v2, depth 10, floor 0.005"
         );
         let quiet = (
             200,

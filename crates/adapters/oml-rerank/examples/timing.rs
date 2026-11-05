@@ -17,6 +17,8 @@ fn main() {
         &oml_rerank::MINILM_L6,
         oml_rerank::Limits {
             max_concurrent: 1,
+            threads: 1,
+            max_tokens: oml_rerank::MAX_TOKENS,
             timeout: std::time::Duration::from_secs(60),
         },
     )

@@ -228,8 +228,21 @@ pub fn fetch_missing(
 pub struct Limits {
     /// Inferences running at once; a call waits for a slot.
     pub max_concurrent: usize,
+    /// The threads of the reranker's pool (not built yet).
+    pub threads: usize,
+    /// The longest pair in tokens (not built yet).
+    pub max_tokens: usize,
     /// From the call to its answer, waiting for a slot included.
     pub timeout: Duration,
+}
+
+/// The byte bound a passage is cut to before tokenising (not built yet).
+pub const MAX_PASSAGE_BYTES: usize = 4_096;
+
+/// A passage cut to [`MAX_PASSAGE_BYTES`] (not built yet).
+#[must_use]
+pub fn cut_passage(text: &str) -> &str {
+    text
 }
 
 /// The threads of the reranker's own pool, which every inference shares,
