@@ -31,11 +31,14 @@ CREATE FUNCTION oml_search_text(t text) RETURNS text
 ------------------------------------------------------------------------------
 -- oml_search_vector — what the bm25 retriever scores: the text's `simple`
 -- lexemes, then the identifier parts it does not already hold, then the
--- `english` stems neither holds. Each occurrence counts once: a word the
--- text says once has one position, where concatenating the text with its
--- split copy, or `simple` with `english`, would count it two to four times
--- (ADR-0049 d12; eval/bench/REPORT.md). An exact form always matches, a
--- non-English word included, and an English word also matches its stem.
+-- `english` stems neither holds, the stems taken from the text and from
+-- the parts it lacks, never from the text twice. Each occurrence counts
+-- once: a word the text says once has one position, whether it is matched
+-- by its exact form or by its stem (`runs` holds `run` once, as `run`
+-- does), where concatenating the text with its split copy, or `simple`
+-- with `english`, would count it two to four times (ADR-0049 d12;
+-- eval/bench/REPORT.md). An exact form always matches, a non-English word
+-- included, and an English word also matches its stem.
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_search_exact(t text) RETURNS tsvector
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
@@ -43,11 +46,16 @@ CREATE FUNCTION oml_search_exact(t text) RETURNS tsvector
         || ts_delete(to_tsvector('simple'::regconfig, oml_search_split(t)),
                      tsvector_to_array(to_tsvector('simple'::regconfig, t)));
 
+CREATE FUNCTION oml_search_stems(t text) RETURNS tsvector
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    RETURN to_tsvector('english'::regconfig, t)
+        || ts_delete(to_tsvector('english'::regconfig, oml_search_split(t)),
+                     tsvector_to_array(to_tsvector('english'::regconfig, t)));
+
 CREATE FUNCTION oml_search_vector(t text) RETURNS tsvector
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     RETURN oml_search_exact(t)
-        || ts_delete(to_tsvector('english'::regconfig, oml_search_text(t)),
-                     tsvector_to_array(oml_search_exact(t)));
+        || ts_delete(oml_search_stems(t), tsvector_to_array(oml_search_exact(t)));
 
 COMMENT ON FUNCTION oml_search_vector(text) IS
     'The bm25 retriever''s lexemes, each occurrence once: simple, identifier parts, english stems '
@@ -55,28 +63,67 @@ COMMENT ON FUNCTION oml_search_vector(text) IS
 
 ------------------------------------------------------------------------------
 -- memories.search_vector and search_len — each version's lexemes and their
--- count, stored once when the row is written, never rebuilt by a read
--- (ADR-0049 d12). Generated columns: the claim never changes in place, and
--- the expression is the one oml_search_vector names. Added on the
--- partitioned parent, so every tenant's partition is rewritten with them
--- here, which fills them for every existing row; a partition created later
--- takes them through LIKE ... INCLUDING ALL. The GIN index serves the owner
--- and a later LEAKPROOF step; under row security `@@` is not leakproof, so
--- the serving role's reads scan the scope (ADR-0034 d13).
+-- count, computed once when the row is written, never rebuilt by a read
+-- (ADR-0049 d12). Plain columns set by a BEFORE trigger rather than
+-- generated ones, so the vector is computed once per write: a generated
+-- search_len could not read search_vector and would compute it again. The
+-- trigger fires on an insert and on an update naming claim or either
+-- column, so a write cannot store lexemes that are not its claim's, and a
+-- status change copies nothing. Every existing row is filled below, under
+-- its tenant's row security; a partition created later takes the columns
+-- through LIKE ... INCLUDING ALL and the trigger through ATTACH PARTITION.
+-- No text index is built on them: under row security `@@` is not
+-- leakproof, so the serving role's reads scan the scope and no index would
+-- serve them (ADR-0034 d13). An erasure that rewrites a claim rewrites its
+-- lexemes through this trigger; one that changed only the status would
+-- leave the erased text in search_vector (ADR-0049 d12).
 ------------------------------------------------------------------------------
 ALTER TABLE memories
-    ADD COLUMN search_vector tsvector
-        GENERATED ALWAYS AS (oml_search_vector(claim)) STORED,
-    ADD COLUMN search_len integer
-        GENERATED ALWAYS AS (length(oml_search_vector(claim))) STORED;
+    ADD COLUMN search_vector tsvector,
+    ADD COLUMN search_len integer;
 
 COMMENT ON COLUMN memories.search_vector IS
-    'oml_search_vector(claim), stored at write (ADR-0049 d12). Owning page: docs/data/postgres-schema.md.';
+    'oml_search_vector(claim), set at write by memories_search_vector (ADR-0049 d12). '
+    'Owning page: docs/data/postgres-schema.md.';
 COMMENT ON COLUMN memories.search_len IS
     'The count of distinct lexemes in search_vector, BM25''s row length (ADR-0049 d12). '
     'Owning page: docs/data/postgres-schema.md.';
 
-CREATE INDEX memories_search_vector ON memories USING gin (search_vector);
+CREATE FUNCTION oml_search_vector_fold() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    NEW.search_vector := oml_search_vector(NEW.claim);
+    NEW.search_len := length(NEW.search_vector);
+    RETURN NEW;
+END
+$$;
+
+-- The lexemes of the rows already written, under each tenant's row
+-- security, the tenants enumerated under 0003's startup policy as 0005
+-- enumerates them; each vector is computed once.
+DO $$
+DECLARE
+    t uuid;
+BEGIN
+    PERFORM set_config('oml.startup_check', 'on', true);
+    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
+        PERFORM set_config('oml.tenant_id', t::text, true);
+        UPDATE memories m SET search_vector = v.sv, search_len = length(v.sv)
+          FROM (SELECT id, oml_search_vector(claim) AS sv FROM memories WHERE tenant_id = t) v
+         WHERE m.tenant_id = t AND m.id = v.id;
+    END LOOP;
+    PERFORM set_config('oml.tenant_id', '', true);
+    PERFORM set_config('oml.startup_check', '', true);
+END
+$$;
+
+ALTER TABLE memories
+    ALTER COLUMN search_vector SET NOT NULL,
+    ALTER COLUMN search_len SET NOT NULL;
+
+CREATE TRIGGER memories_search_vector
+    BEFORE INSERT OR UPDATE OF claim, search_vector, search_len
+    ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_vector_fold();
 
 ------------------------------------------------------------------------------
 -- search_vocabulary — the words did_you_mean may offer: for each workarea,
@@ -135,14 +182,17 @@ CREATE FUNCTION oml_search_words(t text) RETURNS text[]
 -- Words are taken and given back in byte order, so two writes of one tenant
 -- lock vocabulary rows in the same order.
 CREATE FUNCTION oml_search_vocabulary_fold() RETURNS trigger
-    LANGUAGE plpgsql SECURITY INVOKER AS $$
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 DECLARE
     was_live boolean := TG_OP <> 'INSERT'
-        AND OLD.status = 'promoted' AND OLD.is_tip AND NOT OLD.retirement;
+        AND OLD.status = 'promoted' AND OLD.is_tip AND NOT OLD.retirement
+        AND OLD.kind IN ('memory', 'derived_fact');
     is_live boolean := TG_OP <> 'DELETE'
-        AND NEW.status = 'promoted' AND NEW.is_tip AND NOT NEW.retirement;
+        AND NEW.status = 'promoted' AND NEW.is_tip AND NOT NEW.retirement
+        AND NEW.kind IN ('memory', 'derived_fact');
     moved boolean := TG_OP = 'UPDATE'
-        AND (OLD.claim IS DISTINCT FROM NEW.claim OR OLD.workarea_id <> NEW.workarea_id);
+        AND (OLD.claim IS DISTINCT FROM NEW.claim OR OLD.workarea_id <> NEW.workarea_id
+             OR OLD.kind <> NEW.kind);
 BEGIN
     IF was_live AND (NOT is_live OR moved) THEN
         DELETE FROM search_vocabulary v
@@ -163,7 +213,7 @@ END
 $$;
 
 CREATE TRIGGER memories_search_vocabulary
-    AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim, workarea_id OR DELETE
+    AFTER INSERT OR UPDATE OF status, is_tip, retirement, claim, workarea_id, kind OR DELETE
     ON memories FOR EACH ROW EXECUTE FUNCTION oml_search_vocabulary_fold();
 
 -- The vocabulary of the rows already promoted, read and written under each
@@ -180,6 +230,7 @@ BEGIN
         SELECT m.tenant_id, m.workarea_id, w, count(*)
           FROM memories m CROSS JOIN LATERAL unnest(oml_search_words(m.claim)) w
          WHERE m.tenant_id = t AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement
+           AND m.kind IN ('memory', 'derived_fact')
          GROUP BY 1, 2, 3;
     END LOOP;
     PERFORM set_config('oml.tenant_id', '', true);
@@ -188,30 +239,22 @@ END
 $$;
 
 ------------------------------------------------------------------------------
--- pg_trgm, for the trigram retriever and did_you_mean's similarity (ADR-0048
--- d4). A trusted extension: the owner role creates it when it holds CREATE
--- on the database, as it does when it owns the database (deployment.md).
--- Where it does not, the migration goes on without it, neither the trigram
--- retriever nor did_you_mean is served, and a lead whose search.enabled
--- names a trigram pipeline refuses to start, naming the extension
--- (configuration.md search.enabled); doctor names its absence. The indexes
--- are created here when the extension exists, and by the lead's start once
--- an operator creates the extension later. Under row security `%` and `<%`
--- are not leakproof, so the serving role's reads scan (ADR-0034 d13).
+-- pg_trgm, for the opt-in bm25-trigram pipeline and did_you_mean's
+-- similarity (ADR-0048 d4; ADR-0049 d12). A trusted extension: the owner
+-- role creates it when it holds CREATE on the database, as it does when it
+-- owns the database (deployment.md). Where it does not, or the contrib
+-- package is not installed, the migration goes on without it: the default pipelines need none, did_you_mean answers []
+-- and a lead whose search.enabled names bm25-trigram refuses to start,
+-- naming the extension (configuration.md search.enabled); doctor names its
+-- absence. No trigram index is built: under row security `%` and `<%` are
+-- not leakproof, so no index would serve the serving role's reads
+-- (ADR-0034 d13).
 ------------------------------------------------------------------------------
 DO $$
 BEGIN
-    BEGIN
-        CREATE EXTENSION IF NOT EXISTS pg_trgm;
-    EXCEPTION WHEN insufficient_privilege THEN
-        RAISE NOTICE 'pg_trgm not created (%): the trigram retriever is not served', SQLERRM;
-    END;
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
-        EXECUTE 'CREATE INDEX IF NOT EXISTS memories_search_trgm ON memories '
-             || 'USING gin (oml_search_text(claim) gin_trgm_ops)';
-        EXECUTE 'CREATE INDEX IF NOT EXISTS search_vocabulary_trgm ON search_vocabulary '
-             || 'USING gin (word gin_trgm_ops)';
-    END IF;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+EXCEPTION WHEN insufficient_privilege OR undefined_file OR feature_not_supported THEN
+    RAISE NOTICE 'pg_trgm not created (%): bm25-trigram and did_you_mean are not served', SQLERRM;
 END
 $$;
 

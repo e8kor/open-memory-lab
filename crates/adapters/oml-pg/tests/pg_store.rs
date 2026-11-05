@@ -7084,12 +7084,14 @@ async fn stored_lexemes_hold(store: &PgStore, tenant: Uuid) -> (bool, i64) {
 }
 
 /// Each version's search vector, `simple` and `english` over the claim with
-/// its identifier parts, is stored once when the row is written, as a
-/// generated column, with its length beside it; every tenant partition
-/// carries a GIN index over it, and no read rebuilds it (ADR-0049 d12;
-/// postgres-schema.md, search).
+/// its identifier parts, is set once when the row is written, with its
+/// length beside it, and a write cannot store lexemes that are not its
+/// claim's; no text index is kept on it or on the vocabulary, since under
+/// row security none would serve the serving role (ADR-0049 d12; ADR-0034
+/// d13; postgres-schema.md, search).
 #[tokio::test]
-async fn every_memory_versions_search_vector_is_stored_once_with_a_gin_index_on_its_partition() {
+async fn every_memory_versions_search_vector_is_set_once_by_its_write_and_no_index_the_serving_role_cannot_use_is_kept()
+ {
     if !splits().await {
         return;
     }
@@ -7098,43 +7100,46 @@ async fn every_memory_versions_search_vector_is_stored_once_with_a_gin_index_on_
     let mut rig = ChainRig::new(560);
     rig.seed_chain(&store, 0).await;
     let wa = Uuid::from_u128(0xE2);
-    lexeme_rows(&mut rig, &store, wa).await;
+    let (promoted, _) = lexeme_rows(&mut rig, &store, wa).await;
     assert_eq!(
         stored_lexemes_hold(&store, rig.tenant_id).await,
         (true, 6),
         "every version, held or promoted, stores its lexemes"
     );
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "UPDATE memories SET search_vector = to_tsvector('simple', 'zebra'), search_len = 1 \
+          WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(rig.tenant_id)
+    .bind(promoted[0])
+    .execute(&mut *tx)
+    .await
+    .expect("a write naming the lexemes");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        stored_lexemes_hold(&store, rig.tenant_id).await,
+        (true, 6),
+        "the write stores its claim's lexemes, not the ones it named"
+    );
     let mut owner = owner_conn(&store).await;
-    let generated: Vec<(String, String)> = sqlx::query_as(
-        "SELECT attname::text, attgenerated::text FROM pg_attribute \
-          WHERE attrelid = 'memories'::regclass AND attname IN ('search_vector', 'search_len') \
-          ORDER BY attname",
+    let text_indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+           JOIN pg_class t ON t.oid = i.indrelid \
+          WHERE t.relname IN ('memories', 'search_vocabulary') \
+            AND (pg_get_indexdef(i.indexrelid) LIKE '%search_vector%' \
+                 OR pg_get_indexdef(i.indexrelid) LIKE '%gin_trgm_ops%') \
+          ORDER BY 1",
     )
     .fetch_all(&mut owner)
     .await
-    .expect("columns");
-    assert_eq!(
-        generated,
-        vec![
-            ("search_len".to_owned(), "s".to_owned()),
-            ("search_vector".to_owned(), "s".to_owned()),
-        ],
-        "both are stored generated columns"
-    );
-    let indexed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
-                          JOIN pg_am a ON a.oid = c.relam \
-                         WHERE i.indrelid = $1::regclass AND a.amname = 'gin' \
-                           AND pg_get_indexdef(i.indexrelid) LIKE '%(search_vector)%')",
-    )
-    .bind(format!("memories_t_{}", rig.tenant_id.simple()))
-    .fetch_one(&mut owner)
-    .await
-    .expect("index");
-    assert!(
-        indexed,
-        "the tenant's partition has a GIN index on search_vector"
-    );
+    .expect("indexes");
+    assert_eq!(text_indexes, Vec::<String>::new());
     drop(owner);
     drop_dbs(&created).await;
 }

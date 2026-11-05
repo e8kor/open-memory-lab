@@ -684,8 +684,8 @@ pub fn bm25_sql() -> String {
 
 /// The `trigram` statement (ADR-0048 S3): `pg_trgm` word similarity of the
 /// query to the normalised text above 0.3, the threshold `SET LOCAL` gives
-/// `<%`, which the `memories_search_trgm` index serves. `$6` the query, `$7`
-/// `k`.
+/// `<%`. No index serves it: under row security `<%` is not leakproof, so it
+/// scans the scope (ADR-0034 d13; ADR-0049 d12). `$6` the query, `$7` `k`.
 fn trigram_sql() -> String {
     format!(
         "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
@@ -772,33 +772,6 @@ impl PgStore {
         Ok(())
     }
 
-    /// Creates the trigram index on `owner` once `pg_trgm` exists, for a
-    /// database whose extension an operator created after 0020 ran without
-    /// it (ADR-0049 d8). Idempotent; a database without the extension is
-    /// left as it is.
-    pub async fn ensure_trigram_index(owner: &PgPool) -> Result<(), sqlx::Error> {
-        let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
-        )
-        .fetch_one(owner)
-        .await?;
-        if present {
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS memories_search_trgm ON memories \
-                 USING gin (oml_search_text(claim) gin_trgm_ops)",
-            )
-            .execute(owner)
-            .await?;
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS search_vocabulary_trgm ON search_vocabulary \
-                 USING gin (word gin_trgm_ops)",
-            )
-            .execute(owner)
-            .await?;
-        }
-        Ok(())
-    }
-
     /// The owner's URL, which the store opens a connection to for each
     /// tenant's partition DDL alone and closes after it (ADR-0034 d4, d11);
     /// without it, [`JournalStore::create_tenant_partitions`] refuses.
@@ -860,9 +833,7 @@ impl PgStore {
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
         MIGRATOR.run(owner).await?;
-        // 0020 may have created pg_trgm; the trigram index is created here
-        // too, for a database whose extension an operator created later.
-        Self::ensure_trigram_index(owner).await?;
+        // 0020 may have created pg_trgm, which serves bm25-trigram.
         self.probe_search().await?;
         Ok(aligned)
     }

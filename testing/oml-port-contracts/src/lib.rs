@@ -9492,10 +9492,15 @@ pub async fn a_retriever_orders_deterministically_by_score_then_id<S: JournalSto
     }
 }
 
-/// A row outside the scope never changes a candidate's score: a ranking
-/// statistic is computed over the scope alone, so a key cannot learn of
-/// rows it cannot read from the ranks of rows it can (ADR-0048 d3;
-/// ADR-0049 d2).
+/// No row outside the scope changes a candidate's score or the list: the
+/// crowded store adds, beside the same scope rows, every class of row a
+/// statistic could leak from: another key's held row, the calling key's own
+/// held row when the scope names no own keys, a replaced version, a retired
+/// claim's versions, a steering row, rows on another node, and another
+/// tenant's rows on the same node id in the same database. Each class
+/// carries the queries' words, so a document frequency, a row count or an
+/// average length taken over it moves a score (ADR-0048 d3; ADR-0049 d2,
+/// d12).
 pub async fn a_row_outside_the_scope_never_changes_a_candidates_score<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -9506,29 +9511,97 @@ where
     let mut rig = ChainRig::new(403);
     rig.seed_chain(&alone, 0).await;
     let (_, _, wa, own) = retriever_fixture(&mut rig, &alone, false).await;
-    let crowded = new_store().await;
-    let mut rig2 = ChainRig::new(404);
-    rig2.seed_chain(&crowded, 0).await;
-    let _ = retriever_fixture(&mut rig2, &crowded, true).await;
-    for kind in alone.retrievers() {
-        for query in LAW_QUERIES {
-            let scope = scope_of(wa, Some(own));
-            let a = run(&alone, rig.tenant_id, kind, &scope, query, MatchMode::Any).await;
-            let b = run(
-                &crowded,
-                rig2.tenant_id,
-                kind,
-                &scope,
-                query,
-                MatchMode::Any,
-            )
-            .await;
-            assert_eq!(
-                a, b,
-                "{kind:?} {query:?}: rows outside the scope moved a score"
-            );
+    let tenant = rig.tenant_id;
+    // The successor that is a served tip in every store.
+    hold_and_promote(
+        &mut rig,
+        &alone,
+        held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0xF83),
+            "rita",
+            Uuid::from_u128(0xE5),
+            SUCCESSOR,
+        ),
+    )
+    .await;
+    // With no own keys named, the crowded store also holds the key's own
+    // held row; with them named, that row would be in scope, so it is left
+    // out and another key's held row must stay out instead.
+    for (own_held, own_extra) in [(None, true), (Some(own), false)] {
+        let crowded = new_store().await;
+        let t = crowd(&crowded, wa, own, own_extra).await;
+        let scope = scope_of(wa, own_held);
+        for kind in alone.retrievers() {
+            for query in LAW_QUERIES {
+                let a = run(&alone, tenant, kind, &scope, query, MatchMode::Any).await;
+                let b = run(&crowded, t, kind, &scope, query, MatchMode::Any).await;
+                assert_eq!(
+                    a, b,
+                    "{kind:?} {query:?} own {own_held:?}: rows outside the scope moved a score"
+                );
+            }
         }
     }
+}
+
+/// The words every leak class of [`crowd`] says: those of the law queries.
+const LEAKY: &str = "billing deploy friday invoices tenant service rollback release";
+/// The text of the served tip that replaces [`crowd`]'s replaced version.
+const SUCCESSOR: &str = "rollback the release on monday";
+
+/// The retriever fixture with every class of row outside `scope_of(wa, _)`
+/// added, each saying [`LEAKY`]; the tenant of its rows.
+async fn crowd<S: JournalStore>(store: &S, wa: Uuid, own: Uuid, own_extra: bool) -> Uuid {
+    let mut rig = ChainRig::new(403);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let _ = retriever_fixture(&mut rig, store, true).await;
+    let other = Uuid::from_u128(0xE5);
+    let row = |tenant: Uuid, id: u128, key: Uuid, body: &str| {
+        held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, body)
+    };
+    hold(&mut rig, store, row(t, 0xF81, other, LEAKY))
+        .await
+        .expect("another key's held row");
+    if own_extra {
+        hold(&mut rig, store, row(t, 0xF87, own, LEAKY))
+            .await
+            .expect("the key's own held row");
+    }
+    let replaced = row(t, 0xF82, other, LEAKY);
+    hold_and_promote(&mut rig, store, replaced.clone()).await;
+    hold_and_ratify(
+        &mut rig,
+        store,
+        successor_of(&replaced, Uuid::from_u128(0xF83), SUCCESSOR, false),
+    )
+    .await;
+    let retired = row(t, 0xF84, other, LEAKY);
+    hold_and_promote(&mut rig, store, retired.clone()).await;
+    hold_and_ratify(
+        &mut rig,
+        store,
+        successor_of(&retired, Uuid::from_u128(0xF85), LEAKY, true),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..row(t, 0xF86, other, LEAKY)
+        },
+    )
+    .await;
+    let mut neighbour = ChainRig::new(412);
+    neighbour.seed_chain(store, 0).await;
+    let theirs = neighbour.tenant_id;
+    for i in 0..4_u128 {
+        hold_and_promote(&mut neighbour, store, row(theirs, 0xF90 + i, other, LEAKY)).await;
+    }
+    t
 }
 
 /// The keyword retrievers mean the same on every store (ADR-0049 d7):
@@ -9861,9 +9934,73 @@ pub async fn bm25_scores_a_word_a_lone_row_says_once_at_its_weight<S: JournalSto
     );
 }
 
-/// `did_you_mean` draws only on the words of promoted served tips in the
-/// scope: never a held row's, another node's, a replaced version's or a
-/// retired claim's, and a word returns once a served tip says it again
+/// BM25 counts an inflected form once, as it counts the exact word: a lone
+/// row that says `deploying` once scores `deploy` at exactly its BM25
+/// weight, and of two rows that say `runs` and `run`, the query `run` ranks
+/// the exact word's row first, never the inflected one above it (ADR-0049
+/// d12).
+pub async fn bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25) {
+        return;
+    }
+    let mut rig = ChainRig::new(411);
+    rig.seed_chain(store, 0).await;
+    let (lone, pair) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let row = |id: u128, node: Uuid, body: &str| {
+        held_memory(
+            rig_tenant(411),
+            node,
+            Uuid::from_u128(id),
+            "rita",
+            Uuid::from_u128(0xE5),
+            body,
+        )
+    };
+    hold_and_promote(&mut rig, store, row(0xF71, lone, "deploying canary")).await;
+    let got = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope_of(lone, None),
+        "deploy",
+        MatchMode::Any,
+    )
+    .await;
+    let weight = (1.0_f64 + 0.5 / 1.5).ln();
+    assert_eq!(got.candidates.len(), 1, "{got:?}");
+    assert!(
+        (f64::from(got.candidates[0].score) - weight).abs() < 1e-4,
+        "deploying scores deploy at {} against {weight}",
+        got.candidates[0].score
+    );
+    hold_and_promote(&mut rig, store, row(0xF72, pair, "the dog runs fast")).await;
+    hold_and_promote(&mut rig, store, row(0xF73, pair, "the dog run fast")).await;
+    let got = run(
+        store,
+        rig.tenant_id,
+        RetrieverKind::Bm25,
+        &scope_of(pair, None),
+        "run",
+        MatchMode::Any,
+    )
+    .await;
+    assert_eq!(
+        got.candidates
+            .iter()
+            .map(|c| c.memory_id.as_u128())
+            .collect::<Vec<_>>(),
+        vec![0xF73, 0xF72],
+        "the exact word's row first: {got:?}"
+    );
+}
+
+/// `did_you_mean` draws only on the words of promoted served tips of the
+/// kinds recall serves, in the scope: never a held row's, another node's, a
+/// steering row's, another tenant's on the same node id, a replaced
+/// version's or a retired claim's, and a word returns once a served tip says
+/// it again
 /// (ADR-0049 d6, d12).
 pub async fn did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope<
     S: JournalStore,
@@ -9922,6 +10059,39 @@ pub async fn did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the
     assert!(
         suggest(&["zookeper"]).await.is_empty(),
         "another node's word"
+    );
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..row(0xF69, wa, "prometheus scrapes every minute")
+        },
+    )
+    .await;
+    assert!(
+        suggest(&["prometeus"]).await.is_empty(),
+        "a kind recall never serves"
+    );
+    let mut neighbour = ChainRig::new(413);
+    neighbour.seed_chain(store, 0).await;
+    let theirs = neighbour.tenant_id;
+    hold_and_promote(
+        &mut neighbour,
+        store,
+        held_memory(
+            theirs,
+            wa,
+            Uuid::from_u128(0xF6A),
+            "rita",
+            Uuid::from_u128(0xE5),
+            "cassandra replicates across racks",
+        ),
+    )
+    .await;
+    assert!(
+        suggest(&["casandra"]).await.is_empty(),
+        "another tenant's word on the same node id"
     );
 
     hold_and_ratify(
@@ -9982,6 +10152,7 @@ where
     bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other(&new_store().await)
         .await;
     bm25_scores_a_word_a_lone_row_says_once_at_its_weight(&new_store().await).await;
+    bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word(&new_store().await).await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
