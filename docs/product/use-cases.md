@@ -718,7 +718,7 @@ How it works: [ontologies](../architecture/ontologies.md).
 
 ## Sources
 
-Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
+Every use case here is **designed**: UC-SM-01 to UC-SM-05 are **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed), and UC-SM-06 for v0.5.9.
 
 ### Say where a memory came from
 
@@ -762,6 +762,17 @@ Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../ad
 - **Goal:** turn "this record amends that decision" lines into reviewed links between memories.
 - **How it plays out:** after the memories are approved, one person proposes the links the
   documents state and a second confirms them; a link is read like any other.
+
+### Load a code base's crate and module docs and keep them in step
+
+- **Who:** a developer, an operator. **UC-SM-06.** Designed, planned for v0.5.9
+  ([ADR-0061](../adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md), proposed).
+- **Goal:** know what each crate of a Rust code base is for, what it uses and what uses it, and
+  what each module does, without a checkout, from the documentation its authors wrote.
+- **How it plays out:** `oml sync crates --workarea project-code --adapter rust --dry-run` shows
+  one memory per crate and one per module; the run writes them for one person to review. An edit
+  to code leaves them as they are; an edit to a module's opening documentation, or a new
+  dependency between crates, proposes a corrected version.
 
 ## Files and deliverables
 

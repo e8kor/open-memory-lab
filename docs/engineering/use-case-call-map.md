@@ -171,6 +171,7 @@ new call to one of these rows.
 | UC-SM-03 | [See that a memory's source changed](../product/use-cases.md#see-that-a-memorys-source-changed) | designed (ADR-0057 d5, d11) | none | `anchor`, `stale` and `source_checked` on every claim item; `POST /v1/memories/{artifact_id}/source-check`, recorded by `oml sync` and `oml sync --check --record` |
 | UC-SM-04 | [Load a repository's documents and keep them in step](../product/use-cases.md#load-a-repositorys-documents-and-keep-them-in-step) | designed (ADR-0057 d6–d9) | a script calling `oml write` per memory | `oml sync <source> --workarea <w> [--dry-run]` over `write`, `read` and the review listing |
 | UC-SM-05 | [Link the decisions documents say amend each other](../product/use-cases.md#link-the-decisions-documents-say-amend-each-other) | designed (ADR-0057 d10) | `oml edges propose claim` and `oml edges ratify`, one edge at a time | `oml sync … --edges [--ratify]` over the same two routes |
+| UC-SM-06 | [Load a code base's crate and module docs and keep them in step](../product/use-cases.md#load-a-code-bases-crate-and-module-docs-and-keep-them-in-step) | designed (ADR-0061) | none | `oml sync <source> --workarea <w> --adapter rust [--dry-run]` over the same routes as UC-SM-04 |
 
 ### Sessions and agents
 
