@@ -129,7 +129,7 @@ Decided, not built.
 
 - **d5 — Every claim item carries `anchor` and `stale`, and `stale` comes from the source alone,
   recorded on the promoted version by a source check; it is never inferred from a held version.**
-  *Recommended by the main session on 2026-11-05, pending the operator.* `anchor` is the version's
+  *Decided by the operator on 2026-11-05.* `anchor` is the version's
   anchor or `null`. A **source check** is a journalled statement that a version's anchored span
   was compared with the repository at a commit: `POST /v1/memories/{artifact_id}/source-check
   {rev, result, hash?}`, `result` one of `fresh`, `equivalent`, `changed` or `removed`, `hash` the
@@ -335,7 +335,7 @@ Decided, not built.
        edges use two dreamer keys `held_by: human` with distinct principals: the reviewer key
        that runs `oml review` and `oml sync --edges`, and a second that runs `--edges --ratify`.
     3. **The source.** `docs/adr` of `github.com/e8kor/open-memory-lab` at a commit of `main`.
-       **Drafts** (*recommended by the main session on 2026-11-05, pending the operator*) load
+       **Drafts** (*decided by the operator on 2026-11-05*) load
        into a child workarea per draft pull request, `oml-design-pr-<n>`, as ADR-0047 d5 gives a
        branch its own workarea: `oml sync docs/adr/ADR-0047-….md --workarea oml-design-pr-59
        --rev origin/design/code-map-r2`, naming only the records the pull request adds or
