@@ -45,7 +45,7 @@ from adapters import ADAPTERS, PUBLISHED_BM25, safe, workarea  # noqa: E402
 from run import Client  # noqa: E402  eval/recall/run.py's HTTP client
 
 PIPELINES = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank",
-             "sparse", "bm25-sparse"]
+             "sparse", "bm25-sparse", "bm25-sparse-rrf"]
 K = 100
 MEASURES = ["nDCG@10", "R@10", "R@20", "R@100", "RR@10", "Success@1", "Success@5"]
 DEFAULT_CACHE = "/srv/build/bench-data"
