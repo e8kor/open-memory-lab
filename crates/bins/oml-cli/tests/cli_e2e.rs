@@ -3887,7 +3887,11 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v2/edges"
         ],
     );
-    assert!(seen[5..].iter().all(|(_, auth)| *auth == bearer("oml_file_key")));
+    assert!(
+        seen[5..]
+            .iter()
+            .all(|(_, auth)| *auth == bearer("oml_file_key"))
+    );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
     assert_eq!(seen[2].1, bearer("oml_file_key"));
@@ -6337,5 +6341,235 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     assert_eq!(crew_doctor["verdict"], "warn", "{crew_doctor}");
     let (_, writer_doctor, _) = lab.json(Some(&loader), &["doctor"]);
     assert!(writer_doctor["review"].is_null(), "{writer_doctor}");
+    lab.stop().await;
+}
+
+/// `oml <args> --json` under `key`, run inside `cwd`, as `oml sync` runs in
+/// a clone.
+fn oml_at(lab: &Lab, key: &str, cwd: &Path, args: &[&str]) -> (i32, Value, String) {
+    let out = oml_command(&lab.server, &lab.creds, Some(key), args)
+        .arg("--json")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("the oml binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    (
+        out.status.code().unwrap_or(-1),
+        serde_json::from_str(stdout.trim()).unwrap_or(Value::Null),
+        format!(
+            "stdout: {stdout}\nstderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+const SYNC_ADR_1: &str = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\nWhy one.\n\n## Decision\n\n- **d1 — First.** The first decision.\n- **d2 — Second.** The second decision.\n\n## Rejected alternatives\n\n| Alternative | Why not |\n|---|---|\n| **Nothing** | Something is needed. |\n";
+const SYNC_ADR_2: &str = "# ADR-0002 — Two\n\n**Status:** accepted\n\n**Amends:** ADR-0001 (d2)\n\n## Context\n\nWhy two.\n\n## Decision\n\n- **d1 — Only.** The only decision.\n";
+
+/// `oml sync` end to end (ADR-0057 d6–d11, d14, d18): a scratch clone's
+/// records load as anchored held claims, a person reviews them in bulk, a
+/// second run writes nothing and records each tip fresh, an edit is stale
+/// to `--check` and superseded by the next run, a rename is moved with no
+/// write, and the stated edge is proposed by one dreamer and ratified by
+/// another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("oml-design");
+    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+        lab.issue(
+            name,
+            &[
+                "--role",
+                role,
+                "--held-by",
+                held_by,
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{wa}:{role}"),
+            ],
+        )["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let sync = issue("design-sync", "writer", "service", "crew/design-sync");
+    let reviewer = issue("eugene-review", "dreamer", "human", "eugene");
+    let ratifier = issue("ana-review", "dreamer", "human", "ana");
+    let clone = lab.dir.join("clone");
+    std::fs::create_dir_all(clone.join("docs/adr")).expect("clone dir");
+    git_in(&clone, &["init", "-q", "-b", "main"]);
+    git_in(
+        &clone,
+        &["remote", "add", "origin", "git@github.com:e8kor/Docs.git"],
+    );
+    std::fs::write(clone.join("docs/adr/ADR-0001-one.md"), SYNC_ADR_1).expect("write");
+    std::fs::write(clone.join("docs/adr/ADR-0002-two.md"), SYNC_ADR_2).expect("write");
+    git_in(&clone, &["add", "."]);
+    git_in(&clone, &["commit", "-q", "-m", "records"]);
+    let run = |key: &str, extra: &[&str]| {
+        let mut args = vec!["sync", "docs/adr", "--workarea", "oml-design"];
+        args.extend_from_slice(extra);
+        oml_at(&lab, key, &clone, &args)
+    };
+    let approve_all = || {
+        let (code, listed, log) = oml_text(
+            &lab.server,
+            &lab.creds,
+            Some(&reviewer),
+            &[
+                "review",
+                "list",
+                "--workarea",
+                "oml-design",
+                "--author-key",
+                "design-sync",
+                "--ids-only",
+                "--all",
+            ],
+        );
+        assert_eq!(code, 0, "review list: {log}");
+        let file = lab.dir.join("ids.txt");
+        std::fs::write(&file, &listed).expect("ids");
+        let (code, verdicts, log) = lab.json(
+            Some(&reviewer),
+            &["review", "approve", "--ids", file.to_str().expect("path")],
+        );
+        assert_eq!(code, 0, "approve: {log}");
+        verdicts["summary"]["approved"].as_u64().expect("approved")
+    };
+
+    // The dry run sends nothing; the run writes the same plan.
+    let (code, dry, log) = run(&sync, &["--dry-run"]);
+    assert_eq!(code, 0, "dry run: {log}");
+    assert_eq!(dry["source"]["repo"], "github.com/e8kor/docs", "{log}");
+    assert_eq!(dry["summary"]["new"], 6, "{log}");
+    assert_eq!(
+        dry["edges"][0],
+        json!({"from": "adr-0002-summary", "label": "amends", "to": "adr-0001-d2", "state": "waiting"})
+    );
+    let (code, first, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "sync: {log}");
+    assert_eq!(
+        first["items"], dry["items"],
+        "the dry run's plan is the run's"
+    );
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-design"]);
+    assert_eq!(code, 0, "{log}");
+    let d1 = held["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["claim_key"] == "adr-0001-d1")
+        .expect("d1")
+        .clone();
+    assert_eq!(d1["state"], "held");
+    assert_eq!(d1["anchor"]["repo"], "github.com/e8kor/docs");
+    assert_eq!(d1["anchor"]["path"], "docs/adr/ADR-0001-one.md");
+    assert_eq!(d1["anchor"]["fragment"], "d1");
+    assert_eq!(d1["anchor"]["hasher"], "oml-md/1");
+    assert_eq!(approve_all(), 6);
+
+    // A second run at the same commit writes nothing and checks each tip.
+    let (code, again, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(again["summary"]["unchanged"], 6, "{log}");
+    assert_eq!(again["summary"]["writes_this_run"], 0, "{log}");
+    let (code, _, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 0, "check: {log}");
+
+    // An edit is stale until its successor is reviewed.
+    std::fs::write(
+        clone.join("docs/adr/ADR-0001-one.md"),
+        SYNC_ADR_1.replace("The second decision.", "The second decision, revised."),
+    )
+    .expect("write");
+    git_in(&clone, &["commit", "-q", "-am", "edit"]);
+    let (code, check, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 1, "check: {log}");
+    assert!(
+        check["claims"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .any(|c| c["claim_key"] == "adr-0001-d2" && c["state"] == "stale"),
+        "{log}"
+    );
+    let (code, edited, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        edited["summary"]["changed"], 1,
+        "the decision alone, since the summary's span holds only its headline: {log}"
+    );
+    let (code, served, log) = lab.json(
+        Some(&reviewer),
+        &["read", "--all", "--workarea", "oml-design"],
+    );
+    assert_eq!(code, 0, "{log}");
+    let d2 = served["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["claim_key"] == "adr-0001-d2")
+        .expect("d2")
+        .clone();
+    assert_eq!(
+        d2["stale"], "changed",
+        "the served version is marked from the source: {d2}"
+    );
+    assert_eq!(approve_all(), 1);
+    let (code, _, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 0, "check after review: {log}");
+
+    // A renamed record is moved: a source check, no write.
+    git_in(
+        &clone,
+        &[
+            "mv",
+            "docs/adr/ADR-0002-two.md",
+            "docs/adr/ADR-0002-two-renamed.md",
+        ],
+    );
+    git_in(&clone, &["commit", "-q", "-m", "rename"]);
+    let (code, moved, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(moved["summary"]["moved"], 2, "{log}");
+    assert_eq!(moved["summary"]["writes_this_run"], 0, "{log}");
+
+    // The edge: proposed by one person's dreamer key, ratified by another's.
+    let (code, proposed, log) = run(&reviewer, &["--edges"]);
+    assert_eq!(code, 0, "edges: {log}");
+    assert_eq!(proposed["edges"][0]["state"], "pending", "{log}");
+    let (code, _, log) = run(&reviewer, &["--edges", "--ratify"]);
+    assert_eq!(code, 0, "{log}");
+    let (code, ratified, log) = run(&ratifier, &["--edges", "--ratify"]);
+    assert_eq!(code, 0, "ratify: {log}");
+    assert_eq!(ratified["edges"][0]["state"], "ratified", "{log}");
     lab.stop().await;
 }
