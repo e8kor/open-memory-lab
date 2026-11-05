@@ -32,7 +32,7 @@ use oml_transport_http::traffic::{Traffic, TrustedProxies, metrics};
 
 fn base_url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev".to_owned())
+        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
 }
 
 const PAIR_PASSWORD: &str = "oml_test_pair";

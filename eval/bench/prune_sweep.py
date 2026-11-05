@@ -40,7 +40,7 @@ PAIRS = [("inf", str(2**63 - 1)), ("0.5", "50000"), ("0.3", "50000"), ("0.2", "5
 
 def psql(db, sql):
     return subprocess.run(
-        ["psql", "-h", os.environ.get("PGHOST", "127.0.0.1"), "-p", os.environ.get("PGPORT", "5432"),
+        ["psql", "-h", os.environ.get("PGHOST", "127.0.0.1"), "-p", os.environ["PGPORT"],
          "-U", os.environ.get("PGUSER", "postgres"), "-d", db, "-qtAX", "-c", sql],
         capture_output=True, text=True, check=True).stdout.strip()
 
@@ -57,7 +57,7 @@ def main():
     state = Path(a.state)
     db = (state / "database").read_text().strip()
     url = (f"postgres://{db}_serving@{os.environ.get('PGHOST', '127.0.0.1')}:"
-           f"{os.environ.get('PGPORT', '5432')}/{db}")
+           f"{os.environ['PGPORT']}/{db}")
     tenant = psql(db, "SELECT id FROM tenants WHERE name = 'bench'")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

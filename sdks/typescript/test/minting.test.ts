@@ -19,9 +19,13 @@ test("any other admin role is read as one that cannot mint", () => {
   assert.equal(adminRole(ADMIN_ROLE_QUERY.replace("rolsuper", "false")).superuser, false);
 });
 
-test("the admin role is read by its name", () => {
-  const url =
-    process.env.OML_SDK_TEST_DATABASE_URL ?? "postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev";
+test("the admin role is read by its name", (t) => {
+  // No default URL: a guessed one could reach a live server.
+  const url = process.env.OML_SDK_TEST_DATABASE_URL;
+  if (!url) {
+    t.skip("did not run: set OML_SDK_TEST_DATABASE_URL to a throwaway cluster");
+    return;
+  }
   const name = execFileSync("psql", [url, "-q", "-t", "-A", "-c", "SELECT current_user"], {
     env: { PATH: process.env.PATH ?? "" },
     encoding: "utf8",

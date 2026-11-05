@@ -98,6 +98,9 @@ jobs:
       # drops its own uniquely named role pair (ADR-0034 d8).
       - name: PoC demo
         run: bash scripts/poc-demo.sh
+        env:
+          # Named, never defaulted: the job's own service container.
+          PGPORT: "5432"
       # The service container is this job's own cluster, so the pair takes
       # the fixed names (ADR-0034 d2): the lead migrates as oml_owner and
       # serves as oml_server.
