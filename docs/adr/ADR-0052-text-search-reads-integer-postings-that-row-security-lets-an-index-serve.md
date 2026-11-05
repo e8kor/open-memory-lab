@@ -161,10 +161,15 @@ d11). Decided, not built.
 
 - **d6 — A word is pruned by its readable count, the postings read are bounded, and the scan answers
   when nothing is left.** While the query forms' summed readable frequencies fit `POSTING_BUDGET`,
-  nothing is pruned and every form is read (amended 2026-11-05, below). Past it, a form is
-  **frequent** when its readable document frequency exceeds `FREQUENT_SHARE` of the readable row
-  count; frequent forms are pruned, then, while the kept forms' summed readable frequencies exceed
-  `POSTING_BUDGET`, the most frequent kept form is pruned too. Both
+  nothing is pruned and every form is read (amended 2026-11-05, below). Past it, a **word** is
+  pruned whole, every form of it (amended 2026-11-05 on review): a word is **frequent** when one of
+  its forms has a readable document frequency above `FREQUENT_SHARE` of the readable row count;
+  frequent words are pruned, then, while the kept words' distinct forms sum above
+  `POSTING_BUDGET`, the kept word with the most postings is pruned too. Pruning by form instead,
+  as first built, could drop a word's stem and keep its exact form, losing the rows that hold only
+  another inflection while `search.pruned` stayed `[]`; whole words make `pruned` name every word
+  whose rows may be missing, so `pruned: []` means `bm25`'s list. Law:
+  `a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach`. Both
   decisions read d5's sums alone, so which word is pruned depends only on rows the key may read
   (law in d12). The two are constants in `oml-pg`, not settings: `FREQUENT_SHARE` 0.1 and
   `POSTING_BUDGET` 10,000, set on 2026-11-05 by the scale lane and the external sets (open
@@ -240,10 +245,13 @@ d11). Decided, not built.
     0.67); (2) on SciFact, NFCorpus and LoCoMo its nDCG@10 is at most 0.005 below served `bm25`'s, which
     bounds what pruning costs; (3) on the scale lane its p95 at 100,000 readable rows, universe scope,
     is at most 50 ms and below `bm25`'s. `bm25` stays enabled, since it is the fallback statement and
-    the comparison. *Met on 2026-11-05, one release build of `feat/token-postings`:* (1) success@1
-    0.826 and success@5 0.934, `bm25`'s own; (2) nDCG@10 0.6851 / 0.3209 / 0.5030 on SciFact /
-    NFCorpus / LoCoMo against `bm25`'s 0.6851 / 0.3214 / 0.5033; (3) 29.9 ms p95 at 99,721 readable
-    rows, universe scope, against `bm25`'s 492.7 ms. `bm25-postings` is that build's default.
+    the comparison. *Met on 2026-11-05, on the build that ships it (`66979b4`, whole words, budget
+    first):* (1) success@1 0.826 and success@5 0.934, `bm25`'s own (a load that draws other ids
+    measured 0.835: ties move one query); (2) nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact
+    (0.6851, 0.8656, 0.928), NFCorpus (0.3208, 0.1839, 0.247) and LoCoMo (0.5035, 0.6968, 0.813);
+    (3) 25.5 ms p95 at 99,721 readable rows (165,000 memories), universe scope, against `bm25`'s
+    485 ms on the same run, load average 2.3 to 4.7. 100,000 memories were not re-measured for
+    this build. `bm25-postings` is its default.
     `sparse` or `bm25-sparse` replaces the default only when it passes the same gate
     and ranks above the default on the external sets (ADR-0049 d12 item 6's rule), at a p95 that meets
     (3). Each step is a change to `search.default`, no code change.
@@ -295,14 +303,30 @@ d11). Decided, not built.
   missing for a tenant whose partition exists; a sampled count that disagrees with its postings (the
   repair is a re-fill, the cause a defect); the encoder's backlog; the `scan` share above FR-100's
   bound. *Built 2026-11-05 (`feat/token-postings`), but for the encoder's backlog, which waits for
-  kind 2:* `/readyz` counts each pipeline's recalls since start by access, and doctor warns when the
-  scan answered more than 5% of `bm25-postings`'s, over at least 20; read by an admin key, `GET
+  kind 2:* doctor reads `oml_recalls_total{pipeline, access}` from the metrics listener
+  `OML_METRICS_URL` names (ADR-0042 d11), never from `/readyz`, which answers anyone and so may
+  not carry every tenant's traffic (amended on review), and warns when the scan answered more than
+  5% of `bm25-postings`'s recalls, over at least 20; read by an admin key, `GET
   /v2/search` carries the tenant's postings health, and doctor warns on a missing partition, on
   versions with no postings (the fill incomplete), on served versions with no served postings, and
   on per-workarea or sampled word counts that disagree with the postings, each line naming the
   repair, the owner's `oml_search_postings_refill(tenant)`, which is 0021's fill for one tenant.
-  Laws: `the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_fault_until_a_refill`,
-  `readyz_counts_each_pipelines_recalls_by_how_they_were_read`,
+  The refill is the owner's alone (`EXECUTE` revoked from `PUBLIC`) and takes that tenant's chain
+  advisory lock, so it holds that tenant's writes and no other's; `oml_search_count` is granted to
+  the serving role alone, whose writes' trigger calls it. A missing postings partition, as a lead
+  built before 0021 leaves a tenant it creates, makes every write of that tenant fail; every start
+  creates and fills it after migrating, and doctor says so meanwhile. The health check samples its
+  200 word counts from a random token each read. A recall's statements share one `REPEATABLE READ,
+  READ ONLY` snapshot. The parent table keeps no statistics of its own (FR-45); each partition
+  keeps its tenant's. Lock order: every count write locks its word rows in token order, then its
+  workarea row, and a take-back locks before it changes anything, so writes that skip the chain
+  lock neither deadlock nor drive a count below zero. Laws:
+  `the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_fault_until_a_refill`,
+  `the_postings_health_samples_word_counts_across_the_whole_range`,
+  `the_serving_role_may_not_run_the_postings_refill`,
+  `a_refill_holds_its_own_tenants_writes_and_no_other_tenants`,
+  `a_tenant_without_a_postings_partition_gets_one_at_the_next_start_and_its_writes_resume`,
+  `concurrent_count_updates_without_the_chain_lock_never_deadlock`, `readyz_names_no_recall_counts`,
   `doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_when_all_is_well`.
 
 ## Consequences
