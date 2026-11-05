@@ -146,6 +146,7 @@ pub struct Metrics {
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
+    source_checks: Family<BulkLabels, Counter>,
     web_failures: Family<WebFailureLabels, Counter>,
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
@@ -279,6 +280,7 @@ impl Default for Metrics {
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
+        let source_checks = Family::<BulkLabels, Counter>::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
         let sparse_backlog = Gauge::default();
@@ -329,6 +331,13 @@ impl Default for Metrics {
             "items of bulk verdicts by outcome",
             bulk_items.clone(),
         );
+        // The outcome is a closed set: fresh, equivalent, moved, changed or
+        // removed (ADR-0057 d17).
+        registry.register(
+            "oml_source_checks",
+            "source checks recorded, by result",
+            source_checks.clone(),
+        );
         // Both labels are closed sets: the provider, and the exchange's
         // failure reason (ADR-0045 d18), moved off /readyz (ADR-0054 d1).
         registry.register(
@@ -360,6 +369,7 @@ impl Default for Metrics {
             recalls,
             reranks,
             bulk_items,
+            source_checks,
             web_failures,
             quality,
             sparse_encoded,
@@ -417,6 +427,15 @@ impl Metrics {
         self.bulk_items
             .get_or_create(&BulkLabels {
                 outcome: outcome.to_owned(),
+            })
+            .inc();
+    }
+
+    /// One recorded source check, by its result (ADR-0057 d17).
+    pub(crate) fn source_check(&self, result: &'static str) {
+        self.source_checks
+            .get_or_create(&BulkLabels {
+                outcome: result.to_owned(),
             })
             .inc();
     }

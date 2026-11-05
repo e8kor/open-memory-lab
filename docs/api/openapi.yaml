@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.5.7-design
+  version: 0.5.8-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -144,6 +144,8 @@ paths:
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
         - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
         - { name: own, in: query, schema: { type: boolean, default: false } }
+        - { name: anchor_repo, in: query, schema: { $ref: '#/components/schemas/AnchorRepo' }, description: "Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo." }
+        - { name: anchor_path_prefix, in: query, schema: { $ref: '#/components/schemas/AnchorPathPrefix' }, description: "Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4)." }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
         - { $ref: '#/components/parameters/Limit' }
@@ -316,7 +318,7 @@ paths:
       tags: [memories]
       operationId: supersedeMemory
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workarea, if sent, must equal the target''s workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target. The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
+      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workarea, if sent, must equal the target''s workarea (request.validation, details.field /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workarea.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim''s latest version the caller can read (its promoted versions where the caller reads the workarea, and the versions its own keys wrote; never another author''s held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -331,10 +333,12 @@ paths:
               revise:
                 value:
                   body: Supplier Accra Metals revised the quote to 408 USD/t for Q1-2027 delivery, valid until 2026-12-01. Quote ref AM-7741-r2.
+                  expected_version: 1
                   reason: supplier issued a revised quote
               retire:
                 value:
                   body: Superseded by the 2026 runbook; stop serving.
+                  expected_version: 1
                   retirement: true
             schema: { $ref: '#/components/schemas/SupersedeRequest' }
       responses:
@@ -359,6 +363,59 @@ paths:
                 journal_seq: 4293
               schema: { $ref: '#/components/schemas/SubmitAccepted' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v1/memories/{artifact_id}/source-check:
+    post:
+      tags: [memories]
+      operationId: sourceCheckMemory
+      summary: Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057 d5, d18).
+      description: 'Requires: the version''s author key (writer), or a dreamer with dreamer effective access on its workarea; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version''s new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span''s new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workarea.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              changed:
+                value:
+                  rev: 4b7e0c1a9d22f3e8a1c6b5d4e3f2a1b0c9d8e7f6
+                  result: changed
+                  hash: sha256:9c2e4f1a7b3d5e8c0f2a4b6d8e0c2f4a6b8d0e2c4f6a8b0d2e4c6f8a0b2d4e6c
+              moved:
+                value:
+                  rev: 4b7e0c1a9d22f3e8a1c6b5d4e3f2a1b0c9d8e7f6
+                  result: moved
+                  hash: sha256:1f3a4f1a7b3d5e8c0f2a4b6d8e0c2f4a6b8d0e2c4f6a8b0d2e4c6f8a0b2d4e6c
+                  path: docs/adr/ADR-0047-renamed.md
+                  fragment: d3
+            schema: { $ref: '#/components/schemas/SourceCheckRequest' }
+      responses:
+        '200':
+          description: The check is journalled; the version's stale as it now reads.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                artifact_id: 0193a8f2-7c41-7d2e-9b1a-3c5e7f9a1b2d
+                stale: changed
+                source_checked:
+                  rev: 4b7e0c1a9d22f3e8a1c6b5d4e3f2a1b0c9d8e7f6
+                  at: '2026-11-05T18:00:00Z'
+                  result: changed
+                  moved_to: null
+                journal_seq: 4301
+              schema: { $ref: '#/components/schemas/SourceCheckResult' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -2410,6 +2467,11 @@ components:
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
+        anchor:
+          description: The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2).
+          oneOf:
+            - { $ref: '#/components/schemas/Anchor' }
+            - { type: 'null' }
 
     WebEmail:
       type: object
@@ -2543,6 +2605,7 @@ components:
         - submission.simulation_id_required
         - submission.lineage_required
         - submission.tip_conflict
+        - submission.version_conflict
         - submission.claim_key_conflict
         - submission.similar_exists
         - submission.universe_refused
@@ -2608,6 +2671,7 @@ components:
           items: { type: string }
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
+        anchor: { $ref: '#/components/schemas/Anchor' }
 
     SubmitAccepted:
       type: object
@@ -2675,7 +2739,7 @@ components:
 
     MemorySummary:
       type: object
-      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at]
+      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -2710,6 +2774,21 @@ components:
         held_expires_at: { type: [string, 'null'], format: date-time, description: 'For a held row, when held-item expiry dead-letters it under the workarea''s review policy; null on every other row, and on every row while held-item expiry is unbuilt (ADR-0025 d13).' }
         created_at: { type: string, format: date-time }
         promoted_at: { type: [string, 'null'], format: date-time }
+        anchor:
+          description: The version's anchor, as its author declared it, or null (ADR-0057 d1, d2).
+          oneOf:
+            - { $ref: '#/components/schemas/Anchor' }
+            - { type: 'null' }
+        stale:
+          description: changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5).
+          oneOf:
+            - { $ref: '#/components/schemas/Stale' }
+            - { type: 'null' }
+        source_checked:
+          description: The version's latest source check, or null; always null on a held version (ADR-0057 d5).
+          oneOf:
+            - { $ref: '#/components/schemas/SourceChecked' }
+            - { type: 'null' }
 
     Memory:
       allOf:
@@ -2741,6 +2820,8 @@ components:
         k: { type: integer, minimum: 1, maximum: 100, default: 8 }
         kinds: { type: array, minItems: 1, items: { type: string, enum: [memory, derived_fact] }, description: 'Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workarea''s journalled policy opts them in, they are hits only of a recall that omits kinds.' }
         include_text: { type: boolean, default: true, description: Whether each served item carries its text (ADR-0039 d7). }
+        anchor_repo: { $ref: '#/components/schemas/AnchorRepo' }
+        anchor_path_prefix: { $ref: '#/components/schemas/AnchorPathPrefix' }
         include_unreviewed:
           type: boolean
           default: false
@@ -3014,9 +3095,11 @@ components:
         — attachments, simulation_id, simulated_time, mapping and the term fields — are declared
         under x-oml-designed-fields in openapi-designed.yaml, and each sent here answers its v0.3.0
         code rather than the unknown-field refusal (ADR-0039 d9).
-      required: [body]
+      required: [body, expected_version]
       properties:
         body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
+        expected_version: { type: integer, minimum: 1, description: "The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19)." }
+        anchor: { $ref: '#/components/schemas/Anchor' }
         workarea: { $ref: '#/components/schemas/WorkareaRef', description: "When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7)." }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
@@ -3025,6 +3108,84 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
+
+    Anchor:
+      type: object
+      additionalProperties: false
+      description: >-
+        The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+        immutable per version, shown to the reviewer, never fetched by the server, and clear
+        metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and
+        uri; hash and hasher together or neither. Any other shape is request.validation naming the
+        field, such as /anchor/path; a scan finding in repo, uri, path or fragment is
+        submission.scan_veto.
+      properties:
+        repo: { $ref: '#/components/schemas/AnchorRepo' }
+        uri: { type: string, maxLength: 2048, pattern: '^https://[^@#\s]+$', description: 'A page outside a repository: an absolute https URL with no user information and no fragment.' }
+        rev: { type: string, minLength: 1, maxLength: 128, description: 'With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace.' }
+        path: { type: string, minLength: 1, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
+        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21).' }
+        hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "Digest of the fragment's text, or the file's, under hasher." }
+        hasher: { type: string, enum: [oml-md/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).' }
+
+    AnchorRepo:
+      type: string
+      minLength: 1
+      maxLength: 200
+      pattern: '^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*){0,7}$'
+      description: 'A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out (d4).'
+
+    AnchorPathPrefix:
+      type: string
+      minLength: 1
+      description: 'A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4).'
+
+    Stale:
+      type: string
+      enum: [changed, removed]
+      description: "The served version's latest source check when it is changed or removed. Computed from the source alone, never from a held successor (ADR-0057 d5)."
+
+    SourceChecked:
+      type: object
+      additionalProperties: false
+      required: [rev, at, result, moved_to]
+      properties:
+        rev: { type: string, description: The commit or page version the span was compared at. }
+        at: { type: string, format: date-time }
+        result: { type: string, enum: [fresh, equivalent, moved, changed, removed] }
+        moved_to:
+          description: Where a moved check found the span (ADR-0057 d18); null for any other result.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [path, fragment]
+              properties:
+                path: { type: string }
+                fragment: { type: [string, 'null'] }
+            - { type: 'null' }
+
+    SourceCheckRequest:
+      type: object
+      additionalProperties: false
+      required: [rev, result]
+      properties:
+        rev: { type: string, minLength: 1, maxLength: 128, description: "The anchor's rev grammar: with a repo anchor, 40 or 64 lower-case hex digits." }
+        result: { type: string, enum: [fresh, equivalent, moved, changed, removed] }
+        hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "The span's hash at rev under the anchor's hasher; refused on an anchor without one." }
+        path: { type: string, minLength: 1, description: 'For moved alone, required: the span''s new path, under the anchor path grammar.' }
+        fragment: { type: string, minLength: 1, maxLength: 256, description: 'For moved alone: the span''s new fragment, under the fragment grammar.' }
+
+    SourceCheckResult:
+      type: object
+      required: [artifact_id, stale, source_checked, journal_seq]
+      properties:
+        artifact_id: { type: string }
+        stale:
+          oneOf:
+            - { $ref: '#/components/schemas/Stale' }
+            - { type: 'null' }
+        source_checked: { $ref: '#/components/schemas/SourceChecked' }
+        journal_seq: { type: integer }
 
     Crew:
       type: object
@@ -3091,8 +3252,9 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Workarea' }
         - type: object
-          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief]
+          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
           properties:
+            stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea." }
             children:
               type: array
               description: The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name.

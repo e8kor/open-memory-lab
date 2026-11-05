@@ -20,6 +20,8 @@ use std::fmt;
 use uuid::Uuid;
 
 use oml_domain::MemoryKind;
+
+use crate::types::AnchorFilter;
 use oml_domain::budget::hit_order;
 
 /// One candidate generator an adapter may serve (ADR-0049 d2). Each is a
@@ -643,6 +645,10 @@ pub struct CandidateScope {
     pub promoted_nodes: Vec<Uuid>,
     pub kinds: Vec<MemoryKind>,
     pub own_held: Option<OwnHeldScope>,
+    /// The origin filters, a predicate of the scope itself, before any
+    /// ranking or cut, so a filtered recall never under-returns (ADR-0057
+    /// d4). Empty, they narrow nothing.
+    pub anchor: AnchorFilter,
 }
 
 /// The own held part of a candidate scope (ADR-0025 d4, d5).
@@ -787,6 +793,22 @@ pub struct Fused {
     /// Its rank in the first stage's list, from 1, for a candidate the
     /// reranker scored (`matched.rank_before`; ADR-0053 d7).
     pub rank_before: Option<u32>,
+}
+
+/// Caps each retriever's list at `depth`, keeping its first candidates in
+/// the adapter's order, then fuses them (ADR-0049 d13; ADR-0057 d22): the
+/// depth the core asked for is a cap it enforces, so no retriever, however
+/// many rows it returns, contributes more candidates than any other.
+#[must_use]
+pub fn fuse_capped(
+    mut lists: Vec<(RetrieverKind, Retrieved)>,
+    fusion: Fusion,
+    depth: usize,
+) -> Vec<Fused> {
+    for (_, list) in &mut lists {
+        list.candidates.truncate(depth);
+    }
+    fuse(&lists, fusion)
 }
 
 /// Fuses each retriever's list under `fusion`, in the total order of hits

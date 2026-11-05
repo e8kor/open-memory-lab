@@ -86,6 +86,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                anchor: None,
             },
         )
         .await
@@ -110,6 +111,7 @@ fn recall(timings: bool) -> RecallRequest {
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,
+        anchor: Default::default(),
     }
 }
 

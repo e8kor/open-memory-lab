@@ -1061,6 +1061,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     assert_eq!(
         fields(item),
         vec![
+            "anchor",
             "artifact_id",
             "attachments",
             "claim_key",
@@ -1070,6 +1071,8 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
             "promoted_at",
             "replaces",
             "retirement",
+            "source_checked",
+            "stale",
             "state",
             "text",
             "tip",
@@ -1156,6 +1159,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
         1,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": v1,
             "text": REVISED,
             "reason": "supplier issued a revised quote",
@@ -1180,6 +1184,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
             "workarea": crew.to_string(),
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1232,7 +1237,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
         &writer,
         9,
         "oml_write",
-        json!({"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-1"}),
+        json!({ "expected_version": 2,"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-1"}),
     )
     .await;
     assert_eq!(stale["isError"], true, "{stale}");
@@ -1249,7 +1254,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
         &reader,
         10,
         "oml_write",
-        json!({"replaces": v2, "text": REVISED, "idempotency_key": "reader-1"}),
+        json!({ "expected_version": 1,"replaces": v2, "text": REVISED, "idempotency_key": "reader-1"}),
     )
     .await;
     assert_eq!(
@@ -1275,6 +1280,7 @@ async fn oml_write_with_retirement_retires_the_claim_once_ratified_and_get_answe
         1,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": v1,
             "text": why,
             "retirement": true,
@@ -1332,6 +1338,7 @@ async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let (writer, dreamer, _, _) = crew(&router).await;
     let v1 = ratified(&router, &writer, &dreamer).await;
     let args = json!({
+        "expected_version": 1,
         "replaces": v1,
         "text": REVISED,
         "idempotency_key": "crew-procure/run-2/step-1",
@@ -1398,8 +1405,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes
         .to_owned();
     let propose = |id: u64, idem: &str| {
         let (router, writer, term) = (&router, &writer, &term);
-        let args =
-            json!({"replaces": term, "text": "aluminium: element 13.", "idempotency_key": idem});
+        let args = json!({ "expected_version": 1,"replaces": term, "text": "aluminium: element 13.", "idempotency_key": idem});
         async move { call_tool(router, writer, id, "oml_write", args).await }
     };
 
@@ -1434,7 +1440,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes
         &format!("/v1/memories/{term}/supersede"),
         Some(&writer),
         Some("term-3"),
-        Some(&json!({"body": "aluminium: element 13."})),
+        Some(&json!({ "expected_version": 1,"body": "aluminium: element 13."})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
@@ -1522,6 +1528,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": null,
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1598,6 +1605,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
         1,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": v1,
             "text": REVISED,
             "reason": "supplier issued a revised quote",
@@ -1623,6 +1631,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1657,6 +1666,7 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
         1,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": v1,
             "text": why,
             "retirement": true,
@@ -1727,6 +1737,7 @@ async fn oml_write_refuses_claim_key_with_replaces_naming_claim_key() {
             id,
             "oml_write",
             json!({
+                "expected_version": 1,
                 "replaces": v1,
                 "claim_key": claim_key,
                 "text": REVISED,
@@ -1755,6 +1766,7 @@ async fn oml_write_refuses_a_workarea_other_than_the_targets_naming_workarea() {
         1,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": v1,
             "workarea": Uuid::from_u128(0xBEEF),
             "text": REVISED,
@@ -1798,7 +1810,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
         &writer,
         2,
         "oml_write",
-        json!({"replaces": term, "text": "aluminium: element 13.", "idempotency_key": "term-1"}),
+        json!({ "expected_version": 1,"replaces": term, "text": "aluminium: element 13.", "idempotency_key": "term-1"}),
     )
     .await;
     refused_naming(&refused, "/replaces");
@@ -1817,6 +1829,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
         3,
         "oml_write",
         json!({
+            "expected_version": 1,
             "replaces": term,
             "kind": "term",
             "text": "aluminium: element 13.",
@@ -1860,11 +1873,11 @@ async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode(
         ),
         (
             "supersede",
-            json!({"replaces": v1, "text": REVISED, "reason": "revised", "idempotency_key": "reader/supersede"}),
+            json!({ "expected_version": 1,"replaces": v1, "text": REVISED, "reason": "revised", "idempotency_key": "reader/supersede"}),
         ),
         (
             "retire",
-            json!({"replaces": v1, "text": "Retired: quote AM-7741 lapsed.", "retirement": true, "idempotency_key": "reader/retire"}),
+            json!({ "expected_version": 1,"replaces": v1, "text": "Retired: quote AM-7741 lapsed.", "retirement": true, "idempotency_key": "reader/retire"}),
         ),
     ]) {
         let refused = call_tool(&router, &reader, id, "oml_write", args).await;
@@ -1982,7 +1995,7 @@ async fn a_repeated_idempotency_key_replays_with_idempotent_replay_true() {
         ),
         (
             3,
-            json!({"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-2"}),
+            json!({ "expected_version": 1,"replaces": v1, "text": REVISED, "idempotency_key": "crew-procure/run-3/step-2"}),
         ),
     ] {
         let first = call_tool(&router, &writer, id, "oml_write", args.clone()).await;
@@ -2048,7 +2061,7 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
         &writer,
         2,
         "oml_write",
-        json!({"replaces": v1, "text": REVISED, "idempotency_key": key}),
+        json!({ "expected_version": 1,"replaces": v1, "text": REVISED, "idempotency_key": key}),
     )
     .await;
     assert_eq!(superseded["isError"], false, "{superseded}");
@@ -2397,6 +2410,7 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
     assert_eq!(
         fields,
         vec![
+            "anchor",
             "artifact_id",
             "claim_key",
             "created_at",
@@ -2405,6 +2419,8 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
             "promoted_at",
             "replaces",
             "retirement",
+            "source_checked",
+            "stale",
             "state",
             "text",
             "tip",
@@ -2802,6 +2818,7 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     // matched words on hits only — never the ring's body (mcp-plugin.md, the
     // claim item; ADR-0025 d12; ADR-0049 d6).
     let base = [
+        "anchor",
         "artifact_id",
         "claim_key",
         "created_at",
@@ -2809,6 +2826,8 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
         "promoted_at",
         "replaces",
         "retirement",
+        "source_checked",
+        "stale",
         "state",
         "text",
         "tip",
@@ -3363,6 +3382,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
 
     // ADR-0025 d12's claim item and its text, in each mode's container.
     let base = [
+        "anchor",
         "artifact_id",
         "claim_key",
         "created_at",
@@ -3370,6 +3390,8 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
         "promoted_at",
         "replaces",
         "retirement",
+        "source_checked",
+        "stale",
         "state",
         "text",
         "tip",

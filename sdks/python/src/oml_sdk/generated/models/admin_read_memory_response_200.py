@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.admin_read_memory_response_200_verdicts_item import (
         AdminReadMemoryResponse200VerdictsItem,
     )
+    from ..models.anchor import Anchor
 
 
 T = TypeVar("T", bound="AdminReadMemoryResponse200")
@@ -33,6 +34,8 @@ class AdminReadMemoryResponse200:
         created_at (datetime.datetime):
         principal (None | str | Unset):
         user (None | str | Unset):
+        anchor (Anchor | None | Unset): The version's anchor, which the reviewer judges beside the text, or null
+            (ADR-0057 d2).
         derives_from (list[str] | Unset):
         replaces (None | str | Unset):
         plaintext_digest (str | Unset):
@@ -49,6 +52,7 @@ class AdminReadMemoryResponse200:
     created_at: datetime.datetime
     principal: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
+    anchor: Anchor | None | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     replaces: None | str | Unset = UNSET
     plaintext_digest: str | Unset = UNSET
@@ -56,6 +60,8 @@ class AdminReadMemoryResponse200:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.anchor import Anchor
+
         artifact_id = self.artifact_id
 
         claim_key = self.claim_key
@@ -83,6 +89,14 @@ class AdminReadMemoryResponse200:
             user = UNSET
         else:
             user = self.user
+
+        anchor: dict[str, Any] | None | Unset
+        if isinstance(self.anchor, Unset):
+            anchor = UNSET
+        elif isinstance(self.anchor, Anchor):
+            anchor = self.anchor.to_dict()
+        else:
+            anchor = self.anchor
 
         derives_from: list[str] | Unset = UNSET
         if not isinstance(self.derives_from, Unset):
@@ -121,6 +135,8 @@ class AdminReadMemoryResponse200:
             field_dict["principal"] = principal
         if user is not UNSET:
             field_dict["user"] = user
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
         if replaces is not UNSET:
@@ -137,6 +153,7 @@ class AdminReadMemoryResponse200:
         from ..models.admin_read_memory_response_200_verdicts_item import (
             AdminReadMemoryResponse200VerdictsItem,
         )
+        from ..models.anchor import Anchor
 
         d = dict(src_dict)
         artifact_id = d.pop("artifact_id")
@@ -173,6 +190,23 @@ class AdminReadMemoryResponse200:
 
         user = _parse_user(d.pop("user", UNSET))
 
+        def _parse_anchor(data: object) -> Anchor | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                anchor_type_0 = Anchor.from_dict(data)
+
+                return anchor_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Anchor | None | Unset, data)
+
+        anchor = _parse_anchor(d.pop("anchor", UNSET))
+
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
         def _parse_replaces(data: object) -> None | str | Unset:
@@ -208,6 +242,7 @@ class AdminReadMemoryResponse200:
             created_at=created_at,
             principal=principal,
             user=user,
+            anchor=anchor,
             derives_from=derives_from,
             replaces=replaces,
             plaintext_digest=plaintext_digest,

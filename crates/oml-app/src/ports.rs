@@ -25,8 +25,8 @@ use crate::types::{
     ConnectGrant, ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter,
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
-    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, UnnamedRows,
-    WebEntry, WebSessionRecord, WorkareaRecord,
+    RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -304,6 +304,13 @@ pub enum MetadataFold {
     },
     MemoryRejected {
         memory_id: Uuid,
+    },
+    /// `source.checked`: the version's latest source check, set on its row
+    /// (ADR-0057 d5, d18). The application admits only a promoted, anchored
+    /// served tip; the store writes the check and nothing else.
+    SourceChecked {
+        memory_id: Uuid,
+        check: SourceCheck,
     },
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets
@@ -831,6 +838,30 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
+
+    /// How many promoted served tips on `workarea_id` itself read `stale`:
+    /// their latest source check found the source `changed` or `removed`
+    /// (ADR-0057 d5, d17). A held version is never counted.
+    fn stale_count(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The greatest `version` of `claim_key` in the workarea that a key of
+    /// `own_key_ids` may read as the claim's: its own held and promoted
+    /// versions, and with `reads_promoted` (reader effective access on the
+    /// workarea) every promoted one; never another author's held version,
+    /// so a supersession's check tells its caller nothing it cannot read
+    /// (ADR-0057 d19; R3).
+    fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+        reads_promoted: bool,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 
     /// The promoted served tip of `claim_key` in the workarea, if any
     /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).

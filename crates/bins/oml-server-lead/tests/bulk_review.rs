@@ -648,7 +648,7 @@ async fn an_item_the_reviewer_authored_or_derives_from_is_skipped_not_approved()
         &format!("/v1/memories/{base}/supersede"),
         Some(&w.reviewer),
         Some("reviewer-supersedes"),
-        Some(json!({"body": "Decision adr-0003-d1, as the reviewer revised it."})),
+        Some(json!({ "expected_version": 1,"body": "Decision adr-0003-d1, as the reviewer revised it."})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposed}");
@@ -700,14 +700,14 @@ async fn a_stale_id_is_reported_not_approved() {
     // the tip and the second has lost its target.
     let mut successors = Vec::new();
     // A writer supersedes its own claims and a dreamer proposes for any.
-    for (token, tag) in [(&w.agent, "one"), (&w.agent_dreamer, "two")] {
+    for (token, tag, expected) in [(&w.agent, "one", 1), (&w.agent_dreamer, "two", 1)] {
         let (status, s) = send(
             r,
             "POST",
             &format!("/v1/memories/{decided}/supersede"),
             Some(token),
             Some(&format!("succ-{tag}")),
-            Some(json!({"body": format!("Decision adr-0001-d1, revision {tag}.")})),
+            Some(json!({ "expected_version": expected,"body": format!("Decision adr-0001-d1, revision {tag}.")})),
         )
         .await;
         assert_eq!(status, StatusCode::ACCEPTED, "{s}");

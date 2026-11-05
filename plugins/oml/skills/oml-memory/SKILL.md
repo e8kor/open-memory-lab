@@ -131,15 +131,23 @@ anything derived from it.
 
 Call `oml_write` with `replaces` to propose a new version of a claim whose current version
 your key wrote. Pass the `artifact_id` of the version recall serves now, the one with
-`tip: true`, the whole new `text`, and optionally a `reason`; do not pass `claim_key`, since
-the new version takes its target's. The new version is held like any write, and recall
+`tip: true`, its `version` as `expected_version`, the whole new `text`, and optionally a
+`reason`; do not pass `claim_key`, since the new version takes its target's. If the claim
+moved on since you read it, the write is refused with `submission.version_conflict` and
+`details.current_version`; read the claim again before you propose. The new version is held like any write, and recall
 keeps serving the old one until a different identity approves the new one. If another
 version took the tip first, the refusal `submission.tip_conflict` names it in
 `details.current_tip`; read it with `oml_read` and its `artifact_id` before you propose
 again. Keep the same `idempotency_key` when you retry the same proposal.
 
-To retire a claim that no longer holds, pass `replaces` and `retirement: true` with a
-`text` that says why. Once approved, recall stops serving the claim, and every version
+When a memory states something read from a committed file, pass `anchor` with where it came
+from: `{repo, rev, path, fragment}`, with `repo` like `github.com/owner/name`, `rev` the full
+commit id you read and `fragment` a heading slug or a line span such as `L10-L42`. The reviewer
+sees it beside the text, and recall can then be narrowed with `anchor_repo` and
+`anchor_path_prefix`; a hit whose source changed since it was reviewed carries `stale`.
+
+To retire a claim that no longer holds, pass `replaces`, its `expected_version` and
+`retirement: true` with a `text` that says why. Once approved, recall stops serving the claim, and every version
 stays readable with `oml_read`.
 
 ## What the tools cannot do

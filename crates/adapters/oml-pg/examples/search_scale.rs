@@ -61,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tenant = Uuid::parse_str(item["tenant"].as_str().unwrap_or_default())?;
         let own_keys = uuids(&item["own_keys"]);
         let scope = CandidateScope {
+            anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: uuids(&item["nodes"]),
             kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
             own_held: (!own_keys.is_empty()).then(|| OwnHeldScope {

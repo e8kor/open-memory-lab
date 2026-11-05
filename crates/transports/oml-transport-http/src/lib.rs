@@ -47,6 +47,7 @@ use uuid::Uuid;
 use oml_app::App;
 use oml_app::app::Caller;
 use oml_app::domain::access::Covers;
+use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
@@ -59,12 +60,13 @@ use oml_app::ports::{
 };
 use oml_app::search::MatchMode;
 use oml_app::types::{
-    AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal, ClaimEdgeQuery,
-    ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
+    AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
+    ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, ListRequest, NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge,
-    RecallRequest, ServedMemory, SimilarItem, SubmitRequest, SubmitVerb, SupersedeRequest,
-    TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
+    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge,
+    ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck, SourceCheckRequest,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -91,6 +93,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories/recall"),
     ("GET", "/v1/memories/{artifact_id}"),
     ("POST", "/v1/memories/{artifact_id}/supersede"),
+    ("POST", "/v1/memories/{artifact_id}/source-check"),
     ("GET", "/v1/guardrails"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
@@ -299,6 +302,7 @@ where
             ("POST", "/v1/memories/recall") => post(Self::recall),
             ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
             ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
+            ("POST", "/v1/memories/{artifact_id}/source-check") => post(Self::source_check),
             ("GET", "/v1/guardrails") => get(Self::guardrails),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
@@ -553,6 +557,7 @@ where
             derives_from: req.derives_from,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            anchor: parse_anchor(req.anchor.as_ref())?,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
@@ -775,6 +780,11 @@ where
                     max_tokens: req.max_tokens,
                     search: req.search.clone(),
                     match_mode,
+                    anchor: anchor_filter(
+                        req.anchor_repo.as_deref(),
+                        req.anchor_path_prefix.as_deref(),
+                        "/",
+                    )?,
                 },
             )
             .await
@@ -903,6 +913,80 @@ where
         Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
     }
 
+    async fn source_check(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(artifact_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::source_check_inner(&st, &artifact_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v1/memories/{artifact_id}/source-check`: a journalled
+    /// statement that a promoted version's anchored span was compared with
+    /// its source at a commit; it answers the version's new `stale` (ADR-0057
+    /// d5, d18). The body is closed.
+    async fn source_check_inner(
+        st: &Self,
+        artifact_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        let idem_key = idempotency_key(headers)?;
+        let memory_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
+        let req: SourceCheckBody = parse_json(headers, body)?;
+        let result = CheckResult::parse(&req.result).ok_or_else(|| {
+            ApiError::validation("result must be fresh, equivalent, moved, changed or removed")
+                .with_details(json!({ "field": "/result" }))
+        })?;
+        let app_req = SourceCheckRequest {
+            idempotency_key: idem_key,
+            memory_id,
+            rev: req.rev,
+            result,
+            hash: req.hash,
+            path: req.path,
+            fragment: req.fragment,
+        };
+        let (receipt, replayed) = retry_chain(|| st.app.source_check(acting.bearer(), &app_req))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let check = json!({
+            "rev": receipt.rev,
+            "at": receipt.at,
+            "result": receipt.result,
+            "moved_to": receipt.moved_path.as_ref().map(|path| json!({
+                "path": path,
+                "fragment": receipt.moved_fragment,
+            })),
+        });
+        if !replayed {
+            st.traffic.metrics().source_check(result.as_str());
+        }
+        let stale = CheckResult::parse(&receipt.result).and_then(CheckResult::stale);
+        let mut response = json_response(
+            StatusCode::OK,
+            &json!({
+                "artifact_id": receipt.memory_id,
+                "stale": stale,
+                "source_checked": check,
+                "journal_seq": receipt.journal_seq,
+            }),
+        );
+        if replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
+    }
+
     async fn supersede(
         State(st): State<Self>,
         rid: Rid,
@@ -971,6 +1055,8 @@ where
             refuse_vocabulary_target,
             severity: parse_severity(req.severity.as_deref())?,
             rule: req.rule,
+            anchor: parse_anchor(req.anchor.as_ref())?,
+            expected_version: parse_expected_version(req.expected_version)?,
         };
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
@@ -2413,6 +2499,9 @@ struct SubmitBody {
     /// `hold` (the default) or `refuse` (ADR-0050 d1).
     #[serde(default)]
     on_similar: Option<String>,
+    /// The origin the author declares (ADR-0057 d1-d3).
+    #[serde(default)]
+    anchor: Option<Value>,
 }
 
 /// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
@@ -2445,6 +2534,20 @@ struct RecallBody {
     /// The answer's per-stage `timings`, where the deployment serves them
     /// (`search.timings`; ADR-0049 d13).
     timings: Option<bool>,
+    /// The origin filters (ADR-0057 d4).
+    anchor_repo: Option<String>,
+    anchor_path_prefix: Option<String>,
+}
+
+/// openapi.yaml `SourceCheckRequest`, closed (ADR-0057 d5).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceCheckBody {
+    rev: String,
+    result: String,
+    hash: Option<String>,
+    path: Option<String>,
+    fragment: Option<String>,
 }
 
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission
@@ -2453,6 +2556,13 @@ struct RecallBody {
 #[serde(deny_unknown_fields)]
 struct SupersedeBody {
     body: String,
+    /// The claim's latest live version as last read; required (ADR-0057
+    /// d19), parsed as optional so its absence names the field.
+    #[serde(default)]
+    expected_version: Option<Value>,
+    /// The successor's own anchor (ADR-0057 d2).
+    #[serde(default)]
+    anchor: Option<Value>,
     /// When sent, the target's workarea, by id or name (ADR-0039 d7).
     workarea: Option<String>,
     #[serde(default)]
@@ -3295,7 +3405,10 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         until: None,
         limit: PAGE_LIMIT_DEFAULT,
         cursor: None,
+        anchor: AnchorFilter::default(),
     };
+    let mut anchor_repo = None;
+    let mut anchor_path_prefix = None;
     let mut seen = HashSet::new();
     for (name, value) in params {
         if !seen.insert(name.as_str()) {
@@ -3337,6 +3450,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                     })?;
             }
             "cursor" => req.cursor = Some(value.clone()),
+            "anchor_repo" => anchor_repo = Some(value.as_str()),
+            "anchor_path_prefix" => anchor_path_prefix = Some(value.as_str()),
             other => {
                 return Err(ApiError::validation(format!(
                     "unknown query parameter {other:?}"
@@ -3344,7 +3459,66 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             }
         }
     }
+    req.anchor = anchor_filter(anchor_repo, anchor_path_prefix, "")?;
     Ok(req)
+}
+
+/// The origin filters, each checked against its grammar and refused naming
+/// it (ADR-0057 d3, d4); `base` is `/` for a body's field and empty for a
+/// query parameter.
+pub(crate) fn anchor_filter(
+    repo: Option<&str>,
+    path_prefix: Option<&str>,
+    base: &str,
+) -> Result<AnchorFilter, ApiError> {
+    if let Some(repo) = repo {
+        anchor_grammar::check_repo(repo).map_err(|why| {
+            ApiError::validation(format!("anchor_repo: {why}"))
+                .with_details(json!({ "field": format!("{base}anchor_repo") }))
+        })?;
+    }
+    if let Some(prefix) = path_prefix {
+        anchor_grammar::check_path_prefix(prefix).map_err(|why| {
+            ApiError::validation(format!("anchor_path_prefix: {why}"))
+                .with_details(json!({ "field": format!("{base}anchor_path_prefix") }))
+        })?;
+    }
+    Ok(AnchorFilter {
+        repo: repo.map(ToOwned::to_owned),
+        path_prefix: path_prefix.map(ToOwned::to_owned),
+    })
+}
+
+/// A body's `anchor`, checked against the grammar and refused naming the
+/// field, such as `/anchor/path` (ADR-0057 d3).
+pub(crate) fn parse_anchor(anchor: Option<&Value>) -> Result<Option<Anchor>, ApiError> {
+    anchor
+        .filter(|a| !a.is_null())
+        .map(|a| {
+            Anchor::from_json(a, "/anchor").map_err(|e| {
+                ApiError::validation(format!("anchor: {e}"))
+                    .with_details(json!({ "field": e.field }))
+            })
+        })
+        .transpose()
+}
+
+/// A supersession's `expected_version`: required, an integer of at least 1
+/// (ADR-0057 d19).
+pub(crate) fn parse_expected_version(sent: Option<Value>) -> Result<u32, ApiError> {
+    let refused = |why: &str| {
+        ApiError::validation(format!("expected_version: {why}"))
+            .with_details(json!({ "field": "/expected_version" }))
+    };
+    let Some(sent) = sent else {
+        return Err(refused(
+            "required: the claim's latest version as you last read it",
+        ));
+    };
+    sent.as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .filter(|v| *v >= 1)
+        .ok_or_else(|| refused("an integer of at least 1"))
 }
 
 /// A listing's `state` filter (openapi.yaml `searchMemories`).
@@ -3478,6 +3652,27 @@ where
 /// expiry — are emitted at their fixed PoC values rather than omitted, so
 /// clients see the full shape.
 #[must_use]
+/// A version's latest source check, served only on a promoted version: a
+/// held one carries none, so no mark ever derives from it (ADR-0057 d5).
+fn source_check(m: &MemoryRecord) -> Option<&SourceCheck> {
+    (m.status == MemoryStatus::Promoted)
+        .then_some(m.source_check.as_deref())
+        .flatten()
+}
+
+/// `SourceChecked` (openapi.yaml; ADR-0057 d5, d18).
+pub fn source_checked_json(check: &SourceCheck) -> Value {
+    json!({
+        "rev": check.rev,
+        "at": check.at.as_str(),
+        "result": check.result.as_str(),
+        "moved_to": check.moved_to.as_ref().map(|(path, fragment)| json!({
+            "path": path,
+            "fragment": fragment,
+        })),
+    })
+}
+
 pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     let m = &served.memory;
     let mut value = json!({
@@ -3514,6 +3709,11 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
+        // The author's declared origin, and the served version's latest
+        // source check, from the source alone (ADR-0057 d1, d5).
+        "anchor": m.anchor.as_deref().map_or(Value::Null, Anchor::to_json),
+        "stale": source_check(m).and_then(SourceCheck::stale),
+        "source_checked": source_check(m).map(source_checked_json),
     });
     // The claim's text, `body` in v0.3.0 and still ADR-0004's storage
     // word (ADR-0039 d7).
@@ -3680,6 +3880,7 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
             json!(info.my_effective_verbs),
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
+        obj.insert("stale_versions".to_owned(), json!(info.stale_versions));
         obj.insert("policy".to_owned(), info.policy.clone());
         obj.insert(
             "pending_transitions".to_owned(),

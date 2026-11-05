@@ -2,7 +2,7 @@
 id: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval
 tier: engineering
 status: proposed
-answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; and how this record relates to ADR-0048
+answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; the per-retriever cap before fusion (d13); and how this record relates to ADR-0048
 -->
 
 # ADR-0049 — Search is a pipeline of retrievers behind a port, chosen by name and gated by the recall eval
@@ -365,6 +365,19 @@ reorders results, and steering rows, which precede hits, are never ranked"
        search moves to an integer token table, `(memory, token_id, weight)`, whose index row
        security can use; that is its own record. This item's columns and statement are the
        lexical leg until then.
+
+- **d13 — Each retriever's list is capped in the core before fusion.** *Added 2026-11-05 with
+  [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+  for v0.5.8, after Hindsight's per-arm cap (`hindsight_api/engine/search/fusion.py:8-26`).* The
+  depth d3 reads a list to (`k` for `Single`, at least 50 for `Rrf`, at least 100 for `Cc`, at
+  least the rerank depth for a reranking pipeline) is a cap the core enforces, not a request the
+  adapter honours: `run_pipeline` keeps each list's first `depth` candidates, in the adapter's
+  order, before `fuse` reads it, so no retriever, however many rows it returns, contributes more
+  candidates to the fused pool than any other, and a future arm (a graph or temporal leg) cannot
+  flood what the reranker reads. The law
+  `no_retriever_contributes_more_candidates_than_its_cap` runs the core over a retriever that
+  returns more than it was asked for. The cost is nothing on today's adapters, which already
+  stop at the depth; the cap is the guard for the next one.
 
 
 - **d13 — Every recall measures its stages, records them by pipeline and stage, and serves them

@@ -4883,6 +4883,8 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
             "Retired: the 2026 runbook replaces it.",
             "--replaces",
             STUB_ARTIFACT,
+            "--expected-version",
+            "1",
             "--retirement",
             "--reason",
             "superseded by the runbook",
@@ -4899,6 +4901,7 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
         sent[0].body,
         json!({
             "body": "Retired: the 2026 runbook replaces it.",
+            "expected_version": 1,
             "retirement": true,
             "reason": "superseded by the runbook",
         }),
@@ -4922,11 +4925,18 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
                 "t",
                 "--replaces",
                 STUB_ARTIFACT,
+                "--expected-version",
+                "1",
                 "--claim-key",
                 "k",
             ],
             "--claim-key",
         ),
+        (
+            vec!["write", "t", "--replaces", STUB_ARTIFACT],
+            "--expected-version",
+        ),
+        (vec!["write", "t", "--expected-version", "1"], "--replaces"),
     ] {
         let (code, _, stderr) = stub_text(&server, &dir, &args);
         assert_eq!(code, 2, "{args:?}: {stderr}");

@@ -37,6 +37,11 @@ class RecallRequest:
                 vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary
                 workarea's journalled policy opts them in, they are hits only of a recall that omits kinds.
             include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
+            anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-
+                lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out
+                (d4).
+            anchor_path_prefix (str | Unset): A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor
+                path starts with it, unanchored rows left out (ADR-0057 d4).
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
                 filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held;
@@ -66,6 +71,8 @@ class RecallRequest:
     k: int | Unset = 8
     kinds: list[RecallRequestKindsItem] | Unset = UNSET
     include_text: bool | Unset = True
+    anchor_repo: str | Unset = UNSET
+    anchor_path_prefix: str | Unset = UNSET
     include_unreviewed: bool | Unset = False
     max_tokens: int | Unset = UNSET
     search: RecallRequestSearch | Unset = UNSET
@@ -92,6 +99,10 @@ class RecallRequest:
                 kinds.append(kinds_item)
 
         include_text = self.include_text
+
+        anchor_repo = self.anchor_repo
+
+        anchor_path_prefix = self.anchor_path_prefix
 
         include_unreviewed = self.include_unreviewed
 
@@ -126,6 +137,10 @@ class RecallRequest:
             field_dict["kinds"] = kinds
         if include_text is not UNSET:
             field_dict["include_text"] = include_text
+        if anchor_repo is not UNSET:
+            field_dict["anchor_repo"] = anchor_repo
+        if anchor_path_prefix is not UNSET:
+            field_dict["anchor_path_prefix"] = anchor_path_prefix
         if include_unreviewed is not UNSET:
             field_dict["include_unreviewed"] = include_unreviewed
         if max_tokens is not UNSET:
@@ -168,6 +183,10 @@ class RecallRequest:
 
         include_text = d.pop("include_text", UNSET)
 
+        anchor_repo = d.pop("anchor_repo", UNSET)
+
+        anchor_path_prefix = d.pop("anchor_path_prefix", UNSET)
+
         include_unreviewed = d.pop("include_unreviewed", UNSET)
 
         max_tokens = d.pop("max_tokens", UNSET)
@@ -201,6 +220,8 @@ class RecallRequest:
             k=k,
             kinds=kinds,
             include_text=include_text,
+            anchor_repo=anchor_repo,
+            anchor_path_prefix=anchor_path_prefix,
             include_unreviewed=include_unreviewed,
             max_tokens=max_tokens,
             search=search,

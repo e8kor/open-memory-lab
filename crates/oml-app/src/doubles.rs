@@ -46,9 +46,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SweepReport,
-    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry,
-    WebSessionRecord, WorkareaRecord, WorkareaRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SourceCheck,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -1385,6 +1385,11 @@ fn apply_fold(
             }
             state.queue.retain(|e| e.memory_id != memory_id);
         }
+        MetadataFold::SourceChecked { memory_id, check } => {
+            if let Some(memory) = state.memories.get_mut(&memory_id) {
+                memory.source_check = Some(Box::new(check));
+            }
+        }
         MetadataFold::TipSuperseded {
             successor,
             replaced,
@@ -1817,6 +1822,9 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
+            if !scope.anchor.admits(m.anchor.as_deref()) {
+                return false;
+            }
             if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
                 return true;
             }
@@ -2198,6 +2206,7 @@ impl JournalStore for MemStore {
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
+            .filter(|m| filter.anchor.admits(m.anchor.as_deref()))
             .filter(|m| {
                 filter
                     .since
@@ -2240,6 +2249,52 @@ impl JournalStore for MemStore {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.workarea_id == workarea_id && served_tip(m))
+            .filter(|m| {
+                m.source_check
+                    .as_deref()
+                    .and_then(SourceCheck::stale)
+                    .is_some()
+            })
+            .count() as u64)
+    }
+
+    async fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+        reads_promoted: bool,
+    ) -> Result<Option<u32>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.workarea_id == workarea_id && m.claim_key == claim_key)
+            .filter(|m| {
+                let own = own_key_ids.contains(&m.author_key_id);
+                match m.status {
+                    MemoryStatus::Promoted => reads_promoted || own,
+                    MemoryStatus::Held => own,
+                    _ => false,
+                }
+            })
+            .map(|m| m.version)
+            .max())
     }
 
     async fn claim_tip(

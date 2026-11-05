@@ -323,6 +323,37 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn stale_count(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "stale_count",
+            self.inner.stale_count(tenant_id, workarea_id),
+        )
+    }
+
+    fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+        reads_promoted: bool,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send {
+        timed(
+            "claim_latest_readable",
+            self.inner.claim_latest_readable(
+                tenant_id,
+                workarea_id,
+                claim_key,
+                own_key_ids,
+                reads_promoted,
+            ),
+        )
+    }
+
     fn claim_tip(
         &self,
         tenant_id: Uuid,

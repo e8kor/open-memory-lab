@@ -13,6 +13,7 @@ from ..models.submit_request_verb import SubmitRequestVerb
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
 
 
@@ -58,6 +59,11 @@ class SubmitRequest:
                 row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
                 rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
                 no idempotency record. Not part of the request digest. Since v0.5.9.
+            anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+                immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
+                shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
+                Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
+                or fragment is submission.scan_veto.
     """
 
     body: str
@@ -69,6 +75,7 @@ class SubmitRequest:
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     on_similar: SubmitRequestOnSimilar | Unset = UNSET
+    anchor: Anchor | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,6 +113,10 @@ class SubmitRequest:
         if not isinstance(self.on_similar, Unset):
             on_similar = self.on_similar.value
 
+        anchor: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anchor, Unset):
+            anchor = self.anchor.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -129,11 +140,14 @@ class SubmitRequest:
             field_dict["derives_from"] = derives_from
         if on_similar is not UNSET:
             field_dict["on_similar"] = on_similar
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
 
         d = dict(src_dict)
@@ -185,6 +199,13 @@ class SubmitRequest:
         else:
             on_similar = SubmitRequestOnSimilar(_on_similar)
 
+        _anchor = d.pop("anchor", UNSET)
+        anchor: Anchor | Unset
+        if isinstance(_anchor, Unset):
+            anchor = UNSET
+        else:
+            anchor = Anchor.from_dict(_anchor)
+
         submit_request = cls(
             body=body,
             verb=verb,
@@ -195,6 +216,7 @@ class SubmitRequest:
             workarea=workarea,
             derives_from=derives_from,
             on_similar=on_similar,
+            anchor=anchor,
         )
 
         submit_request.additional_properties = d

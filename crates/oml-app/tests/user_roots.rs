@@ -179,6 +179,7 @@ async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> Issue
 fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
+        anchor: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -208,6 +209,7 @@ async fn approve(app: &TestApp, reviewer: &str, id: Uuid) {
 fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
     RecallRequest {
         timings: false,
+        anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
         workarea: workarea.map(by_name),
