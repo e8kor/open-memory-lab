@@ -1863,7 +1863,10 @@ mod tests {
             model_dir: Some(dir.clone()),
             ..SparseSettings::default()
         };
-        assert!(!default_search().needs_sparse(), "the default serves no sparse pipeline");
+        assert!(
+            !default_search().needs_sparse(),
+            "the default serves no sparse pipeline"
+        );
         assert!(
             load_sparse(&default_search(), &settings, |_| panic!("no fetch"))
                 .expect("nothing to load")
@@ -1877,10 +1880,12 @@ mod tests {
                 .err()
                 .expect("refused");
             assert!(err.contains("config.json is missing"), "{err}");
-            assert!(err.contains("search.rerank.fetch") || err.contains("fetch"), "{err}");
+            assert!(err.contains("search.sparse.fetch"), "{err}");
             assert_eq!(
                 sparse.require_sparse(false),
-                Err(oml_app::search::SearchConfigError::NoSparseEncoder(pipeline))
+                Err(oml_app::search::SearchConfigError::NoSparseEncoder(
+                    pipeline
+                ))
             );
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -1903,13 +1908,17 @@ mod tests {
             ))
         );
         for (key, value, says) in [
-            ("OML_SEARCH__SPARSE__MODEL_DIR", "models/sparse", "search.sparse.model_dir"),
+            (
+                "OML_SEARCH__SPARSE__MODEL_DIR",
+                "models/sparse",
+                "search.sparse.model_dir",
+            ),
             ("OML_SEARCH__SPARSE__FETCH", "yes", "search.sparse.fetch"),
             ("OML_SEARCH__SPARSE__THREADS", "0", "search.sparse.threads"),
         ] {
             let env = env_of(&[(key, value)]);
-            let err = Config::from_sources(Some(base), &|k| env.get(k).cloned())
-                .expect_err("refused");
+            let err =
+                Config::from_sources(Some(base), &|k| env.get(k).cloned()).expect_err("refused");
             assert!(err.to_string().contains(says), "{err}");
         }
     }

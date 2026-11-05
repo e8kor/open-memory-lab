@@ -125,13 +125,15 @@ pub const BATCH: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LoadError {
     #[error(
-        "{dir}/{file} is missing: place the {model} files there, or set search.rerank.fetch = true to fetch them from {repo} at start"
+        "{dir}/{file} is missing: place the {model} files there, or set {fetch} = true to fetch them from {repo} at start"
     )]
     Missing {
         dir: String,
         file: &'static str,
         model: &'static str,
         repo: &'static str,
+        /// The setting that lets the lead fetch them.
+        fetch: &'static str,
     },
     #[error(
         "{dir}/{file} has SHA-256 {found}, not the {expected} this build pins for {model}: remove it and fetch again"
@@ -229,6 +231,7 @@ pub(crate) fn read_pinned(
     expected: &'static str,
     model: &'static str,
     repo: &'static str,
+    fetch: &'static str,
 ) -> Result<Vec<u8>, LoadError> {
     let path = dir.join(file);
     let bytes = match std::fs::read(&path) {
@@ -239,6 +242,7 @@ pub(crate) fn read_pinned(
                 file,
                 model,
                 repo,
+                fetch,
             });
         }
         Err(e) => return Err(LoadError::Io(format!("{}: {e}", path.display()))),

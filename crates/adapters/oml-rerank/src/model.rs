@@ -20,7 +20,14 @@ use crate::{
 
 /// Reads `dir/file` and checks it is the file `spec` pins.
 fn read_checked(dir: &Path, spec: &ModelSpec, i: usize) -> Result<Vec<u8>, LoadError> {
-    crate::read_pinned(dir, MODEL_FILES[i], spec.files[i], spec.name, spec.repo)
+    crate::read_pinned(
+        dir,
+        MODEL_FILES[i],
+        spec.files[i],
+        spec.name,
+        spec.repo,
+        "search.rerank.fetch",
+    )
 }
 
 /// The network: a BERT encoder, its pooler and the one-logit classifier

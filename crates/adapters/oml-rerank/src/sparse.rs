@@ -103,7 +103,14 @@ pub fn fetch_sparse_missing(
 
 /// Reads `dir/file` and checks it is the file `spec` pins.
 fn read_checked(dir: &Path, spec: &SparseSpec, i: usize) -> Result<Vec<u8>, LoadError> {
-    crate::read_pinned(dir, SPARSE_FILES[i], spec.files[i], spec.name, spec.repo)
+    crate::read_pinned(
+        dir,
+        SPARSE_FILES[i],
+        spec.files[i],
+        spec.name,
+        spec.repo,
+        "search.sparse.fetch",
+    )
 }
 
 /// Checks every pinned file in `dir` without parsing it: what a build
@@ -332,10 +339,11 @@ mod model {
                 serde_json::from_slice(&read_checked(dir, spec, 3)?).map_err(|e| model(&e))?;
             let mut idf = vec![0.0_f32; config.vocab_size];
             for (piece, w) in idf_raw {
-                if let Some(id) = tokenizer.token_to_id(&piece) {
-                    if let Some(slot) = idf.get_mut(id as usize) {
-                        *slot = w;
-                    }
+                if let Some(slot) = tokenizer
+                    .token_to_id(&piece)
+                    .and_then(|id| idf.get_mut(id as usize))
+                {
+                    *slot = w;
                 }
             }
             let special: BTreeSet<u32> = tokenizer
