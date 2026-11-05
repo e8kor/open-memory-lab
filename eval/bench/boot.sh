@@ -38,6 +38,9 @@ PGUSER="${PGUSER:-postgres}"
 PORT="${BENCH_PORT:-8447}"
 REVIEWERS="${BENCH_REVIEWERS:-4}"
 URL="http://127.0.0.1:$PORT"
+# The metrics listener: the sparse encoder's backlog is read there
+# (ADR-0052 d15; wait_sparse.sh).
+METRICS_PORT="${BENCH_METRICS_PORT:-9447}"
 TAG="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
 DB="oml_bench_$TAG"
 PAIR_PASSWORD="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
@@ -80,6 +83,7 @@ ENABLED="$(echo "$PIPELINES" | tr ' ' ',')"
 OML_POSTGRES__URL="postgres://${DB}_serving:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
 OML_POSTGRES__OWNER_URL="postgres://${DB}_owner:$PAIR_PASSWORD@$PGHOST:$PGPORT/$DB" \
 OML_SERVER__LISTEN="127.0.0.1:$PORT" \
+OML_SERVER__METRICS_LISTEN="127.0.0.1:$METRICS_PORT" \
 OML_KMS__KEYRING_PATH="$STATE/keyring" \
 OML_SEARCH__ENABLED="$ENABLED" \
 OML_SEARCH__DEFAULT="$DEFAULT" \
@@ -117,6 +121,7 @@ done
  done) || fail "keys"
 [ -s "$STATE/writer.key" ] && [ -s "$STATE/reviewer-1.key" ] || fail "empty key file"
 
+echo "http://127.0.0.1:$METRICS_PORT" >"$STATE/metrics_url"
 echo "$URL" >"$STATE/url"
 echo "bench boot: serving $URL, database $DB, workareas $*" >&2
 wait "$SERVER_PID"

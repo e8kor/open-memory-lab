@@ -1098,10 +1098,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1130,16 +1130,27 @@ export interface components {
             /** @description How many words the query had. */
             of: number;
             /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings")[];
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse")[];
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
             rank_before?: number | null;
+            /** @description The learned sparse tokens (word pieces) that scored the row, largest contribution first; empty when no sparse list held it (ADR-0052 d17). */
+            tokens?: {
+                /** @description The word piece. */
+                token: string;
+                /** @description Its contribution to the sparse score: the query weight (the model's idf) times the row's weight. */
+                weight: number;
+                /** @description true when the encoder added the piece and the row's own text does not hold it. */
+                expanded: boolean;
+            }[];
+            /** @description The pieces the row matched only through the encoder's expansion, so not words it says (ADR-0052 d17). */
+            expanded?: string[];
         };
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1184,7 +1195,7 @@ export interface components {
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
         };
-        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings; absent from the answer to POST /v2/search/default. */
+        /** @description The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST /v2/search/default. */
         PostingsHealth: {
             /** @description The tenant's postings partition exists. */
             partition: boolean;
@@ -1198,6 +1209,14 @@ export interface components {
             term_drift: number;
             /** @description How many word counts were sampled. */
             terms_checked: number;
+            /** @description Memory versions waiting for the learned sparse encoder, parked ones aside, absent from sparse lists until it writes their postings (ADR-0052 d15). */
+            sparse_backlog: number;
+            /** @description Of them, those whose last encode failed; each is retried after at most an hour. */
+            sparse_failing: number;
+            /** @description Memory versions parked after five failed encodes: kept with their reason, never retried until written again (ADR-0052 d15). */
+            sparse_parked: number;
+            /** @description Whether the tenant's learned sparse queue is on: only a lead serving a sparse pipeline turns it on, and nothing is queued while it is off. */
+            sparse_enabled: boolean;
         };
         /**
          * @description How the max_tokens cut was applied (docs/architecture/retrieval.md, Token budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the 90-token hit is not, because the cut is a strict rank prefix.

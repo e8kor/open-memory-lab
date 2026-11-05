@@ -7,9 +7,11 @@
 
 mod pages;
 mod search;
+mod sparse;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use search::SearchSettings;
+pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 
 use std::collections::btree_map::Entry;
@@ -65,7 +67,7 @@ use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
     JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
-    Scanner, Signer, StoreError, SubjectRow, TailEvent,
+    Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::types::{
     AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
@@ -90,7 +92,7 @@ use crate::types::{
 };
 
 use crate::search::{
-    Access, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
+    Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
     OwnHeldScope, Pipeline, RetrievalQuery, SearchConfig, apply_floor, fuse, pipeline_access,
     pruned_words, query_terms, rerank_order,
 };
@@ -180,6 +182,10 @@ pub struct App<J, S, C, I, Sc> {
     /// Reranking stages skipped since the process started, by reason:
     /// busy, timeout, failed; what doctor warns on (ADR-0053 d9).
     rerank_skips: [AtomicU64; 3],
+    /// The learned sparse encoder the sparse pipelines read the query with
+    /// and the encoder task writes kind 2 with; `None` where the deployment
+    /// serves no sparse pipeline (ADR-0052 d14, d16).
+    sparse: Option<Arc<dyn SparseEncoder>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -996,6 +1002,7 @@ where
             search: SearchConfig::default(),
             reranker: None,
             rerank_skips: Default::default(),
+            sparse: None,
         }
     }
 
@@ -1017,6 +1024,24 @@ where
             reranker: Some(reranker),
             ..self
         }
+    }
+
+    /// The app whose sparse pipelines read the query with `encoder`, and
+    /// whose encoder task writes kind 2 with it (ADR-0052 d14). The
+    /// composition refuses to serve a sparse pipeline without one
+    /// (`SearchConfig::require_sparse`).
+    #[must_use]
+    pub fn with_sparse_encoder(self, encoder: Arc<dyn SparseEncoder>) -> Self {
+        Self {
+            sparse: Some(encoder),
+            ..self
+        }
+    }
+
+    /// The loaded sparse encoder's model name, for doctor and `/readyz`.
+    #[must_use]
+    pub fn sparse_model(&self) -> Option<&str> {
+        self.sparse.as_deref().map(SparseEncoder::model)
     }
 
     /// The loaded reranker's model name, for doctor and `/readyz`.
@@ -4627,6 +4652,7 @@ where
                     score: candidate.score,
                     matched: candidate.matched.clone(),
                     via: candidate.via.clone(),
+                    tokens: candidate.tokens.clone(),
                     rerank: candidate.rerank,
                     rank_before: candidate.rank_before,
                 });
@@ -4900,6 +4926,19 @@ where
         let depth = match pipeline.fusion() {
             Fusion::Single => req.k,
             Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
+            Fusion::Cc { .. } => req.k.max(CC_DEPTH),
+        };
+        // A sparse pipeline reads the query's tokens, weighted by the
+        // model's shipped idf, with no model run (ADR-0052 d14, d16).
+        let sparse = if pipeline.needs_sparse() {
+            let encoder = self.sparse.as_deref().ok_or_else(|| {
+                AppError::Store(StoreError::Backend(format!(
+                    "{pipeline} reads learned sparse postings and no sparse encoder is loaded"
+                )))
+            })?;
+            encoder.encode_query(query)
+        } else {
+            Vec::new()
         };
         // A reranking pipeline reads its first stage as deep as the head it
         // reorders (ADR-0053 d4).
@@ -4926,6 +4965,7 @@ where
                             query,
                             match_mode: mode,
                             k: depth,
+                            sparse: &sparse,
                         },
                     )
                     .await?;

@@ -18,7 +18,7 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [Synthetic recall set](recall-synthetic.md)
 
-200 memories, 121 queries. Measured 2026-11-05 on commit `3c70c71`, `71b7b69`, `c257083`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
+200 memories, 121 queries. Measured 2026-11-05, unknown on commit `3c70c71`, `71b7b69`, `c257083`, `unknown`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6; build release, host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -28,10 +28,12 @@ Every number below went through the served path: memories written over HTTP by a
 | bm25-trigram | 121 | 0.874 | 0.950 | – | 0.000 | 30.4 | 41.9 |
 | bm25-postings | 121 | 0.873 | 0.934 | – | 0.000 | 10.1 | 48.0 |
 | bm25-rerank | 121 | 0.906 | 0.950 | – | 0.000 | 128 | 215 |
+| sparse | 121 | 0.891 | 0.967 | – | 0.000 | 9.3 | 15.4 |
+| bm25-sparse | 121 | 0.910 | 0.983 | – | 0.000 | 12.5 | 18.7 |
 
 ## [BEIR SciFact](beir-scifact.md)
 
-5,183 memories, 300 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
+5,183 memories, 300 queries. Measured 2026-11-05 on commit `2123e90`, `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6; build release, host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -40,6 +42,8 @@ Every number below went through the served path: memories written over HTTP by a
 | bm25 | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 86.1 | 116 |
 | bm25-trigram | 100 (sampled) | 0.611 | 0.710 | 0.906 | 0.000 | 3,707 | 5,454 |
 | bm25-postings | 300 | 0.685 | 0.783 | 0.928 | 0.000 | 46.2 | 65.6 |
+| sparse | 300 | 0.710 | 0.780 | 0.931 | 0.000 | 36.4 | 50.5 |
+| bm25-sparse | 300 | 0.730 | 0.800 | 0.957 | 0.000 | 52.6 | 83.7 |
 | bm25-k10 | 300 | 0.685 | 0.783 | 0.822 | 0.000 | 70.5 | 98.5 |
 | bm25-rerank-d20 | 100 (sampled) | 0.699 | 0.800 | 0.925 | 0.000 | 4,563 | 5,711 |
 | bm25-sampled | 100 (sampled) | 0.696 | 0.780 | 0.925 | 0.000 | 102 | 140 |
@@ -51,7 +55,7 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [BEIR NFCorpus](beir-nfcorpus.md)
 
-3,633 memories, 323 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
+3,633 memories, 323 queries. Measured 2026-11-05 on commit `2123e90`, `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6; build release, host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -60,6 +64,8 @@ Every number below went through the served path: memories written over HTTP by a
 | bm25 | 323 | 0.321 | 0.656 | 0.247 | 0.046 | 51.8 | 83.8 |
 | bm25-trigram | 100 (sampled) | 0.267 | 0.600 | 0.245 | 0.000 | 2,172 | 3,047 |
 | bm25-postings | 323 | 0.321 | 0.656 | 0.247 | 0.046 | 38.0 | 54.8 |
+| sparse | 323 | 0.343 | 0.656 | 0.276 | 0.009 | 35.7 | 49.4 |
+| bm25-sparse | 323 | 0.349 | 0.662 | 0.277 | 0.009 | 48.5 | 65.9 |
 | bm25-rerank-d20 | 100 (sampled) | 0.330 | 0.630 | 0.243 | 0.040 | 5,247 | 15,467 |
 | bm25-sampled | 100 (sampled) | 0.320 | 0.630 | 0.243 | 0.040 | 69.5 | 140 |
 | reference-bm25s-k1-0.9-b-0.4 | 323 | 0.318 | 0.647 | 0.246 | 0.046 | offline | offline |
@@ -68,7 +74,7 @@ Every number below went through the served path: memories written over HTTP by a
 
 ## [LoCoMo](locomo.md)
 
-5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6.
+5,882 memories, 1,535 queries. Measured 2026-11-05 on commit `2123e90`, `66979b4`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6; build release, host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6.
 
 | method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -77,6 +83,8 @@ Every number below went through the served path: memories written over HTTP by a
 | bm25 | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 31.6 | 39.2 |
 | bm25-trigram | 1,535 | 0.483 | 0.587 | 0.822 | 0.000 | 89.1 | 112 |
 | bm25-postings | 1,535 | 0.503 | 0.628 | 0.813 | 0.000 | 29.9 | 37.0 |
+| sparse | 1,535 | 0.530 | 0.649 | 0.867 | 0.000 | 16.0 | 24.6 |
+| bm25-sparse | 1,535 | 0.550 | 0.673 | 0.885 | 0.000 | 23.5 | 32.6 |
 | bm25-rerank-d20 | 302 (sampled) | 0.635 | 0.762 | 0.824 | 0.000 | 2,522 | 3,367 |
 | bm25-sampled | 302 (sampled) | 0.534 | 0.662 | 0.824 | 0.000 | 57.6 | 77.5 |
 | reference-bm25s-k1-0.9-b-0.4 | 1,535 | 0.468 | 0.585 | 0.812 | 0.000 | offline | offline |

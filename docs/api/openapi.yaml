@@ -2524,10 +2524,11 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         search:
           type: string
-          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank]
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse]
           description: >-
             The search pipeline, among those the deployment serves (search.enabled); omitted, the
-            tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9). A name the deployment does not
+            tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
+            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not
             serve is request.validation with details.field /search and details.served.
         match:
           type: string
@@ -2568,9 +2569,21 @@ components:
       properties:
         terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
         of: { type: integer, minimum: 0, description: How many words the query had. }
-        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings] }, description: The retrievers whose lists held the row. }
+        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse] }, description: The retrievers whose lists held the row. }
         rerank: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'The reranker''s relevance of the row to the query, when a reranking pipeline scored it; the hit''s score is then this relevance (ADR-0053 d7).' }
         rank_before: { type: [integer, 'null'], minimum: 1, description: 'The row''s rank in the first stage''s list, from 1, when the reranker scored it (ADR-0053 d7).' }
+        tokens:
+          type: array
+          description: 'The learned sparse tokens (word pieces) that scored the row, largest contribution first; empty when no sparse list held it (ADR-0052 d17).'
+          items:
+            type: object
+            additionalProperties: false
+            required: [token, weight, expanded]
+            properties:
+              token: { type: string, description: The word piece. }
+              weight: { type: number, minimum: 0, description: 'Its contribution to the sparse score: the query weight (the model''s idf) times the row''s weight.' }
+              expanded: { type: boolean, description: 'true when the encoder added the piece and the row''s own text does not hold it.' }
+        expanded: { type: array, items: { type: string }, description: 'The pieces the row matched only through the encoder''s expansion, so not words it says (ADR-0052 d17).' }
 
     RecallSearch:
       type: object
@@ -2578,7 +2591,7 @@ components:
       description: What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
       required: [pipeline, match, terms, fallback, did_you_mean, access, pruned, rerank, rerank_reason, floor, below_floor]
       properties:
-        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank] }
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse] }
         match: { type: string, enum: [any, all] }
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
@@ -2624,9 +2637,9 @@ components:
       additionalProperties: false
       description: >-
         The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present on GET
-        /v2/search where the deployment serves bm25-postings; absent from the answer to POST
+        /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
         /v2/search/default.
-      required: [partition, unfilled, served_behind, workarea_drift, term_drift, terms_checked]
+      required: [partition, unfilled, served_behind, workarea_drift, term_drift, terms_checked, sparse_backlog, sparse_failing, sparse_parked, sparse_enabled]
       properties:
         partition: { type: boolean, description: The tenant's postings partition exists. }
         unfilled: { type: integer, minimum: 0, description: 'Memory versions that should have postings and have none: the fill incomplete.' }
@@ -2634,6 +2647,10 @@ components:
         workarea_drift: { type: integer, minimum: 0, description: Per-workarea counts that disagree with the served memories. }
         term_drift: { type: integer, minimum: 0, description: 'Sampled word counts that disagree with the served postings, or are missing.' }
         terms_checked: { type: integer, minimum: 0, description: How many word counts were sampled. }
+        sparse_backlog: { type: integer, minimum: 0, description: 'Memory versions waiting for the learned sparse encoder, parked ones aside, absent from sparse lists until it writes their postings (ADR-0052 d15).' }
+        sparse_failing: { type: integer, minimum: 0, description: 'Of them, those whose last encode failed; each is retried after at most an hour.' }
+        sparse_parked: { type: integer, minimum: 0, description: 'Memory versions parked after five failed encodes: kept with their reason, never retried until written again (ADR-0052 d15).' }
+        sparse_enabled: { type: boolean, description: 'Whether the tenant''s learned sparse queue is on: only a lead serving a sparse pipeline turns it on, and nothing is queued while it is off.' }
 
     RecallBudget:
       type: object

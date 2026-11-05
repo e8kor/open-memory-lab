@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "The local cross-encoder behind oml-app's Reranker port (ADR-0053): a BERT-class model on the CPU through candle, pure Rust, under a concurrency cap and a deadline; the lead alone depends on it, so the CLI never carries it."
+description = "The lead's local models through candle, pure Rust: the cross-encoder behind oml-app's Reranker port (ADR-0053) and the learned sparse encoder behind its SparseEncoder port (ADR-0052 d14); the lead alone depends on it, so the CLI never carries it."
 
 [dependencies]
 oml-app.workspace = true
@@ -43,8 +43,16 @@ model = [
 name = "timing"
 required-features = ["model"]
 
+[[example]]
+name = "sparse_encode"
+required-features = ["model"]
+
 [[test]]
 name = "model"
+required-features = ["model"]
+
+[[test]]
+name = "sparse"
 required-features = ["model"]
 
 [lints]

@@ -463,6 +463,12 @@ where
                         },
                     })
                 }),
+                // The learned sparse encoder the sparse pipelines read, or
+                // null: doctor's search_sparse_model line reads it
+                // (ADR-0052 d16). Its backlog is per tenant, read by an
+                // admin through GET /v2/search, and summed on the metrics
+                // listener, never here.
+                "sparse": st.app.sparse_model().map(|model| json!({ "model": model })),
                 // No recall counts: they are every tenant's traffic, and
                 // this probe answers anyone; they are the metrics
                 // listener's, oml_recalls_total (ADR-0042 d11; ADR-0052
@@ -758,6 +764,15 @@ where
                         "via": hit.via.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
                         "rerank": hit.rerank.map(relevance),
                         "rank_before": hit.rank_before,
+                        // The learned sparse tokens that scored the hit,
+                        // each with its contribution and whether the
+                        // encoder added it (ADR-0052 d17).
+                        "tokens": hit.tokens.iter().map(|t| json!({
+                            "token": t.token,
+                            "weight": f64::from(t.weight),
+                            "expanded": t.expanded,
+                        })).collect::<Vec<_>>(),
+                        "expanded": hit.tokens.iter().filter(|t| t.expanded).map(|t| t.token.as_str()).collect::<Vec<_>>(),
                     },
                 })
             })
