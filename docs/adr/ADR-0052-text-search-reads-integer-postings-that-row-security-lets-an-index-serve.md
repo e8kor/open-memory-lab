@@ -160,14 +160,25 @@ d11). Decided, not built.
   rather than add a new one. That length is unmeasured, tracked as FR-102.
 
 - **d6 — A word is pruned by its readable count, the postings read are bounded, and the scan answers
-  when nothing is left.** A form is **frequent** when its readable document frequency exceeds
-  `FREQUENT_SHARE` of the readable row count; frequent forms are pruned, then, while the kept forms'
-  summed readable frequencies exceed `POSTING_BUDGET`, the most frequent kept form is pruned too. Both
+  when nothing is left.** While the query forms' summed readable frequencies fit `POSTING_BUDGET`,
+  nothing is pruned and every form is read (amended 2026-11-05, below). Past it, a form is
+  **frequent** when its readable document frequency exceeds `FREQUENT_SHARE` of the readable row
+  count; frequent forms are pruned, then, while the kept forms' summed readable frequencies exceed
+  `POSTING_BUDGET`, the most frequent kept form is pruned too. Both
   decisions read d5's sums alone, so which word is pruned depends only on rows the key may read
   (law in d12). The two are constants in `oml-pg`, not settings: `FREQUENT_SHARE` 0.1 and
   `POSTING_BUDGET` 10,000, set on 2026-11-05 by the scale lane and the external sets (open
   question 2), whose runs are committed. The best `4 × k` candidates by the kept forms are rescored
-  (d4 step 5). A pruned word still counts for the candidates it reaches (d4 step 5); what pruning loses
+  (d4 step 5). *Amended 2026-11-05:* candidates come only from the postings of the forms read, and
+  the rescoring reorders them and adds none, so a row holding only pruned forms is never found. The
+  first rule pruned frequent forms whatever the budget; on LoCoMo, where a query reads one
+  conversation of about 590 turns and 99% of queries had a frequent word, that cost R@100 0.813 →
+  0.767 and R@20 0.6962 → 0.6935, served, for no latency the budget needed. Pruning only past the
+  budget returns `bm25`'s lists on SciFact, NFCorpus and LoCoMo (R@20 0.8656 / 0.1840 / 0.6971,
+  R@100 0.928 / 0.248 / 0.813, as `bm25`), and at 165,000 memories the universe p95 measured 41.7
+  ms on a busier host (`bm25` 841 ms there), against 29.9 ms for the first rule; leaf and project
+  scopes rose from 9.2 / 12.1 to 14.6 / 24.0 ms. Law:
+  `a_scope_whose_postings_fit_the_budget_is_read_whole`. A pruned word still counts for the candidates it reaches (d4 step 5); what pruning loses
   is the rows that hold **only** pruned words. When every form is pruned, the retriever runs ADR-0049
   d12's `bm25` statement over the stored lexemes instead, which ranks identically (d12), and says so:
   the answer's `search.access` is `scan`. This fallback costs what the scan costs (1.4 s p95 at
@@ -283,7 +294,16 @@ d11). Decided, not built.
   `a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it`. Doctor: postings or counts
   missing for a tenant whose partition exists; a sampled count that disagrees with its postings (the
   repair is a re-fill, the cause a defect); the encoder's backlog; the `scan` share above FR-100's
-  bound.
+  bound. *Built 2026-11-05 (`feat/token-postings`), but for the encoder's backlog, which waits for
+  kind 2:* `/readyz` counts each pipeline's recalls since start by access, and doctor warns when the
+  scan answered more than 5% of `bm25-postings`'s, over at least 20; read by an admin key, `GET
+  /v2/search` carries the tenant's postings health, and doctor warns on a missing partition, on
+  versions with no postings (the fill incomplete), on served versions with no served postings, and
+  on per-workarea or sampled word counts that disagree with the postings, each line naming the
+  repair, the owner's `oml_search_postings_refill(tenant)`, which is 0021's fill for one tenant.
+  Laws: `the_postings_health_is_clean_where_the_trigger_kept_it_and_names_each_fault_until_a_refill`,
+  `readyz_counts_each_pipelines_recalls_by_how_they_were_read`,
+  `doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_when_all_is_well`.
 
 ## Consequences
 
