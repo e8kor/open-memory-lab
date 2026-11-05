@@ -7,13 +7,15 @@ from attrs import define as _attrs_define
 
 from ..models.recall_search_match import RecallSearchMatch
 from ..models.recall_search_pipeline import RecallSearchPipeline
+from ..models.rerank_outcome import RerankOutcome
+from ..models.rerank_reason import RerankReason
 
 T = TypeVar("T", bound="RecallSearch")
 
 
 @_attrs_define
 class RecallSearch:
-    """What ran and how the query was read (ADR-0049 d5, d6).
+    """What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7).
 
     Attributes:
         pipeline (RecallSearchPipeline):
@@ -23,6 +25,14 @@ class RecallSearch:
             null otherwise.
         did_you_mean (list[str]): Spellings from rows the key may read, from a pipeline with a trigram list, when no hit
             holds every word; else empty.
+        rerank (None | RerankOutcome): applied when a reranking pipeline reordered the head of its first stage; skipped
+            when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does
+            not rerank or found nothing.
+        rerank_reason (None | RerankReason): Why the rerank was skipped; null otherwise.
+        floor (float | None): The relevance floor applied to this answer (search.rerank.floor), only when the rerank was
+            applied; null when none was.
+        below_floor (int): How many of the first k candidates the floor withheld; hits empty with below_floor above 0
+            means nothing scored above the floor (ADR-0053 d6).
     """
 
     pipeline: RecallSearchPipeline
@@ -30,6 +40,10 @@ class RecallSearch:
     terms: list[str]
     fallback: None | str
     did_you_mean: list[str]
+    rerank: None | RerankOutcome
+    rerank_reason: None | RerankReason
+    floor: float | None
+    below_floor: int
 
     def to_dict(self) -> dict[str, Any]:
         pipeline = self.pipeline.value
@@ -43,6 +57,23 @@ class RecallSearch:
 
         did_you_mean = self.did_you_mean
 
+        rerank: None | str
+        if isinstance(self.rerank, RerankOutcome):
+            rerank = self.rerank.value
+        else:
+            rerank = self.rerank
+
+        rerank_reason: None | str
+        if isinstance(self.rerank_reason, RerankReason):
+            rerank_reason = self.rerank_reason.value
+        else:
+            rerank_reason = self.rerank_reason
+
+        floor: float | None
+        floor = self.floor
+
+        below_floor = self.below_floor
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -52,6 +83,10 @@ class RecallSearch:
                 "terms": terms,
                 "fallback": fallback,
                 "did_you_mean": did_you_mean,
+                "rerank": rerank,
+                "rerank_reason": rerank_reason,
+                "floor": floor,
+                "below_floor": below_floor,
             }
         )
 
@@ -75,12 +110,55 @@ class RecallSearch:
 
         did_you_mean = cast(list[str], d.pop("did_you_mean"))
 
+        def _parse_rerank(data: object) -> None | RerankOutcome:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                rerank_type_0 = RerankOutcome(data)
+
+                return rerank_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RerankOutcome, data)
+
+        rerank = _parse_rerank(d.pop("rerank"))
+
+        def _parse_rerank_reason(data: object) -> None | RerankReason:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                rerank_reason_type_0 = RerankReason(data)
+
+                return rerank_reason_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RerankReason, data)
+
+        rerank_reason = _parse_rerank_reason(d.pop("rerank_reason"))
+
+        def _parse_floor(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        floor = _parse_floor(d.pop("floor"))
+
+        below_floor = d.pop("below_floor")
+
         recall_search = cls(
             pipeline=pipeline,
             match=match,
             terms=terms,
             fallback=fallback,
             did_you_mean=did_you_mean,
+            rerank=rerank,
+            rerank_reason=rerank_reason,
+            floor=floor,
+            below_floor=below_floor,
         )
 
         return recall_search

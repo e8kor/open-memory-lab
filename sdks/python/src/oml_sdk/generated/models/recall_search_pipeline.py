@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class RecallSearchPipeline(StrEnum):
     BM25 = "bm25"
+    BM25_RERANK = "bm25-rerank"
     BM25_TRIGRAM = "bm25-trigram"
     KEYWORD_ALL = "keyword-all"
     KEYWORD_ANY = "keyword-any"

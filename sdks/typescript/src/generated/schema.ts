@@ -1101,7 +1101,7 @@ export interface components {
              * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-rerank";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1131,11 +1131,15 @@ export interface components {
             of: number;
             /** @description The retrievers whose lists held the row. */
             via: ("keyword_all" | "keyword_any" | "bm25" | "trigram")[];
+            /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
+            rerank?: number | null;
+            /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
+            rank_before?: number | null;
         };
-        /** @description What ran and how the query was read (ADR-0049 d5, d6). */
+        /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-rerank";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1143,7 +1147,25 @@ export interface components {
             fallback: string | null;
             /** @description Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty. */
             did_you_mean: string[];
+            /** @description applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does not rerank or found nothing. */
+            rerank: components["schemas"]["RerankOutcome"] | null;
+            /** @description Why the rerank was skipped; null otherwise. */
+            rerank_reason: components["schemas"]["RerankReason"] | null;
+            /** @description The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was. */
+            floor: number | null;
+            /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
+            below_floor: number;
         };
+        /**
+         * @description What a recall's reranking stage did (ADR-0053 d5).
+         * @enum {string}
+         */
+        RerankOutcome: "applied" | "skipped";
+        /**
+         * @description Why a reranking stage was skipped (ADR-0053 d5).
+         * @enum {string}
+         */
+        RerankReason: "busy" | "timeout" | "failed";
         SearchSettings: {
             /** @description The pipelines the deployment serves (search.enabled). */
             enabled: string[];

@@ -140,6 +140,8 @@ from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
+from .rerank_outcome import RerankOutcome
+from .rerank_reason import RerankReason
 from .review_next_body import ReviewNextBody
 from .review_policy import ReviewPolicy
 from .revoke_connection_body import RevokeConnectionBody
@@ -323,6 +325,8 @@ __all__ = (
     "RecallSearchPipeline",
     "RemoveWebEmailBody",
     "RemoveWebEmailResponse200",
+    "RerankOutcome",
+    "RerankReason",
     "ReviewNextBody",
     "ReviewPolicy",
     "RevokeConnectionBody",

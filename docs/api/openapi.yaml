@@ -2583,10 +2583,28 @@ components:
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
         did_you_mean: { type: array, items: { type: string }, description: 'Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty.' }
-        rerank: { type: [string, 'null'], enum: [applied, skipped, null], description: 'applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage''s order was served; null when the pipeline does not rerank or found nothing.' }
-        rerank_reason: { type: [string, 'null'], enum: [busy, timeout, failed, null], description: Why the rerank was skipped; null otherwise. }
+        rerank:
+          description: 'applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage''s order was served; null when the pipeline does not rerank or found nothing.'
+          oneOf:
+            - { $ref: '#/components/schemas/RerankOutcome' }
+            - { type: 'null' }
+        rerank_reason:
+          description: Why the rerank was skipped; null otherwise.
+          oneOf:
+            - { $ref: '#/components/schemas/RerankReason' }
+            - { type: 'null' }
         floor: { type: [number, 'null'], description: 'The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was.' }
         below_floor: { type: integer, minimum: 0, description: 'How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6).' }
+
+    RerankOutcome:
+      type: string
+      enum: [applied, skipped]
+      description: What a recall's reranking stage did (ADR-0053 d5).
+
+    RerankReason:
+      type: string
+      enum: [busy, timeout, failed]
+      description: Why a reranking stage was skipped (ADR-0053 d5).
 
     SearchSettings:
       type: object
