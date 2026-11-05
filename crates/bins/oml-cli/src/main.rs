@@ -1938,11 +1938,11 @@ fn run_chat_init(
 /// key's user's own.
 fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
     let mut out = Vec::new();
-    match client.get("/v1/memories?own=true&limit=1&origin_kinds=manual") {
-        Err(CliError::Refused {
-            status, envelope, ..
-        }) => out.extend(oml_cli::chat::origin_probe_line(status, &envelope)),
-        Ok(_) | Err(_) => {}
+    if let Err(CliError::Refused {
+        status, envelope, ..
+    }) = client.get("/v1/memories?own=true&limit=1&origin_kinds=manual")
+    {
+        out.extend(oml_cli::chat::origin_probe_line(status, &envelope));
     }
     let var = |name: &str| std::env::var(name).ok();
     if let Some(named) = oml_cli::chat::chat_workarea(&var) {
