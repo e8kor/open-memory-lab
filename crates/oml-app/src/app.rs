@@ -177,9 +177,6 @@ pub struct App<J, S, C, I, Sc> {
     /// deployment loads none, and then no reranking pipeline is served
     /// (ADR-0053 d2, d8).
     reranker: Option<Arc<dyn Reranker>>,
-    /// Reranking stages skipped since the process started, by reason:
-    /// busy, timeout, failed; what doctor warns on (ADR-0053 d9).
-    rerank_skips: [AtomicU64; 3],
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -995,17 +992,7 @@ where
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
             search: SearchConfig::default(),
             reranker: None,
-            rerank_skips: Default::default(),
         }
-    }
-
-    /// Reranking stages skipped since the process started: busy, timeout,
-    /// failed (ADR-0053 d9).
-    #[must_use]
-    pub fn rerank_skipped(&self) -> [u64; 3] {
-        self.rerank_skips
-            .each_ref()
-            .map(|n| n.load(Ordering::Relaxed))
     }
 
     /// The app whose reranking pipelines call `reranker` (ADR-0053 d2). The
@@ -4511,12 +4498,6 @@ where
                     rerank_order(head, &scores)
                 }
                 Err(e) => {
-                    let slot = match e {
-                        crate::ports::RerankError::Busy => 0,
-                        crate::ports::RerankError::Timeout => 1,
-                        crate::ports::RerankError::Failed(_) => 2,
-                    };
-                    self.rerank_skips[slot].fetch_add(1, Ordering::Relaxed);
                     rerank = RerankOutcome::Skipped(e.reason());
                     head
                 }

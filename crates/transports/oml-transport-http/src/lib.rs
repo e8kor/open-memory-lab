@@ -437,36 +437,31 @@ where
             // The lead's oauth.issuer, or null: doctor reads whether
             // connections are on here, off the route it checks (ADR-0031 d14).
             "oauth_issuer": st.app.oauth_issuer().map(|issuer| issuer.as_str()),
-            // The web pages' providers and their failed exchanges since
-            // start, or null where the pages are off: doctor's web line
-            // reads it (ADR-0045 d18).
+            // The web pages' providers, or null where the pages are off:
+            // doctor's web line reads it (ADR-0045 d18); their failed
+            // exchanges are the metrics listener's (ADR-0054 d1).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
             // The served search pipelines and the deployment's default:
             // doctor's search line reads them (ADR-0049 d8).
             "search": {
                 "enabled": st.app.search_config().enabled().iter().map(|p| p.as_str()).collect::<Vec<_>>(),
                 "default": st.app.search_config().default_pipeline().as_str(),
-                // The reranker the reranking pipelines call, its policy and
-                // the stages skipped since start: doctor's rerank line reads
-                // them (ADR-0053 d9).
+                // The reranker the reranking pipelines call and its policy:
+                // doctor's rerank line reads them (ADR-0053 d9). The stages
+                // it skipped are counted on the metrics listener,
+                // oml_reranks_total, never here (ADR-0054 d1).
                 "rerank": st.app.reranker_model().map(|model| {
                     let policy = st.app.search_config().rerank();
-                    let skipped = st.app.rerank_skipped();
                     json!({
                         "model": model,
                         "depth": policy.depth,
                         "floor": policy.floor.map(relevance),
-                        "skipped": {
-                            "busy": skipped[0],
-                            "timeout": skipped[1],
-                            "failed": skipped[2],
-                        },
                     })
                 }),
-                // No recall counts: they are every tenant's traffic, and
-                // this probe answers anyone; they are the metrics
-                // listener's, oml_recalls_total (ADR-0042 d11; ADR-0052
-                // d12).
+                // No count of any kind: recalls, skipped reranks and failed
+                // sign-ins are every tenant's traffic, and this probe
+                // answers anyone; they are the metrics listener's
+                // (ADR-0042 d11; ADR-0052 d12; ADR-0054 d1).
             },
         });
         let status = if ready {

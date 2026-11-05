@@ -50,6 +50,12 @@ struct RerankLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct WebFailureLabels {
+    provider: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct TokenLabels {
     grant_type: String,
     outcome: String,
@@ -66,6 +72,7 @@ pub struct Metrics {
     oauth_tokens: Family<TokenLabels, Counter>,
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
+    web_failures: Family<WebFailureLabels, Counter>,
 }
 
 impl Default for Metrics {
@@ -82,6 +89,7 @@ impl Default for Metrics {
         let oauth_tokens = Family::<TokenLabels, Counter>::default();
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
+        let web_failures = Family::<WebFailureLabels, Counter>::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -122,6 +130,13 @@ impl Default for Metrics {
             "reranking stages by outcome, and why a skipped one was skipped",
             reranks.clone(),
         );
+        // Both labels are closed sets: the provider, and the exchange's
+        // failure reason (ADR-0045 d18), moved off /readyz (ADR-0054 d1).
+        registry.register(
+            "oml_web_exchanges_failed",
+            "sign-in provider exchanges that failed, by provider and reason",
+            web_failures.clone(),
+        );
         Self {
             registry,
             http,
@@ -131,6 +146,7 @@ impl Default for Metrics {
             oauth_tokens,
             recalls,
             reranks,
+            web_failures,
         }
     }
 }
@@ -197,6 +213,17 @@ impl Metrics {
             .get_or_create(&RerankLabels {
                 outcome: outcome.to_owned(),
                 reason: reason.unwrap_or("none").to_owned(),
+            })
+            .inc();
+    }
+
+    /// One sign-in exchange with `provider` failed for `reason` (ADR-0045
+    /// d18).
+    pub fn web_failed(&self, provider: &'static str, reason: &'static str) {
+        self.web_failures
+            .get_or_create(&WebFailureLabels {
+                provider: provider.to_owned(),
+                reason: reason.to_owned(),
             })
             .inc();
     }

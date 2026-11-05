@@ -1704,6 +1704,14 @@ show/validate/apply shape and the retired-key refusal.
   guess: a build from a source tree with no git metadata and no `OML_BUILD_COMMIT` /
   `OML_BUILD_COMMIT_TIME` build arguments reports both as `unknown`.
 
+`/readyz` also names the configuration doctor reads: the served search pipelines and the default
+(`search.enabled`, `search.default`), the reranker's `model`, `depth` and `floor`
+(`search.rerank`, or `null`), and the sign-in providers (`web.providers`, or `null`). It carries no
+count of any kind: recalls, skipped reranks and failed sign-in exchanges are every tenant's
+traffic, and they are the metrics listener's alone, which doctor reads where `OML_METRICS_URL`
+names it ([observability](../operations/observability.md);
+[ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d1).
+
 Both are unauthenticated, carry no tenant data, and are the probe targets the Helm chart wires up
 ([deployment.md](../operations/deployment.md)). The cost of `build`: anyone who can reach
 `/readyz` learns the exact build a replica runs. For a released version, that is already public

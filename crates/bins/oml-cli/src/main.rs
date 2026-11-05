@@ -3486,15 +3486,16 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             }
         }
     }
-    let web = web_doctor(ready.as_ref(), admin_emails);
-    let web_warn = web.iter().any(|line| line.starts_with("warn"));
-    // The recall counts are the metrics listener's alone (ADR-0042 d11), read
-    // where OML_METRICS_URL names it (ADR-0052 d12).
-    let recall_counts = std::env::var("OML_METRICS_URL")
+    // Every count of the lead's traffic is the metrics listener's alone
+    // (ADR-0042 d11), read where OML_METRICS_URL names it, never /readyz,
+    // which answers anyone (ADR-0052 d12; ADR-0054 d1).
+    let scrape = std::env::var("OML_METRICS_URL")
         .ok()
         .filter(|u| !u.trim().is_empty())
-        .and_then(|u| postings_recall_counts(u.trim_end_matches('/')));
-    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), recall_counts);
+        .and_then(|u| Scrape::fetch(u.trim_end_matches('/')));
+    let web = web_doctor(ready.as_ref(), admin_emails, scrape.as_ref());
+    let web_warn = web.iter().any(|line| line.starts_with("warn"));
+    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     // The connection surface, from wherever the CLI runs (ADR-0031 d14).
     let oauth = source
@@ -3712,7 +3713,7 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 fn search_doctor(
     ready: Option<&(u16, Value)>,
     settings: Option<&Value>,
-    recall_counts: Option<(u64, u64)>,
+    scrape: Option<&Scrape>,
 ) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
@@ -3727,8 +3728,9 @@ fn search_doctor(
         .filter_map(Value::as_str)
         .collect();
     let mut lines = vec![format!("default {default}; enabled {}", enabled.join(", "))];
-    // The reranker the reranking pipelines call, and the stages it skipped
-    // since the lead started, by reason (ADR-0053 d9).
+    // The reranker the reranking pipelines call, from /readyz, and the
+    // stages it skipped since the lead started, by reason, from the metrics
+    // listener (ADR-0053 d9; ADR-0054 d1).
     let rerank = &body["search"]["rerank"];
     if let Some(model) = rerank["model"].as_str() {
         let floor = rerank["floor"]
@@ -3738,24 +3740,37 @@ fn search_doctor(
             "rerank {model}, depth {}, floor {floor}",
             rerank["depth"].as_u64().unwrap_or(0)
         ));
-        let count = |reason: &str| rerank["skipped"][reason].as_u64().unwrap_or(0);
-        let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
-        if busy + timeout > 0 {
-            let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
-                .into_iter()
-                .filter(|(_, n)| *n > 0)
-                .map(|(reason, n)| format!("{n} {reason}"))
-                .collect();
-            lines.push(format!(
-                "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
-                busy + timeout,
-                reasons.join(", ")
-            ));
-        }
-        if failed > 0 {
-            lines.push(format!(
-                "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
-            ));
+        match scrape {
+            None => lines.push(
+                "rerank skips not read: set OML_METRICS_URL to the lead's metrics listener"
+                    .to_owned(),
+            ),
+            Some(scrape) => {
+                let count = |reason: &str| {
+                    scrape.sum(
+                        "oml_reranks_total",
+                        &[("outcome", "skipped"), ("reason", reason)],
+                    )
+                };
+                let (busy, timeout, failed) = (count("busy"), count("timeout"), count("failed"));
+                if busy + timeout > 0 {
+                    let reasons: Vec<String> = [("busy", busy), ("timeout", timeout)]
+                        .into_iter()
+                        .filter(|(_, n)| *n > 0)
+                        .map(|(reason, n)| format!("{n} {reason}"))
+                        .collect();
+                    lines.push(format!(
+                        "warn search_rerank: {} reranks skipped since start ({}), so those recalls served bm25's order; raise search.rerank.max_concurrent or timeout_ms, or lower search.rerank.depth",
+                        busy + timeout,
+                        reasons.join(", ")
+                    ));
+                }
+                if failed > 0 {
+                    lines.push(format!(
+                        "warn search_rerank_failed: {failed} rerank failed since start, so those recalls served bm25's order; the lead's log names each reason under event rerank_failed"
+                    ));
+                }
+            }
         }
     }
     if default == "keyword-all" {
@@ -3773,6 +3788,13 @@ fn search_doctor(
             settings["effective"].as_str().unwrap_or("the deployment's")
         ));
     }
+    let recall_counts = scrape.map(|scrape| {
+        let pipeline = ("pipeline", "bm25-postings");
+        (
+            scrape.sum("oml_recalls_total", &[pipeline, ("access", "postings")]),
+            scrape.sum("oml_recalls_total", &[pipeline, ("access", "scan")]),
+        )
+    });
     lines.extend(postings_doctor(recall_counts, settings));
     lines
 }
@@ -3785,37 +3807,58 @@ const SCAN_SHARE_WARN_PERCENT: u64 = 5;
 /// the scan share: below it one recall would swing it.
 const SCAN_SHARE_MIN_RECALLS: u64 = 20;
 
-/// `bm25-postings`'s recalls since the lead started, (read from postings,
-/// answered by the scan), summed from `oml_recalls_total` on the metrics
-/// listener at `base` (ADR-0042 d11), or `None` when it does not answer.
-fn postings_recall_counts(base: &str) -> Option<(u64, u64)> {
-    let text = ureq::get(&format!("{base}/metrics"))
-        .call()
-        .ok()?
-        .into_string()
-        .ok()?;
-    let (mut postings, mut scan) = (0_u64, 0_u64);
-    for line in text.lines() {
-        if !line.starts_with("oml_recalls_total{") || !line.contains("pipeline=\"bm25-postings\"") {
-            continue;
-        }
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a counter's integral value"
-        )]
-        let value = line
-            .rsplit(' ')
-            .next()
-            .and_then(|v| v.parse::<f64>().ok())
-            .map_or(0, |v| v as u64);
-        if line.contains("access=\"scan\"") {
-            scan += value;
-        } else if line.contains("access=\"postings\"") {
-            postings += value;
-        }
+/// One scrape of the lead's metrics listener (ADR-0042 d11), which doctor
+/// reads every traffic count from.
+struct Scrape(String);
+
+impl Scrape {
+    /// `GET {base}/metrics`, or `None` when it does not answer.
+    fn fetch(base: &str) -> Option<Self> {
+        ureq::get(&format!("{base}/metrics"))
+            .call()
+            .ok()?
+            .into_string()
+            .ok()
+            .map(Self)
     }
-    Some((postings, scan))
+
+    /// The sum of every sample of `name` whose labels hold each of `labels`.
+    fn sum(&self, name: &str, labels: &[(&str, &str)]) -> u64 {
+        self.samples(name, labels).map(|(_, v)| v).sum()
+    }
+
+    /// Every sample of `name` whose labels hold each of `labels`, as its
+    /// label text and integral value.
+    fn samples<'a>(
+        &'a self,
+        name: &'a str,
+        labels: &'a [(&'a str, &'a str)],
+    ) -> impl Iterator<Item = (&'a str, u64)> + 'a {
+        self.0.lines().filter_map(move |line| {
+            let rest = line.strip_prefix(name)?;
+            let (set, value) = match rest.strip_prefix('{') {
+                Some(rest) => rest.split_once("} ")?,
+                None => ("", rest.strip_prefix(' ')?),
+            };
+            if !labels
+                .iter()
+                .all(|(k, v)| set.split(',').any(|pair| pair == format!("{k}=\"{v}\"")))
+            {
+                return None;
+            }
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a counter's or gauge's integral value"
+            )]
+            let value = value
+                .split(' ')
+                .next()
+                .and_then(|v| v.parse::<f64>().ok())
+                .map_or(0, |v| v.max(0.0) as u64);
+            Some((set, value))
+        })
+    }
 }
 
 /// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
@@ -3886,23 +3929,37 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
 fn web_doctor(
     ready: Option<&(u16, Value)>,
     admin_emails: Option<(usize, Vec<String>)>,
+    scrape: Option<&Scrape>,
 ) -> Vec<String> {
     let Some((_, body)) = ready else {
         return Vec::new();
     };
-    let Some(providers) = body["web"]["providers"].as_object() else {
+    let Some(providers) = body["web"]["providers"].as_array() else {
         return vec!["off (no sign-in provider, or no oauth.issuer)".to_owned()];
     };
-    let mut lines = vec![format!(
-        "on ({})",
-        providers.keys().cloned().collect::<Vec<_>>().join(", ")
-    )];
-    for (provider, state) in providers {
-        let failed = state["failed_exchanges"].as_u64().unwrap_or(0);
+    let providers: Vec<&str> = providers.iter().filter_map(Value::as_str).collect();
+    let mut lines = vec![format!("on ({})", providers.join(", "))];
+    // The failed exchanges are the metrics listener's (ADR-0054 d1).
+    for provider in &providers {
+        let Some(scrape) = scrape else { break };
+        let label = [("provider", *provider)];
+        let reasons: Vec<String> = scrape
+            .samples("oml_web_exchanges_failed_total", &label)
+            .filter(|(_, n)| *n > 0)
+            .map(|(set, n)| {
+                let reason = set
+                    .split(',')
+                    .find_map(|pair| pair.strip_prefix("reason="))
+                    .unwrap_or("\"unknown\"")
+                    .trim_matches('"');
+                format!("{n} {reason}")
+            })
+            .collect();
+        let failed = scrape.sum("oml_web_exchanges_failed_total", &label);
         if failed > 0 {
             lines.push(format!(
-                "warn web_provider_{provider}: {failed} failed exchanges since start, last {}",
-                state["last_failure"].as_str().unwrap_or("unknown")
+                "warn web_provider_{provider}: {failed} failed exchanges since start ({})",
+                reasons.join(", ")
             ));
         }
     }
@@ -3948,16 +4005,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_search_doctor_names_the_reranker_and_warns_on_skipped_reranks() {
+    fn the_search_doctor_names_the_reranker_and_warns_on_skips_read_from_the_metrics_listener() {
         let ready = (
             200,
             json!({"search": {
                 "enabled": ["bm25", "bm25-rerank"], "default": "bm25",
-                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null,
-                           "skipped": {"busy": 3, "timeout": 0, "failed": 1}},
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 20, "floor": null},
             }}),
         );
-        let lines = search_doctor(Some(&ready), None, None);
+        let scrape = Scrape(
+            "oml_reranks_total{outcome=\"applied\",reason=\"none\"} 9\n\
+             oml_reranks_total{outcome=\"skipped\",reason=\"busy\"} 3\n\
+             oml_reranks_total{outcome=\"skipped\",reason=\"failed\"} 1\n"
+                .to_owned(),
+        );
+        let lines = search_doctor(Some(&ready), None, Some(&scrape));
         assert_eq!(
             lines[1],
             "rerank ms-marco-MiniLM-L6-v2, depth 20, floor off"
@@ -3978,12 +4040,15 @@ mod tests {
             lines[3].contains("rerank_failed") && !lines[3].contains("max_concurrent"),
             "a failure names the log event, not the cap: {lines:?}"
         );
+        // Without the metrics listener doctor says where the skips are,
+        // never that there are none.
+        let unread = search_doctor(Some(&ready), None, None);
+        assert!(unread[2].contains("OML_METRICS_URL"), "{unread:?}");
         let floored = (
             200,
             json!({"search": {
                 "enabled": ["bm25-rerank"], "default": "bm25-rerank",
-                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005,
-                           "skipped": {"busy": 0, "timeout": 0, "failed": 0}},
+                "rerank": {"model": "ms-marco-MiniLM-L6-v2", "depth": 10, "floor": 0.005},
             }}),
         );
         assert_eq!(
@@ -3995,9 +4060,26 @@ mod tests {
             json!({"search": {"enabled": ["bm25"], "default": "bm25", "rerank": null}}),
         );
         assert_eq!(
-            search_doctor(Some(&quiet), None, None).len(),
+            search_doctor(Some(&quiet), None, Some(&Scrape(String::new()))).len(),
             1,
             "no reranker, no line"
         );
+    }
+
+    #[test]
+    fn the_web_doctor_reads_failed_exchanges_from_the_metrics_listener() {
+        let ready = (200, json!({"web": {"providers": ["google", "github"]}}));
+        let scrape = Scrape(
+            "oml_web_exchanges_failed_total{provider=\"google\",reason=\"busy\"} 1\n\
+             oml_web_exchanges_failed_total{provider=\"google\",reason=\"error_answer\"} 1\n"
+                .to_owned(),
+        );
+        let lines = web_doctor(Some(&ready), None, Some(&scrape));
+        assert_eq!(lines[0], "on (google, github)");
+        assert_eq!(
+            lines[1],
+            "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
+        );
+        assert_eq!(lines.len(), 2, "{lines:?}");
     }
 }
