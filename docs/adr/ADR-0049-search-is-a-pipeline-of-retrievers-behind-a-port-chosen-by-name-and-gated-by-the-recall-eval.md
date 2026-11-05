@@ -9,7 +9,8 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 **Status:** proposed · 2026-11-04
 
-**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); later
+**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
+each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; later
 increments not assigned ([releases](../product/releases.md#decisions))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
