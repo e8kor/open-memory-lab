@@ -1609,6 +1609,13 @@ pub enum ScanOutcome {
 /// The scanner port: deterministic, synchronous, in-process (admission.md).
 pub trait Scanner: Send + Sync {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome;
+
+    /// The rule-set version every verdict is journalled under, the
+    /// submission event's `scan.scanner_version` (ADR-0065 d1; ADR-0019 d4);
+    /// `None` for a scanner that pins none, as the test doubles do.
+    fn version(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

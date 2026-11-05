@@ -4039,8 +4039,8 @@ where
         // The catalog payload of submission.remember: digest-only, body
         // plaintext never rides the journal (ADR-0002 d1; event-catalog.md).
         // The PoC stores the body inline and unencrypted, so there is no
-        // ciphertext digest, and it pins no scan rule set, so there is no
-        // scanner version (admission.md rule-set registry).
+        // ciphertext digest; the scanner names the rule set its verdict was
+        // taken under, or none (admission.md rule-set registry; ADR-0065 d1).
         let mut payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
@@ -4059,7 +4059,7 @@ where
             "retirement": false,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });
@@ -5951,7 +5951,7 @@ where
             "retirement": req.retirement,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });

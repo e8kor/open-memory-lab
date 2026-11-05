@@ -122,6 +122,18 @@ struct TokenLabels {
     outcome: String,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ScanLabels {
+    class: String,
+    rule: String,
+    action: String,
+}
+
+/// Where the scan findings come from: the composition's rule set, read at
+/// each scrape (ADR-0065 d11). Counts by class, rule and action, nothing
+/// else.
+pub type ScanCounts = fn() -> Vec<(&'static str, &'static str, &'static str, u64)>;
+
 /// The four families (ADR-0042 d12).
 #[derive(Debug)]
 pub struct Metrics {
@@ -139,6 +151,9 @@ pub struct Metrics {
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
     sparse_backlog: Gauge,
+    scan_findings: Family<ScanLabels, Counter>,
+    scan_counts: std::sync::OnceLock<ScanCounts>,
+    scan_refresh: std::sync::Mutex<()>,
 }
 
 /// The recall and remember quality families (ADR-0054 d1, as accepted):
@@ -326,6 +341,15 @@ impl Default for Metrics {
             "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
+        // Every label is from the rule set's closed vocabulary: the finding
+        // class, the rule id and veto or hold — never what a rule matched
+        // (ADR-0065 d8, d11).
+        let scan_findings = Family::<ScanLabels, Counter>::default();
+        registry.register(
+            "oml_scan_findings",
+            "deterministic scan findings since start, by finding class, rule and action",
+            scan_findings.clone(),
+        );
         Self {
             registry,
             http,
@@ -341,6 +365,9 @@ impl Default for Metrics {
             quality,
             sparse_encoded,
             sparse_backlog,
+            scan_findings,
+            scan_counts: std::sync::OnceLock::new(),
+            scan_refresh: std::sync::Mutex::new(()),
         }
     }
 }
@@ -505,9 +532,38 @@ impl Metrics {
             .observe(seconds);
     }
 
+    /// Read the scan findings from `counts` at every scrape (ADR-0065 d11).
+    /// The first source set stays.
+    pub fn with_scan_counts(&self, counts: ScanCounts) {
+        let _ = self.scan_counts.set(counts);
+    }
+
+    /// Bring the findings counters up to the rule set's counts. One refresh
+    /// at a time, so two scrapes never add one delta twice.
+    fn refresh_scan(&self) {
+        let Some(counts) = self.scan_counts.get() else {
+            return;
+        };
+        let Ok(_one) = self.scan_refresh.lock() else {
+            return;
+        };
+        for (class, rule, action, n) in counts() {
+            let counter = self.scan_findings.get_or_create(&ScanLabels {
+                class: class.to_owned(),
+                rule: rule.to_owned(),
+                action: action.to_owned(),
+            });
+            let seen = counter.get();
+            if n > seen {
+                counter.inc_by(n - seen);
+            }
+        }
+    }
+
     /// The exposition: OpenMetrics text, which Prometheus scrapes.
     #[must_use]
     pub fn encode(&self) -> String {
+        self.refresh_scan();
         let mut out = String::new();
         // Writing into a String cannot fail.
         let _ = prometheus_client::encoding::text::encode(&mut out, &self.registry);

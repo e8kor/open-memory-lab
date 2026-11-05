@@ -917,6 +917,10 @@ async fn submission_digests_nfc_text() {
     assert_eq!(event.payload["retirement"], false);
     assert!(event.payload["replaces"].is_null());
     assert!(event.payload.get("body").is_none(), "digest-only payloads");
+    // The scan names the rule set its verdict was taken under; the double
+    // pins none (ADR-0065 d1).
+    assert_eq!(event.payload["scan"]["result"], "pass");
+    assert!(event.payload["scan"]["scanner_version"].is_null());
 
     // The scan sees the NFC text too: a rule on the composed spelling
     // vetoes the decomposed one.
