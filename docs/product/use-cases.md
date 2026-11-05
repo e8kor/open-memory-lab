@@ -718,7 +718,7 @@ How it works: [ontologies](../architecture/ontologies.md).
 
 ## Sources
 
-Every use case here is **designed** and **planned for v0.5.8** ([ADR-0056](../adr/ADR-0056-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
+Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
 
 ### Say where a memory came from
 
@@ -741,8 +741,9 @@ Every use case here is **designed** and **planned for v0.5.8** ([ADR-0056](../ad
 
 - **Who:** an agent, a developer, CI. **UC-SM-03.**
 - **Goal:** know when the document a memory came from has changed since it was read.
-- **How it plays out:** once a sync has read the newer document, every search result from it is
-  marked until someone reviews the newer version. In a checkout, `oml sync --check` lists every
+- **How it plays out:** once a sync or a CI check has compared the memory with the newer
+  document, every search result from it is marked as stale until a corrected version is
+  approved; a change that only reformats the source leaves it unmarked. In a checkout, `oml sync --check` lists every
   memory a commit made stale and fails a CI step until they are answered.
 
 ### Load a repository's documents and keep them in step
