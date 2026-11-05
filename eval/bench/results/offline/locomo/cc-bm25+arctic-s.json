@@ -1,0 +1,146 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "offline",
+ "method": "cc-bm25+arctic-s",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.5695,
+  "recall@10": 0.7224,
+  "recall@100": 0.9236,
+  "mrr@10": 0.5524,
+  "success@1": 0.43,
+  "success@5": 0.7218,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.4225,
+   "recall@10": 0.6222,
+   "recall@100": 0.9204,
+   "mrr@10": 0.3627,
+   "success@1": 0.2511,
+   "success@5": 0.5,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.4031,
+   "recall@10": 0.4882,
+   "recall@100": 0.841,
+   "mrr@10": 0.4946,
+   "success@1": 0.3546,
+   "success@5": 0.6809,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.3393,
+   "recall@10": 0.4717,
+   "recall@100": 0.7724,
+   "mrr@10": 0.3419,
+   "success@1": 0.2283,
+   "success@5": 0.5435,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.6248,
+   "recall@10": 0.8076,
+   "recall@100": 0.9602,
+   "mrr@10": 0.5742,
+   "success@1": 0.4507,
+   "success@5": 0.7408,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.6371,
+   "recall@10": 0.7771,
+   "recall@100": 0.9437,
+   "mrr@10": 0.6065,
+   "success@1": 0.5,
+   "success@5": 0.7594,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.5364,
+   "recall@10": 0.6999,
+   "recall@100": 0.9229,
+   "mrr@10": 0.5097,
+   "success@1": 0.3897,
+   "success@5": 0.6719,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "Convex combination of 0.35 x bm25 + 0.65 x arctic-s, each leg min-max normalised over this query's own top 100; weights tuned on recall-synthetic (nDCG@10) and applied unchanged here.",
+ "cost": {
+  "arctic-s": {
+   "docs": 5882,
+   "encode_seconds": 106.8,
+   "docs_per_second": 55.1,
+   "mean_chars": 175,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.0,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 13.9,
+     "docs_per_second": 18.4
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.0
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 24.23,
+     "p95_ms": 33.71
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.32,
+     "p95_ms": 19.42
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 12.01,
+     "p95_ms": 16.46
+    },
+    "load_after": 6.66
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.0662,
+  "p_value": 0.0001,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ },
+ "weights": {
+  "bm25": 0.35,
+  "arctic-s": 0.65
+ },
+ "tuned_on": "synthetic"
+}

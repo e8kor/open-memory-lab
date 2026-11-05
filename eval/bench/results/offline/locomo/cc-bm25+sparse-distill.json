@@ -1,0 +1,139 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "offline",
+ "method": "cc-bm25+sparse-distill",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.5524,
+  "recall@10": 0.6852,
+  "recall@100": 0.8903,
+  "mrr@10": 0.5378,
+  "success@1": 0.4306,
+  "success@5": 0.6769,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.4634,
+   "recall@10": 0.6345,
+   "recall@100": 0.8946,
+   "mrr@10": 0.4118,
+   "success@1": 0.3094,
+   "success@5": 0.5561,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.3476,
+   "recall@10": 0.4255,
+   "recall@100": 0.7429,
+   "mrr@10": 0.4201,
+   "success@1": 0.2979,
+   "success@5": 0.5745,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.307,
+   "recall@10": 0.4025,
+   "recall@100": 0.6956,
+   "mrr@10": 0.3259,
+   "success@1": 0.2391,
+   "success@5": 0.4348,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.6124,
+   "recall@10": 0.7669,
+   "recall@100": 0.9431,
+   "mrr@10": 0.57,
+   "success@1": 0.4637,
+   "success@5": 0.7075,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.6457,
+   "recall@10": 0.7805,
+   "recall@100": 0.9372,
+   "mrr@10": 0.6178,
+   "success@1": 0.5156,
+   "success@5": 0.7562,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.5323,
+   "recall@10": 0.6738,
+   "recall@100": 0.8913,
+   "mrr@10": 0.5094,
+   "success@1": 0.4033,
+   "success@5": 0.6497,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "Convex combination of 0.3 x bm25 + 0.7 x sparse-distill, each leg min-max normalised over this query's own top 100; weights tuned on recall-synthetic (nDCG@10) and applied unchanged here.",
+ "cost": {
+  "sparse-distill": {
+   "docs": 5882,
+   "encode_seconds": 324.4,
+   "docs_per_second": 18.1,
+   "mean_chars": 175,
+   "threads": 8,
+   "batch": 32,
+   "nnz_mean": 211.6,
+   "nnz_p50": 210,
+   "nnz_p95": 259,
+   "nnz_max": 564,
+   "clean": {
+    "load_before": 2.45,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 36.19,
+     "docs_per_second": 7.1
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 9.83,
+     "docs_per_second": 52.1
+    },
+    "query_encode": {
+     "what": "tokenizer + idf lookup, no model",
+     "p50_ms": 0.04,
+     "p95_ms": 0.08
+    },
+    "load_after": 5.62
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.0491,
+  "p_value": 0.0001,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ },
+ "weights": {
+  "bm25": 0.3,
+  "sparse-distill": 0.7
+ },
+ "tuned_on": "synthetic"
+}

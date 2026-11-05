@@ -1,0 +1,191 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "recall-synthetic",
+ "suite_version": "eval/recall data version 1, scored by eval/bench/bench.py (gain = grade)",
+ "kind": "offline",
+ "method": "arctic-s",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 121,
+ "n_docs": 200,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.873,
+  "recall@10": 0.8988,
+  "recall@100": 0.991,
+  "mrr@10": 0.9249,
+  "success@1": 0.8264,
+  "success@5": 0.9504,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "exact": {
+   "ndcg@10": 0.9532,
+   "recall@10": 0.9545,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "identifier": {
+   "ndcg@10": 1.0,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "inflection": {
+   "ndcg@10": 0.9082,
+   "recall@10": 0.9091,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "long": {
+   "ndcg@10": 0.8523,
+   "recall@10": 0.8485,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.9091,
+   "success@5": 0.9091,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "multihop": {
+   "ndcg@10": 0.9054,
+   "recall@10": 0.9015,
+   "recall@100": 0.9773,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "negation": {
+   "ndcg@10": 0.9875,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "paraphrase": {
+   "ndcg@10": 0.6944,
+   "recall@10": 0.7273,
+   "recall@100": 0.9242,
+   "mrr@10": 0.75,
+   "success@1": 0.7273,
+   "success@5": 0.8182,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "partial": {
+   "ndcg@10": 0.9389,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.9545,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "question": {
+   "ndcg@10": 0.8942,
+   "recall@10": 0.9091,
+   "recall@100": 1.0,
+   "mrr@10": 0.9545,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "temporal": {
+   "ndcg@10": 0.6685,
+   "recall@10": 0.7727,
+   "recall@100": 1.0,
+   "mrr@10": 0.7121,
+   "success@1": 0.2727,
+   "success@5": 0.8182,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "typo": {
+   "ndcg@10": 0.8003,
+   "recall@10": 0.8636,
+   "recall@100": 1.0,
+   "mrr@10": 0.803,
+   "success@1": 0.7273,
+   "success@5": 0.9091,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "Snowflake/snowflake-arctic-embed-s (Apache-2.0). Dense, exact cosine over every row of the scope; query with the card's retrieval prompt.",
+ "cost": {
+  "arctic-s": {
+   "docs": 200,
+   "encode_seconds": 1.9,
+   "docs_per_second": 106.5,
+   "mean_chars": 121,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.0,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 13.9,
+     "docs_per_second": 18.4
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.0
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 24.23,
+     "p95_ms": 33.71
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.32,
+     "p95_ms": 19.42
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 12.01,
+     "p95_ms": 16.46
+    },
+    "load_after": 6.66
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": -0.001,
+  "p_value": 0.9616,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ }
+}

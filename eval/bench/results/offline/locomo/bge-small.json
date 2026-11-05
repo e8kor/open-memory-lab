@@ -1,0 +1,141 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "offline",
+ "method": "bge-small",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.4391,
+  "recall@10": 0.5934,
+  "recall@100": 0.877,
+  "mrr@10": 0.4141,
+  "success@1": 0.3075,
+  "success@5": 0.5687,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.2888,
+   "recall@10": 0.4451,
+   "recall@100": 0.8161,
+   "mrr@10": 0.2426,
+   "success@1": 0.1592,
+   "success@5": 0.352,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.3132,
+   "recall@10": 0.4037,
+   "recall@100": 0.81,
+   "mrr@10": 0.3724,
+   "success@1": 0.2376,
+   "success@5": 0.5638,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.2401,
+   "recall@10": 0.3536,
+   "recall@100": 0.6956,
+   "mrr@10": 0.238,
+   "success@1": 0.163,
+   "success@5": 0.3804,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.4679,
+   "recall@10": 0.6568,
+   "recall@100": 0.914,
+   "mrr@10": 0.4136,
+   "success@1": 0.3044,
+   "success@5": 0.5707,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.5314,
+   "recall@10": 0.663,
+   "recall@100": 0.8909,
+   "mrr@10": 0.5025,
+   "success@1": 0.4188,
+   "success@5": 0.6219,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.4052,
+   "recall@10": 0.56,
+   "recall@100": 0.8633,
+   "mrr@10": 0.3755,
+   "success@1": 0.2741,
+   "success@5": 0.5199,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "BAAI/bge-small-en-v1.5 (MIT). Dense, exact cosine over every row of the scope; query with the card's retrieval prompt.",
+ "cost": {
+  "bge-small": {
+   "docs": 5882,
+   "encode_seconds": 92.3,
+   "docs_per_second": 63.7,
+   "mean_chars": 175,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.19,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 14.21,
+     "docs_per_second": 18.0
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.1
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 23.96,
+     "p95_ms": 33.97
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.42,
+     "p95_ms": 20.46
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 11.53,
+     "p95_ms": 15.02
+    },
+    "load_after": 7.0
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": -0.0643,
+  "p_value": 0.0001,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ }
+}

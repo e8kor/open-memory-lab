@@ -1,0 +1,85 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "beir-nfcorpus",
+ "suite_version": "beir/nfcorpus/test (ir_datasets 0.6.3)",
+ "kind": "offline",
+ "method": "cc-bm25+arctic-s",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 323,
+ "n_docs": 3633,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.3508,
+  "recall@10": 0.1647,
+  "recall@100": 0.2998,
+  "mrr@10": 0.5768,
+  "success@1": 0.5046,
+  "success@5": 0.6811,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {},
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "Convex combination of 0.35 x bm25 + 0.65 x arctic-s, each leg min-max normalised over this query's own top 100; weights tuned on recall-synthetic (nDCG@10) and applied unchanged here.",
+ "cost": {
+  "arctic-s": {
+   "docs": 3633,
+   "encode_seconds": 496.3,
+   "docs_per_second": 7.3,
+   "mean_chars": 1592,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.0,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 13.9,
+     "docs_per_second": 18.4
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.0
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 24.23,
+     "p95_ms": 33.71
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.32,
+     "p95_ms": 19.42
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 12.01,
+     "p95_ms": 16.46
+    },
+    "load_after": 6.66
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.0291,
+  "p_value": 0.0004,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ },
+ "weights": {
+  "bm25": 0.35,
+  "arctic-s": 0.65
+ },
+ "tuned_on": "synthetic"
+}
