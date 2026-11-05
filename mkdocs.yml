@@ -124,11 +124,14 @@ nav:
       - Restore: operations/restore.md
       - Disaster recovery: operations/disaster-recovery.md
       - Capacity: operations/capacity.md
+      - Releasing: operations/releasing.md
   - Engineering:
       - Workspace plan: engineering/workspace-plan.md
       - Test strategy: engineering/test-strategy.md
       - CI and toolchain: engineering/ci-and-toolchain.md
       - Benchmark harness: engineering/benchmark-harness.md
+      - Pre-review checklist: contributing/review-checklist.md
+      - Number registry: NUMBERS.md
       - M0 spikes:
           - Harness and status: engineering/spikes/index.md
           - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md

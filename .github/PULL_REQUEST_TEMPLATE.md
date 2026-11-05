@@ -27,3 +27,9 @@
 - [ ] Compliance vocabulary appears only in the sanctioned form ("produces the evidence an auditor asks for").
 - [ ] `uvx --with mkdocs-material mkdocs build --strict` passes; new pages are in the nav and carry the frontmatter block.
 - [ ] If this changes an accepted decision after `spec-v0.1`: the change tags a spec revision and adds a changelog entry.
+
+## Pre-review checklist
+
+<!-- Paste the list from docs/contributing/review-checklist.md with each box ticked, or struck
+     through with a reason. Build lanes: required. Numbers reserved in docs/NUMBERS.md; a
+     change under crates/ or docs/adr/ adds a changes/ fragment or carries `no-changelog`. -->

@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design and 0.5.7-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design and 0.5.8-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.7-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.5.8-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,7 +27,90 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## Unreleased
+## 0.5.8-design
+
+Opened for release v0.5.8, which carries this revision: [ADR-0057](adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in
+v0.5.8, and [ADR-0049](adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13, the per-retriever cap before fusion, introduced in v0.5.8.
+`info.version` moved to `0.5.8-design` with the contract of ADR-0057 (the entry below):
+`anchor` on submissions and supersessions, the origin filters on recall and the listing,
+`anchor`, `stale` and `source_checked` on every memory item, the source-check route and
+`submission.version_conflict` were added, and `expected_version` became required on a
+supersession, the one change that breaks a v0.5.7 caller. The entries below were kept apart under
+"Unreleased" until this release, newest first.
+
+### 2026-11-05 — Release v0.5.8: memories that say where they came from, and `oml sync`
+
+What changes for someone using OML:
+
+- **A memory can say where it came from.** A write may carry an anchor: the repository, the full
+  commit read, the file, the part of it (an ADR decision such as `d3`, a heading's slug, or a line
+  span `L10-L24`) and a fingerprint of that part's text. The reviewer sees it, it is signed with
+  the memory and never changes, and the server never fetches the source. `oml anchor
+  docs/adr/ADR-0057-….md#d19` prints the anchor of a committed file or part of it, ready for
+  `oml write --anchor @anchor.json`; `oml_write` takes `anchor` the same way.
+- **Recall and the listing filter by repository and folder.** `oml read --query … --anchor-repo
+  github.com/e8kor/open-memory-lab --anchor-path-prefix docs/adr/`, and `anchor_repo` and
+  `anchor_path_prefix` on `oml_read`, `POST /v1/memories/recall` and `GET /v1/memories`. The
+  filters run inside the index reads, not after them: at 100,000 memories a recall filtered to
+  1% of them took 14 to 151 ms at the 95th percentile, against 112 to 265 ms when the whole list
+  was read and then filtered (FR-115). A filtered recall never returns fewer hits than it would
+  by filtering the unfiltered list, and memories without an anchor are left out of a filtered
+  read.
+- **A hit says when its source moved on.** Each memory item carries `stale` (`changed` or
+  `removed`) when the latest check of its source found the text changed or gone since it was
+  reviewed, and `source_checked` with the commit, the time and the result. Only a check of the
+  source sets it, never a newer version waiting for review, and it clears once a successor is
+  reviewed. `oml doctor` counts the stale versions and the waiting links on your default
+  workarea.
+- **`oml sync` keeps a workarea in step with a repository's markdown.** It reads committed files
+  at a commit, one memory per decision of a decision record (with a summary and the rejected
+  alternatives, the `adr` adapter), per section of any other document (`headings`), or per block
+  of lines (`lines`), and compares them with the workarea: it writes what is new, replaces what
+  changed, proposes retiring what was removed, records a moved part without a new review, and
+  never writes a rollback unless `--allow-rollback`. Every write is held for review, in batches
+  of at most `--max-writes` that `oml review list` and `oml review approve --ids -` take in one
+  act; a second run with nothing changed writes nothing.
+  - `--dry-run` prints the plan and writes nothing; start with it.
+  - `--check` writes no memory and lists each anchored memory as `fresh`, `moved`, `stale`,
+    `removed` or `pending`; it exits `1` when a commit made one stale, so CI can run it after
+    every merge (`--record` records the checks).
+  - `--exclude <glob>` (repeatable) leaves paths out: never read, compared or retired.
+  - `--pr <n> --rev <head>` loads a draft pull request's records into a workarea of their own,
+    `<workarea>-pr-<n>`; `--retire-all` retires them when the pull request closes.
+  - `--edges` proposes the links between decision records that amend or supersede one another,
+    under a person's reviewer key, and `--edges --ratify` under a second person's confirms them.
+  - Sync refuses the public server until a run passes `--allow-public-server` for that clone,
+    and strips credentials from the repository URL it writes.
+- **BREAKING: replacing a memory names the version you read.** A supersession must send
+  `expected_version`, the claim's latest version as you last read it (the `version` of the tip
+  you are replacing, or of your own newer held version). If the claim has moved on, the write is
+  refused with `409 submission.version_conflict` and `details.current_version`, and nothing is
+  stored; read it again and retry. Two sessions that read version 3 can no longer both replace
+  it. A supersession without the field is refused as `request.validation`.
+  - HTTP: `POST /v1/memories/{artifact_id}/supersede` with
+    `{"body": "The new text", "expected_version": 3}` and an `Idempotency-Key` header.
+  - MCP: `oml_write` with `{"text": "The new text", "replaces": "<artifact_id>",
+    "expected_version": 3, "idempotency_key": "…"}`.
+  - CLI: `oml write "The new text" --replaces <artifact_id> --expected-version 3`.
+
+  The `oml` plugin, the Python and TypeScript SDKs and the CLI in this release send it. **Restart
+  your agent sessions after the upgrade**, so they load the new plugin and its tool description;
+  a session started before it keeps the old one and its supersessions are refused.
+- **Search caps each list before merging.** In a pipeline that fuses several searches, each
+  search contributes at most its depth of candidates, so no single one can crowd out the others
+  or the reranker's head (ADR-0049 d13). Today's searches already stopped there; nothing ranks
+  differently.
+- **Migration 0025 runs at upgrade.** It adds the anchor and source-check columns to memories and
+  the index the filters read. It is safe on a live database: it waits at most 5 s for a lock and
+  otherwise fails, to be run again; each index is built one partition at a time.
+
+The workspace version, `Cargo.lock`, both plugins' manifests, the chart's `version` and
+`appVersion`, and the installers' default release move to 0.5.8; every reader page fetches the
+installer at `v0.5.8`. `info.version` in both OpenAPI documents and `design_spec_version` in both
+MCP tool documents are `0.5.8-design`. ADR-0057 is accepted, introduced in v0.5.8; ADR-0049 d13 is
+introduced in v0.5.8, and ADR-0052's fused pipelines (`bm25-sparse`) read capped lists from it.
+ADR-0047 stays proposed, except the parts ADR-0057 took over (its anchor, the import of
+repository files, its anchor rule and its answered questions, as ADR-0057 records).
 
 ### 2026-11-05 — Source anchors and the expected version (ADR-0057, ADR-0049 d13)
 
