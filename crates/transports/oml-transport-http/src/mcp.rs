@@ -872,6 +872,8 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("version", "version"),
         ("kind", "kind"),
         ("state", "state"),
+        // True exactly when the version is held (ADR-0030 d4).
+        ("unreviewed", "unreviewed"),
         ("tip", "tip"),
         ("retirement", "retirement"),
         ("replaces", "replaces"),
