@@ -143,6 +143,7 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
 
 fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -181,6 +182,7 @@ impl World {
 
 fn recall(query: &str) -> RecallRequest {
     RecallRequest {
+        timings: false,
         query: query.to_owned(),
         k: 10,
         workarea: None,
@@ -224,6 +226,7 @@ async fn bm25_rerank_reorders_the_first_stages_head_by_the_rerankers_relevance()
         .recall(
             &w.reader,
             &RecallRequest {
+                timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy friday")
             },
@@ -287,6 +290,7 @@ async fn an_own_held_row_is_reranked_by_the_same_function_as_a_promoted_one() {
         .recall(
             &w.writer,
             &RecallRequest {
+                timings: false,
                 include_unreviewed: true,
                 ..recall("rotate signing key")
             },
@@ -406,6 +410,7 @@ async fn a_pipeline_that_does_not_rerank_never_calls_the_reranker() {
         .recall(
             &w.reader,
             &RecallRequest {
+                timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy saturday")
             },

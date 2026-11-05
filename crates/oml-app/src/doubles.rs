@@ -5,6 +5,7 @@
 //! The doubles are deterministic — fixed clock, counting id generator — so
 //! every test chain is reproducible byte for byte.
 
+use oml_domain::similar::Fingerprint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,9 +46,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
-    WorkareaRecord, WorkareaRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SweepReport,
+    TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry,
+    WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -1845,6 +1846,49 @@ impl Retriever for MemStore {
         _limit: usize,
     ) -> Result<Vec<String>, StoreError> {
         Ok(Vec::new())
+    }
+
+    /// The near-copy check's candidates, keyed as migration 0025 keys them
+    /// (ADR-0050 d17): each version's keys computed from its text on the
+    /// read, under the same scope predicates as [`Self::retrieve`].
+    async fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut found: Vec<(usize, Uuid)> = state
+            .memories
+            .values()
+            .filter(|m| {
+                if m.retirement || !SIMILAR_KINDS.contains(&m.kind) {
+                    return false;
+                }
+                if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+                    return true;
+                }
+                scope.own_held.as_ref().is_some_and(|own| {
+                    m.status == MemoryStatus::Held
+                        && own.author_key_ids.contains(&m.author_key_id)
+                        && own.nodes.contains(&m.workarea_id)
+                })
+            })
+            .filter_map(|m| {
+                let shared = Fingerprint::of(&m.body)
+                    .stored_keys()
+                    .iter()
+                    .filter(|(_, key)| keys.contains(key))
+                    .count();
+                (shared > 0).then_some((shared, m.memory_id))
+            })
+            .collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        Ok(found.into_iter().take(limit).map(|(_, id)| id).collect())
     }
 }
 

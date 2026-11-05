@@ -29,7 +29,8 @@
 //! closure without `oml:about`, retirement and the recall terms match
 //! (ADR-0021 d5; ADR-0027 d6–d11); `claim_edges` holds the label check at a
 //! claim-edge proposal and the ratifier check at its ratification (ADR-0008
-//! d5; ADR-0021 d5; ADR-0012).
+//! d5; ADR-0021 d5; ADR-0012). `similar` holds the near-copy check's words,
+//! keys, guard and exact relation (ADR-0050 d1, d17).
 
 #![forbid(unsafe_code)]
 
@@ -46,6 +47,7 @@ pub mod ladder;
 pub mod model;
 pub mod name;
 pub mod oauth;
+pub mod similar;
 pub mod vocab;
 pub mod vocab_edges;
 pub mod web;

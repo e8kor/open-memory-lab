@@ -516,6 +516,15 @@ async fn create_partition_on(owner: &mut PgConnection, tenant_id: Uuid) -> Resul
     if postings_table {
         statements.extend(postings_partition_ddl(tenant_id));
     }
+    // The similar keys partition likewise, so the tenant's first write
+    // finds it when its trigger writes keys (ADR-0050 d17).
+    let similar_table: bool = sqlx::query_scalar("SELECT to_regclass('similar_keys') IS NOT NULL")
+        .persistent(false)
+        .fetch_one(&mut *tx)
+        .await?;
+    if similar_table {
+        statements.extend(similar_partition_ddl(tenant_id));
+    }
     statements.extend([
         format!("CREATE TABLE {partition} (LIKE memories INCLUDING ALL)"),
         format!("ALTER TABLE {partition} ENABLE ROW LEVEL SECURITY"),
@@ -557,6 +566,83 @@ fn postings_partition_ddl(tenant_id: Uuid) -> Vec<String> {
             "ALTER TABLE search_postings ATTACH PARTITION {postings} FOR VALUES IN ('{tenant_id}')"
         ),
     ]
+}
+
+/// `tenant_id`'s `similar_keys` partition (ADR-0050 d17).
+fn similar_partition(tenant_id: Uuid) -> String {
+    format!("similar_keys_t_{}", tenant_id.simple())
+}
+
+/// The DDL of `tenant_id`'s `similar_keys` partition, fenced before it is
+/// attached, as 0025 builds every existing tenant's (ADR-0050 d17).
+fn similar_partition_ddl(tenant_id: Uuid) -> Vec<String> {
+    let similar = similar_partition(tenant_id);
+    let policy = "USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) \
+                  WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)";
+    vec![
+        format!("CREATE TABLE {similar} (LIKE similar_keys INCLUDING ALL)"),
+        format!("ALTER TABLE {similar} ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {similar} FORCE ROW LEVEL SECURITY"),
+        format!("CREATE POLICY tenant_isolation ON {similar} {policy}"),
+        format!(
+            "ALTER TABLE similar_keys ATTACH PARTITION {similar} FOR VALUES IN ('{tenant_id}')"
+        ),
+    ]
+}
+
+/// Creates and fills the `similar_keys` partition of every tenant whose
+/// memories partition exists and whose similar keys partition does not, as
+/// [`ensure_postings_partitions`] does for postings: a lead built before
+/// 0025 creates a tenant without it, and that tenant's writes fail until it
+/// exists (ADR-0050 d17). Returns the tenants repaired.
+async fn ensure_similar_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx = owner.begin().await?;
+    sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let tenants: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM tenants ORDER BY id")
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let mut repaired = 0;
+    for tenant_id in tenants {
+        let mut tx = owner.begin().await?;
+        let missing: bool = sqlx::query_scalar(
+            "SELECT to_regclass('similar_keys') IS NOT NULL \
+                AND to_regclass($1) IS NOT NULL AND to_regclass($2) IS NULL",
+        )
+        .bind(memories_partition(tenant_id))
+        .bind(similar_partition(tenant_id))
+        .fetch_one(&mut *tx)
+        .await?;
+        if !missing {
+            tx.rollback().await?;
+            continue;
+        }
+        sqlx::query(&format!(
+            "SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT}'"
+        ))
+        .persistent(false)
+        .execute(&mut *tx)
+        .await?;
+        for statement in similar_partition_ddl(tenant_id) {
+            sqlx::query(&statement)
+                .persistent(false)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT oml_similar_keys_refill($1)")
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        repaired += 1;
+    }
+    Ok(repaired)
 }
 
 /// Creates and fills the `search_postings` partition of every tenant whose
@@ -1178,6 +1264,36 @@ const SUGGEST: &str = "WITH q AS (SELECT w FROM unnest($3::text[]) w \
      ORDER BY s DESC, word ASC \
      LIMIT $4";
 
+/// The similar check's candidates (ADR-0050 d17), binding `$1` the tenant,
+/// `$2` the write's keys, `$3` the nodes whose served tips it reads, `$4`
+/// the own keys, `$5` the nodes of its own held rows and `$6` the limit.
+/// Only bigint and uuid equalities, which are leakproof, reach
+/// `similar_keys_key` under row security, and the index carries every
+/// column the statement reads. Exported so the suite plans the statement
+/// the adapter runs.
+pub const SIMILAR_CANDIDATES: &str = "SELECT s.memory_id FROM similar_keys s \
+     WHERE s.tenant_id = $1 AND s.key = ANY($2::int8[]) \
+       AND ((s.state = 1 AND s.workarea_id = ANY($3::uuid[])) \
+         OR (s.state = 0 AND s.author_key_id = ANY($4::uuid[]) \
+             AND s.workarea_id = ANY($5::uuid[]))) \
+     GROUP BY s.memory_id \
+     ORDER BY count(*) DESC, s.memory_id ASC \
+     LIMIT $6";
+
+/// The similar keys' health for doctor (ADR-0050 d15, d17): whether the
+/// tenant's partition exists, the versions that should hold keys and hold
+/// none, and the versions whose keys hold a state other than theirs, or
+/// that hold keys and should not. Doctor's cost: every version once.
+const SIMILAR_HEALTH: &str = "WITH v AS ( \
+         SELECT m.id, oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) AS state, \
+                cardinality(oml_similar_words(m.claim)) > 0 AS worded \
+         FROM memories m WHERE m.tenant_id = $1) \
+     SELECT to_regclass($2) IS NOT NULL, \
+       (SELECT count(*) FROM v WHERE v.state IS NOT NULL AND v.worded AND NOT EXISTS ( \
+            SELECT 1 FROM similar_keys s WHERE s.tenant_id = $1 AND s.memory_id = v.id))::int8, \
+       (SELECT count(DISTINCT s.memory_id) FROM similar_keys s LEFT JOIN v ON v.id = s.memory_id \
+         WHERE s.tenant_id = $1 AND s.state IS DISTINCT FROM v.state)::int8";
+
 /// The Postgres `JournalStore`.
 #[derive(Debug, Clone)]
 pub struct PgStore {
@@ -1314,6 +1430,11 @@ impl PgStore {
         // A tenant a lead before 0021 created has no postings partition, and
         // its writes fail until it does (ADR-0052 d1).
         ensure_postings_partitions(owner)
+            .await
+            .map_err(sqlx::migrate::MigrateError::Execute)?;
+        // A tenant a lead before 0025 created has no similar keys
+        // partition, and its writes fail until it does (ADR-0050 d17).
+        ensure_similar_partitions(owner)
             .await
             .map_err(sqlx::migrate::MigrateError::Execute)?;
         // A tenant a lead before 0023 created has no telemetry partitions,
@@ -3850,6 +3971,35 @@ impl Retriever for PgStore {
         Ok(found)
     }
 
+    async fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let (authors, held_nodes) = scope
+            .own_held
+            .as_ref()
+            .map_or((Vec::new(), Vec::new()), |own| {
+                (own.author_key_ids.clone(), own.nodes.clone())
+            });
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let found: Vec<Uuid> = sqlx::query_scalar(SIMILAR_CANDIDATES)
+            .bind(tenant_id)
+            .bind(keys)
+            .bind(&scope.promoted_nodes)
+            .bind(&authors)
+            .bind(&held_nodes)
+            .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(found)
+    }
+
     async fn postings_health(&self, tenant_id: Uuid) -> Result<Option<PostingsHealth>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -3861,6 +4011,12 @@ impl Retriever for PgStore {
             .map_err(backend)?;
         let queued: (i64, i64, i64, bool) = sqlx::query_as(SPARSE_QUEUE_HEALTH)
             .bind(tenant_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let similar: (bool, i64, i64) = sqlx::query_as(SIMILAR_HEALTH)
+            .bind(tenant_id)
+            .bind(similar_partition(tenant_id))
             .fetch_one(&mut *tx)
             .await
             .map_err(backend)?;
@@ -3880,6 +4036,9 @@ impl Retriever for PgStore {
             sparse_failing: u64::try_from(queued.1).map_err(backend)?,
             sparse_parked: u64::try_from(queued.2).map_err(backend)?,
             sparse_enabled: queued.3,
+            similar_partition: similar.0,
+            similar_unfilled: u64::try_from(similar.1).map_err(backend)?,
+            similar_drift: u64::try_from(similar.2).map_err(backend)?,
         }))
     }
 

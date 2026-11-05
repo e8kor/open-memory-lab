@@ -7464,6 +7464,48 @@ async fn oml_token_id_in_sql_equals_the_adapters() {
     drop_dbs(&created).await;
 }
 
+/// `oml_similar_keys` and `oml_similar_words` in SQL and
+/// `oml_domain::similar` give every text the same words and keys, so a
+/// write's keys meet the stored ones (ADR-0050 d17).
+#[tokio::test]
+async fn similar_keys_computed_in_sql_equal_the_cores() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let texts = [
+        "",
+        "--- !!!",
+        "ok",
+        "Port 8080, not 8081.",
+        "Production deploys run only on Tuesday and Thursday between 10:00 and 12:00 CET; \
+         outside that window a deploy needs the on-call lead's approval.",
+        "Use `pnpm`, not NPM: v0.5.7 — ok? Grüße aus Köln, 東京 and naïve café.",
+        "UPPER lower MiXeD\ttabs\nnew lines  and \u{a0}no-break spaces",
+        "x'y back\\slash under_score dash-ed dot.ted",
+        "yes yes yes yes yes yes yes yes yes yes yes",
+    ];
+    for text in texts {
+        let words: Vec<String> = sqlx::query_scalar("SELECT oml_similar_words($1)")
+            .bind(text)
+            .fetch_one(store.pool())
+            .await
+            .expect("oml_similar_words");
+        assert_eq!(words, oml_app::domain::similar::words(text), "{text:?}");
+        let mut sql: Vec<(i16, i64)> = sqlx::query_as("SELECT band, key FROM oml_similar_keys($1)")
+            .bind(text)
+            .fetch_all(store.pool())
+            .await
+            .expect("oml_similar_keys");
+        sql.sort_unstable();
+        let mut core = oml_app::domain::similar::Fingerprint::of(text).stored_keys();
+        core.sort_unstable();
+        assert_eq!(sql, core, "{text:?}");
+    }
+    drop_dbs(&created).await;
+}
+
 /// What the postings and counts of `tenant` hold, read as the owner under
 /// the tenant's row security: per memory, its postings' (state, count); per
 /// (workarea, memory kind, token), the count row; per (workarea, memory

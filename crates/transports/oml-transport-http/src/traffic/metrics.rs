@@ -71,6 +71,18 @@ struct PipelineLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StageLabels {
+    pipeline: String,
+    stage: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SimilarLabels {
+    relation: String,
+    on_similar: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct LabelLabels {
     label: String,
 }
@@ -155,6 +167,9 @@ struct Quality {
     lag: Gauge<f64, AtomicU64>,
     purge_overdue: Gauge,
     unrecalled: Family<AgeLabels, Gauge>,
+    stages: Family<StageLabels, Histogram, fn() -> Histogram>,
+    similar: Family<SimilarLabels, Counter>,
+    similar_duration: Histogram,
 }
 
 impl Quality {
@@ -171,7 +186,25 @@ impl Quality {
             lag: Gauge::default(),
             purge_overdue: Gauge::default(),
             unrecalled: Family::default(),
+            stages: Family::new_with_constructor(histogram as fn() -> Histogram),
+            similar: Family::default(),
+            similar_duration: histogram(),
         };
+        registry.register(
+            "oml_recall_stage_duration_seconds",
+            "time a recall spent in each stage, by pipeline and stage: scope, retrieve_<retriever>, fuse, rerank, suggest, hydrate, cut",
+            q.stages.clone(),
+        );
+        registry.register(
+            "oml_remember_similar",
+            "writes the similar check ran for, by the best relation it named (none, same_text, near_copy) and on_similar (hold, refuse)",
+            q.similar.clone(),
+        );
+        registry.register(
+            "oml_remember_similar_duration_seconds",
+            "time a write's similar check took",
+            q.similar_duration.clone(),
+        );
         registry.register(
             "oml_recall_answers",
             "recall answers by pipeline and shape: hits, empty, or below_floor when the relevance floor withheld a row",
@@ -443,6 +476,34 @@ impl Metrics {
                 pipeline: pipeline.to_owned(),
             })
             .observe(seconds);
+    }
+
+    /// One recall stage's seconds (ADR-0049 d13).
+    pub(crate) fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
+        self.quality
+            .stages
+            .get_or_create(&StageLabels {
+                pipeline: pipeline.to_owned(),
+                stage: stage.to_owned(),
+            })
+            .observe(seconds);
+    }
+
+    /// One write's similar check (ADR-0050 d1; ADR-0054 d1).
+    pub(crate) fn similar_checked(
+        &self,
+        relation: &'static str,
+        on_similar: &'static str,
+        seconds: f64,
+    ) {
+        self.quality
+            .similar
+            .get_or_create(&SimilarLabels {
+                relation: relation.to_owned(),
+                on_similar: on_similar.to_owned(),
+            })
+            .inc();
+        self.quality.similar_duration.observe(seconds);
     }
 
     /// One verdict, `waited` seconds after its memory's submission.

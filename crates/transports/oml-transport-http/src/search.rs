@@ -49,6 +49,10 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 "sparse_failing": h.sparse_failing,
                 "sparse_parked": h.sparse_parked,
                 "sparse_enabled": h.sparse_enabled,
+                // The similar check's keys (ADR-0050 d17).
+                "similar_partition": h.similar_partition,
+                "similar_unfilled": h.similar_unfilled,
+                "similar_drift": h.similar_drift,
             }),
         );
     }

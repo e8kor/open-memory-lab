@@ -186,6 +186,7 @@ async fn agent(app: &TestApp, admin: &str, principal: &str, node: Uuid) -> Issue
 /// idempotency key, so distinct submissions never collide (ADR-0025 d18).
 fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -200,6 +201,7 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
 
 fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         workarea: Some(workarea_id.into()),
         ..submit_req(idem, body)
     }
@@ -207,6 +209,7 @@ fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
 
 fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
+        timings: false,
         query: query.to_owned(),
         k: 10,
         workarea: None,
@@ -223,6 +226,7 @@ fn recall_req(query: &str) -> RecallRequest {
 /// no kind sent, no retirement, no ancestor beyond the target.
 fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         target_id: target,
         body: body.to_owned(),
@@ -241,6 +245,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
 /// whose body states why (ADR-0025 d11).
 fn retire_req(idem: &str, target: Uuid, why: &str) -> SupersedeRequest {
     SupersedeRequest {
+        on_similar: Default::default(),
         retirement: true,
         ..supersede_req(idem, target, why)
     }
@@ -761,6 +766,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     .await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str, workarea: Uuid| SubmitRequest {
+        on_similar: Default::default(),
         claim_key: Some("fleet-order".to_owned()),
         ..submit_into(idem, "the fleet follows the canary", workarea)
     };
@@ -809,6 +815,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
     let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
     let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
     let fleet = |idem: &str| SubmitRequest {
+        on_similar: Default::default(),
         claim_key: Some("fleet-order".to_owned()),
         ..submit_req(idem, "the fleet follows the canary")
     };
@@ -861,6 +868,7 @@ async fn submission_digests_nfc_text() {
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 kind: MemoryKind::DerivedFact,
                 ..submit_req("i1", decomposed)
             },
@@ -946,6 +954,7 @@ async fn a_successor_takes_the_next_version_and_the_targets_kind() {
         &writer.value,
         &dreamer.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             kind: MemoryKind::DerivedFact,
             ..submit_req("i1", "the canary drains first")
         },
@@ -1161,6 +1170,7 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
             .recall(
                 &agent.value,
                 &RecallRequest {
+                    timings: false,
                     workarea: Some(node.into()),
                     ..recall_req("x")
                 },
@@ -1263,6 +1273,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         .recall(
             &reader.value,
             &RecallRequest {
+                timings: false,
                 workarea: Some(quarantine.into()),
                 ..recall_req("canary")
             },
@@ -1552,6 +1563,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
         .receipt
         .memory_id;
     let derive = |idem: &str| SubmitRequest {
+        on_similar: Default::default(),
         claim_key: Some(format!("derived-{idem}")),
         derives_from: vec![held],
         ..submit_req(idem, "a derived fact")
@@ -1609,6 +1621,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
         &author.value,
         &dreamer.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             claim_key: Some("fleet-order".to_owned()),
             derives_from: vec![held],
             ..submit_req("i2", "the fleet follows the canary")
@@ -1646,6 +1659,7 @@ async fn a_promoted_row_derived_from_its_authors_held_row_names_it_to_no_other_k
 /// A first version of `kind` in `workarea_id`.
 fn submit_kind(idem: &str, kind: MemoryKind, body: &str, workarea_id: Uuid) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         kind,
         ..submit_into(idem, body, workarea_id)
     }
@@ -1664,6 +1678,7 @@ fn hit_ids_of(recall: &RecallResult) -> Vec<Uuid> {
 /// A recall of `query` at `scope`.
 fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
     RecallRequest {
+        timings: false,
         workarea: Some(scope.into()),
         ..recall_req(query)
     }
@@ -1884,6 +1899,7 @@ async fn kinds_filters_hits_only() {
             .recall(
                 &reader.value,
                 &RecallRequest {
+                    timings: false,
                     kinds: kinds.clone(),
                     ..recall_req("canary")
                 },
@@ -3325,6 +3341,7 @@ async fn a_replayed_supersede_returns_the_stored_receipt_and_writes_once() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 target_id: other,
                 ..req.clone()
             },
@@ -3589,6 +3606,7 @@ async fn a_term_cannot_retire_it_deprecates() {
         &writer.value,
         &dreamer.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             kind: MemoryKind::Term,
             ..submit_req("i1", "canary: a staged rollout slice")
         },
@@ -3620,12 +3638,14 @@ async fn a_successor_kind_changes_only_within_its_class() {
         &writer.value,
         &dreamer.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             kind: MemoryKind::Term,
             ..submit_req("i2", "canary: a staged rollout slice")
         },
     )
     .await;
     let with_kind = |idem: &str, target, kind, retirement| SupersedeRequest {
+        on_similar: Default::default(),
         kind: Some(kind),
         retirement,
         ..supersede_req(idem, target, "revised")
@@ -3676,6 +3696,7 @@ async fn a_derived_fact_successor_journals_submission_learn() {
     app.supersede(
         &writer.value,
         &SupersedeRequest {
+            on_similar: Default::default(),
             kind: Some(MemoryKind::DerivedFact),
             ..supersede_req("sup-1", first, "the canary always drains first")
         },
@@ -3715,6 +3736,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 workarea: Some(boot.root_workarea_id.into()),
                 ..supersede_req("sup-1", first, "revised")
             },
@@ -3725,6 +3747,7 @@ async fn an_x_oml_workarea_other_than_the_targets_is_request_validation() {
     app.supersede(
         &writer.value,
         &SupersedeRequest {
+            on_similar: Default::default(),
             workarea: Some(crew.into()),
             ..supersede_req("sup-2", first, "revised")
         },
@@ -3963,6 +3986,7 @@ fn tokens(text: &str) -> u64 {
 /// A recall of `query` that takes the calling key's own held rows too.
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
+        timings: false,
         include_unreviewed: true,
         ..recall_req(query)
     }
@@ -3971,6 +3995,7 @@ fn own_held(query: &str) -> RecallRequest {
 /// A recall of `query` under a budget of `max_tokens`.
 fn budgeted(query: &str, max_tokens: u64) -> RecallRequest {
     RecallRequest {
+        timings: false,
         max_tokens: Some(max_tokens),
         ..recall_req(query)
     }
@@ -4147,6 +4172,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
         .recall(
             &author.value,
             &RecallRequest {
+                timings: false,
                 max_tokens: Some(tokens(held_text)),
                 ..own_held(query)
             },
@@ -4260,6 +4286,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
         .recall(
             &author.value,
             &RecallRequest {
+                timings: false,
                 workarea: Some(quotes.into()),
                 ..own_held("canary")
             },
@@ -4277,6 +4304,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
             .recall(
                 &author.value,
                 &RecallRequest {
+                    timings: false,
                     workarea: Some(scope.into()),
                     ..own_held("canary")
                 },
@@ -4552,6 +4580,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let (app, reader, _steering, _hits, _s, _t) = budget_fixture().await;
     let bodiless = RecallRequest {
+        timings: false,
         include_text: false,
         ..recall_req("canary")
     };
@@ -4559,6 +4588,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
         .recall(
             &reader.value,
             &RecallRequest {
+                timings: false,
                 max_tokens: Some(500),
                 ..bodiless.clone()
             },
@@ -4603,6 +4633,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_eq!(
         digest(RecallRequest {
+            timings: false,
             workarea: Some(crew.into()),
             ..recall_req("canary")
         })
@@ -4621,6 +4652,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_ne!(
         digest(RecallRequest {
+            timings: false,
             include_text: false,
             ..recall_req("canary")
         })
@@ -4631,6 +4663,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     // Only the order and repetition of kinds entries never matter, and the
     // query digests as its NFC text.
     let kinds = |kinds: Vec<MemoryKind>| RecallRequest {
+        timings: false,
         kinds,
         ..recall_req("canary")
     };
@@ -4659,6 +4692,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
 /// A first version of a claim into the workarea `target` names.
 fn submit_to(idem: &str, body: &str, target: Reference) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         workarea: Some(target),
         ..submit_req(idem, body)
     }
@@ -4718,6 +4752,7 @@ async fn a_writer_key_submitting_with_its_workareas_name_lands_in_that_workarea(
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 workarea: Some(metals.into()),
                 ..req.clone()
             },
@@ -4762,6 +4797,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
             app.recall(
                 key,
                 &RecallRequest {
+                    timings: false,
                     workarea: Some(target),
                     ..recall_req("copper")
                 },
@@ -5738,6 +5774,7 @@ async fn an_admin_keys_recall_is_refused() {
             .recall(
                 &boot.admin_key.value,
                 &RecallRequest {
+                    timings: false,
                     workarea: scope,
                     ..recall_req("anything")
                 },
@@ -5879,6 +5916,7 @@ async fn a_submission_without_claim_key_is_held_under_the_key_derived_from_its_a
     let second = agent(&app, admin, "crew/agent-7", crew).await;
     let text = "the canary drains first";
     let derived = |idem: &str| SubmitRequest {
+        on_similar: Default::default(),
         claim_key: None,
         ..submit_req(idem, text)
     };
@@ -5922,6 +5960,7 @@ async fn an_explicit_claim_key_starting_auto_is_refused_naming_claim_key() {
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 claim_key: Some("auto-0123456789abcdef".to_owned()),
                 ..submit_req("a1", "a fact")
             },
@@ -5956,6 +5995,7 @@ async fn a_submission_with_derives_from_and_no_verb_journals_learn_and_an_explic
         app.submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 verb,
                 derives_from: vec![ancestor],
                 ..submit_req(idem, &format!("derived {idem}"))
@@ -8687,6 +8727,7 @@ fn deny_push() -> Value {
 /// no rule.
 fn guardrail_req(idem: &str, severity: Severity, body: &str, workarea_id: Uuid) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         severity: Some(severity),
         ..submit_kind(idem, MemoryKind::Guardrail, body, workarea_id)
     }
@@ -8745,6 +8786,7 @@ async fn a_guardrail_without_a_severity_is_refused() {
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 severity: Some(Severity::Must),
                 ..submit_into("m1", "a fact", crew)
             },
@@ -8759,6 +8801,7 @@ async fn a_guardrail_without_a_severity_is_refused() {
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 rule: Some(deny_push()),
                 ..submit_into("m2", "a fact", crew)
             },
@@ -8809,6 +8852,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
             .supersede(
                 &writer.value,
                 &SupersedeRequest {
+                    on_similar: Default::default(),
                     kind: Some(sent),
                     ..supersede_req(&format!("s-{}", sent.as_str()), rail, "now a fact")
                 },
@@ -8821,6 +8865,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 kind: Some(MemoryKind::Guardrail),
                 severity: Some(Severity::Must),
                 ..supersede_req("s-fact", fact, "now a rule")
@@ -8852,6 +8897,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 severity: Some(Severity::Must),
                 ..retire_req("s-retire-sev", rail, "no longer needed")
             },
@@ -8866,6 +8912,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 severity: Some(Severity::Should),
                 ..supersede_req("s-ok", rail, "Run the tests before a push.")
             },
@@ -8904,6 +8951,7 @@ async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unpar
             .submit_memory(
                 &writer.value,
                 &SubmitRequest {
+                    on_similar: Default::default(),
                     rule: Some(rule.clone()),
                     ..guardrail_req(&format!("g{i}"), severity, "Never push.", crew)
                 },
@@ -8919,6 +8967,7 @@ async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unpar
         .submit_memory(
             &writer.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 rule: Some(deny_push()),
                 ..guardrail_req("ok", Severity::Never, "Never push.", crew)
             },
@@ -9097,6 +9146,7 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 refuse_vocabulary_target: true,
                 severity: Some(Severity::Must),
                 ..supersede_req("s1", rail, "Run the tests before a push.")
@@ -9254,6 +9304,7 @@ async fn recall_never_serves_kind_guardrail() {
         .recall(
             &author.value,
             &RecallRequest {
+                timings: false,
                 include_unreviewed: true,
                 ..recall_req("canary")
             },
@@ -9442,6 +9493,7 @@ async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in
     let (boot, crew, team, writer, dreamer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let topic = |severity, node, idem: &str| SubmitRequest {
+        on_similar: Default::default(),
         claim_key: Some("push-policy".to_owned()),
         ..guardrail_req(idem, severity, "Pushing to main.", node)
     };
@@ -9464,6 +9516,7 @@ async fn rows_of_one_claim_key_with_different_severities_each_name_the_others_in
         &writer.value,
         &dreamer.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             claim_key: Some("tests".to_owned()),
             ..guardrail_req("g3", Severity::Must, "Run the tests.", crew)
         },
@@ -10495,6 +10548,7 @@ async fn a_supersede_whose_target_lies_in_a_validated_workarea_is_frozen() {
         .supersede(
             &writer.value,
             &SupersedeRequest {
+                on_similar: Default::default(),
                 workarea: Some(open.into()),
                 ..supersede_req("s5", target, "x")
             },
@@ -11172,6 +11226,7 @@ async fn a_claim_edge_proposed_on_an_ancestor_between_a_captures_ancestor_read_a
         .submit_memory(
             &carol.value,
             &SubmitRequest {
+                on_similar: Default::default(),
                 derives_from: vec![a],
                 ..submit_req("anc-d", "carol builds on alice")
             },
@@ -11499,6 +11554,7 @@ async fn a_pending_edge_refuses_a_verdict_on_a_held_row_deriving_from_an_endpoin
         &app,
         &alice.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             derives_from: vec![c],
             ..submit_req("verd-a", "the fact of verd-a")
         },
@@ -11551,6 +11607,7 @@ async fn review_next_never_serves_a_held_row_deriving_from_an_endpoint_to_the_au
         &app,
         &alice.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             derives_from: vec![c],
             ..submit_req("queue-a", "the fact of queue-a")
         },
@@ -11662,6 +11719,7 @@ async fn term(app: &TestApp, writer: &str, dreamer: &str, idem: &str, curie: &st
         writer,
         dreamer,
         &SubmitRequest {
+            on_similar: Default::default(),
             kind: MemoryKind::Term,
             claim_key: Some(curie.to_owned()),
             ..submit_req(idem, &format!("{curie}: a term"))
@@ -13163,6 +13221,7 @@ async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_read
 /// A recall naming `search`, under `match`.
 fn searched(query: &str, search: Option<&str>, all: bool) -> RecallRequest {
     RecallRequest {
+        timings: false,
         search: search.map(ToOwned::to_owned),
         match_mode: if all {
             oml_app::search::MatchMode::All
@@ -13469,6 +13528,7 @@ async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it
                 .recall(
                     key.as_str(),
                     &RecallRequest {
+                        timings: false,
                         k,
                         search: Some("keyword-any".to_owned()),
                         ..recall_req("canary")

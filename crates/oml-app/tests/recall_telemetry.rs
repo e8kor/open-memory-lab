@@ -108,6 +108,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .submit_memory(
             writer.as_str(),
             &SubmitRequest {
+                on_similar: Default::default(),
                 idempotency_key: "i-1".to_owned(),
                 claim_key: None,
                 verb: None,
@@ -122,6 +123,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .await
         .expect("submit");
     let req = RecallRequest {
+        timings: false,
         query: "deploy fridays".to_owned(),
         k: 8,
         workarea: None,

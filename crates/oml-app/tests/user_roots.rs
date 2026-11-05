@@ -178,6 +178,7 @@ async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> Issue
 
 fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -206,6 +207,7 @@ async fn approve(app: &TestApp, reviewer: &str, id: Uuid) {
 
 fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
     RecallRequest {
+        timings: false,
         query: query.to_owned(),
         k: 10,
         workarea: workarea.map(by_name),
@@ -244,6 +246,7 @@ async fn curated(app: &TestApp, boot: &BootstrapResult) -> Curated {
         app,
         &curator.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             derives_from: vec![source],
             ..submit(
                 "curated",
@@ -856,6 +859,7 @@ async fn a_curated_claim_is_never_promoted_by_the_sources_author() {
         &app,
         &curator.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             derives_from: vec![source],
             ..submit("cur", "a finding, curated", Some("universe"))
         },
@@ -1055,6 +1059,7 @@ async fn universe_steering_applies_in_every_user_root() {
         &app,
         &curator.value,
         &SubmitRequest {
+            on_similar: Default::default(),
             kind: MemoryKind::Steering,
             ..submit("steer", "cite every source", Some("universe"))
         },
@@ -1180,6 +1185,7 @@ use oml_app::domain::guardrail::{GuardrailScope, Severity};
 
 fn guardrail(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         kind: MemoryKind::Guardrail,
         severity: Some(Severity::Must),
         ..submit(idem, body, workarea)

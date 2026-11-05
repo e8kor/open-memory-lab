@@ -496,6 +496,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A claim_key names one live claim per (tenant, workarea); a claim whose every version is rejected or erased releases it (D7).",
             "a held, promoted or demoted version already holds this claim_key in the workarea",
         ),
+        AppError::TimingsOff => ApiError::validation(
+            "timings is refused: this deployment does not serve recall timings; an operator sets search.timings to serve them",
+        )
+        .with_details(json!({ "field": "/timings" })),
+        AppError::SimilarExists(similar) => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.similar_exists",
+            "The similar check names what the writer may already read and decides nothing: with on_similar refuse the writer reads the named rows and chooses, before anything waits for review (ADR-0050 d1).",
+            "on_similar is refuse and the writer may already read a row with the same text or a near copy",
+        )
+        .with_details(json!({ "similar": crate::similar_json(&similar) })),
         AppError::ScanVeto(finding) => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "submission.scan_veto",

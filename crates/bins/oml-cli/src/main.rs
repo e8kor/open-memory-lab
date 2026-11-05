@@ -4263,7 +4263,7 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
     let sparse: Vec<&str> = enabled
         .iter()
         .copied()
-        .filter(|p| matches!(*p, "sparse" | "bm25-sparse"))
+        .filter(|p| matches!(*p, "sparse" | "bm25-sparse" | "bm25-sparse-rrf"))
         .collect();
     let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
     let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
@@ -4420,7 +4420,25 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("terms_checked")
         ));
     }
+    // The similar check's keys (ADR-0050 d15, d17); a server before 0025
+    // sends none of these fields, and none is read as a fault.
+    let similar_refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_similar_keys_refill('<tenant id>') rebuilds them (postgres-schema.md, similar keys)";
+    if h["similar_partition"] == Value::Bool(false) {
+        lines.push(
+            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0025 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
+        );
+    }
+    if n("similar_unfilled") > 0 || n("similar_drift") > 0 {
+        lines.push(format!(
+            "warn similar: the similar keys disagree with the versions: {} without keys, {} with keys of another state; the write-time check misses or names the wrong rows until rebuilt: {similar_refill}, and report it",
+            n("similar_unfilled"),
+            n("similar_drift")
+        ));
+    }
     let faulty = h["partition"] != Value::Bool(true)
+        || h["similar_partition"] == Value::Bool(false)
+        || n("similar_unfilled") > 0
+        || n("similar_drift") > 0
         || n("unfilled") > 0
         || n("served_behind") > 0
         || n("workarea_drift") > 0

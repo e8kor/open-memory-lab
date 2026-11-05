@@ -159,6 +159,8 @@ struct WriteArgs {
     replaces: Option<String>,
     retirement: Option<bool>,
     reason: Option<String>,
+    /// `hold` or `refuse` (ADR-0050 d1).
+    on_similar: Option<String>,
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
@@ -540,6 +542,7 @@ where
                 ("derives_from", args.derives_from.map(Value::from)),
                 ("retirement", args.retirement.map(Value::from)),
                 ("reason", args.reason.map(Value::from)),
+                ("on_similar", args.on_similar.map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -574,6 +577,7 @@ where
                 ("kind", args.kind.map(Value::from)),
                 ("workarea", args.workarea.map(Value::from)),
                 ("derives_from", args.derives_from.map(Value::from)),
+                ("on_similar", args.on_similar.map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -601,6 +605,7 @@ where
             "workarea": receipt["workarea_id"],
             "retirement": receipt["retirement"],
             "replaces": receipt["replaces"],
+            "similar": receipt["similar"],
             "idempotent_replay": replayed,
         }))
     }
