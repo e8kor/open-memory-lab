@@ -44,7 +44,7 @@ sys.path.insert(0, str(HERE.parent / "recall"))
 from adapters import ADAPTERS, PUBLISHED_BM25, safe, workarea  # noqa: E402
 from run import Client  # noqa: E402  eval/recall/run.py's HTTP client
 
-PIPELINES = ["keyword-all", "keyword-any", "bm25", "bm25-trigram"]
+PIPELINES = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-rerank"]
 K = 100
 MEASURES = ["nDCG@10", "R@10", "R@100", "RR@10", "Success@1", "Success@5"]
 DEFAULT_CACHE = "/srv/build/bench-data"
@@ -245,9 +245,17 @@ def cmd_run(a):
             res, ms = writer.recall(q.text, a.k, None, workarea(a.dataset, q.group), pipeline)
             hits = res.get("hits", [])
             ranked = [doc_of.get(back.get((h.get("memory", h))["artifact_id"])) for h in hits]
-            return q.id, res.get("search", {}).get("pipeline"), {
+            search = res.get("search", {})
+            return q.id, search.get("pipeline"), {
                 "ranked": ranked, "latency_ms": round(ms, 2),
-                "fallback": res.get("search", {}).get("fallback"),
+                "fallback": search.get("fallback"),
+                # The reranking stage (ADR-0053): its outcome, each hit's
+                # relevance, and what a floor withheld, so a floor can be
+                # swept offline over a run made with none.
+                "rerank": search.get("rerank"),
+                "rerank_reason": search.get("rerank_reason"),
+                "rerank_scores": [(h.get("matched") or {}).get("rerank") for h in hits],
+                "below_floor": search.get("below_floor"),
             }
 
         t0 = time.perf_counter()

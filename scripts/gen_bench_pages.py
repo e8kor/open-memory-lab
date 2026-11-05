@@ -25,7 +25,7 @@ SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "resu
 OUT = ROOT / "docs" / "api" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
-SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram"]
+SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-rerank"]
 SUITE_TITLES = {
     "recall-synthetic": "Synthetic recall set",
     "beir-scifact": "BEIR SciFact",
@@ -75,7 +75,7 @@ def default_pipeline():
     m = re.search(r"DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::(\w+);",
                   DEFAULT_SOURCE.read_text())
     names = {"KeywordAll": "keyword-all", "KeywordAny": "keyword-any", "Bm25": "bm25",
-             "Bm25Trigram": "bm25-trigram"}
+             "Bm25Trigram": "bm25-trigram", "Bm25Rerank": "bm25-rerank"}
     return names.get(m.group(1), m.group(1)) if m else "unknown"
 
 
