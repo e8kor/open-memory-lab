@@ -5,7 +5,7 @@
  "kind": "recall",
  "method": "bm25",
  "date": "2026-11-05",
- "commit": "d3fdb72",
+ "commit": "9a4bae6",
  "environment": {
   "host": "8 vCPU / 15 GB",
   "postgres": "17.9",
@@ -16,10 +16,10 @@
  "sampled": null,
  "metrics": {
   "ndcg@10": 0.5033,
-  "recall@10": 0.6346,
-  "recall@100": 0.8131,
-  "mrr@10": 0.4873,
-  "success@1": 0.3831,
+  "recall@10": 0.6343,
+  "recall@100": 0.8128,
+  "mrr@10": 0.4874,
+  "success@1": 0.3837,
   "success@5": 0.628,
   "zero_result_rate": 0.0
  },
@@ -27,7 +27,7 @@
   "adversarial": {
    "ndcg@10": 0.5619,
    "recall@10": 0.7321,
-   "recall@100": 0.8767,
+   "recall@100": 0.8756,
    "mrr@10": 0.5105,
    "success@1": 0.3969,
    "success@5": 0.6682,
@@ -35,40 +35,40 @@
    "n_queries": 446
   },
   "multi-hop": {
-   "ndcg@10": 0.289,
-   "recall@10": 0.3697,
-   "recall@100": 0.6297,
-   "mrr@10": 0.3571,
+   "ndcg@10": 0.2883,
+   "recall@10": 0.3685,
+   "recall@100": 0.6288,
+   "mrr@10": 0.3564,
    "success@1": 0.2518,
    "success@5": 0.5071,
    "zero_result_rate": 0.0,
    "n_queries": 282
   },
   "open-domain": {
-   "ndcg@10": 0.229,
+   "ndcg@10": 0.2331,
    "recall@10": 0.3011,
    "recall@100": 0.5187,
-   "mrr@10": 0.2436,
-   "success@1": 0.1522,
+   "mrr@10": 0.2491,
+   "success@1": 0.163,
    "success@5": 0.3696,
    "zero_result_rate": 0.0,
    "n_queries": 92
   },
   "single-hop": {
-   "ndcg@10": 0.5708,
+   "ndcg@10": 0.5706,
    "recall@10": 0.7289,
    "recall@100": 0.8775,
-   "mrr@10": 0.5268,
+   "mrr@10": 0.5265,
    "success@1": 0.4162,
    "success@5": 0.673,
    "zero_result_rate": 0.0,
    "n_queries": 841
   },
   "temporal": {
-   "ndcg@10": 0.5937,
+   "ndcg@10": 0.5938,
    "recall@10": 0.7159,
-   "recall@100": 0.8901,
-   "mrr@10": 0.5684,
+   "recall@100": 0.8896,
+   "mrr@10": 0.5685,
    "success@1": 0.4781,
    "success@5": 0.6906,
    "zero_result_rate": 0.0,
@@ -76,19 +76,19 @@
   },
   "all-categories": {
    "ndcg@10": 0.5165,
-   "recall@10": 0.6565,
-   "recall@100": 0.8274,
-   "mrr@10": 0.4925,
-   "success@1": 0.3862,
+   "recall@10": 0.6563,
+   "recall@100": 0.827,
+   "mrr@10": 0.4926,
+   "success@1": 0.3867,
    "success@5": 0.6371,
    "zero_result_rate": 0.0,
    "n_queries": 1981
   }
  },
  "latency_ms": {
-  "p50": 30.97,
-  "p95": 38.4,
-  "p99": 41.59
+  "p50": 25.04,
+  "p95": 36.67,
+  "p99": 41.48
  },
  "reference": null,
  "notes": "One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only."

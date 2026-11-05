@@ -27,6 +27,49 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
+## Unreleased
+
+Entries kept apart until the release that carries them, newest first. `info.version` stays
+`0.5.5-design` until that release; the recall answer below adds members, it removes none.
+
+### 2026-11-05 — Text search reads integer postings (implementation)
+
+*2026-11-05 ·* [ADR-0052](adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
+*(proposed), on `feat/token-postings`.* What changes for someone using OML:
+
+- **Recall reads an index, so its cost no longer follows every row a key can read.** A new
+  pipeline, `bm25-postings`, keeps each memory's search words a second time as integer postings,
+  which row security lets PostgreSQL serve from an index, and ranks by the same BM25 as `bm25`. At
+  99,721 readable memories, a recall over the whole tree answered in 29.9 ms p95 where `bm25`
+  took 493 ms, and a recall inside one project in 12.1 ms where `bm25` took 218 ms
+  ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
+  On BEIR SciFact and NFCorpus and on LoCoMo it scores within 0.0005 nDCG@10 of `bm25` at about
+  half the served latency ([benchmarks](api/benchmarks/index.md)).
+- **`bm25-postings` is the default search**, chosen by ADR-0052 d9's evidence on one build; `bm25`
+  stays served as its fallback and for comparison, and a tenant or a request can still name it.
+- **The answer says how it was read.** `search.access` is `postings` or `scan`, and
+  `search.pruned` names query words left out of what was read because most of the memories the
+  key reads hold them; such a word still counts in every hit the other words find, and a memory
+  holding only such words is not found. When every word is that common, the `bm25` scan answers
+  and `access` says `scan`. The request line gains `search_access` and the recall metric an
+  `access` label.
+- **Costs, carried openly.** The postings, their two indexes and the per-workarea counts take
+  about 7 times the space of the memories themselves; a promotion takes about 2–3 ms longer; and
+  migration 0021 fills the postings of every existing memory when the new server first starts,
+  holding writes while it runs, about 0.4 s per 1,000 memories (a batched fill before any tenant
+  reaches 1,000,000 is FR-103). A key holding 10,000 unreviewed rows of its own pays 266 ms for a
+  whole-tree recall that includes them.
+- **Erasure, when it is built, removes postings and counts** with the version's other copies;
+  until then nothing deletes them, and replaced, demoted, rejected and retired versions keep
+  theirs, flipped off.
+
+Pages: [retrieval](architecture/retrieval.md), [schema](data/postgres-schema.md#search-postings-adr-0052),
+[configuration](operations/configuration.md), [HTTP API](api/http-api.md),
+[MCP plugin](api/mcp-plugin.md), `openapi.yaml` and `mcp-tools.json` (`bm25-postings`,
+`search.access`, `search.pruned`, `matched.via` `bm25_postings`), both SDKs regenerated, and the
+benchmark pages. ADR-0052's open questions are settled in the record, with OpenSearch rejected for
+now and its revisit conditions; FR-100 is measured to 165,000 memories, and 1,000,000 is not.
+
 ## 0.5.5-design
 
 Opened for release v0.5.5, which carries this revision: search pipelines, increment 1 of

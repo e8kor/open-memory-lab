@@ -23,6 +23,7 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 | `run.sh` | boot, load, run every pipeline and print the tables, in one command; the nightly workflow runs it |
 | `reference.py` | ranks the same memories offline with [bm25s](https://github.com/xhluca/bm25s) (MIT), to split a gap to a published number between the mapping and the served implementation |
 | `export.py` | writes every result in the common schema below, and converts `eval/recall`'s served results too |
+| `prune_sweep.py` | asks every query through the PostgreSQL adapter's own `retrieve` (`crates/adapters/oml-pg/examples/search_scale.rs`) for `bm25` and for `bm25-postings` at several pairs of prune constants, and scores each list: the run that set ADR-0052's constants (`results/prune-sweep.json`) |
 | `requirements.txt` | the Python packages, pinned |
 | `results/<suite>/<method>.json` | the committed results, one file per suite and method, schema `oml-bench/1` |
 | `results/tables.md`, `results/load-*.json` | the report tables and each dataset's load log |
@@ -60,7 +61,7 @@ the fixed `--seed` (default 20261104); the corpus is always loaded whole.
 ## What is measured
 
 Each query is asked once per pipeline (`search`: `keyword-all`, `keyword-any`, `bm25`,
-`bm25-trigram`), with `k` 100 and no `max_tokens`, one query at a time so the latency is a
+`bm25-trigram`, `bm25-postings`), with `k` 100 and no `max_tokens`, one query at a time so the latency is a
 single client's. From that one ranked list: **nDCG@10**, **R@10**, **R@100**, **RR@10** (MRR
 cut at 10), **Success@1** and **Success@5**, each the ir_measures measure of that name. A
 query whose recall served nothing scores 0 on every measure; pytrec_eval alone would drop it

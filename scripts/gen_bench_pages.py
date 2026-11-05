@@ -41,13 +41,17 @@ LATENCY_LINE_MS = 50
 
 
 CEILING = ("**The latency ceiling.** Under row security no text index serves a recall: `@@`, "
-           "`%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline reads the "
+           "`%` and `ts_rank` are not leakproof (ADR-0034 d13), so every pipeline but "
+           "`bm25-postings` reads the "
            "stored lexemes of every row the key may read, and its cost grows with those rows. "
            "Storing the lexemes made a row several times cheaper, not free: the scale lane "
            "measured an every-word match over a stored `simple` vector past 50 ms near 70,000 "
            "readable rows (`bench/scale/REPORT.md` on `feat/scale-bench`), and `bm25` reads "
            "more per row than that match, so on abstract-length text it crosses the line far "
-           "sooner, as the tables show. Latency at scale is not solved by stored lexemes.\n")
+           "sooner, as the tables show. Latency at scale is not solved by stored lexemes. "
+           "`bm25-postings` (ADR-0052) reads integer postings, which row security lets an "
+           "index serve, so its cost follows the postings it reads: 29.9 ms p95 at 99,721 "
+           "readable rows against `bm25`'s 493 ms (`bench/scale/REPORT.md`).\n")
 
 
 def load_results():

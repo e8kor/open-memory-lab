@@ -26,6 +26,38 @@ nDCG@10, then the median and p95 latency per query at `k` 100, one client:
 | offline BM25 (bm25s, k1 0.9, b 0.4) | 0.837 | 0.676 | 0.318 | 0.468 |
 | BEIR BM25, published | | 0.665 | 0.325 | |
 
+## Integer postings: `bm25-postings` (ADR-0052)
+
+Measured 2026-11-05 on a release build of this branch (`feat/token-postings`), `bm25` and
+`bm25-postings` asked one after the other through `oml_read` against the same loaded corpus,
+PostgreSQL 17.9, on the same host shared with other build lanes (load average 10 to 29 during
+the runs, so the latencies are an upper bound for one client). `bm25-postings` reads `bm25`'s
+score from integer postings that row security lets an index serve, leaves out of what it reads the
+query forms held by more than 10% of the readable rows (`FREQUENT_SHARE` 0.1) and then the most
+frequent kept form while the kept ones sum above 10,000 postings (`POSTING_BUDGET`), and rescores
+the best `4 × k` candidates with every form.
+
+| suite | nDCG@10 bm25 / postings | R@100 bm25 / postings | p50 ms bm25 / postings | p95 ms bm25 / postings |
+|---|---|---|---|---|
+| synthetic (200) | 0.874 / 0.874 | 0.930 / 0.930 | 12.4 / 9.3 | 18.6 / 13.0 |
+| SciFact (5,183) | 0.6851 / 0.6851 | 0.928 / 0.928 | 100 / 49.8 | 174 / 91.9 |
+| NFCorpus (3,633) | 0.3214 / 0.3209 | 0.247 / 0.245 | 65.6 / 35.6 | 89.3 / 63.7 |
+| LoCoMo (5,882, categories 1-4) | 0.5033 / 0.5030 | 0.813 / 0.767 | 25.6 / 14.5 | 36.9 / 24.2 |
+
+- **nDCG@10 moves by at most 0.0005**, within ADR-0052 d9's 0.005 on every set. The recall eval's
+  gate passes with `bm25`'s own numbers (success@1 0.826, success@5 0.934;
+  `eval/recall/results/served_bm25_postings.json`).
+- **What pruning costs is the tail.** LoCoMo's R@100 falls from 0.813 to 0.767: a turn that
+  holds only words frequent in its conversation (the speakers' names are) is no longer a
+  candidate. The top ten barely move; a recall that pages past the first hundred loses
+  some of those turns.
+- **About half the latency** at these sizes, through the whole served path; the scale lane
+  (`bench/scale/REPORT.md`) measures the part that grows with the rows a key reads.
+- **How the constants were chosen.** `prune_sweep.py` asked every query through the adapter's
+  `retrieve` at nine pairs of constants (`results/prune-sweep.json`). On the four sets a share of
+  0.1 cost at most 0.0005 nDCG@10 and 0.05 cost 0.0019 (NFCorpus); the budget did not bind below
+  6,000 rows. The budget was set on the scale lane, where it decides the universe scope's p95.
+
 ## Latency at the size an agent asks, and at scale
 
 `bm25`, p50 / p95 per query, one client:

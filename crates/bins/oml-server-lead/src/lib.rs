@@ -91,14 +91,19 @@ pub struct Config {
 /// `keyword-all`, which the recall eval runs for comparison, and
 /// `bm25-trigram`, which needs `pg_trgm`, are served only where a
 /// deployment enables them, so a database without the extension starts
-/// (configuration.md search.enabled; ADR-0049 d4, d12).
-pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 2] = [Pipeline::KeywordAny, Pipeline::Bm25];
+/// (configuration.md search.enabled; ADR-0049 d4, d12). `bm25` stays
+/// served beside `bm25-postings`: it is the postings' fallback statement
+/// and their comparison (ADR-0052 d9).
+pub const DEFAULT_SEARCH_ENABLED: [Pipeline; 3] =
+    [Pipeline::KeywordAny, Pipeline::Bm25, Pipeline::Bm25Postings];
 
-/// `search.default`'s default: `bm25`, chosen on the recall eval's gate
-/// together with the external sets: it passes its gate, ranks best on
-/// SciFact, NFCorpus and LoCoMo, and answers in a fraction of
-/// `bm25-trigram`'s time (ADR-0049 d9, d12; eval/bench/REPORT.md).
-pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25;
+/// `search.default`'s default: `bm25-postings`, moved from `bm25` by
+/// ADR-0052 d9's evidence, measured on one build on 2026-11-05: it passes
+/// `bm25`'s recall-eval gate (success@1 0.826, success@5 0.934), its
+/// nDCG@10 is within 0.0005 of `bm25`'s on SciFact, NFCorpus and LoCoMo,
+/// and its p95 at 99,721 readable rows, universe scope, is 29.9 ms against
+/// `bm25`'s 492.7 ms (bench/scale/REPORT.md; eval/bench/REPORT.md).
+pub const DEFAULT_SEARCH_PIPELINE: Pipeline = Pipeline::Bm25Postings;
 
 /// The search settings of a deployment that sets none.
 #[must_use]
@@ -1168,7 +1173,11 @@ mod tests {
         };
         let cfg = load(&[]).expect("defaults load");
         assert_eq!(cfg.search, default_search());
-        assert_eq!(cfg.search.default_pipeline(), Pipeline::Bm25);
+        assert_eq!(cfg.search.default_pipeline(), Pipeline::Bm25Postings);
+        assert!(
+            cfg.search.serves(Pipeline::Bm25),
+            "bm25 stays served: the postings' fallback and comparison"
+        );
         assert!(
             !cfg.search.serves(Pipeline::KeywordAll),
             "keyword-all is opt-in"
