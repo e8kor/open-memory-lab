@@ -80,11 +80,17 @@ d11). Decided, not built.
     Only versions of the hit kinds (`memory`, `derived_fact`) get postings, as only they are
     recalled (ADR-0025 d8); a steering or guardrail row, and a retirement version, get none.
 
-    Two indexes per partition: `(kind, token_id)`, the access path every query takes, and
-    `(memory_id)`, for the state flips, the erase and d6's rescoring. `fillfactor` 90, so a state flip,
-    which touches no indexed column, stays a heap-only update. Only leakproof equalities reach the
-    indexes (`kind`, `token_id`, `memory_id`, `tenant_id`), so the indexes serve the serving role; the
-    `workarea_id` and `state` predicates filter the fetched rows, as the measured case did. The owner
+    Two indexes per partition (amended 2026-11-05, open question 1): `search_postings_served`,
+    `(kind, token_id, workarea_id) INCLUDE (memory_kind, memory_id, weight, doc_len, tenant_id)
+    WHERE state = 1`, the access path every query takes, and `(memory_id)`, for the own held rows,
+    the state flips, the erase and d6's rescoring. The served index holds the served postings alone,
+    ordered so that a recall reads its own workareas' postings of a token and nothing else, and
+    carries every column a score needs, so the read is index-only once vacuum has marked the pages
+    visible. The first reading, `(kind, token_id)` over every posting with `workarea_id` and `state`
+    filtered from the heap and `fillfactor` 90 to keep a flip heap-only, measured 3 to 18 times
+    slower (open question 1); a flip into or out of served now touches the served index, which d8's
+    write cost includes. Only leakproof equalities reach the indexes (`kind`, `token_id`,
+    `workarea_id`, `memory_id`, `tenant_id`), so they serve the serving role. The owner
     creates each partition in the same owner transaction that ADR-0034 d11 runs for `memories`, before
     the attach, under the same lock timeout; 0021 creates one for every existing tenant. The serving
     role holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on it, as on `search_vocabulary`. The cost,
@@ -158,9 +164,10 @@ d11). Decided, not built.
   `FREQUENT_SHARE` of the readable row count; frequent forms are pruned, then, while the kept forms'
   summed readable frequencies exceed `POSTING_BUDGET`, the most frequent kept form is pruned too. Both
   decisions read d5's sums alone, so which word is pruned depends only on rows the key may read
-  (law in d12). The two are constants in `oml-pg`, not settings; their values are set by the scale
-  lane and the external sets before the pipeline is enabled (FR-100), and the run that sets them is
-  committed. A pruned word still counts for the candidates it reaches (d4 step 5); what pruning loses
+  (law in d12). The two are constants in `oml-pg`, not settings: `FREQUENT_SHARE` 0.1 and
+  `POSTING_BUDGET` 10,000, set on 2026-11-05 by the scale lane and the external sets (open
+  question 2), whose runs are committed. The best `4 × k` candidates by the kept forms are rescored
+  (d4 step 5). A pruned word still counts for the candidates it reaches (d4 step 5); what pruning loses
   is the rows that hold **only** pruned words. When every form is pruned, the retriever runs ADR-0049
   d12's `bm25` statement over the stored lexemes instead, which ranks identically (d12), and says so:
   the answer's `search.access` is `scan`. This fallback costs what the scan costs (1.4 s p95 at
@@ -203,7 +210,7 @@ d11). Decided, not built.
   the trigger's lock on `memories` for its fill, so writes wait for it; the fill time at 100,000 and
   1,000,000 rows is measured before the release that carries 0021 (FR-100); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, FR-103). Kind
   2 is filled by the encoder after start, oldest first. `bm25-postings` enters the build disabled
-  (ADR-0049 d10); `sparse` and `bm25-sparse` are refused at start while the backlog is above zero.
+  (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; `sparse` and `bm25-sparse` are refused at start while the backlog is above zero.
 
 - **d9 — Two retriever kinds behind the `Retriever` port, three named pipelines, and the default moved
   by evidence.** `RetrieverKind` gains `Bm25Postings` and, with the encoder, `Sparse`. `PgStore`
@@ -222,11 +229,21 @@ d11). Decided, not built.
     0.67); (2) on SciFact, NFCorpus and LoCoMo its nDCG@10 is at most 0.005 below served `bm25`'s, which
     bounds what pruning costs; (3) on the scale lane its p95 at 100,000 readable rows, universe scope,
     is at most 50 ms and below `bm25`'s. `bm25` stays enabled, since it is the fallback statement and
-    the comparison. `sparse` or `bm25-sparse` replaces the default only when it passes the same gate
+    the comparison. *Met on 2026-11-05, one release build of `feat/token-postings`:* (1) success@1
+    0.826 and success@5 0.934, `bm25`'s own; (2) nDCG@10 0.6851 / 0.3209 / 0.5030 on SciFact /
+    NFCorpus / LoCoMo against `bm25`'s 0.6851 / 0.3214 / 0.5033; (3) 29.9 ms p95 at 99,721 readable
+    rows, universe scope, against `bm25`'s 492.7 ms. `bm25-postings` is that build's default.
+    `sparse` or `bm25-sparse` replaces the default only when it passes the same gate
     and ranks above the default on the external sets (ADR-0049 d12 item 6's rule), at a p95 that meets
     (3). Each step is a change to `search.default`, no code change.
 
-- **d10 — What 1,000,000 memories cost, as far as it is measured.** *Latency:* about 137 ms p95 with
+- **d10 — What 1,000,000 memories cost, as far as it is measured.** *Measured on 2026-11-05*
+  (`bench/scale/REPORT.md`, 10,000 to 165,000 memories, about 36 postings each): 29.9 ms p95 at
+  99,721 readable rows, universe scope; heap, both indexes and the counts about 7 times the
+  memories heap, 1.1 GiB per 165,000 memories, about 6.7 GiB per 1,000,000 by linear
+  extrapolation; 0021's fill about 0.4 s per 1,000 memories. 1,000,000 itself was not measured:
+  the build host lacked the disk. The paragraph below is the estimate this record was proposed
+  with. *Latency:* about 137 ms p95 with
   the 100 most frequent tokens pruned, universe scope, extrapolated from 200,000; leaf scopes cost
   less, since the scope filter drops their postings after the fetch. That misses 50 ms at 1,000,000;
   `POSTING_BUDGET` can hold the bound at the price of more pruning, and what that price is in nDCG is
@@ -313,12 +330,20 @@ d11). Decided, not built.
 The operator settled each question on 2026-11-05. Where the answer is a measurement, the build lane
 (`feat/token-postings`) takes it and records the value here in the same change as the code.
 
-1. **`workarea_id` in the access index** — decided by measurement in the build lane: the leaf,
-   project and universe p95 at 100,000 rows with `(kind, token_id)` and with `(kind, token_id,
-   workarea_id)`, and the index sizes, on the same data.
-2. **The prune constants and the `scan` share** — calibrated from the scale lane's data
-   (`bench/scale/`) and the external sets in the build lane, and the values written into d6
-   with the run that set them.
+1. **`workarea_id` in the access index** — yes, measured on `feat/token-postings`
+   (`bench/scale/REPORT.md`, 2026-11-05): the served covering index of d1 against `(kind,
+   token_id)` over every posting, warm p95 leaf / project / universe 9.2 / 12.1 / 29.9 ms against
+   148 / 137 / 138 ms at 165,000 memories (99,721 readable at universe scope), and 5.7 / 12.8 /
+   26.6 against 105 / 95.6 / 89.4 ms at 100,000. The price is size: 455 MiB against 42 MiB at
+   165,000, beside a 568 MiB heap.
+2. **The prune constants and the `scan` share** — `FREQUENT_SHARE` 0.1 and `POSTING_BUDGET`
+   10,000 (d6). On SciFact, NFCorpus, LoCoMo and the recall set, through the adapter
+   (`eval/bench/prune_sweep.py`, `results/prune-sweep.json`), a share of 0.1 cost at most 0.0005
+   nDCG@10 and 0.05 cost 0.0019; the budget did not bind below 6,000 rows. At 165,000 memories,
+   universe scope, the budget decides the p95: 46.7 ms at 20,000, 29.9 ms at 10,000, 14.1 ms at
+   5,000, with 98.7%, 97.5% and 94.5% of `bm25`'s top 10 kept. The scan answered 0 of 330
+   queries at 100,000 and 165,000, 2 of 330 at 10,000, and at most 0.4% on the external sets;
+   doctor's bound on the `scan` share is 5%, a line not yet built (FR-100).
 3. **Off postings** — deferred. Superseded, demoted and retired versions keep their postings
    (d7); no compaction is built. Reopen on FR-100's space figures.
 4. **A fill too long for one migration** — 0021's fill, which holds writes while it runs, is
@@ -331,8 +356,12 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
 6. **Kind 2's model** — deferred to the learned-sparse offline experiment, a separate lane, which
    reports where the model comes from, the weight floor, `SPARSE_MAX_TOKENS` and its reach beyond
    English before any kind 2 code is built.
-7. **Own held rows at scale** — measured in the build lane: the recall p95 for a key holding 1,000
-   and 10,000 own held rows with `include_unreviewed`, beside the same recall without it.
+7. **Own held rows at scale** — measured (`bench/scale/REPORT.md`): a key holding 1,000 own held
+   rows adds about 30 ms to a universe recall with `include_unreviewed` (59.2 against 29.9 ms p95
+   at 165,000 memories); 10,000 put it at 266 ms, still below `bm25`'s 654 ms there. The rows are
+   counted at query time (d5), so the cost follows how many the key holds in scope. Left as
+   measured: the case is a bulk import awaiting review (FR-87), and a count kept per key would
+   need a counter per author beside the per-workarea ones.
 
 ## Test plan
 
