@@ -429,8 +429,9 @@ async fn query_text_is_null_unless_the_tenant_opted_in() {
     w.events(&w.a).await;
     assert_eq!(visible(&pool, Some(w.a.boot.tenant_id)).await, (3, 0));
 
-    // The control: the same probe counts text the moment a row holds it,
-    // as a writer that ignored the opt-in would leave it.
+    // The rule is the database's, not the writer's statement: the serving
+    // role writing text itself, by INSERT or UPDATE, stores none while the
+    // tenant is opted out (ADR-0054 d3, as amended).
     let mut tx = pool.begin().await.expect("tx");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(w.a.boot.tenant_id.to_string())
@@ -439,12 +440,24 @@ async fn query_text_is_null_unless_the_tenant_opted_in() {
         .expect("set");
     tx.execute("UPDATE recall_events SET query_text = 'leaked'")
         .await
-        .expect("broken clause");
+        .expect("an update");
+    tx.execute(
+        format!(
+            "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
+               scope_workarea_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+             VALUES ('{}', gen_random_uuid(), now(), gen_random_uuid(), 'p', gen_random_uuid(), \
+               'bm25', 'scan', decode(repeat('00', 32), 'hex'), 'inserted', '{{}}', '{{}}')",
+            w.a.boot.tenant_id
+        )
+        .as_str(),
+    )
+    .await
+    .expect("an insert");
     tx.commit().await.expect("commit");
     assert_eq!(
         visible(&pool, Some(w.a.boot.tenant_id)).await,
-        (3, 3),
-        "the probe cannot see text"
+        (4, 0),
+        "the serving role stored text without the opt-in"
     );
     drop_db(&w.db).await;
 }
@@ -453,7 +466,8 @@ async fn query_text_is_null_unless_the_tenant_opted_in() {
 async fn no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_transport() {
     let Some(w) = world().await else { return };
     w.promoted(&w.a, "the deploy runs on fridays").await;
-    w.recall(&w.a.reader, "deploy fridays").await;
+    let watched = w.recall(&w.a.reader, "deploy fridays").await;
+    let watched_id = watched["recall_id"].as_str().expect("an id").to_owned();
     for key in [&w.a.writer, &w.a.reader, &w.a.dreamer] {
         for request in [
             get("/v2/usage/events", key),
@@ -470,36 +484,60 @@ async fn no_agent_writer_reader_or_dreamer_key_reads_a_recall_event_on_any_trans
             assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
             assert!(!body.to_string().contains("deploy"), "{path}: {body}");
         }
-        // /mcp serves no tool that reaches an event, and oml_read has no
-        // mode that does.
-        let (_, body) = call(
-            &w.router,
-            post(
-                "/mcp",
-                key,
-                &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                        "params": {"name": "oml_usage", "arguments": {}}}),
+        // /mcp's real tools, with real arguments, in every mode, never
+        // answer another recall's id or digest: no mode reaches an event.
+        for (id, arguments) in [
+            (
+                1,
+                json!({"name": "oml_read", "arguments": {"query": "deploy fridays"}}),
             ),
-        )
-        .await;
-        assert!(
-            body.get("error").is_some() || body["result"]["isError"] == true,
-            "{body}"
-        );
-        let (_, body) = call(
-            &w.router,
-            post(
-                "/mcp",
-                key,
-                &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                        "params": {"name": "oml_read", "arguments": {"events": true}}}),
-            ),
-        )
-        .await;
-        assert_eq!(body["result"]["isError"], true, "{body}");
+            (2, json!({"name": "oml_read", "arguments": {}})),
+            (3, json!({"name": "oml_read", "arguments": {"own": false}})),
+            (4, json!({"name": "oml_workarea", "arguments": {}})),
+        ] {
+            let (status, body) = call(
+                &w.router,
+                post(
+                    "/mcp",
+                    key,
+                    &json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": arguments}),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_ne!(body["result"]["isError"], true, "{arguments}: {body}");
+            let text = body.to_string();
+            assert!(
+                !text.contains(watched_id.as_str()),
+                "{arguments} answers another recall's id: {text}"
+            );
+        }
     }
-    // The tenant's admin reads them.
-    assert_eq!(w.events(&w.a).await.len(), 1);
+    // Another tenant's admin and keys read nothing of this tenant's, and a
+    // web session's cookie is no credential on /v2 at all.
+    for key in [&w.b.boot.admin_key.value, &w.b.writer] {
+        let (status, body) = call(&w.router, get("/v2/usage/events", key)).await;
+        assert!(
+            !body.to_string().contains(watched_id.as_str()),
+            "{status}: {body}"
+        );
+    }
+    let (status, body) = call(
+        &w.router,
+        Request::get("/v2/usage/events")
+            .header(header::COOKIE, "__Host-oml_session=anything")
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    // The tenant's admin reads them: the watched recall and the keys' own.
+    assert!(
+        w.events(&w.a)
+            .await
+            .iter()
+            .any(|e| e["recall_id"] == watched_id.as_str())
+    );
     drop_db(&w.db).await;
 }
 
@@ -709,52 +747,9 @@ async fn a_replay_scores_the_labelled_queries_and_its_answer_holds_no_text_and_n
 }
 
 #[tokio::test]
-async fn no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied_and_dropped() {
+async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_the_lag() {
     let Some(w) = world().await else { return };
     let tenant = w.a.boot.tenant_id;
-    let hex = tenant.simple().to_string();
-    let mut owner = w.owner().await;
-    // Two week partitions behind the rotation's: one that ended 35 days
-    // before this week, and one from then to this week, as an outage of the
-    // rotation leaves them; rows dated 40, 31 and 1 days ago.
-    let week = |weeks_back: i64| {
-        format!(
-            "SELECT to_char(date_trunc('week', now() AT TIME ZONE 'UTC') - interval '{} days', 'YYYYMMDD')",
-            7 * weeks_back
-        )
-    };
-    let mut bounds = Vec::new();
-    for weeks_back in [6, 5, 0] {
-        let d: String = sqlx::query_scalar(&week(weeks_back))
-            .fetch_one(&mut owner)
-            .await
-            .expect("a monday");
-        bounds.push(d);
-    }
-    for (from, to) in [(&bounds[0], &bounds[1]), (&bounds[1], &bounds[2])] {
-        for table in ["recall_events", "recall_outcomes"] {
-            let p = format!("{table}_t_{hex}_w{from}");
-            for s in [
-                format!("CREATE TABLE {p} (LIKE {table} INCLUDING ALL)"),
-                format!("ALTER TABLE {p} ENABLE ROW LEVEL SECURITY"),
-                format!("ALTER TABLE {p} FORCE ROW LEVEL SECURITY"),
-                format!(
-                    "CREATE POLICY tenant_isolation ON {p} USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)"
-                ),
-                format!(
-                    "ALTER TABLE {table}_t_{hex} ATTACH PARTITION {p} FOR VALUES FROM ('{from} 00:00:00+00') TO ('{to} 00:00:00+00')"
-                ),
-            ] {
-                owner.execute(s.as_str()).await.expect("an old week");
-            }
-        }
-    }
-    let attached_weeks: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass")
-            .bind(format!("recall_events_t_{hex}"))
-            .fetch_one(&mut owner)
-            .await
-            .expect("weeks");
     let pool = w.serving().await;
     let insert = |days: i64| {
         format!(
@@ -778,10 +773,17 @@ async fn no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied_a
     assert_eq!(w.events(&w.a).await.len(), 1);
     assert_eq!(visible(&pool, Some(tenant)).await.0, 3);
 
-    // A writer's first pass purges the rows; the rotation drops the week.
+    // A writer's first pass reports the lag it found, then purges, in
+    // batches the serving role commits one by one; nothing but telemetry
+    // is touched.
+    let journal_before: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut w.owner().await)
+        .await
+        .expect("journal");
+    let traffic = Traffic::new(TrustedProxies::default());
     let (_t, writer) = oml_pg::telemetry::PgTelemetry::spawn(
         pool.clone(),
-        Arc::clone(w.traffic.metrics()) as Arc<dyn oml_app::ports::TelemetryMeter>,
+        Arc::clone(traffic.metrics()) as Arc<dyn oml_app::ports::TelemetryMeter>,
     );
     let mut purged = false;
     for _ in 0..50 {
@@ -793,20 +795,154 @@ async fn no_row_older_than_30_days_is_read_and_an_overdue_partition_is_emptied_a
     }
     writer.abort();
     assert!(purged, "the pass left rows past the 30 days");
-    let rotated = w
-        .store
-        .rotate_telemetry()
+    let text = traffic.metrics().encode();
+    assert!(text.contains("oml_telemetry_purge_overdue 1"), "{text}");
+    let journal_after: i64 = sqlx::query_scalar("SELECT count(*) FROM journal")
+        .fetch_one(&mut w.owner().await)
         .await
-        .expect("an owner URL")
-        .expect("the rotation");
-    assert_eq!(rotated.dropped, 2, "{rotated:?}");
-    let weeks_after: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass")
-            .bind(format!("recall_events_t_{hex}"))
-            .fetch_one(&mut owner)
-            .await
-            .expect("weeks");
-    assert_eq!(weeks_after, attached_weeks - 1);
+        .expect("journal");
+    assert_eq!(
+        journal_after, journal_before,
+        "the purge touched the journal"
+    );
+    drop_db(&w.db).await;
+}
+
+#[tokio::test]
+async fn an_opt_out_committing_during_a_batch_keeps_that_batchs_text_out() {
+    let Some(w) = world().await else { return };
+    w.set_query_text(&w.a, true).await;
+    let tenant = w.a.boot.tenant_id;
+    let pool = w.serving().await;
+    // A writer's batch, open: its row holds text the tenant allowed when
+    // it was written.
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("set");
+    tx.execute(
+        format!(
+            "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
+               scope_workarea_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+             VALUES ('{tenant}', gen_random_uuid(), now(), gen_random_uuid(), 'p', gen_random_uuid(), \
+               'bm25', 'scan', decode(repeat('00', 32), 'hex'), 'in flight', '{{}}', '{{}}')"
+        )
+        .as_str(),
+    )
+    .await
+    .expect("the batch's row");
+    // The opt-out commits while the batch is open, and waits for it.
+    let router = w.router.clone();
+    let admin = w.a.boot.admin_key.value.clone();
+    let opt_out = tokio::spawn(async move {
+        call(
+            &router,
+            post(
+                "/v2/usage/settings",
+                &admin,
+                &json!({ "query_text": false }),
+            ),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tx.commit().await.expect("the batch commits");
+    let (status, body) = opt_out.await.expect("the opt-out");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        visible(&pool, Some(tenant)).await,
+        (1, 0),
+        "the batch's text outlived the opt-out"
+    );
+    drop_db(&w.db).await;
+}
+
+#[tokio::test]
+async fn feedback_is_capped_per_key_and_another_tenants_key_cannot_label_this_tenants_recall() {
+    let Some(w) = world().await else { return };
+    let used = w.promoted(&w.a, "the deploy runs on fridays").await;
+    let answer = w.recall(&w.a.reader, "deploy fridays").await;
+    let feedback = json!({ "recall_id": answer["recall_id"], "useful": [used] });
+    let (status, body) = call(
+        &w.router,
+        post(
+            "/v1/memories/recall",
+            &w.b.writer,
+            &json!({ "query": "lunch", "feedback": feedback }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error"]["details"]["field"], "/feedback/recall_id",
+        "{body}"
+    );
+    // A key's feedback members are counted, refused or not, and past the
+    // cap the read answers limit.rate before any lookup.
+    let mut limited = None;
+    for i in 0..1_100 {
+        let junk = json!({ "recall_id": fresh_id(), "useful": [fresh_id()] });
+        let (status, body) = call(
+            &w.router,
+            post(
+                "/v1/memories/recall",
+                &w.a.writer,
+                &json!({ "query": "lunch", "feedback": junk }),
+            ),
+        )
+        .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            assert_eq!(body["error"]["code"], "limit.rate", "{body}");
+            limited = Some(i);
+            break;
+        }
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    assert_eq!(
+        limited,
+        Some(1_000),
+        "the cap is 1000 feedback members a key a day"
+    );
+    // Another key is not held to this key's cap.
+    let (status, body) = call(
+        &w.router,
+        post(
+            "/v1/memories/recall",
+            &w.a.reader,
+            &json!({ "query": "lunch", "feedback": feedback }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    drop_db(&w.db).await;
+}
+
+#[tokio::test]
+async fn an_admin_reading_recall_events_or_replaying_them_is_journalled() {
+    let Some(w) = world().await else { return };
+    w.promoted(&w.a, "the deploy runs on fridays").await;
+    w.recall(&w.a.reader, "deploy fridays").await;
+    w.events(&w.a).await;
+    let (status, body) = call(
+        &w.router,
+        post(
+            "/v2/usage/eval",
+            &w.a.boot.admin_key.value,
+            &json!({ "pipelines": ["bm25-postings"] }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut owner = w.owner().await;
+    let types: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type FROM journal WHERE event_type LIKE 'telemetry.%' ORDER BY seq",
+    )
+    .fetch_all(&mut owner)
+    .await
+    .expect("journal");
+    assert_eq!(types, vec!["telemetry.events_read", "telemetry.replayed"]);
     drop_db(&w.db).await;
 }
 
@@ -847,6 +983,8 @@ async fn an_erased_version_leaves_no_text_no_hit_and_no_label_in_the_telemetry()
         .find(|e| e["recall_id"] == answer["recall_id"])
         .expect("the event");
     assert_eq!(e["query_text"], Value::Null);
+    // A short query's digest inverts by word list, so it goes too (M5).
+    assert_eq!(e["query_digest"], format!("sha256:{}", "0".repeat(64)));
     assert_eq!(e["hits"].as_array().map(Vec::len), Some(1));
     assert_eq!(e["hits"][0]["artifact_id"], kept.to_string());
     assert!(!e.to_string().contains(&erased.to_string()), "{e}");
