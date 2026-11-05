@@ -1,0 +1,178 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "offline",
+ "method": "cc-bm25+sparse-gte+arctic-s",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.5815,
+  "recall@10": 0.7303,
+  "recall@100": 0.9234,
+  "mrr@10": 0.5661,
+  "success@1": 0.4482,
+  "success@5": 0.7342,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.4288,
+   "recall@10": 0.6043,
+   "recall@100": 0.9182,
+   "mrr@10": 0.3743,
+   "success@1": 0.2601,
+   "success@5": 0.5404,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.4074,
+   "recall@10": 0.4959,
+   "recall@100": 0.8321,
+   "mrr@10": 0.5017,
+   "success@1": 0.3723,
+   "success@5": 0.6738,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.3612,
+   "recall@10": 0.4877,
+   "recall@100": 0.7954,
+   "mrr@10": 0.3588,
+   "success@1": 0.2391,
+   "success@5": 0.5217,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.634,
+   "recall@10": 0.8105,
+   "recall@100": 0.9608,
+   "mrr@10": 0.5851,
+   "success@1": 0.4637,
+   "success@5": 0.7658,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.6605,
+   "recall@10": 0.7958,
+   "recall@100": 0.9424,
+   "mrr@10": 0.6326,
+   "success@1": 0.5344,
+   "success@5": 0.7656,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.5471,
+   "recall@10": 0.7019,
+   "recall@100": 0.9222,
+   "mrr@10": 0.5229,
+   "success@1": 0.4059,
+   "success@5": 0.6906,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "Convex combination of 0.2 x bm25 + 0.3 x sparse-gte + 0.5 x arctic-s, each leg min-max normalised over this query's own top 100; weights tuned on recall-synthetic (nDCG@10) and applied unchanged here.",
+ "cost": {
+  "sparse-gte": {
+   "docs": 5882,
+   "encode_seconds": 541.0,
+   "docs_per_second": 10.9,
+   "mean_chars": 175,
+   "threads": 4,
+   "batch": 32,
+   "nnz_mean": 392.8,
+   "nnz_p50": 354,
+   "nnz_p95": 721,
+   "nnz_max": 1773,
+   "clean": {
+    "load_before": 5.62,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 77.0,
+     "docs_per_second": 3.3
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 19.94,
+     "docs_per_second": 25.7
+    },
+    "query_encode": {
+     "what": "tokenizer + idf lookup, no model",
+     "p50_ms": 0.04,
+     "p95_ms": 0.09
+    },
+    "load_after": 7.19
+   }
+  },
+  "arctic-s": {
+   "docs": 5882,
+   "encode_seconds": 106.8,
+   "docs_per_second": 55.1,
+   "mean_chars": 175,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.0,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 13.9,
+     "docs_per_second": 18.4
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.0
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 24.23,
+     "p95_ms": 33.71
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.32,
+     "p95_ms": 19.42
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 12.01,
+     "p95_ms": 16.46
+    },
+    "load_after": 6.66
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.0782,
+  "p_value": 0.0001,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ },
+ "weights": {
+  "bm25": 0.2,
+  "sparse-gte": 0.3,
+  "arctic-s": 0.5
+ },
+ "tuned_on": "synthetic"
+}

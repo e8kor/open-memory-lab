@@ -1,0 +1,12 @@
+# The offline experiment's packages, for a scratch venv (never the system's), CPU torch:
+#   uv venv /srv/build/sparse-eval/venv
+#   uv pip install --python /srv/build/sparse-eval/venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
+#   uv pip install --python /srv/build/sparse-eval/venv/bin/python -r eval/bench/offline/requirements.txt
+-r ../requirements.txt
+transformers==5.22.1
+sentence-transformers==6.2.0
+tokenizers==0.23.3
+safetensors==0.8.0
+numpy==2.5.4
+scipy==1.18.1
+psycopg[binary]==3.3.8

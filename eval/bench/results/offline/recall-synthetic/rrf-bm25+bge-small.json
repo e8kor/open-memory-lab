@@ -1,0 +1,191 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "recall-synthetic",
+ "suite_version": "eval/recall data version 1, scored by eval/bench/bench.py (gain = grade)",
+ "kind": "offline",
+ "method": "rrf-bm25+bge-small",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 121,
+ "n_docs": 200,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.8912,
+  "recall@10": 0.9387,
+  "recall@100": 0.9931,
+  "mrr@10": 0.9228,
+  "success@1": 0.8017,
+  "success@5": 0.9669,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "exact": {
+   "ndcg@10": 0.9544,
+   "recall@10": 0.9091,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "identifier": {
+   "ndcg@10": 1.0,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 1.0,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "inflection": {
+   "ndcg@10": 0.961,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "long": {
+   "ndcg@10": 0.9117,
+   "recall@10": 0.947,
+   "recall@100": 1.0,
+   "mrr@10": 0.9545,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "multihop": {
+   "ndcg@10": 0.8631,
+   "recall@10": 0.9697,
+   "recall@100": 1.0,
+   "mrr@10": 0.9091,
+   "success@1": 0.7273,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "negation": {
+   "ndcg@10": 0.9198,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.9091,
+   "success@1": 0.8182,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "paraphrase": {
+   "ndcg@10": 0.6645,
+   "recall@10": 0.7121,
+   "recall@100": 0.9242,
+   "mrr@10": 0.7313,
+   "success@1": 0.6364,
+   "success@5": 0.8182,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "partial": {
+   "ndcg@10": 0.9296,
+   "recall@10": 0.9545,
+   "recall@100": 1.0,
+   "mrr@10": 0.9394,
+   "success@1": 0.9091,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "question": {
+   "ndcg@10": 0.9262,
+   "recall@10": 0.9091,
+   "recall@100": 1.0,
+   "mrr@10": 1.0,
+   "success@1": 0.9091,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "temporal": {
+   "ndcg@10": 0.8175,
+   "recall@10": 0.9242,
+   "recall@100": 1.0,
+   "mrr@10": 0.8818,
+   "success@1": 0.5455,
+   "success@5": 0.8182,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  },
+  "typo": {
+   "ndcg@10": 0.8559,
+   "recall@10": 1.0,
+   "recall@100": 1.0,
+   "mrr@10": 0.8258,
+   "success@1": 0.6364,
+   "success@5": 1.0,
+   "zero_result_rate": 0.0,
+   "n_queries": 11
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "RRF (k 60, equal weights) of bm25+bge-small over each leg's top 100.",
+ "cost": {
+  "bge-small": {
+   "docs": 200,
+   "encode_seconds": 3.0,
+   "docs_per_second": 67.0,
+   "mean_chars": 121,
+   "threads": 4,
+   "batch": 32,
+   "dims": 384,
+   "clean": {
+    "load_before": 7.19,
+    "scifact-256": {
+     "docs": 256,
+     "seconds": 14.21,
+     "docs_per_second": 18.0
+    },
+    "locomo-512": {
+     "docs": 512,
+     "seconds": 3.22,
+     "docs_per_second": 159.1
+    },
+    "query_encode_1_threads": {
+     "what": "one query per call, 1 threads",
+     "p50_ms": 23.96,
+     "p95_ms": 33.97
+    },
+    "query_encode_4_threads": {
+     "what": "one query per call, 4 threads",
+     "p50_ms": 14.42,
+     "p95_ms": 20.46
+    },
+    "query_encode_8_threads": {
+     "what": "one query per call, 8 threads",
+     "p50_ms": 11.53,
+     "p95_ms": 15.02
+    },
+    "load_after": 7.0
+   }
+  }
+ },
+ "vs_bm25": {
+  "metric": "ndcg@10",
+  "delta": 0.0173,
+  "p_value": 0.1785,
+  "test": "paired sign-flip randomisation, 10,000 draws, two-sided"
+ }
+}

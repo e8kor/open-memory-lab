@@ -1,0 +1,41 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "beir-nfcorpus",
+ "suite_version": "beir/nfcorpus/test (ir_datasets 0.6.3)",
+ "kind": "offline",
+ "method": "bm25",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 323,
+ "n_docs": 3633,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.3216,
+  "recall@10": 0.1551,
+  "recall@100": 0.2476,
+  "mrr@10": 0.5295,
+  "success@1": 0.4458,
+  "success@5": 0.6563,
+  "zero_result_rate": 0.0464
+ },
+ "per_category": {},
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": {
+  "source": "BEIR BM25",
+  "metric": "ndcg@10",
+  "value": 0.325,
+  "url": "https://arxiv.org/abs/2104.08663"
+ },
+ "notes": "The served bm25 statement (oml-pg bm25_sql, k1 1.2, b 0.75) over migration 0020's stored lexemes, run in a throwaway Postgres 18 with the scope reduced to the query's workarea; it reproduces the served run to the third decimal.",
+ "cost": null,
+ "vs_bm25": null
+}

@@ -1,0 +1,97 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "offline",
+ "method": "bm25",
+ "date": "2026-11-05",
+ "commit": "33953f5",
+ "environment": {
+  "host": "8 vCPU (AMD EPYC Genoa) / 15 GB, shared",
+  "postgres": "18.6 (bm25 leg only)",
+  "build": "offline python (torch 2.15 cpu, fp32)"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.5033,
+  "recall@10": 0.6346,
+  "recall@100": 0.8126,
+  "mrr@10": 0.4872,
+  "success@1": 0.3831,
+  "success@5": 0.628,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.5619,
+   "recall@10": 0.7321,
+   "recall@100": 0.8767,
+   "mrr@10": 0.5106,
+   "success@1": 0.3969,
+   "success@5": 0.6682,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.2885,
+   "recall@10": 0.3697,
+   "recall@100": 0.6288,
+   "mrr@10": 0.3553,
+   "success@1": 0.2482,
+   "success@5": 0.5071,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.2291,
+   "recall@10": 0.3011,
+   "recall@100": 0.5187,
+   "mrr@10": 0.2436,
+   "success@1": 0.1522,
+   "success@5": 0.3696,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.5709,
+   "recall@10": 0.7289,
+   "recall@100": 0.8775,
+   "mrr@10": 0.527,
+   "success@1": 0.4174,
+   "success@5": 0.673,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.594,
+   "recall@10": 0.7159,
+   "recall@100": 0.8885,
+   "mrr@10": 0.5688,
+   "success@1": 0.4781,
+   "success@5": 0.6906,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.5165,
+   "recall@10": 0.6565,
+   "recall@100": 0.827,
+   "mrr@10": 0.4924,
+   "success@1": 0.3862,
+   "success@5": 0.6371,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": null,
+  "p95": null,
+  "p99": null
+ },
+ "reference": null,
+ "notes": "The served bm25 statement (oml-pg bm25_sql, k1 1.2, b 0.75) over migration 0020's stored lexemes, run in a throwaway Postgres 18 with the scope reduced to the query's workarea; it reproduces the served run to the third decimal.",
+ "cost": null,
+ "vs_bm25": null
+}
