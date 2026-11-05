@@ -31,9 +31,7 @@ use candle_core::{D, DType, Device, IndexOp, Tensor};
 use candle_nn::{Linear, Module, VarBuilder, linear};
 use candle_transformers::models::bert::{BertModel, Config};
 use sha2::{Digest, Sha256};
-use tokenizers::{
-    Encoding, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy,
-};
+use tokenizers::{Encoding, Tokenizer, TruncationDirection};
 use tokio::sync::Semaphore;
 
 use oml_app::ports::{RerankError, RerankFuture, Reranker};
@@ -104,12 +102,18 @@ pub fn model(name: &str) -> Option<ModelSpec> {
 }
 
 /// The longest pair, in tokens, the model reads: the position embeddings'
-/// length; a longer passage is cut from its end, the query never.
+/// length, and the ceiling of `search.rerank.max_tokens`.
 pub const MAX_TOKENS: usize = 512;
 
+/// The query's share of a pair is at most a quarter of its tokens, so a
+/// pasted stack trace still leaves every passage three quarters of the pair
+/// and the rerank answers rather than failing (ADR-0053 d2).
+pub const QUERY_SHARE: usize = 4;
+
 /// How many pairs run as one batch: a batch is padded to its longest pair,
-/// so pairs are batched by length and a few at a time.
-pub const BATCH: usize = 8;
+/// so pairs are batched by token count. Sixteen holds the default head of
+/// ten in one forward pass (ADR-0053 d4).
+pub const BATCH: usize = 16;
 
 /// Why a model could not be loaded or fetched; the lead refuses to start
 /// naming it (ADR-0053 d8).
@@ -228,32 +232,34 @@ pub fn fetch_missing(
 pub struct Limits {
     /// Inferences running at once; a call waits for a slot.
     pub max_concurrent: usize,
-    /// The threads of the reranker's pool (not built yet).
+    /// The threads of the reranker's own pool, which every inference
+    /// shares: the most CPU the stage takes. candle splits each product
+    /// into its own count (`RAYON_NUM_THREADS`), which the lead sets to this
+    /// before any thread starts, so the two agree (ADR-0053 d5).
     pub threads: usize,
-    /// The longest pair in tokens (not built yet).
+    /// The longest pair in tokens, at most [`MAX_TOKENS`]: a passage is cut
+    /// to what the query leaves of it (ADR-0053 d4).
     pub max_tokens: usize,
     /// From the call to its answer, waiting for a slot included.
     pub timeout: Duration,
 }
 
-/// The byte bound a passage is cut to before tokenising (not built yet).
+/// The bytes of a passage the tokenizer reads: well past what 512 tokens
+/// take in any script, so the cut never shortens what the model sees, and a
+/// megabyte memory costs what its first 4 KiB cost (ADR-0053 d2).
 pub const MAX_PASSAGE_BYTES: usize = 4_096;
 
-/// A passage cut to [`MAX_PASSAGE_BYTES`] (not built yet).
+/// `text` cut to [`MAX_PASSAGE_BYTES`] on a character boundary.
 #[must_use]
 pub fn cut_passage(text: &str) -> &str {
-    text
-}
-
-/// The threads of the reranker's own pool, which every inference shares,
-/// so the stage never takes more CPU than this: candle's own count, which it
-/// reads from `RAYON_NUM_THREADS` (else the host's cores) and splits each
-/// matrix product into, so the pool and the split agree. A deployment sets
-/// it in the lead's environment; on a busy host fewer threads measured
-/// faster, not slower (ADR-0053 d5).
-#[must_use]
-pub fn threads() -> usize {
-    candle_core::utils::get_num_threads().max(1)
+    if text.len() <= MAX_PASSAGE_BYTES {
+        return text;
+    }
+    let mut end = MAX_PASSAGE_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// The network: a BERT encoder, its pooler and the one-logit classifier
@@ -275,18 +281,11 @@ impl Network {
         let weights = read_checked(dir, spec, 2)?;
         let model = |e: &dyn fmt::Display| LoadError::Model(e.to_string());
         let config: Config = serde_json::from_slice(&config).map_err(|e| model(&e))?;
+        // Truncation and padding are this adapter's own (`pair`), so the
+        // tokenizer does neither.
         let mut tokenizer = Tokenizer::from_bytes(&tokenizer).map_err(|e| model(&e))?;
-        tokenizer
-            .with_truncation(Some(TruncationParams {
-                max_length: MAX_TOKENS,
-                strategy: TruncationStrategy::OnlySecond,
-                ..TruncationParams::default()
-            }))
-            .map_err(|e| model(&e))?;
-        tokenizer.with_padding(Some(PaddingParams {
-            strategy: PaddingStrategy::BatchLongest,
-            ..PaddingParams::default()
-        }));
+        tokenizer.with_truncation(None).map_err(|e| model(&e))?;
+        tokenizer.with_padding(None);
         let device = Device::Cpu;
         let vb = VarBuilder::from_buffered_safetensors(weights, DType::F32, &device)
             .map_err(|e| model(&e))?;
@@ -308,31 +307,64 @@ impl Network {
         })
     }
 
-    /// The relevance of each passage to `query`, in order.
-    fn score(&self, query: &str, passages: &[String]) -> Result<Vec<f32>, String> {
-        // Batched by length, so a short claim is not padded to an abstract.
-        let mut order: Vec<usize> = (0..passages.len()).collect();
-        order.sort_by_key(|&i| (passages[i].len(), i));
-        let mut out = vec![0.0; passages.len()];
+    /// The relevance of each passage to `query`, in order, each pair at
+    /// most `max_tokens` long.
+    fn score(
+        &self,
+        query: &str,
+        passages: &[String],
+        max_tokens: usize,
+    ) -> Result<Vec<f32>, String> {
+        self.score_pairs(query, passages, max_tokens.clamp(16, MAX_TOKENS))
+            .map_err(|e| e.to_string())
+    }
+
+    fn score_pairs(
+        &self,
+        query: &str,
+        passages: &[String],
+        max_tokens: usize,
+    ) -> Result<Vec<f32>, Failure> {
+        if passages.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The query once, cut to its share; each passage cut in bytes before
+        // the tokenizer reads it, then to what the query leaves (three
+        // special tokens: [CLS] query [SEP] passage [SEP]).
+        let mut q = self.tokenizer.encode_fast(query, false)?;
+        q.truncate(max_tokens / QUERY_SHARE, 0, TruncationDirection::Right);
+        let room = max_tokens.saturating_sub(q.len() + 3).max(1);
+        let cut: Vec<&str> = passages.iter().map(|p| cut_passage(p)).collect();
+        let mut pairs = Vec::with_capacity(cut.len());
+        for mut p in self.tokenizer.encode_batch_fast(cut, false)? {
+            p.truncate(room, 0, TruncationDirection::Right);
+            pairs.push(self.tokenizer.post_process(q.clone(), Some(p), true)?);
+        }
+        // Batched by token count, so a short claim is not padded to an
+        // abstract.
+        let mut order: Vec<usize> = (0..pairs.len()).collect();
+        order.sort_by_key(|&i| (pairs[i].len(), i));
+        let mut out = vec![0.0; pairs.len()];
         for chunk in order.chunks(BATCH) {
-            let pairs: Vec<(String, String)> = chunk
-                .iter()
-                .map(|&i| (query.to_owned(), passages[i].clone()))
-                .collect();
-            let scores = self.batch(pairs).map_err(|e| e.to_string())?;
-            for (&i, s) in chunk.iter().zip(scores) {
+            let batch: Vec<&Encoding> = chunk.iter().map(|&i| &pairs[i]).collect();
+            for (&i, s) in chunk.iter().zip(self.batch(&batch)?) {
                 out[i] = s;
             }
         }
         Ok(out)
     }
 
-    fn batch(&self, pairs: Vec<(String, String)>) -> Result<Vec<f32>, Failure> {
-        let encodings = self.tokenizer.encode_batch(pairs, true)?;
+    fn batch(&self, encodings: &[&Encoding]) -> Result<Vec<f32>, Failure> {
         let rows = encodings.len();
-        let width = encodings.first().map_or(0, |e| e.get_ids().len());
+        let width = encodings.iter().map(|e| e.len()).max().unwrap_or(0);
+        // Padded to the batch's longest pair with id 0, type 0, mask 0.
         let tensor = |field: fn(&Encoding) -> &[u32]| -> Result<Tensor, Failure> {
-            let flat: Vec<u32> = encodings.iter().flat_map(|e| field(e).to_vec()).collect();
+            let mut flat = Vec::with_capacity(rows * width);
+            for e in encodings {
+                let values = field(e);
+                flat.extend_from_slice(values);
+                flat.resize(flat.len() + width - values.len(), 0);
+            }
             Ok(Tensor::from_vec(flat, (rows, width), &self.device)?)
         };
         let ids = tensor(Encoding::get_ids)?;
@@ -351,6 +383,7 @@ impl Network {
 pub struct CrossEncoder {
     name: &'static str,
     network: Arc<Network>,
+    max_tokens: usize,
     pool: Arc<rayon::ThreadPool>,
     slots: Arc<Semaphore>,
     timeout: Duration,
@@ -375,13 +408,14 @@ impl CrossEncoder {
     /// [`LoadError::Model`] when the files do not make the network.
     pub fn load(dir: &Path, spec: &ModelSpec, limits: Limits) -> Result<Self, LoadError> {
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(threads())
+            .num_threads(limits.threads.max(1))
             .thread_name(|i| format!("oml-rerank-{i}"))
             .build()
             .map_err(|e| LoadError::Model(e.to_string()))?;
         Ok(Self {
             name: spec.name,
             network: Arc::new(Network::load(dir, spec)?),
+            max_tokens: limits.max_tokens,
             pool: Arc::new(pool),
             slots: Arc::new(Semaphore::new(limits.max_concurrent.max(1))),
             timeout: limits.timeout,
@@ -395,7 +429,8 @@ impl CrossEncoder {
     ///
     /// The model's failure, named.
     pub fn score_now(&self, query: &str, passages: &[String]) -> Result<Vec<f32>, String> {
-        self.pool.install(|| self.network.score(query, passages))
+        self.pool
+            .install(|| self.network.score(query, passages, self.max_tokens))
     }
 }
 
@@ -420,14 +455,22 @@ impl Reranker for CrossEncoder {
                 };
             let network = Arc::clone(&self.network);
             let pool = Arc::clone(&self.pool);
+            let max_tokens = self.max_tokens;
             let work = tokio::task::spawn_blocking(move || {
                 let _slot = slot;
-                pool.install(|| network.score(&query, &passages))
+                pool.install(|| network.score(&query, &passages, max_tokens))
             });
+            let failed = |reason: String| {
+                // The error's own text: a tokenizer, tensor or join error,
+                // which carries no passage text; what doctor's
+                // `search_rerank_failed` line points at (ADR-0053 d9).
+                tracing::warn!(event = "rerank_failed", model = self.name, %reason, "a rerank failed; the recall served the first stage's order");
+                Err(RerankError::Failed(reason))
+            };
             match tokio::time::timeout_at(deadline, work).await {
                 Err(_) => Err(RerankError::Timeout),
-                Ok(Err(join)) => Err(RerankError::Failed(join.to_string())),
-                Ok(Ok(Err(model))) => Err(RerankError::Failed(model)),
+                Ok(Err(join)) => failed(join.to_string()),
+                Ok(Ok(Err(model))) => failed(model),
                 Ok(Ok(Ok(scores))) => Ok(scores),
             }
         })
