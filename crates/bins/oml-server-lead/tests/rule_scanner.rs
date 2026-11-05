@@ -86,3 +86,21 @@ fn the_lead_names_its_rule_set_and_counts_findings_by_rule() {
         "{counts:?}"
     );
 }
+
+#[test]
+fn the_lead_describes_its_rule_set_and_reports_findings_without_counting() {
+    let info = RuleScanner.info().expect("the lead pins a rule set");
+    assert_eq!(info.version, "oml-scan/1");
+    assert!(info.rules > 30, "{info:?}");
+    assert!(!info.pii, "personal-data rules are off by default");
+    let token = fake_github_token();
+    let found = RuleScanner.findings(&AdmissionEnvelope {
+        tenant_id: Uuid::from_u128(1),
+        kind: "memory",
+        body: &format!("a\nb {token}"),
+    });
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].rule, "github-token");
+    assert!(found[0].veto);
+    assert_eq!(found[0].at, "/body line 2");
+}

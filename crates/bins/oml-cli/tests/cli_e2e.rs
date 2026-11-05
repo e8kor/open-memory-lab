@@ -637,6 +637,47 @@ impl Lab {
         at
     }
 
+    /// Store `body` as `key`'s memory the way a server before `oml-scan/1`
+    /// did, through the lead's own store and signing key with a scanner that
+    /// passes everything: a row the rule set never saw (ADR-0065 d13).
+    async fn seed_unscanned(&self, key: &str, claim_key: &str, body: &str) -> String {
+        struct Unscanned;
+        impl oml_app::ports::Scanner for Unscanned {
+            fn scan(
+                &self,
+                _: &oml_app::ports::AdmissionEnvelope<'_>,
+            ) -> oml_app::ports::ScanOutcome {
+                oml_app::ports::ScanOutcome::Pass
+            }
+        }
+        let app = oml_app::App::new(
+            self.store.clone(),
+            oml_server_lead::LeadSigner::new(self.signing.clone()),
+            oml_server_lead::SystemClock,
+            OsIds,
+            Unscanned,
+        );
+        let receipt = app
+            .submit_memory(
+                key,
+                &oml_app::types::SubmitRequest {
+                    idempotency_key: format!("seed-{claim_key}"),
+                    claim_key: Some(claim_key.to_owned()),
+                    verb: None,
+                    kind: oml_app::domain::MemoryKind::Memory,
+                    body: body.to_owned(),
+                    workarea: None,
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    anchor: None,
+                },
+            )
+            .await
+            .expect("the unscanned row is stored");
+        receipt.receipt.memory_id.to_string()
+    }
+
     /// `oml --json <args>` under the stored admin credentials, or `key`.
     fn json(&self, key: Option<&str>, args: &[&str]) -> (i32, Value, String) {
         oml(&self.server, &self.creds, key, args)
@@ -2925,16 +2966,15 @@ async fn the_hook_output_never_contains_the_key_value() {
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A body that holds the key value is refused by the scan, naming the
-    // rule and never the value (ADR-0065 d3, d8), so no row can carry it
-    // to the hook's recall.
+    // A body that holds the key value is refused today, naming the rule
+    // and never the value (ADR-0065 d3, d8).
     let (code, refused, log) = crew.lab.json(
         Some(&crew.agent),
         &[
             "write",
             &format!("Metals desk key {} is in the vault.", crew.agent),
             "--claim-key",
-            "metals-key-note",
+            "metals-key-refused",
             "--kind",
             "memory",
         ],
@@ -2946,18 +2986,51 @@ async fn the_hook_output_never_contains_the_key_value() {
         "{log}"
     );
     assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-desk-note",
-        "Metals desk keys are in the vault.",
-    );
+    // A row a server before the rule set stored still holds it, and matches
+    // the query: the hook redacts it where it was stored.
+    let seeded = crew
+        .lab
+        .seed_unscanned(
+            &crew.agent,
+            "metals-key-note",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
 
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
     assert_eq!(code, 0, "{stderr}");
+    let context = context_of(&stdout);
     assert!(!stdout.contains(&crew.agent), "no key on stdout: {stdout}");
     assert!(!stderr.contains(&crew.agent), "no key on stderr: {stderr}");
+    assert!(
+        section(&context, "Memories matching \"metals\":").contains(
+            &"- [held] metals-key-note: Metals desk key [OML_API_KEY] is in the vault.".to_owned()
+        ),
+        "the value is redacted where it was stored: {context}"
+    );
+
+    // The rescan finds the old row by rule and place, never the value, and
+    // changes nothing: the row is still there for a person to retire
+    // (ADR-0065 d13; ADR-0001 R4).
+    let (code, rescan, log) = crew.lab.json(None, &["admin", "rescan"]);
+    assert_eq!(code, 1, "a veto on a stored row exits 1: {log}");
+    assert_eq!(rescan["scanner_version"], "oml-scan/1", "{log}");
+    let hit = rescan["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|f| f["artifact_id"] == seeded.as_str())
+        .unwrap_or_else(|| panic!("the seeded row is found: {log}"))
+        .clone();
+    assert_eq!(hit["class"], "secret.api_token");
+    assert_eq!(hit["rule"], "oml-key");
+    assert_eq!(hit["action"], "veto");
+    assert_eq!(hit["at"], "/body line 1");
+    assert!(!log.contains(&crew.agent), "no key in the rescan: {log}");
+    let (code, read, log) = crew.lab.json(None, &["admin", "read", &seeded]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(read["state"], "held", "the rescan changed nothing: {log}");
 
     // A refused key is not echoed either.
     let unknown = "oml_refusedkey0123456789abcdefghijklmnopqrstu";

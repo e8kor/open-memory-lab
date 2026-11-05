@@ -846,6 +846,15 @@ async fn the_rule_set_vetoes_credential_files_and_secrets_and_holds_injections_n
         "injection.tool_call: reader-trigger at /body line 1; \
          injection.override: ignore-instructions at /body line 1"
     );
+    // /readyz names the rule set for doctor's scan line (d11).
+    let (status, ready) = send(&w.rig.router, "GET", "/readyz", None, None, None).await;
+    assert_eq!(status, StatusCode::OK, "{ready}");
+    assert_eq!(ready["scan"]["version"], "oml-scan/1");
+    assert_eq!(ready["scan"]["pii"], false);
+    assert!(
+        ready["scan"]["rules"].as_u64().is_some_and(|n| n > 30),
+        "{ready}"
+    );
     w.done().await;
 }
 
