@@ -4718,7 +4718,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             // d8).
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
-                // The usage counters against their rows (ADR-0070 d3, d5).
+                // The usage counters against their rows (ADR-0071 d3, d5).
                 usage_drift = client.get("/v2/admin/usage/drift").ok().map(|(_, v)| v);
             }
         }
@@ -5578,7 +5578,7 @@ fn web_doctor(
     lines
 }
 
-/// Usage metering's doctor lines (ADR-0070 d3, d5), from
+/// Usage metering's doctor lines (ADR-0071 d3, d5), from
 /// `GET /v2/admin/usage/drift` read by an admin key: the accounts whose
 /// counters differ from their rows, and the accounts on a profile the
 /// configuration does not declare; nothing when neither holds.
@@ -5645,7 +5645,7 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
             continue;
         }
         let mut hit = false;
-        // A null limit is unlimited and never near (ADR-0070 d5).
+        // A null limit is unlimited and never near (ADR-0071 d5).
         for (quota, used) in [
             ("memories", "memories"),
             ("text_bytes", "text_bytes"),

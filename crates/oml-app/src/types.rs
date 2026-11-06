@@ -2482,7 +2482,7 @@ pub struct SignupPolicy {
     pub quotas: oml_domain::signup::Quotas,
 }
 
-/// One account's six meters (ADR-0070 d2): the four stocks now and the
+/// One account's six meters (ADR-0071 d2): the four stocks now and the
 /// two flows of one UTC month.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UserUsage {
@@ -2529,7 +2529,7 @@ impl UserUsage {
     }
 }
 
-/// One account's counters, as the admin list reads them (ADR-0070 d6).
+/// One account's counters, as the admin list reads them (ADR-0071 d6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountCounters {
     pub user_root: Uuid,
@@ -2537,7 +2537,7 @@ pub struct AccountCounters {
     pub usage: UserUsage,
 }
 
-/// One ledger row: an account's meters for one closed UTC day (ADR-0070
+/// One ledger row: an account's meters for one closed UTC day (ADR-0071
 /// d4). Counts only (d7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerRow {
@@ -2548,7 +2548,7 @@ pub struct LedgerRow {
 }
 
 /// One meter of one account whose counter differs from its rows
-/// (ADR-0070 d3).
+/// (ADR-0071 d3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeterDrift {
     pub user_root: Uuid,
@@ -2557,7 +2557,7 @@ pub struct MeterDrift {
     pub rows: i64,
 }
 
-/// One meter of an account's usage as the endpoints answer it (ADR-0070
+/// One meter of an account's usage as the endpoints answer it (ADR-0071
 /// d5, d6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeterReading {
@@ -2570,7 +2570,7 @@ pub struct MeterReading {
 }
 
 /// An account's usage: its meters against its limits in one month
-/// (ADR-0070 d6).
+/// (ADR-0071 d6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountUsage {
     pub user_root: Uuid,
@@ -2580,13 +2580,13 @@ pub struct AccountUsage {
     /// limits.
     pub profile: Option<String>,
     /// Whether that profile is one the configuration declares; an
-    /// undeclared one holds every limit at zero (ADR-0070 d5).
+    /// undeclared one holds every limit at zero (ADR-0071 d5).
     pub profile_declared: bool,
     pub month: oml_domain::usage::Month,
     pub meters: Vec<MeterReading>,
 }
 
-/// An admin's `PUT …/profile` (ADR-0070 d5): the profile and every
+/// An admin's `PUT …/profile` (ADR-0071 d5): the profile and every
 /// override, replacing the account's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileAssignment {
@@ -2594,7 +2594,7 @@ pub struct ProfileAssignment {
     pub overrides: Vec<(oml_domain::signup::Quota, u64)>,
 }
 
-/// The deployment's quota profiles (ADR-0070 d5): `default` from the
+/// The deployment's quota profiles (ADR-0071 d5): `default` from the
 /// `quota.*` settings, each other declared name with its limits, and the
 /// profile a sign-up account starts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2603,7 +2603,7 @@ pub struct QuotaProfiles {
     pub signup_profile: String,
 }
 
-/// The name of the profile the `quota.*` settings make (ADR-0070 d5).
+/// The name of the profile the `quota.*` settings make (ADR-0071 d5).
 pub const DEFAULT_PROFILE: &str = "default";
 
 impl Default for QuotaProfiles {

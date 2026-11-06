@@ -1,11 +1,11 @@
-//! Per-account usage metering's pure rules (ADR-0070): the six meters, the
+//! Per-account usage metering's pure rules (ADR-0071): the six meters, the
 //! quota each is held to, a meter's state against its limit, and the UTC
 //! month a flow counts in. The counters and the ledger are the store's.
 
 use crate::envelope::EventTime;
 use crate::signup::{Quota, near_quota};
 
-/// One of the six meters (ADR-0070 d2), in the order the endpoints and the
+/// One of the six meters (ADR-0071 d2), in the order the endpoints and the
 /// pages list them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Meter {
@@ -40,7 +40,7 @@ impl Meter {
     }
 
     /// The quota that limits this meter; `recalls` has none, since reading
-    /// never blocks (ADR-0070 d5).
+    /// never blocks (ADR-0071 d5).
     #[must_use]
     pub fn quota(self) -> Option<Quota> {
         match self {
@@ -61,7 +61,7 @@ impl Meter {
     }
 }
 
-/// Where a meter stands against its limit (ADR-0070 d5).
+/// Where a meter stands against its limit (ADR-0071 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeterState {
     Ok,
@@ -102,7 +102,7 @@ pub fn percent(limit: Option<u64>, used: u64) -> Option<u64> {
 }
 
 /// A UTC calendar month, `YYYY-MM`: the period a flow counts in and the
-/// ledger export's `period` (ADR-0070 d2, d6).
+/// ledger export's `period` (ADR-0071 d2, d6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Month {
     year: u16,
@@ -169,10 +169,10 @@ pub fn day_of(at: &EventTime) -> &str {
     &at.as_str()[..10]
 }
 
-/// How long the ledger keeps a day, in months (ADR-0070 d4).
+/// How long the ledger keeps a day, in months (ADR-0071 d4).
 pub const LEDGER_RETENTION_MONTHS: u32 = 25;
 
-/// How long a day's flows are kept once rolled up, in days (ADR-0070 d4).
+/// How long a day's flows are kept once rolled up, in days (ADR-0071 d4).
 pub const ACTIVITY_RETENTION_DAYS: u32 = 62;
 
 #[cfg(test)]

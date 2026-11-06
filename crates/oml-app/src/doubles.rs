@@ -197,10 +197,10 @@ struct TenantState {
     /// (`web_deletion_requests`; ADR-0068 d6).
     deletion_requests: BTreeMap<Name, (EventTime, Option<EventTime>)>,
     /// Each account's writes and recalls by UTC day (`account_activity`;
-    /// ADR-0070 d2).
+    /// ADR-0071 d2).
     activity: BTreeMap<(Uuid, String), (u64, u64)>,
     /// The profile an admin assigned each account (`account_profiles`;
-    /// ADR-0070 d5).
+    /// ADR-0071 d5).
     account_profiles: BTreeMap<Uuid, String>,
 }
 
@@ -1862,7 +1862,7 @@ fn assign_names_fold(
 
 /// Appends one event to `state` if it extends the head, with its fold,
 /// idempotency record and outbox row, or refuses it.
-/// One account's meters recomputed from the rows by ADR-0070 d2's
+/// One account's meters recomputed from the rows by ADR-0071 d2's
 /// definitions, the flows of `month`: the double keeps no counters, so it
 /// is the definition the Postgres counters are held to.
 fn account_usage(
@@ -1937,7 +1937,7 @@ fn account_usage(
 }
 
 /// The ceiling a commit carries, held against the staged state: a quota
-/// whose count the commit raised past its limit refuses it (ADR-0070 d3).
+/// whose count the commit raised past its limit refuses it (ADR-0071 d3).
 fn hold_ceiling(
     before: &TenantState,
     after: &TenantState,

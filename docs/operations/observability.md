@@ -290,7 +290,7 @@ schema](../data/postgres-schema.md#usage-metering-adr-0070)) writes `event` `usa
 the `tenants` it rolled up and the ledger `rows` it appended. A pass that fails writes
 `usage_rollup_failed` with its `reason`, stops neither the lead nor the next pass, and the next
 pass appends the closed days it missed, up to 62 days back
-([ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d4). No account is ever a metric label: the per-account record is
+([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d4). No account is ever a metric label: the per-account record is
 the ledger.
 
 ### The plaintext rule (a correctness rule)

@@ -13,7 +13,7 @@ T = TypeVar("T", bound="ListWebUsersResponse200UsersItemQuotas")
 
 @_attrs_define
 class ListWebUsersResponse200UsersItemQuotas:
-    """A null limit is unlimited (ADR-0070 d5).
+    """A null limit is unlimited (ADR-0071 d5).
 
     Attributes:
         memories (int | None | Unset):

@@ -113,7 +113,7 @@ where
                         "keys": u.usage.keys,
                         "connections": u.usage.connections,
                     },
-                    // A null limit is unlimited (ADR-0070 d5).
+                    // A null limit is unlimited (ADR-0071 d5).
                     "quotas": oml_app::domain::signup::Quota::ALL
                         .iter()
                         .map(|q| {

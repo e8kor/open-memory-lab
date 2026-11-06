@@ -1,4 +1,4 @@
-//! Per-account usage's routes (ADR-0070 d6): `GET /v1/account/usage` for a
+//! Per-account usage's routes (ADR-0071 d6): `GET /v1/account/usage` for a
 //! key's own account, and, admin by key role, `GET` an account's usage,
 //! `GET` the month's ledger as JSON or CSV, `GET` the drift report and
 //! `PUT` an account's quota profile. Counts only, never content (d7).

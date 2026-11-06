@@ -34,7 +34,7 @@ impl SignupMode {
     }
 }
 
-/// One of the six per-person quotas (ADR-0068 d5; ADR-0070 d5): the
+/// One of the six per-person quotas (ADR-0068 d5; ADR-0071 d5): the
 /// closed set the refusal's `details.quota` and the metric's label take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Quota {
@@ -70,7 +70,7 @@ impl Quota {
     }
 
     /// The largest limit an admin or a profile may set for this quota: a
-    /// byte count reaches further than a count (ADR-0070 d5).
+    /// byte count reaches further than a count (ADR-0071 d5).
     #[must_use]
     pub fn max_limit(self) -> u64 {
         match self {
@@ -88,15 +88,15 @@ impl Quota {
 /// The largest count limit an admin may set (ADR-0068 d5).
 pub const QUOTA_LIMIT_MAX: u64 = 1_000_000;
 
-/// The largest `text_bytes` limit, a terabyte (ADR-0070 d5).
+/// The largest `text_bytes` limit, a terabyte (ADR-0071 d5).
 pub const TEXT_BYTES_LIMIT_MAX: u64 = 1_000_000_000_000;
 
 /// A limit no count reaches: `text_bytes` and `writes_per_month` in the
-/// `default` profile until the operator sets them (ADR-0070 d5).
+/// `default` profile until the operator sets them (ADR-0071 d5).
 pub const UNLIMITED: u64 = u64::MAX;
 
 /// The per-person limits: a profile's, or one person's after an admin's
-/// override (ADR-0068 d1, d5; ADR-0070 d5).
+/// override (ADR-0068 d1, d5; ADR-0071 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quotas {
     pub memories: u64,
@@ -109,7 +109,7 @@ pub struct Quotas {
 
 impl Default for Quotas {
     /// The operator's defaults of 2026-11-06, unmeasured (issue #164);
-    /// `text_bytes` and `writes_per_month` unlimited until set (ADR-0070 d5).
+    /// `text_bytes` and `writes_per_month` unlimited until set (ADR-0071 d5).
     fn default() -> Self {
         Self {
             memories: 1000,
@@ -124,7 +124,7 @@ impl Default for Quotas {
 
 impl Quotas {
     /// Every limit zero: the limits of an account whose profile the
-    /// configuration no longer declares, which fail closed (ADR-0070 d5).
+    /// configuration no longer declares, which fail closed (ADR-0071 d5).
     pub const ZERO: Quotas = Quotas {
         memories: 0,
         text_bytes: 0,
@@ -186,7 +186,7 @@ pub fn check_quota(quota: Quota, limit: u64, used: u64) -> Result<(), QuotaReach
 
 /// Whether `delta` more of `quota` fits beside `used`: the sum may reach the
 /// limit and never pass it, so a limit of zero admits nothing and a
-/// `text_bytes` charge is its byte count (ADR-0070 d3).
+/// `text_bytes` charge is its byte count (ADR-0071 d3).
 pub fn check_charge(quota: Quota, limit: u64, used: u64, delta: u64) -> Result<(), QuotaReached> {
     if used.saturating_add(delta) <= limit {
         Ok(())
@@ -212,7 +212,7 @@ pub fn drawn_user(random: &[u8; 32]) -> Name {
 }
 
 /// Whether the 80% warning holds for `used` of `limit`: the usage
-/// endpoints' `warning` state and the doctor line (ADR-0070 d5, amending
+/// endpoints' `warning` state and the doctor line (ADR-0071 d5, amending
 /// ADR-0068 d5's 90%). An unlimited quota never warns.
 #[must_use]
 pub fn near_quota(limit: u64, used: u64) -> bool {

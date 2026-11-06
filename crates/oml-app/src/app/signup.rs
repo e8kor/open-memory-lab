@@ -509,7 +509,7 @@ where
     }
 
     /// The person's usage and limits, for the onboarding page; `None`
-    /// where they are under no quota (ADR-0068 d5; ADR-0070 d5).
+    /// where they are under no quota (ADR-0068 d5; ADR-0071 d5).
     pub async fn web_own_limits(
         &self,
         web: &Caller,
@@ -651,7 +651,7 @@ where
     }
 
     /// The sign-up profile's limits, what a person with no root yet would
-    /// start on (ADR-0070 d5).
+    /// start on (ADR-0071 d5).
     fn default_quotas(&self) -> Quotas {
         self.profiles
             .get(&self.profiles.signup_profile)
@@ -659,7 +659,7 @@ where
     }
 
     /// The account a key belongs to: a user key, or a person's session key
-    /// (ADR-0070 d1). Whether it is under limits is its profile's.
+    /// (ADR-0071 d1). Whether it is under limits is its profile's.
     fn quota_root(&self, key: &KeyRecord) -> Option<Uuid> {
         key.user
     }
@@ -676,7 +676,7 @@ where
 
     /// One more of `quota` for `key`'s person, or `limit.quota` naming
     /// what was hit (ADR-0068 d5); a key under no limit passes. The
-    /// commit's ceiling is the check that holds (ADR-0070 d3).
+    /// commit's ceiling is the check that holds (ADR-0071 d3).
     pub(crate) async fn require_quota(
         &self,
         key: &KeyRecord,

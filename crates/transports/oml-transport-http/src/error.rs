@@ -883,11 +883,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::TelemetryOff => ApiError::unavailable("telemetry_off"),
         // An account's quota, refused before the signature or by the
         // commit's ceiling; nothing was journalled (errors.md `limit.quota`;
-        // ADR-0068 d5; ADR-0070 d3).
+        // ADR-0068 d5; ADR-0071 d3).
         AppError::QuotaReached(reached) | AppError::Store(StoreError::QuotaReached(reached)) => ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "limit.quota",
-            "An account holds at most its profile's memories, text bytes, monthly writes, keys and connections; an administrator can raise one (ADR-0068 d5; ADR-0070 d5).",
+            "An account holds at most its profile's memories, text bytes, monthly writes, keys and connections; an administrator can raise one (ADR-0068 d5; ADR-0071 d5).",
             format!(
                 "your {} quota of {} is reached",
                 reached.quota.as_str(),

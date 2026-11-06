@@ -14,7 +14,7 @@ T = TypeVar("T", bound="AccountUsage")
 
 @_attrs_define
 class AccountUsage:
-    """An account's six meters against its limits in one UTC month (ADR-0070 d2, d5, d6). Counts only.
+    """An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only.
 
     Attributes:
         account (str): The id of the root workarea the account is.

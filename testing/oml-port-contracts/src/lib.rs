@@ -136,7 +136,7 @@ impl ChainRig {
     }
 
     /// [`Self::commit`] carrying the ceiling of the account it charges
-    /// (ADR-0070 d3).
+    /// (ADR-0071 d3).
     pub async fn commit_charged<S: JournalStore>(
         &mut self,
         store: &S,
@@ -7047,13 +7047,13 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
 }
 
 // ---------------------------------------------------------------------------
-// Usage metering (ADR-0070)
+// Usage metering (ADR-0071)
 // ---------------------------------------------------------------------------
 
 /// A commit whose fold raises one of its account's meters past the ceiling
 /// it carries is refused and writes nothing; the usage the store reads is
 /// what the rows say, through holds, a rejection and a key revocation; and
-/// no counter drifts from its rows (ADR-0070 d2, d3).
+/// no counter drifts from its rows (ADR-0071 d2, d3).
 pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows<
     S: JournalStore,
 >(

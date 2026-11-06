@@ -94,7 +94,7 @@ def sync_detailed(
 ) -> Response[AccountUsage | ErrorEnvelope]:
     """Set an account's quota profile and its overrides, replacing the ones it had.
 
-     Requires: admin key role (ADR-0070 d5, d6). profile names a profile the configuration declares, or
+     Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or
     request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
@@ -142,7 +142,7 @@ def sync(
 ) -> AccountUsage | ErrorEnvelope | None:
     """Set an account's quota profile and its overrides, replacing the ones it had.
 
-     Requires: admin key role (ADR-0070 d5, d6). profile names a profile the configuration declares, or
+     Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or
     request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
@@ -185,7 +185,7 @@ async def asyncio_detailed(
 ) -> Response[AccountUsage | ErrorEnvelope]:
     """Set an account's quota profile and its overrides, replacing the ones it had.
 
-     Requires: admin key role (ADR-0070 d5, d6). profile names a profile the configuration declares, or
+     Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or
     request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
@@ -231,7 +231,7 @@ async def asyncio(
 ) -> AccountUsage | ErrorEnvelope | None:
     """Set an account's quota profile and its overrides, replacing the ones it had.
 
-     Requires: admin key role (ADR-0070 d5, d6). profile names a profile the configuration declares, or
+     Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or
     request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled

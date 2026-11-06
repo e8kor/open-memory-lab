@@ -239,7 +239,7 @@ where
             "guardrails" => ("/web?view=guardrails", self.guardrails_view(&web).await?),
             _ => {
                 // The person's usage above their keys, where they are an
-                // account (ADR-0070 d6).
+                // account (ADR-0071 d6).
                 let usage = match self.app.own_usage(&web).await {
                     Ok(usage) => super::start::usage_card(&usage),
                     Err(oml_app::types::AppError::NotFound) => String::new(),

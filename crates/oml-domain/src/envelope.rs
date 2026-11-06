@@ -104,7 +104,7 @@ pub mod event_types {
     /// An admin set or cleared one person's quota (ADR-0068 d5).
     pub const WEB_QUOTA_SET: &str = "web.quota_set";
     /// An admin set an account's quota profile and its overrides, replacing
-    /// the ones it had (ADR-0070 d5).
+    /// the ones it had (ADR-0071 d5).
     pub const ACCOUNT_PROFILE_SET: &str = "account.profile_set";
     /// An admin disabled a person: their entries and sessions end and
     /// their agent keys are cut off (ADR-0068 d8).

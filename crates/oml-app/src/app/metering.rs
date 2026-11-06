@@ -1,4 +1,4 @@
-//! Per-account usage metering's use cases (ADR-0070): an account's limits
+//! Per-account usage metering's use cases (ADR-0071): an account's limits
 //! from its quota profile and overrides, the ceiling a metered commit
 //! carries, the pre-check before a write is signed, the usage reads, the
 //! ledger export, a profile's assignment and the drift report. The counters
@@ -22,7 +22,7 @@ use crate::types::{
     ProfileAssignment, QuotaProfiles, UserUsage,
 };
 
-/// The drift report (ADR-0070 d3, d5): each meter whose counter differs
+/// The drift report (ADR-0071 d3, d5): each meter whose counter differs
 /// from its rows, and each account on an undeclared profile, with its
 /// user.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub struct UsageDriftReport {
 }
 
 /// The limits an account is held to, and where they come from
-/// (ADR-0070 d5).
+/// (ADR-0071 d5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountLimits {
     /// The profile, `None` for an account under no limits.
@@ -51,7 +51,7 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// The app with the deployment's quota profiles (ADR-0070 d5); without
+    /// The app with the deployment's quota profiles (ADR-0071 d5); without
     /// them, `default` alone, with ADR-0068's limits.
     #[must_use]
     pub fn with_quota_profiles(self, profiles: QuotaProfiles) -> Self {
@@ -67,7 +67,7 @@ where
         &self.profiles
     }
 
-    /// An account's limits (ADR-0070 d5): its assigned profile's, an
+    /// An account's limits (ADR-0071 d5): its assigned profile's, an
     /// undeclared one's being zero; else, in the sign-up tenant,
     /// `quota.signup_profile`'s; else none. The account's overrides apply
     /// to whichever profile holds.
@@ -107,7 +107,7 @@ where
     }
 
     /// The ceiling a commit charging `root`'s account carries, `None` for
-    /// no account or one under no limits (ADR-0070 d3).
+    /// no account or one under no limits (ADR-0071 d3).
     pub(crate) async fn ceiling_for(
         &self,
         tenant_id: Uuid,
@@ -125,7 +125,7 @@ where
     }
 
     /// A commit that charges an account, carrying its ceiling: the store
-    /// refuses it, writing nothing, past a limit (ADR-0070 d3).
+    /// refuses it, writing nothing, past a limit (ADR-0071 d3).
     pub(crate) async fn commit_charged(
         &self,
         event: SignedEnvelope,
@@ -141,7 +141,7 @@ where
     /// The pre-check before a write is signed: each `(quota, delta)` fits
     /// beside what the key's account holds, or `limit.quota` naming the
     /// first that does not. The commit's ceiling is the check that holds;
-    /// this one spares the signature (ADR-0070 d3).
+    /// this one spares the signature (ADR-0071 d3).
     pub(crate) async fn require_charge(
         &self,
         key: &KeyRecord,
@@ -163,7 +163,7 @@ where
     }
 
     /// The usage of `root`'s account: each meter against its limit, this
-    /// month (ADR-0070 d5, d6).
+    /// month (ADR-0071 d5, d6).
     pub async fn usage_of(&self, tenant_id: Uuid, root: Uuid) -> Result<AccountUsage, AppError> {
         let now = self.clock.now();
         let limits = self.account_limits(tenant_id, root).await?;
@@ -179,7 +179,7 @@ where
 
     /// `GET /v1/account/usage`: the caller's own account, by its key and
     /// never by a parameter, so no request names another account; a tenant
-    /// key belongs to none (ADR-0070 d1, d6).
+    /// key belongs to none (ADR-0071 d1, d6).
     pub async fn account_usage(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -220,7 +220,7 @@ where
             .ok_or(AppError::NotFound)
     }
 
-    /// `GET /v2/admin/accounts/{account}/usage` (ADR-0070 d6).
+    /// `GET /v2/admin/accounts/{account}/usage` (ADR-0071 d6).
     pub async fn admin_account_usage(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -233,7 +233,7 @@ where
     }
 
     /// Every account of the admin's tenant with its usage this month, as
-    /// `/web/admin/users` lists them (ADR-0070 d6).
+    /// `/web/admin/users` lists them (ADR-0071 d6).
     pub async fn admin_accounts(&self, admin: &Caller) -> Result<Vec<AccountUsage>, AppError> {
         require_role(&admin.key, Role::Admin, "account_usage")?;
         let tenant_id = admin.key.tenant_id;
@@ -259,7 +259,7 @@ where
     }
 
     /// `GET /v2/admin/usage?period=YYYY-MM`: the month's ledger rows, every
-    /// account, each with its user (ADR-0070 d4, d6).
+    /// account, each with its user (ADR-0071 d4, d6).
     pub async fn admin_usage_ledger(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -291,7 +291,7 @@ where
 
     /// `GET /v2/admin/usage/drift`: each meter whose counter differs from
     /// its rows this month, and each account on a profile the configuration
-    /// does not declare (ADR-0070 d3, d5).
+    /// does not declare (ADR-0071 d3, d5).
     pub async fn admin_usage_drift(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -322,7 +322,7 @@ where
         Ok(report)
     }
 
-    /// `PUT /v2/admin/accounts/{account}/profile` (ADR-0070 d5): a declared
+    /// `PUT /v2/admin/accounts/{account}/profile` (ADR-0071 d5): a declared
     /// profile and overrides within each quota's range, journalled as
     /// `account.profile_set`, replacing the account's; then its usage.
     pub async fn admin_set_profile(

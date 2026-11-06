@@ -77,11 +77,11 @@ def sync_detailed(
 ) -> Response[AccountUsage | ErrorEnvelope]:
     """The calling key's own account's meters against its limits this UTC month.
 
-     Requires: any key of an account, a user root's key (ADR-0070 d1, d6). The account is the key's own
+     Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own
     and no parameter names another, so no request reads another account's usage; a tenant key, which
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
-    (ADR-0070 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
+    (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
     this or any other read. Proposed.
 
     Args:
@@ -119,11 +119,11 @@ def sync(
 ) -> AccountUsage | ErrorEnvelope | None:
     """The calling key's own account's meters against its limits this UTC month.
 
-     Requires: any key of an account, a user root's key (ADR-0070 d1, d6). The account is the key's own
+     Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own
     and no parameter names another, so no request reads another account's usage; a tenant key, which
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
-    (ADR-0070 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
+    (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
     this or any other read. Proposed.
 
     Args:
@@ -156,11 +156,11 @@ async def asyncio_detailed(
 ) -> Response[AccountUsage | ErrorEnvelope]:
     """The calling key's own account's meters against its limits this UTC month.
 
-     Requires: any key of an account, a user root's key (ADR-0070 d1, d6). The account is the key's own
+     Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own
     and no parameter names another, so no request reads another account's usage; a tenant key, which
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
-    (ADR-0070 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
+    (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
     this or any other read. Proposed.
 
     Args:
@@ -196,11 +196,11 @@ async def asyncio(
 ) -> AccountUsage | ErrorEnvelope | None:
     """The calling key's own account's meters against its limits this UTC month.
 
-     Requires: any key of an account, a user root's key (ADR-0070 d1, d6). The account is the key's own
+     Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own
     and no parameter names another, so no request reads another account's usage; a tenant key, which
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
-    (ADR-0070 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
+    (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
     this or any other read. Proposed.
 
     Args:

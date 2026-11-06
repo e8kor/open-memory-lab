@@ -864,7 +864,7 @@ derived from the email.
 
 An admin key set an account's quota profile and its overrides, replacing the ones it had; the
 fold writes `account_profiles` and replaces the account's `user_quotas` rows
-([ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5). Counts and names only.
+([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5). Counts and names only.
 
 ### web.quota_set
 

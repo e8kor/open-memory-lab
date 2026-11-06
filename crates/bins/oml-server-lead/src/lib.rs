@@ -88,7 +88,7 @@ pub struct Config {
     /// (ADR-0068 d1).
     pub signup: Option<oml_app::types::SignupPolicy>,
     /// `quota.*`: the `default` profile, each profile `quota.profiles`
-    /// names, and the profile a sign-up account starts on (ADR-0070 d5).
+    /// names, and the profile a sign-up account starts on (ADR-0071 d5).
     pub quota_profiles: oml_app::types::QuotaProfiles,
     /// `search.enabled` and `search.default`: the pipelines served and the
     /// default (ADR-0049 d4), with `search.rerank.depth` and
@@ -555,7 +555,7 @@ fn signup_policy(
     }))
 }
 
-/// `quota.*` (ADR-0070 d5): `default` from `quota.<quota>`, with ADR-0068's
+/// `quota.*` (ADR-0071 d5): `default` from `quota.<quota>`, with ADR-0068's
 /// limits and `text_bytes` and `writes_per_month` unlimited until set; each
 /// name `quota.profiles` lists, comma-separated, from
 /// `quota.profile.<name>.<quota>`, a limit it leaves unset being
@@ -575,7 +575,7 @@ pub fn quota_profiles(
                     .filter(|n| *n <= quota.max_limit())
                     .ok_or_else(|| {
                         ConfigError::Invalid(format!(
-                            "{key} {v:?} is not a whole number from 0 to {} (ADR-0070 d5)",
+                            "{key} {v:?} is not a whole number from 0 to {} (ADR-0071 d5)",
                             quota.max_limit()
                         ))
                     })
@@ -602,7 +602,7 @@ pub fn quota_profiles(
     {
         if oml_app::domain::name::Name::parse(name).is_err() || name == DEFAULT_PROFILE {
             return Err(ConfigError::Invalid(format!(
-                "{KEY_QUOTA_PROFILES} names {name:?}: a profile is a name other than {DEFAULT_PROFILE} (ADR-0070 d5)"
+                "{KEY_QUOTA_PROFILES} names {name:?}: a profile is a name other than {DEFAULT_PROFILE} (ADR-0071 d5)"
             )));
         }
         profiles.insert(
@@ -615,7 +615,7 @@ pub fn quota_profiles(
         .unwrap_or_else(|| DEFAULT_PROFILE.to_owned());
     if !profiles.contains_key(&signup_profile) {
         return Err(ConfigError::Invalid(format!(
-            "{KEY_QUOTA_SIGNUP_PROFILE} {signup_profile:?} is not a declared profile (ADR-0070 d5)"
+            "{KEY_QUOTA_SIGNUP_PROFILE} {signup_profile:?} is not a declared profile (ADR-0071 d5)"
         )));
     }
     Ok(oml_app::types::QuotaProfiles {
@@ -1546,7 +1546,7 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
 
 /// How often [`spawn_usage_rollup`] runs [`roll_up_usage`]: an hour, so a
 /// closed day's ledger rows land within the hour after midnight UTC
-/// (ADR-0070 d4).
+/// (ADR-0071 d4).
 pub const USAGE_ROLLUP_SECONDS: u64 = 60 * 60;
 
 /// The `event` field of the log line each rollup writes (observability.md).
@@ -1554,7 +1554,7 @@ pub const EVENT_USAGE_ROLLUP: &str = "usage_rollup";
 /// The `event` field of the log line a failed rollup writes.
 pub const EVENT_USAGE_ROLLUP_FAILED: &str = "usage_rollup_failed";
 
-/// One usage rollup at `at` over every tenant (ADR-0070 d4): each
+/// One usage rollup at `at` over every tenant (ADR-0071 d4): each
 /// tenant's closed days appended to the ledger and its expired rows
 /// deleted. Returns the tenants and the rows appended. A failed tenant
 /// fails the pass with its reason; the next pass appends what it missed.
@@ -1587,7 +1587,7 @@ pub fn spawn_usage_rollup(store: PgStore) -> tokio::task::JoinHandle<()> {
                     event = EVENT_USAGE_ROLLUP,
                     tenants,
                     rows,
-                    "usage rolled up (ADR-0070 d4)"
+                    "usage rolled up (ADR-0071 d4)"
                 ),
                 Err(reason) => tracing::error!(
                     event = EVENT_USAGE_ROLLUP_FAILED,
@@ -1863,7 +1863,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     // Open sign-up and the quotas of its tenant (ADR-0068 d1): an issuer
     // that is not a live admin key of that tenant stops the start.
     let signup = web.as_ref().and_then(|w| w.signup_policy().cloned());
-    // The quota profiles (ADR-0070 d5): the configuration's, or `default`
+    // The quota profiles (ADR-0071 d5): the configuration's, or `default`
     // alone with the sign-up policy's limits.
     let profiles = profiles.unwrap_or_else(|| {
         oml_app::types::QuotaProfiles::only(signup.as_ref().map(|p| p.quotas).unwrap_or_default())

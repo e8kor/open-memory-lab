@@ -1436,7 +1436,7 @@ pub struct PgStore {
     trigram: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Whether the database holds 0038's meters, once a commit found them:
     /// a database not yet migrated past 0037, which only an upgrade test
-    /// writes to, commits unmetered and is filled by 0038 (ADR-0070
+    /// writes to, commits unmetered and is filled by 0038 (ADR-0071
     /// Consequences). Shared by every clone, as the database is.
     metered: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The constants `bm25_postings` prunes by (ADR-0052 d6).
@@ -3097,7 +3097,7 @@ async fn apply_fold(
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
-            // The overrides are replaced whole (ADR-0070 d5).
+            // The overrides are replaced whole (ADR-0071 d5).
             sqlx::query("DELETE FROM user_quotas WHERE tenant_id = $1 AND user_root = $2")
                 .bind(tenant_id)
                 .bind(user_root)
@@ -3911,7 +3911,7 @@ async fn fold_connection_revoked(
 }
 
 // ---------------------------------------------------------------------------
-// Usage metering (ADR-0070): the counters a metered fold moves, in the
+// Usage metering (ADR-0071): the counters a metered fold moves, in the
 // commit's own transaction, and the ceiling the commit carries
 // ---------------------------------------------------------------------------
 
@@ -3941,7 +3941,7 @@ fn usage_of(
 
 /// What a fold moves on the account meters, read before the fold: the
 /// chain whose liveness may change, with its liveness then, and the direct
-/// charges, as (account, meter, delta) (ADR-0070 d2, d3).
+/// charges, as (account, meter, delta) (ADR-0071 d2, d3).
 #[derive(Debug, Default)]
 struct MeterPlan {
     chain: Option<(Uuid, String, bool)>,
@@ -3949,7 +3949,7 @@ struct MeterPlan {
 }
 
 /// The account a key belongs to, if any, and whether it counts on `keys`:
-/// a live bearer or connector key (ADR-0070 d1, d2).
+/// a live bearer or connector key (ADR-0071 d1, d2).
 async fn key_account(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -3969,7 +3969,7 @@ async fn key_account(
     }))
 }
 
-/// Whether the chain is live by ADR-0070 d2, through the one SQL
+/// Whether the chain is live by ADR-0071 d2, through the one SQL
 /// definition 0038 holds.
 async fn chain_live(
     tx: &mut Transaction<'_, Postgres>,
@@ -4091,7 +4091,7 @@ async fn connection_account(
 /// After the fold: the chain's liveness again, every charge on its
 /// account's counter, and the ceiling the commit carries held against each
 /// meter it raised. A meter past its limit refuses the commit, which rolls
-/// back with the journal row (ADR-0070 d3).
+/// back with the journal row (ADR-0071 d3).
 async fn apply_meters(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -4316,7 +4316,7 @@ async fn append_event(
 // ---------------------------------------------------------------------------
 
 impl PgStore {
-    /// The usage rollup of one tenant at `at` (ADR-0070 d4): one ledger row
+    /// The usage rollup of one tenant at `at` (ADR-0071 d4): one ledger row
     /// per account for every closed UTC day after its last one, at most 62
     /// days back and from yesterday for an account with none, holding the
     /// stocks as read now and that day's flows; then the rows past their
@@ -5735,7 +5735,7 @@ impl JournalStore for PgStore {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // The account's counter row, so the ledger rolls a person up who
-        // has only read (ADR-0070 d4).
+        // has only read (ADR-0071 d4).
         sqlx::query(
             "INSERT INTO account_meters (tenant_id, user_root) VALUES ($1, $2) \
              ON CONFLICT (tenant_id, user_root) DO NOTHING",
@@ -5967,7 +5967,7 @@ impl JournalStore for PgStore {
         // Each link extends the one before it, under the one lock; a
         // refused link returns before COMMIT, so the transaction rolls back
         // every earlier link with it (ADR-0025 d10).
-        // The meters exist from 0038 on; once found they stay (ADR-0070).
+        // The meters exist from 0038 on; once found they stay (ADR-0071).
         let metered = self.metered.load(std::sync::atomic::Ordering::Relaxed) || {
             let found: bool = sqlx::query_scalar("SELECT to_regproc('oml_chain_live') IS NOT NULL")
                 .fetch_one(&mut *tx)

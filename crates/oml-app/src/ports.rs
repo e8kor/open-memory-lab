@@ -41,7 +41,7 @@ use crate::search::{
 pub enum StoreError {
     /// A metered commit would pass one of its account's limits, checked in
     /// the committing transaction against the counter it moved; the commit
-    /// wrote nothing (ADR-0070 d3).
+    /// wrote nothing (ADR-0071 d3).
     #[error("quota {} reached: {} of {}", .0.quota.as_str(), .0.used, .0.limit)]
     QuotaReached(oml_domain::signup::QuotaReached),
     /// An in-progress commit found a held version on its subtree inside
@@ -373,7 +373,7 @@ pub enum MetadataFold {
     },
     /// `account.profile_set`: the account's quota profile and its overrides,
     /// replacing the ones it had; `None` returns it to the deployment's
-    /// default profile (ADR-0070 d5).
+    /// default profile (ADR-0071 d5).
     AccountProfileSet {
         user_root: Uuid,
         profile: Option<String>,
@@ -547,11 +547,11 @@ pub struct CommitRequest {
     /// The limits of the account this commit charges, which the store holds
     /// every meter the fold raises to in the committing transaction; `None`
     /// for an account under no limits and for every unmetered fold
-    /// (ADR-0070 d3). Metering itself happens either way.
+    /// (ADR-0071 d3). Metering itself happens either way.
     pub ceiling: Option<Ceiling>,
 }
 
-/// One account's limits, carried by a metered commit (ADR-0070 d3).
+/// One account's limits, carried by a metered commit (ADR-0071 d3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ceiling {
     pub user_root: Uuid,
@@ -775,7 +775,7 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
-    /// The account's meters, read from its counters (ADR-0070 d2, d3): the
+    /// The account's meters, read from its counters (ADR-0071 d2, d3): the
     /// four stocks and the flows of the UTC month `at` falls in.
     fn user_usage(
         &self,
@@ -784,7 +784,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         at: &EventTime,
     ) -> impl Future<Output = Result<crate::types::UserUsage, StoreError>> + Send;
 
-    /// The profile an admin assigned the account, if any (ADR-0070 d5).
+    /// The profile an admin assigned the account, if any (ADR-0071 d5).
     fn account_profile(
         &self,
         tenant_id: Uuid,
@@ -792,7 +792,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
 
     /// One recall by a key of the account, counted in `at`'s UTC day; the
-    /// query is never recorded (ADR-0070 d2, d7).
+    /// query is never recorded (ADR-0071 d2, d7).
     fn meter_recall(
         &self,
         tenant_id: Uuid,
@@ -801,7 +801,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// Every account of the tenant that has a counter row, with its
-    /// counters and the flows of `month` (ADR-0070 d6).
+    /// counters and the flows of `month` (ADR-0071 d6).
     fn usage_accounts(
         &self,
         tenant_id: Uuid,
@@ -809,7 +809,7 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<crate::types::AccountCounters>, StoreError>> + Send;
 
     /// The ledger rows of `month`, every account, by day then account
-    /// (ADR-0070 d4, d6).
+    /// (ADR-0071 d4, d6).
     fn usage_ledger(
         &self,
         tenant_id: Uuid,
@@ -817,8 +817,8 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<crate::types::LedgerRow>, StoreError>> + Send;
 
     /// Each account whose counters differ from its rows, recomputed by
-    /// ADR-0070 d2's definitions, with the month of `month`'s flows summed
-    /// (ADR-0070 d3).
+    /// ADR-0071 d2's definitions, with the month of `month`'s flows summed
+    /// (ADR-0071 d3).
     fn usage_drift(
         &self,
         tenant_id: Uuid,

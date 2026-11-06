@@ -7,7 +7,7 @@ answers: how a deployment opens sign-up to anyone with a Google or GitHub accoun
 
 # ADR-0068 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
 
-**Status:** proposed · 2026-11-06 · amended by ADR-0070
+**Status:** proposed · 2026-11-06 · amended by ADR-0071
 
 **Amends:** ADR-0045 (d1: three routes join `WEB_ROUTES`; d2: in open mode a sign-in adds its own entry; d8: one page carries one hashed script; d15: sign-ups are limited per client address), ADR-0058 (d5 is the gate that opening sign-up on the public server waits for)
 

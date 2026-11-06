@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits
+id: adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits
 tier: engineering
 status: proposed
 answers: what an account is and which column names it; the six meters and exactly what each counts; how a quota check stays exact when two writers race at the limit; how doctor finds a counter that drifted from its source; the daily usage ledger, its retention and why no meter is a per-account metric label; named quota profiles, an account's profile and overrides, the 80% warning and the 100% refusal; the endpoints that read usage and set a profile; what the pages show; what the counts never hold; what it amends in ADR-0068
 -->
 
-# ADR-0070 — Every account is metered by counters the write updates in its own transaction, and named quota profiles set its limits
+# ADR-0071 — Every account is metered by counters the write updates in its own transaction, and named quota profiles set its limits
 
 **Status:** proposed · 2026-11-06
 

@@ -1012,9 +1012,9 @@ limit deletes the row. `web_deletion_requests` is folded from `web.deletion_requ
 role holds `SELECT, INSERT, UPDATE, DELETE` on `user_quotas` and `SELECT, INSERT, UPDATE` on
 `web_deletion_requests`.
 
-## usage metering (ADR-0070)
+## usage metering (ADR-0071)
 
-*Proposed (migration `0038_usage_metering`) · [ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d2, d3, d4, d5*
+*Proposed (migration `0038_usage_metering`) · [ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d2, d3, d4, d5*
 
 ```sql
 CREATE TABLE account_meters (            -- one row per account, moved by the metered commit

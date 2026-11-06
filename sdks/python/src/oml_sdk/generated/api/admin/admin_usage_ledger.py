@@ -96,7 +96,7 @@ def sync_detailed(
     """The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or
     CSV.
 
-     Requires: admin key role (ADR-0070 d4, d6). period is the month, YYYY-MM, and required; format is
+     Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
     as the hourly rollup read them after the day closed and that day's flows; profile is the one an
@@ -145,7 +145,7 @@ def sync(
     """The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or
     CSV.
 
-     Requires: admin key role (ADR-0070 d4, d6). period is the month, YYYY-MM, and required; format is
+     Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
     as the hourly rollup read them after the day closed and that day's flows; profile is the one an
@@ -189,7 +189,7 @@ async def asyncio_detailed(
     """The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or
     CSV.
 
-     Requires: admin key role (ADR-0070 d4, d6). period is the month, YYYY-MM, and required; format is
+     Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
     as the hourly rollup read them after the day closed and that day's flows; profile is the one an
@@ -236,7 +236,7 @@ async def asyncio(
     """The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or
     CSV.
 
-     Requires: admin key role (ADR-0070 d4, d6). period is the month, YYYY-MM, and required; format is
+     Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
     as the hourly rollup read them after the day closed and that day's flows; profile is the one an

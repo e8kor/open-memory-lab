@@ -225,7 +225,7 @@ pub struct App<J, S, C, I, Sc> {
     /// Open sign-up and its counters; `None` where the deployment has no
     /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
     signup: Option<Arc<signup::SignupState>>,
-    /// The deployment's quota profiles (ADR-0070 d5).
+    /// The deployment's quota profiles (ADR-0071 d5).
     profiles: Arc<crate::types::QuotaProfiles>,
 }
 
@@ -2860,7 +2860,7 @@ where
         )?;
         let mut last = event.clone();
         // A key of an account counts on its `keys` meter, a session key
-        // never; the commit holds the account's ceiling (ADR-0070 d2, d3).
+        // never; the commit holds the account's ceiling (ADR-0071 d2, d3).
         let charged = record
             .user
             .filter(|_| record.credential != Credential::Session);
@@ -4720,7 +4720,7 @@ where
         // nothing is journalled past them. After the replay, so a retry of
         // a write that landed at the limit answers its record. This check
         // spares the signature; the commit's ceiling is the one that holds
-        // (ADR-0068 d5; ADR-0070 d3).
+        // (ADR-0068 d5; ADR-0071 d3).
         self.require_charge(
             key,
             &[
@@ -5670,7 +5670,7 @@ where
         let result = self.recall_as(&caller, req).await?;
         // One recall on the account's meter, and never what was asked. A
         // count that fails to write leaves the recall served: reading never
-        // blocks (ADR-0070 d2, d5, d7).
+        // blocks (ADR-0071 d2, d5, d7).
         if let Some(root) = caller.key.user {
             let _ = self
                 .journal
@@ -6937,7 +6937,7 @@ where
                 .await?;
         }
         // A new version charges the account's bytes and monthly writes and
-        // never its memories (ADR-0070 d2, d3).
+        // never its memories (ADR-0071 d2, d3).
         self.require_charge(
             key,
             &[

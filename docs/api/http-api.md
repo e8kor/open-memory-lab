@@ -1784,7 +1784,7 @@ when any finding vetoes.
 
 ### Account usage
 
-*Proposed · [ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md)*
+*Proposed · [ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md)*
 
 An account is a person's user root and everything its keys write. Six meters count it:
 `memories` (live chains it started), `text_bytes` (the claim text of every version it wrote),

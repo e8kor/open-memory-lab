@@ -17,7 +17,7 @@ class ListWebUsersResponse200UsersItemUsage:
     Attributes:
         memories (int | Unset):
         text_bytes (int | Unset):
-        writes (int | Unset): Versions submitted this UTC month (ADR-0070 d2).
+        writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2).
         keys (int | Unset):
         connections (int | Unset):
     """

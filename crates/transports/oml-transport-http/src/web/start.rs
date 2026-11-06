@@ -696,7 +696,7 @@ where
             hide(status.first_memory == Some(MemoryStatus::Promoted)),
             glyph_svg("promoted"),
         );
-        // The account's meters against its limits (ADR-0068 d5; ADR-0070
+        // The account's meters against its limits (ADR-0068 d5; ADR-0071
         // d6), read through the use case GET /v1/account/usage serves.
         if let Some(usage) = usage {
             body.push_str(&usage_card(&usage));
@@ -1211,7 +1211,7 @@ fn user_row(u: &UserRow, account: Option<&AccountUsage>, csrf: &str) -> String {
 }
 
 /// One meter's count, its limit where one holds, and its state marked
-/// at 80% and at the limit (ADR-0070 d5).
+/// at 80% and at the limit (ADR-0071 d5).
 fn meter_cell(m: &MeterReading) -> String {
     let used = if m.meter == Meter::TextBytes {
         bytes(m.used)
@@ -1246,7 +1246,7 @@ fn bytes(n: u64) -> String {
     }
 }
 
-/// The account's meters as a card (ADR-0070 d6): each against its limit,
+/// The account's meters as a card (ADR-0071 d6): each against its limit,
 /// a `<meter>` where a limit holds, and its state; `/web/start` and the
 /// person's page show it.
 #[must_use]

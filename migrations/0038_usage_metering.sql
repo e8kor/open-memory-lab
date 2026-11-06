@@ -1,10 +1,10 @@
--- 0038_usage_metering — per-account usage meters (ADR-0070): the counter row
+-- 0038_usage_metering — per-account usage meters (ADR-0071): the counter row
 -- each metered commit moves in its own transaction, the per-day flows, the
 -- append-only daily ledger, an account's quota profile, and the one
 -- definition of every stock meter that the fill below and the drift report
 -- both recompute from. Forward-only (docs/data/postgres-schema.md
 -- "Migrations"): no earlier file is edited. Normative shapes:
--- docs/data/postgres-schema.md "usage metering (ADR-0070)".
+-- docs/data/postgres-schema.md "usage metering (ADR-0071)".
 --
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
 --
@@ -16,9 +16,9 @@
 SET LOCAL lock_timeout = '5s';
 
 ------------------------------------------------------------------------------
--- account_meters — one account's four stocks (ADR-0070 d2, d3), moved by the
+-- account_meters — one account's four stocks (ADR-0071 d2, d3), moved by the
 -- commit that folds a metered event, in its transaction. An account is the
--- id of a person's root workarea (ADR-0070 d1).
+-- id of a person's root workarea (ADR-0071 d1).
 ------------------------------------------------------------------------------
 CREATE TABLE account_meters (
     tenant_id   uuid   NOT NULL REFERENCES tenants (id),
@@ -30,11 +30,11 @@ CREATE TABLE account_meters (
     PRIMARY KEY (tenant_id, user_root)
 );
 COMMENT ON TABLE account_meters IS
-    'One account''s stock meters, moved in the metered commit''s own transaction (ADR-0070 d3). '
+    'One account''s stock meters, moved in the metered commit''s own transaction (ADR-0071 d3). '
     'Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
--- account_activity — one account's flows in one UTC day (ADR-0070 d2): the
+-- account_activity — one account's flows in one UTC day (ADR-0071 d2): the
 -- versions it submitted, moved by the commit, and the recalls it made.
 ------------------------------------------------------------------------------
 CREATE TABLE account_activity (
@@ -46,12 +46,12 @@ CREATE TABLE account_activity (
     PRIMARY KEY (tenant_id, user_root, day)
 );
 COMMENT ON TABLE account_activity IS
-    'One account''s writes and recalls in one UTC day, kept 62 days (ADR-0070 d2, d4). '
+    'One account''s writes and recalls in one UTC day, kept 62 days (ADR-0071 d2, d4). '
     'Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
 -- usage_daily — the ledger: one row per account per closed UTC day,
--- appended once and never updated, kept 25 months (ADR-0070 d4).
+-- appended once and never updated, kept 25 months (ADR-0071 d4).
 ------------------------------------------------------------------------------
 CREATE TABLE usage_daily (
     tenant_id   uuid        NOT NULL REFERENCES tenants (id),
@@ -70,12 +70,12 @@ CREATE TABLE usage_daily (
 CREATE INDEX usage_daily_day ON usage_daily (tenant_id, day);
 COMMENT ON TABLE usage_daily IS
     'The usage ledger: one append-only row per account per closed UTC day, kept 25 months '
-    '(ADR-0070 d4). Owning page: docs/data/postgres-schema.md.';
+    '(ADR-0071 d4). Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
 -- account_profiles — the quota profile an admin assigned, folded from
 -- account.profile_set; an absent row is the deployment's default for the
--- account (ADR-0070 d5).
+-- account (ADR-0071 d5).
 ------------------------------------------------------------------------------
 CREATE TABLE account_profiles (
     tenant_id uuid NOT NULL REFERENCES tenants (id),
@@ -84,11 +84,11 @@ CREATE TABLE account_profiles (
     PRIMARY KEY (tenant_id, user_root)
 );
 COMMENT ON TABLE account_profiles IS
-    'The quota profile an admin assigned an account, folded from account.profile_set (ADR-0070 d5). '
+    'The quota profile an admin assigned an account, folded from account.profile_set (ADR-0071 d5). '
     'Owning page: docs/data/postgres-schema.md.';
 
 ------------------------------------------------------------------------------
--- user_quotas: the two quotas ADR-0070 d5 adds, and a ceiling wide enough
+-- user_quotas: the two quotas ADR-0071 d5 adds, and a ceiling wide enough
 -- for a byte count. The table is new in 0037 and holds at most six rows a
 -- person, so the validation's scan is short.
 ------------------------------------------------------------------------------
@@ -106,7 +106,7 @@ ALTER TABLE user_quotas VALIDATE CONSTRAINT user_quotas_quota;
 ALTER TABLE user_quotas VALIDATE CONSTRAINT user_quotas_max_count;
 
 ------------------------------------------------------------------------------
--- The one definition of a chain's account and of a live chain (ADR-0070
+-- The one definition of a chain's account and of a live chain (ADR-0071
 -- d2): the account is the author's of the chain's first version; a chain is
 -- live while a version of it is held, promoted or demoted and its promoted
 -- tip is not a retirement. The fold reads both before and after a memory
@@ -134,7 +134,7 @@ $$;
 
 ------------------------------------------------------------------------------
 -- oml_account_source — every account's stocks recomputed from the rows, by
--- ADR-0070 d2: what the fill writes and what the drift report compares the
+-- ADR-0071 d2: what the fill writes and what the drift report compares the
 -- counters with (d3). Read under the caller's row security.
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_account_source(t uuid)
@@ -211,7 +211,7 @@ CREATE POLICY tenant_isolation ON account_profiles
 
 ------------------------------------------------------------------------------
 -- The fill: every existing tenant's counters from its rows, so a live
--- database starts with no drift (ADR-0070 Consequences), under each
+-- database starts with no drift (ADR-0071 Consequences), under each
 -- tenant's row security, the tenants enumerated under 0003's startup policy
 -- as 0021 enumerates them. The month's writes are its held versions.
 ------------------------------------------------------------------------------
@@ -240,7 +240,7 @@ $$;
 ------------------------------------------------------------------------------
 -- The serving role's grants, in 0007's form (postgres-schema.md
 -- "Privileges"). The ledger is never updated: its rows are inserted once
--- and deleted only by the 25-month retention (ADR-0070 d4).
+-- and deleted only by the 25-month retention (ADR-0071 d4).
 ------------------------------------------------------------------------------
 DO $$
 BEGIN

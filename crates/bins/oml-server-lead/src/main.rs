@@ -249,7 +249,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
     // else deletes an unused registration, a lapsed authorization or an
     // expired token (ADR-0031 d5, d9, d10).
     let _sweep = oml_server_lead::spawn_connection_sweep(store.clone());
-    // The usage ledger's daily rows and their retention (ADR-0070 d4).
+    // The usage ledger's daily rows and their retention (ADR-0071 d4).
     let _rollup = oml_server_lead::spawn_usage_rollup(store.clone());
 
     let listener = tokio::net::TcpListener::bind(&config.listen)

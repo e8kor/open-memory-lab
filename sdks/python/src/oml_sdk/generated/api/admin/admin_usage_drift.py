@@ -73,8 +73,8 @@ def sync_detailed(
     """Each account whose counters differ from the rows they count, and each account on a profile the
     configuration does not declare.
 
-     Requires: admin key role (ADR-0070 d3, d5). Recomputes every account's stocks from the stored rows
-    by ADR-0070 d2's definitions, and this month's writes from its held versions, in one snapshot, and
+     Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
+    by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
     nothing. Proposed.
 
@@ -114,8 +114,8 @@ def sync(
     """Each account whose counters differ from the rows they count, and each account on a profile the
     configuration does not declare.
 
-     Requires: admin key role (ADR-0070 d3, d5). Recomputes every account's stocks from the stored rows
-    by ADR-0070 d2's definitions, and this month's writes from its held versions, in one snapshot, and
+     Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
+    by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
     nothing. Proposed.
 
@@ -150,8 +150,8 @@ async def asyncio_detailed(
     """Each account whose counters differ from the rows they count, and each account on a profile the
     configuration does not declare.
 
-     Requires: admin key role (ADR-0070 d3, d5). Recomputes every account's stocks from the stored rows
-    by ADR-0070 d2's definitions, and this month's writes from its held versions, in one snapshot, and
+     Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
+    by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
     nothing. Proposed.
 
@@ -189,8 +189,8 @@ async def asyncio(
     """Each account whose counters differ from the rows they count, and each account on a profile the
     configuration does not declare.
 
-     Requires: admin key role (ADR-0070 d3, d5). Recomputes every account's stocks from the stored rows
-    by ADR-0070 d2's definitions, and this month's writes from its held versions, in one snapshot, and
+     Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
+    by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
     nothing. Proposed.
 

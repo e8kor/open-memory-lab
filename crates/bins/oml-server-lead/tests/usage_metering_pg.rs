@@ -1,5 +1,5 @@
 //! Per-account usage metering over the real lead and a migrated Postgres
-//! store under its role pair (ADR-0070): the counter a write moves in its
+//! store under its role pair (ADR-0071): the counter a write moves in its
 //! own transaction, so two writers racing at the limit never both commit;
 //! the 80% warning and the 100% refusal naming the quota, its limit and
 //! what is used; a profile and an override an admin assigns; the daily
