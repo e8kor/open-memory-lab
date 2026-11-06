@@ -409,6 +409,72 @@ fn ms(d: Duration) -> f64 {
 }
 
 /// The layer itself (ADR-0042 d1–d7, d9, d14).
+/// The router wrapped as the lead serves it: the panic guard inside the
+/// traffic layer, so a handler's panic is a `500` the request line and the
+/// metrics see, and the worker serves the next request.
+pub fn guard(router: axum::Router, traffic: Traffic) -> axum::Router {
+    router
+        .layer(axum::middleware::from_fn_with_state(
+            traffic.clone(),
+            catch_panics,
+        ))
+        .layer(axum::middleware::from_fn_with_state(traffic, layer))
+}
+
+/// A future that turns a panic in the one it wraps into its `Err`.
+struct Caught<F>(Pin<Box<F>>);
+
+impl<F: std::future::Future> std::future::Future for Caught<F> {
+    type Output = Result<F::Output, Box<dyn std::any::Any + Send>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let inner = self.0.as_mut();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.poll(cx))) {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Err(panic) => Poll::Ready(Err(panic)),
+        }
+    }
+}
+
+/// Runs the handler; a panic becomes `system.internal` with
+/// `details.reason` `handler_panic`, one `error` line naming the request id,
+/// and one count (observability.md). The panic's text is logged, never sent.
+async fn catch_panics(State(traffic): State<Traffic>, req: Request, next: Next) -> Response {
+    let ids = req.extensions().get::<RequestIds>().cloned();
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| UNMATCHED.to_owned(), |p| p.as_str().to_owned());
+    match (Caught(Box::pin(next.run(req)))).await {
+        Ok(response) => response,
+        Err(panic) => {
+            let text = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic with no text".to_owned());
+            let request_id = ids.map_or_else(String::new, |i| i.request_id);
+            tracing::error!(
+                event = "handler_panic",
+                route = %route,
+                request_id = %request_id,
+                panic = %text,
+                "a handler panicked; the request was answered 500 and the worker continues"
+            );
+            traffic.metrics().handler_panicked();
+            let mut response = crate::error::ApiError::handler_panic().into_response(&request_id);
+            if let Ok(value) = HeaderValue::from_str(&request_id) {
+                response.headers_mut().insert("x-request-id", value);
+            }
+            response
+                .extensions_mut()
+                .insert(Resolved::now(Some("system.internal")));
+            response
+        }
+    }
+}
+
 pub(crate) async fn layer(
     State(traffic): State<Traffic>,
     mut req: Request,

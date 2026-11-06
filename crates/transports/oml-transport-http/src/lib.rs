@@ -287,11 +287,9 @@ where
             probes.fallback(names_unassigned).with_state(self)
         };
         // Outside every route, the fallback and axum's own 404 and 405
-        // included (ADR-0042 d1, d4).
-        router.layer(axum::middleware::from_fn_with_state(
-            traffic,
-            traffic::layer,
-        ))
+        // included (ADR-0042 d1, d4); the panic guard just inside it, so a
+        // handler's panic is a named 500, never a dropped connection.
+        traffic::guard(router, traffic)
     }
 
     /// The handler of one [`ROUTES`] entry. A table entry with no handler

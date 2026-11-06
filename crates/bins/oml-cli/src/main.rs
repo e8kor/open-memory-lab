@@ -4322,6 +4322,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    let handlers = handlers_doctor(scrape.as_ref());
+    let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -4353,6 +4355,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || handlers_warn
         || sync_warn
         || sources_warn
         || in_progress_warn
@@ -4399,6 +4402,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "review": review,
             "sync": sync,
             "telemetry": telemetry,
+            "handlers": handlers,
             "sources": sources,
             "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -4508,6 +4512,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &handlers {
+            println!("handlers    : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -4698,6 +4705,20 @@ const DROPPED_WARN_PERCENT: u64 = 1;
 
 /// The labeller's lag past which doctor warns, in seconds (ADR-0054 d13).
 const LABELLER_LAG_WARN_SECONDS: u64 = 600;
+
+/// The panic guard's doctor line, from the metrics listener alone: handler
+/// panics since start, each a defect the lead's log names by request id.
+fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    match scrape.sum("oml_handler_panics_total", &[]) {
+        0 => vec!["no handler panicked since start".to_owned()],
+        n => vec![format!(
+            "warn handler_panic: {n} request(s) hit a handler panic since start and were answered 500 system.internal (details.reason handler_panic); the lead's log names each under event handler_panic with its request id, and every one is a defect to report"
+        )],
+    }
+}
 
 /// The recall telemetry's doctor lines, from the metrics listener alone
 /// (ADR-0054 d13, as accepted): events dropped above 1% of recalls, by
@@ -5206,6 +5227,22 @@ mod tests {
             1,
             "no reranker, no line"
         );
+    }
+
+    #[test]
+    fn the_handlers_doctor_warns_on_a_panic_the_guard_answered() {
+        let panicked = Scrape("oml_handler_panics_total 2\n".to_owned());
+        let lines = handlers_doctor(Some(&panicked));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("warn handler_panic: 2 request(s)"),
+            "{lines:?}"
+        );
+        assert_eq!(
+            handlers_doctor(Some(&Scrape("oml_handler_panics_total 0\n".to_owned()))),
+            vec!["no handler panicked since start".to_owned()]
+        );
+        assert!(handlers_doctor(None)[0].contains("OML_METRICS_URL"));
     }
 
     #[test]

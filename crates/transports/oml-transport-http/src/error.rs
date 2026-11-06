@@ -154,6 +154,13 @@ impl ApiError {
         .retryable()
     }
 
+    /// A handler panicked and the panic guard turned it into this answer;
+    /// the panic's text stays in the log (`event=handler_panic`).
+    pub fn handler_panic() -> Self {
+        Self::internal("the request hit a defect; the request_id names it in the lead's log")
+            .with_details(json!({ "reason": "handler_panic" }))
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,

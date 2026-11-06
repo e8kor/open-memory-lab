@@ -3,16 +3,20 @@
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
 use oml_transport_http::traffic::{self, Traffic, TrustedProxies};
 
+async fn boom() -> &'static str {
+    panic!("a handler defect")
+}
+
 fn router(traffic: &Traffic) -> Router {
     let routes = Router::new()
-        .route("/boom", get(|| async { panic!("a handler defect") }))
+        .route("/boom", get(boom))
         .route("/fine", get(|| async { "fine" }));
     traffic::guard(routes, traffic.clone())
 }
@@ -61,5 +65,4 @@ async fn a_handler_panic_is_a_named_500_with_the_request_id_and_the_worker_serve
         scrape.contains("oml_handler_panics_total 1"),
         "one panic counted: {scrape}"
     );
-    let _ = header::CONTENT_TYPE;
 }

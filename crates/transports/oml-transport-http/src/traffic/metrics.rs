@@ -157,6 +157,7 @@ pub struct Metrics {
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
     unreviewed_hits: Counter,
+    handler_panics: Counter,
     mode_changes: Family<ModeLabels, Counter>,
     curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
@@ -294,6 +295,7 @@ impl Default for Metrics {
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
         let unreviewed_hits = Counter::default();
+        let handler_panics = Counter::default();
         let mode_changes = Family::<ModeLabels, Counter>::default();
         let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
@@ -395,6 +397,11 @@ impl Default for Metrics {
             "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
+        registry.register(
+            "oml_handler_panics",
+            "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
+            handler_panics.clone(),
+        );
         Self {
             registry,
             http,
@@ -406,6 +413,7 @@ impl Default for Metrics {
             reranks,
             bulk_items,
             unreviewed_hits,
+            handler_panics,
             mode_changes,
             curation_acts,
             source_checks,
@@ -471,6 +479,11 @@ impl Metrics {
     }
 
     /// `n` recall hits served labelled `unreviewed` (ADR-0030 d5).
+    /// One handler panic the panic guard answered.
+    pub(crate) fn handler_panicked(&self) {
+        self.handler_panics.inc();
+    }
+
     pub(crate) fn unreviewed_hits(&self, n: u64) {
         self.unreviewed_hits.inc_by(n);
     }

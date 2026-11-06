@@ -308,7 +308,7 @@ existed.
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. | — |
+| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. A handler that panicked answers it with `details.reason` `handler_panic`; the panic's text is in the lead's log under `event=handler_panic`, never in the body. | — |
 | `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`); or a tenant's creation lost the lock contest for its FTS partition's DDL, a lock timeout or a deadlock, before any commit, journalling nothing and spending no enrollment token (`details.reason` `partition_lock_timeout`, [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d11). Also `telemetry_off`: the server records no recall, so it has no event to list or replay ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
 
 Review *unavailability* — a workarea whose policy cannot currently be satisfied by any eligible
