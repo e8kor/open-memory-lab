@@ -165,7 +165,11 @@ jobs:
           docker tag ghcr.io/e8kor/open-memory-lab:latest "ghcr.io/e8kor/open-memory-lab:$version"
       - name: oml quickstart, then a second run refused as quickstart.exists
         run: |
+          # Timed: the Docker tab of docs/start/quickstart.md, start (this step's
+          # first command), first held write, first recall (next step).
+          date +%s.%N > "$RUNNER_TEMP/qs_t0"
           ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml"
+          date +%s.%N > "$RUNNER_TEMP/qs_t1"
           for f in .env keys keys/agent keys/reviewer credentials; do
             stat -c '%a %n' "$RUNNER_TEMP/oml/$f"
           done
@@ -173,6 +177,27 @@ jobs:
             echo "a second quickstart was not refused" >&2; exit 1
           fi
           grep -q quickstart.exists "$RUNNER_TEMP/again"
+      - name: Docker quickstart timing, first held write and first recall
+        run: |
+          export OML_URL=http://127.0.0.1:8080
+          A="$(cat "$RUNNER_TEMP/oml/keys/agent")"
+          t2=$(date +%s.%N)
+          OML_API_KEY=$A ./target/release/oml write "We deploy on Tuesdays; Friday deploys need two approvals." | tee "$RUNNER_TEMP/write.out"
+          grep -q held "$RUNNER_TEMP/write.out"
+          OML_API_KEY=$A ./target/release/oml read --query "deploy Friday" --include-unreviewed | tee "$RUNNER_TEMP/read.out"
+          grep -q "(held)" "$RUNNER_TEMP/read.out"
+          t3=$(date +%s.%N)
+          t0=$(cat "$RUNNER_TEMP/qs_t0"); t1=$(cat "$RUNNER_TEMP/qs_t1")
+          start=$(echo "$t1 - $t0" | bc -l)
+          rest=$(echo "$t3 - $t2" | bc -l)
+          total=$(printf '%.0f' "$(echo "$start + $rest" | bc -l)")
+          echo "QUICKSTART_DOCKER_SECONDS=$total"
+          {
+            echo "### Docker quickstart timing"
+            echo "- start (oml quickstart, image already built): $(printf '%.1f' "$start") s"
+            echo "- first held write and first recall: $(printf '%.1f' "$rest") s"
+            echo "- total: ${total} s (QUICKSTART_DOCKER_SECONDS=${total})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: oml quickstart's logs on failure
         if: failure()
         run: docker compose --project-directory "$RUNNER_TEMP/oml" logs
