@@ -2242,6 +2242,7 @@ async fn agent_writes_diagram_of(rig: &Rig, value: &str, body: &str) -> uuid::Uu
         .submit_memory(
             value,
             &oml_app::types::SubmitRequest {
+                origin: None,
                 anchor: None,
                 idempotency_key: "k-diagram".to_owned(),
                 claim_key: None,

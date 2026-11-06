@@ -30,6 +30,7 @@ fn app() -> TestApp {
 fn request(idem: &str, body: &str, format: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
+        origin: None,
         anchor: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),

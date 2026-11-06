@@ -4678,7 +4678,6 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "chat": chat,
             "telemetry": telemetry,
             "handlers": handlers,
-        }
             "scan": scan,
             "sources": sources,
             "in_progress": in_progress,
@@ -4792,6 +4791,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &handlers {
             println!("handlers    : {line}");
+        }
         for line in &scan {
             println!("scan        : {line}");
         }
