@@ -136,7 +136,7 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
       anywhere (`format.bidi_control`). The validator is OML's own parser of this subset, in Rust;
       it is stricter than Mermaid's, so a claim can pass it and still fail to render in the browser,
       and d9 makes that harmless. Caps: 64 KiB of source, 200 nodes, 400 relations, all chosen, not
-      measured (FR-109).
+      measured (#159).
     - **Search text.** The title, then one sentence per relation in source order, labels in place of
       ids and the id kept beside a label that differs from it: `A -->|calls| B` with labels
       `Checkout` and `Payments` gives "Checkout (A) calls Payments (B)."; an unlabelled flowchart
@@ -155,7 +155,7 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
       core schema by a maintained pure-Rust parser chosen at build under `cargo deny` (question 2),
       refusing anchors and aliases (`yaml.alias_refused`, which closes expansion bombs), tags
       (`yaml.tag_refused`), merge keys, a second document and a duplicate key. Both: nesting at most
-      32 deep, at most 2,000 scalars, 64 KiB of source (FR-109).
+      32 deep, at most 2,000 scalars, 64 KiB of source (#159).
     - **Search text.** One line per scalar, in document order: the key path with its segments
       separated by spaces, then "is", then the value, as `payments retry max_attempts is 5`; array
       items carry their index. Identifier splitting then finds `max attempts` as it does in prose.
@@ -174,7 +174,7 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
       a format can add a finding and never remove one, as ADR-0019 d4 lets a plugin narrow and never
       widen. ADR-0050 d6's advisory findings count per format: `quality.many_claims` fires on more than
       12 relations in a diagram or 40 scalars in a fragment instead of on sentences, chosen, not
-      measured (FR-113).
+      measured (#159).
 
 - **d7 — Code snippets: a language tag, today's identifier splitting, and no symbol extraction.**
   `lang` is one of a closed list kept in `oml-format` (the languages the scanner's and ctags' tables
@@ -272,7 +272,7 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
   d6's search texts find the format rows at success@5 within 0.05 of their prose twins, with every
   existing row's score unchanged; and ADR-0047 d17's task harness gains an arm where the captured
   knowledge includes diagram claims, against the same knowledge as prose. Until both pass, the skill
-  does not suggest a format, and a writer who sends one gets it (FR-112).
+  does not suggest a format, and a writer who sends one gets it (#159).
 
 - **d13 — The field on every surface, with no new tool; pre-release, nothing breaks.** `oml_write`
   gains an optional `format` (string; the enum of d1 with a pattern for `lang`), in submit and
@@ -293,10 +293,10 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
 
 - **d14 — Cost, doctor lines and the build, each step closed by named tests.**
     - **Cost.** The largest is the Mermaid subset parser, which OML owns and must keep in step with
-      what the pinned bundle draws (FR-109). The bundle adds to the binary and to the first rendered
-      card; its size and render time for the pinned release are unmeasured (FR-110). Parsing and the
+      what the pinned bundle draws (#159). The bundle adds to the binary and to the first rendered
+      card; its size and render time for the pinned release are unmeasured (#159). Parsing and the
       search text add CPU to a format write and `search_text` adds bytes to a format row; prose rows
-      pay nothing (FR-111). Each review card with a diagram is one more request.
+      pay nothing (#159). Each review card with a diagram is one more request.
     - **Doctor** (`oml doctor`, admin) names: the enabled formats with their adapter versions; rows
       whose `search_text_by` is behind its adapter (the refill backlog) and rows indexed by source
       because the adapter could not derive their search text; rows in a disabled format; the served
@@ -325,9 +325,8 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
 - One more vendored dependency outside Cargo: the Mermaid bundle, updated by a pull request that
   changes its file name and digest. `cargo deny` does not see it; the test that checks its digest
   does.
-- Roadmap rows opened: FR-109 (Mermaid subset fidelity and the caps), FR-110 (bundle size and
-  render time), FR-111 (write cost of formats), FR-112 (whether diagram claims help recall and
-  tasks), FR-113 (the per-format quality thresholds).
+- Open work: #159 (Mermaid subset fidelity and the caps, bundle size and render time, write cost
+  of formats, whether diagram claims help recall and tasks, the per-format quality thresholds).
 
 ## Rejected alternatives
 
@@ -426,7 +425,7 @@ shell) the bundle drew a flowchart, a sequence, a class, a state and an entity-r
 under the frame's own policy, whose `script-src` names the bundle and one hashed initialiser and has
 no `unsafe-eval`, and a source that does not parse printed Mermaid's message in the frame
 (`tests/render_frame_chromium.rs`). Because the check passed, the frame ships on by default, and
-no flag exists. FR-110 still asks for the bundle's size cost and its render time, unmeasured.
+no flag exists. #159 still asks for the bundle's size cost and its render time, unmeasured.
 
 **Not built in this change.**
 
@@ -441,7 +440,7 @@ no flag exists. FR-110 still asks for the bundle's size cost and its render time
 - `oml sync` calling the adapters' `diff` (d11, F6): the diff is built and tested in `oml-format`,
   and the CLI's `oml write --format` and `--title` are built, with `-` reading the text from
   standard input.
-- The recall eval's format rows and the task harness's diagram arm (d12, FR-112): until they pass,
+- The recall eval's format rows and the task harness's diagram arm (d12, #159): until they pass,
   the plugin's skill does not suggest a format (F7).
 
 ## Test plan

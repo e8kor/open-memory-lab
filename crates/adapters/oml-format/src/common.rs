@@ -2,7 +2,7 @@
 
 use oml_app::ports::FormatRefusal;
 
-/// The source cap of every non-prose format, chosen, not measured (FR-109).
+/// The source cap of every non-prose format, chosen, not measured (#159).
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
 /// A JSON or YAML document nests at most this deep (ADR-0056 d6).
 pub const MAX_DEPTH: usize = 32;

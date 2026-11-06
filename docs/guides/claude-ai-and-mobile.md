@@ -27,23 +27,35 @@ The server needs three things.
 Claude cannot reach a laptop on `127.0.0.1`. This path needs a server people reach over the
 internet ([run your own server](../start/run-your-own.md)).
 
-## 1. Issue a connector key and its code (administrator)
+## 1. Get a connect code first
+
+Claude's connect page, `/oauth/authorize` on your server, asks for a connect code. You get the code
+before you add the connector; the page does not make one.
+
+1. Open your server's `/web` page and sign in.
+2. Find **Connect Claude on the web or a phone**.
+3. Type a name, keep the role **writer**, and click **Issue connector key**.
+4. Copy the connect code the page shows. It is shown once and works for ten minutes.
+
+If you lost the code or it ran out, click **New connect code** on that key's row. The button is on
+connector keys only.
+
+An administrator can do the same from a terminal:
 
 ```sh
 oml keys issue-agent claude-mobile --principal crew/claude-mobile --workarea <workarea> --connect-code
 ```
 
-It prints two lines: the connector address, such as `https://oml.example.com/mcp`, and a code
-such as `7KQ2-M9XD-4TPA`. The code works once, for ten minutes. The key has no value. Replace a
-code that ran out with `oml keys connect-code <key>`
-([CLI reference](../cli/reference.md)).
+It prints the connector address, such as `https://oml.example.com/mcp`, and a code such as
+`7KQ2-M9XD-4TPA`. The key has no value. Replace a code that ran out with
+`oml keys connect-code <key>` ([CLI reference](../cli/reference.md)).
 
-## 2. Add the connector and enter the code once (user)
+## 2. Add the connector and paste the code
 
-1. On claude.ai, open Customize > Connectors and add a custom connector with the printed
-   address.
-2. Claude opens OML's connect page. Enter the code only if you reached the page this way yourself;
-   if someone sent you a link to it, close it.
+1. On claude.ai, open Customize > Connectors and add a custom connector with your server's
+   address, `https://<your-server>/mcp`.
+2. Claude opens OML's connect page. Paste the code from step 1 into it. If someone sent you a link
+   to the page and you did not start the connection yourself, close it.
 3. The page shows the organization, the agent identity and the workareas the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else
    until someone else reviews it. Confirm.

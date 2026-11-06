@@ -7,10 +7,10 @@ answers: which GitHub issue replaced each former roadmap row (FR-n, RS-n), so ol
 
 # Former roadmap rows and the issues that replaced them
 
-ADR-0066 retired the roadmap and its FR and RS numbers. Each open row became part of one of 59
+ADR-0066 retired the roadmap and its FR and RS numbers. Each open row became part of one of 62
 issues (a 60th, on simulations and the reconciler, holds none); rows that described shipped behaviour closed without an issue. References in older
 commits, pull requests and branches to `FR-n` or `RS-n` resolve here. A few numbers never had a
-row (FR-37 to FR-43, FR-46 to FR-49, FR-95 to FR-99, FR-109 to FR-113, RS-2) and map nowhere.
+row (FR-37 to FR-43, FR-46 to FR-49, FR-95 to FR-99, RS-2) and map nowhere.
 
 | Former id | Issue | Title |
 |---|---|---|
@@ -106,12 +106,29 @@ row (FR-37 to FR-43, FR-46 to FR-49, FR-95 to FR-99, FR-109 to FR-113, RS-2) and
 | FR-106 | [#110](https://github.com/e8kor/open-memory-lab/issues/110) | Does recall by usage rank better? |
 | FR-107 | [#110](https://github.com/e8kor/open-memory-lab/issues/110) | Does recall by usage rank better? |
 | FR-108 | [#110](https://github.com/e8kor/open-memory-lab/issues/110) | Does recall by usage rank better? |
+| FR-109 | [#159](https://github.com/e8kor/open-memory-lab/issues/159) | Claim formats: measure the subset parser, the bundle, write cost and quality thresholds |
+| FR-110 | [#159](https://github.com/e8kor/open-memory-lab/issues/159) | Claim formats: measure the subset parser, the bundle, write cost and quality thresholds |
+| FR-111 | [#159](https://github.com/e8kor/open-memory-lab/issues/159) | Claim formats: measure the subset parser, the bundle, write cost and quality thresholds |
+| FR-112 | [#159](https://github.com/e8kor/open-memory-lab/issues/159) | Claim formats: measure the subset parser, the bundle, write cost and quality thresholds |
+| FR-113 | [#159](https://github.com/e8kor/open-memory-lab/issues/159) | Claim formats: measure the subset parser, the bundle, write cost and quality thresholds |
 | FR-114 | [#138](https://github.com/e8kor/open-memory-lab/issues/138) | Sync follow-ups: origin filters, bulk review size and withdrawn edges |
 | FR-115 | [#138](https://github.com/e8kor/open-memory-lab/issues/138) | Sync follow-ups: origin filters, bulk review size and withdrawn edges |
 | FR-116 | [#138](https://github.com/e8kor/open-memory-lab/issues/138) | Sync follow-ups: origin filters, bulk review size and withdrawn edges |
 | FR-117 | [#138](https://github.com/e8kor/open-memory-lab/issues/138) | Sync follow-ups: origin filters, bulk review size and withdrawn edges |
 | FR-118 | [#104](https://github.com/e8kor/open-memory-lab/issues/104) | Measure the learned sparse encoder's cost and bound its recall leg |
 | FR-119 | [#103](https://github.com/e8kor/open-memory-lab/issues/103) | Measure postings fill, statistics upkeep and migration locks at scale |
+| FR-130 | [#160](https://github.com/e8kor/open-memory-lab/issues/160) | Code sync: review cost, public-surface staleness and dependency edges |
+| FR-131 | [#160](https://github.com/e8kor/open-memory-lab/issues/160) | Code sync: review cost, public-surface staleness and dependency edges |
+| FR-132 | [#160](https://github.com/e8kor/open-memory-lab/issues/160) | Code sync: review cost, public-surface staleness and dependency edges |
+| FR-133 | [#160](https://github.com/e8kor/open-memory-lab/issues/160) | Code sync: review cost, public-surface staleness and dependency edges |
+| FR-140 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-141 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-142 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-143 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-144 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-145 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-146 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
+| FR-147 | [#161](https://github.com/e8kor/open-memory-lab/issues/161) | Lake sync: measure build size, reader coverage, request cost and import throughput |
 | FR-160 | [#111](https://github.com/e8kor/open-memory-lab/issues/111) | Chat memory evals: agent extraction against turn storage |
 | FR-161 | [#139](https://github.com/e8kor/open-memory-lab/issues/139) | Chat memory follow-ups: sessions ending between captures, two machines |
 | FR-162 | [#111](https://github.com/e8kor/open-memory-lab/issues/111) | Chat memory evals: agent extraction against turn storage |

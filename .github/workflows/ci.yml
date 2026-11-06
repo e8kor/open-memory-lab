@@ -299,7 +299,7 @@ jobs:
         run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
       # The lake build (ADR-0062 d3): the reader and its parquet link on every
       # target the CLI ships for, its tests run on the fixture lake, and the
-      # size it adds is printed for FR-140 against the default build's.
+      # size it adds is printed for #161 against the default build's.
       - name: The lake build builds and reads the fixture lake
         run: |
           exe=""
