@@ -281,3 +281,21 @@ same load (`results/*/sparse.json`, `results/*/bm25-sparse.json`). nDCG@10: synt
 1–4 0.503 / 0.530 / 0.550 (`bm25-postings` / `sparse` / `bm25-sparse`), within 0.004 of the
 offline experiment's floor-0.1, 128-token row (`results/offline/REPORT.md`). The latencies on these
 pages ran while other lanes held the load average at 3.6 to 14 and are upper bounds.
+
+## Convex combination against reciprocal rank, served (2026-11-05)
+
+`bm25-sparse` (convex combination, 0.3 / 0.7) and `bm25-sparse-rrf` (reciprocal rank, k 60), the
+same two lists read 100 deep, asked through `oml_read` against one lead in one run (commit
+`a1ad0c9`, PostgreSQL 18, a shared 8 vCPU host at load 8 to 12). nDCG@10 / R@100 / Success@1:
+
+| set | `bm25-sparse` | `bm25-sparse-rrf` |
+|---|---|---|
+| synthetic | 0.909 / 0.984 / 0.860 | 0.894 / 0.984 / 0.818 |
+| SciFact | 0.730 / 0.957 / 0.610 | 0.731 / 0.954 / 0.620 |
+| NFCorpus | 0.350 / 0.277 / 0.489 | 0.344 / 0.272 / 0.461 |
+| LoCoMo 1–4 | 0.550 / 0.885 / 0.428 | 0.534 / 0.878 / 0.424 |
+
+Served, as offline, convex combination ranks better on three of four sets and ties on SciFact;
+ADR-0052 d13 keeps it. The synthetic row is this harness's run of the recall eval, not a committed
+`recall-synthetic` file.
+

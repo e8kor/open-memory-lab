@@ -47,15 +47,19 @@ class RecallRequest:
                 filter by AND; rows without a kind are left out (ADR-0063 d3).
             include_unreviewed (bool | Unset): When true, the calling key's own held rows (kind memory or derived_fact,
                 never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds
-                filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held;
-                they count against k and max_tokens. Rules: docs/architecture/retrieval.md. Default: False.
+                filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held
+                and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every
+                author's held memories on the served nodes join too, and absent means true there; absent means false everywhere
+                else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
             max_tokens (int | Unset): Recall budget in budget tokens (counter oml-tc/1), at most 2^53 - 1, the largest
                 integer the request digest canonicalizes exactly under RFC 8785. Steering is never cut; hits are the longest
                 rank prefix that fits. Refused with include_text false. Rules: docs/architecture/retrieval.md, Token budgets.
             search (RecallRequestSearch | Unset): The search pipeline, among those the deployment serves (search.enabled);
                 omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does
-                not serve is request.validation with details.field /search and details.served.
+                bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same
+                two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused
+                with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not
+                serve is request.validation with details.field /search and details.served.
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not
@@ -63,6 +67,13 @@ class RecallRequest:
                 the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field
                 (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC
                 day answer limit.rate. A valid member changes nothing the read answers.
+            timings (bool | Unset): Omitted, false. true serves the answer's per-stage timings; refused with
+                request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since
+                v0.5.9.
+            include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
+                default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
+            now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
+                digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
     """
 
     query: str
@@ -73,11 +84,14 @@ class RecallRequest:
     anchor_repo: str | Unset = UNSET
     anchor_path_prefix: str | Unset = UNSET
     origin_kinds: list[OriginKind] | Unset = UNSET
-    include_unreviewed: bool | Unset = False
+    include_unreviewed: bool | Unset = UNSET
     max_tokens: int | Unset = UNSET
     search: RecallRequestSearch | Unset = UNSET
     match: RecallRequestMatch | Unset = RecallRequestMatch.ANY
     feedback: Feedback | Unset = UNSET
+    timings: bool | Unset = UNSET
+    include_expired: bool | Unset = False
+    now: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -128,6 +142,12 @@ class RecallRequest:
         if not isinstance(self.feedback, Unset):
             feedback = self.feedback.to_dict()
 
+        timings = self.timings
+
+        include_expired = self.include_expired
+
+        now = self.now
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -159,6 +179,12 @@ class RecallRequest:
             field_dict["match"] = match
         if feedback is not UNSET:
             field_dict["feedback"] = feedback
+        if timings is not UNSET:
+            field_dict["timings"] = timings
+        if include_expired is not UNSET:
+            field_dict["include_expired"] = include_expired
+        if now is not UNSET:
+            field_dict["now"] = now
 
         return field_dict
 
@@ -229,6 +255,12 @@ class RecallRequest:
         else:
             feedback = Feedback.from_dict(_feedback)
 
+        timings = d.pop("timings", UNSET)
+
+        include_expired = d.pop("include_expired", UNSET)
+
+        now = d.pop("now", UNSET)
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -243,6 +275,9 @@ class RecallRequest:
             search=search,
             match=match,
             feedback=feedback,
+            timings=timings,
+            include_expired=include_expired,
+            now=now,
         )
 
         return recall_request

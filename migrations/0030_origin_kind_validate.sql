@@ -1,10 +1,10 @@
 -- no-transaction
--- Validates 0030's origin_kind check and builds its index outside the
+-- Validates 0029's origin_kind check and builds its index outside the
 -- migration transaction (ADR-0063 d2; review L1). Each statement is its own
 -- transaction: VALIDATE CONSTRAINT takes SHARE UPDATE EXCLUSIVE, which lets
 -- reads and writes run while it scans. The DO block builds and attaches
 -- every partition's index in one statement, under SHARE on each partition
--- until it ends; each index is empty, since no row written before 0030 has
+-- until it ends; each index is empty, since no row written before 0029 has
 -- a kind, so that statement does catalog work and little else. A lock is
 -- waited for at most 5 s, then the migration fails and is run again.
 

@@ -208,6 +208,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workareas/{workarea}/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.
+         */
+        post: operations["setWorkareaMode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/crews": {
         parameters: {
             query?: never;
@@ -1063,7 +1083,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "workarea.frozen" | "workarea.in_progress_refused" | "workarea.held_remaining" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1095,6 +1115,10 @@ export interface components {
              * @enum {string}
              */
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2). */
+            valid_from?: components["schemas"]["ValidEnd"];
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
+            valid_until?: components["schemas"]["ValidEnd"];
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
@@ -1103,6 +1127,11 @@ export interface components {
             workarea?: components["schemas"]["WorkareaRef"];
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
+            /**
+             * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9.
+             * @enum {string}
+             */
+            on_similar?: "hold" | "refuse";
             anchor?: components["schemas"]["Anchor"];
             origin?: components["schemas"]["Origin"];
         };
@@ -1131,6 +1160,36 @@ export interface components {
                 scanner_version?: string;
             };
             journal_seq?: number;
+            /** @description The rows the similar check named, as first answered: a replay serves the list of the write it replays (ADR-0050 d1). Since v0.5.9. */
+            similar?: components["schemas"]["SimilarItem"][];
+        };
+        /** @description A row the key may read that holds the same words in the same order (same_text) or a word set at Jaccard 0.9 or more (near_copy), found by integer keys and verified exactly, with no model (ADR-0050 d1, d17). Ordered same_text first, then by jaccard, then by artifact_id. To replace it, write with replaces set to artifact_id. */
+        SimilarItem: {
+            artifact_id: string;
+            claim_key: string;
+            version: number;
+            /** @enum {string} */
+            kind: "memory" | "derived_fact" | "steering";
+            workarea_id: string;
+            /**
+             * @description held only for the calling key's own rows.
+             * @enum {string}
+             */
+            state: "held" | "promoted";
+            /** @enum {string} */
+            relation: "same_text" | "near_copy";
+            /** @description The two word sets' Jaccard similarity, rounded down to hundredths; 1 for same_text. */
+            jaccard: number;
+            /** @description The calling key wrote it. */
+            own: boolean;
+        };
+        /** @description Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request sent timings true, which a deployment serves only with search.timings on. */
+        RecallTimings: {
+            /** @description Keys from the closed set scope, retrieve_keyword_all, retrieve_keyword_any, retrieve_bm25, retrieve_trigram, retrieve_bm25_postings, retrieve_sparse, fuse, rerank, suggest, hydrate, cut; a stage that did not run is absent. */
+            stages_ms: {
+                [key: string]: number;
+            };
+            total_ms: number;
         };
         AttachmentDescriptor: {
             digest?: components["schemas"]["Digest"];
@@ -1151,6 +1210,8 @@ export interface components {
             kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @enum {string} */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased";
+            /** @description True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4). */
+            unreviewed: boolean;
             /**
              * @description On kind guardrail alone, except a retirement version (ADR-0037 d2).
              * @enum {string}
@@ -1200,7 +1261,15 @@ export interface components {
             stale: components["schemas"]["Stale"] | null;
             /** @description The version's latest source check, or null; always null on a held version (ADR-0057 d5). */
             source_checked: components["schemas"]["SourceChecked"] | null;
+            /** @description When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2). */
+            valid_from?: string | null;
+            /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4). */
+            valid_until?: string | null;
+            /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
+            replaces_valid_until?: string;
         };
+        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2). */
+        ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
             /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
             text?: string;
@@ -1226,10 +1295,7 @@ export interface components {
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
             origin_kinds?: components["schemas"]["OriginKinds"];
-            /**
-             * @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held; they count against k and max_tokens. Rules: docs/architecture/retrieval.md.
-             * @default false
-             */
+            /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
              * Format: int64
@@ -1237,10 +1303,10 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not serve is request.validation with details.field /search and details.served.
              * @enum {string}
              */
-            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf" | "bm25-postings-time";
             /**
              * @description all keeps only rows holding every query word; when none does, the any-word hits are served and search.fallback is any_term (ADR-0049 d5).
              * @default any
@@ -1248,6 +1314,15 @@ export interface components {
              */
             match?: "any" | "all";
             feedback?: components["schemas"]["Feedback"];
+            /** @description Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9. */
+            timings?: boolean;
+            /**
+             * @description true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).
+             * @default false
+             */
+            include_expired?: boolean;
+            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5). */
+            now?: components["schemas"]["ValidEnd"];
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
         Feedback: {
@@ -1257,6 +1332,7 @@ export interface components {
             not_useful?: string[];
         };
         RecallResponse: {
+            timings?: components["schemas"]["RecallTimings"];
             /**
              * Format: uuid
              * @description The recall's id: the feedback member of a later read names it (ADR-0054 d6).
@@ -1281,8 +1357,8 @@ export interface components {
             terms: string[];
             /** @description How many words the query had. */
             of: number;
-            /** @description The retrievers whose lists held the row. */
-            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse")[];
+            /** @description The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0059 d7). */
+            via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse" | "time")[];
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
             /** @description The row's rank in the first stage's list, from 1, when the reranker scored it (ADR-0053 d7). */
@@ -1302,7 +1378,7 @@ export interface components {
         /** @description What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7). */
         RecallSearch: {
             /** @enum {string} */
-            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse";
+            pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf" | "bm25-postings-time";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -1317,6 +1393,21 @@ export interface components {
             access: "postings" | "scan";
             /** @description The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11). */
             pruned: string[];
+            /** @description The date window read from the query by rule oml-when/1, anchored to the recall's now; null when the query names no date (proposed ADR-0059 d6). */
+            window?: {
+                /**
+                 * Format: date-time
+                 * @description The window's first instant; null when open.
+                 */
+                from: string | null;
+                /**
+                 * Format: date-time
+                 * @description The instant after its last; null when open.
+                 */
+                until: string | null;
+                /** @description The query's words the window was read from. */
+                phrase: string;
+            } | null;
             /** @description applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage's order was served; null when the pipeline does not rerank or found nothing. */
             rerank: components["schemas"]["RerankOutcome"] | null;
             /** @description Why the rerank was skipped; null otherwise. */
@@ -1346,6 +1437,11 @@ export interface components {
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
+            /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12). */
+            valid_time?: {
+                declared: number;
+                expired: number;
+            };
         };
         UsageSettings: {
             /** @description Whether this server records recalls. */
@@ -1482,6 +1578,15 @@ export interface components {
             reason?: string;
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
+            /**
+             * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
+             * @enum {string}
+             */
+            on_similar?: "hold" | "refuse";
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2). */
+            valid_from?: components["schemas"]["ValidEnd"];
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
+            valid_until?: components["schemas"]["ValidEnd"];
         };
         /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
         Anchor: {
@@ -1577,6 +1682,13 @@ export interface components {
         WorkareaCrewUpdate: {
             crew: components["schemas"]["CrewRef"];
         };
+        WorkareaModeSet: {
+            /**
+             * @description in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6).
+             * @enum {string}
+             */
+            mode: "in_progress" | "standard";
+        };
         Workarea: {
             id: string;
             /** @description Unique in the tenant and never changed; universe for the root (ADR-0026 d1, d6). */
@@ -1591,11 +1703,18 @@ export interface components {
             crew?: components["schemas"]["Crew"] | null;
             /** @description Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11). */
             user_root?: boolean;
+            /**
+             * @description in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2).
+             * @enum {string}
+             */
+            mode?: "standard" | "in_progress";
             /** Format: date-time */
             created_at?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkareaView: components["schemas"]["Workarea"] & {
+            /** @description The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13). */
+            in_progress_root?: components["schemas"]["WhoamiRef"] | null;
             /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea. */
             stale_versions: number;
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
@@ -1903,6 +2022,11 @@ export interface components {
             principal?: string;
             guardrail_scope?: components["schemas"]["GuardrailScope"];
             /**
+             * @description curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9).
+             * @enum {string}
+             */
+            profile?: "curator";
+            /**
              * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
              */
@@ -1941,6 +2065,11 @@ export interface components {
              */
             credential?: "bearer" | "connection" | "session";
             guardrail_scope?: components["schemas"]["GuardrailScope"];
+            /**
+             * @description The key's profile as key.issued journals it; null for none (ADR-0030 d8).
+             * @enum {string|null}
+             */
+            profile?: "curator" | null;
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
         };
@@ -2064,6 +2193,11 @@ export interface components {
             /** @description The key's stored grants, each with its epoch and without its deny masks. */
             grants: components["schemas"]["WhoamiGrant"][];
             guardrail_scope?: components["schemas"]["GuardrailScope"];
+            /**
+             * @description The key's profile; null for none (ADR-0030 d8).
+             * @enum {string|null}
+             */
+            profile?: "curator" | null;
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -3074,6 +3208,50 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Workarea"];
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkareaMode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "mode": "in_progress"
+                 *     }
+                 */
+                "application/json": components["schemas"]["WorkareaModeSet"];
+            };
+        };
+        responses: {
+            /** @description The node as the key reads it. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkareaView"];
                 };
             };
             415: components["responses"]["UnsupportedMedia"];

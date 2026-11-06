@@ -456,6 +456,7 @@ pub fn held_memory(
         scan_finding: None,
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
         guardrail: None,
+        valid: Default::default(),
         anchor: None,
         origin_kind: None,
         source_check: None,
@@ -515,6 +516,7 @@ async fn supersede_tip<S: JournalStore>(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until: None,
         },
         None,
     )
@@ -554,6 +556,7 @@ pub fn workarea_record(
     workarea_name: &str,
 ) -> WorkareaRecord {
     WorkareaRecord {
+        in_progress: false,
         workarea_id,
         tenant_id,
         parent_id,
@@ -587,6 +590,7 @@ pub fn crew_record(tenant_id: Uuid, crew_id: Uuid, crew_name: &str) -> CrewRecor
 #[must_use]
 pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<Uuid>) -> KeyRecord {
     KeyRecord {
+        profile: None,
         key_id,
         tenant_id,
         role,
@@ -937,6 +941,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
             own_held: None,
+            expired_at: None,
         };
         let query = query.to_owned();
         async move {
@@ -949,6 +954,8 @@ pub trait KeywordAllReads: Retriever {
                     match_mode: MatchMode::All,
                     k,
                     sparse: &[],
+                    window: None,
+                    within: &[],
                 },
             )
             .await
@@ -970,9 +977,11 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
+                any_author: false,
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
             }),
+            expired_at: None,
         };
         let query = query.to_owned();
         async move {
@@ -985,6 +994,8 @@ pub trait KeywordAllReads: Retriever {
                     match_mode: MatchMode::All,
                     k,
                     sparse: &[],
+                    window: None,
+                    within: &[],
                 },
             )
             .await
@@ -1479,6 +1490,157 @@ pub async fn recall_own_held_never_returns_another_keys_row_whatever_the_query<S
     assert_eq!(first, all[..1], "k keeps the prefix of the order");
 }
 
+/// Inside an in-progress scope the core hands the retrievers every author's
+/// held rows on the served nodes (ADR-0030 d3): each retriever the store
+/// serves reads exactly the held memories and derived facts on the nodes
+/// named, of any author, never a node outside them, never a rejected,
+/// steering or retirement version, and never another tenant's row, row
+/// security beneath it (P-R3-BOUNDARY at the store).
+pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(46);
+    rig.seed_chain(store, 0).await;
+    let mut other_tenant = ChainRig::new(47);
+    other_tenant.seed_chain(store, 0).await;
+    let [inside, outside] = [0xB460_u128, 0xB461].map(Uuid::from_u128);
+    let [ann, bob] = [0xD460_u128, 0xD461].map(Uuid::from_u128);
+    let row = |tenant: u64, wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| {
+        MemoryRecord {
+            kind,
+            ..held_memory(
+                rig_tenant(tenant),
+                wa,
+                Uuid::from_u128(id),
+                "wanda",
+                author,
+                body,
+            )
+        }
+    };
+    let anns = row(
+        46,
+        inside,
+        0xC460,
+        ann,
+        MemoryKind::Memory,
+        "the canary drains",
+    );
+    let bobs = row(
+        46,
+        inside,
+        0xC461,
+        bob,
+        MemoryKind::DerivedFact,
+        "canary weights logged",
+    );
+    let steering = row(
+        46,
+        inside,
+        0xC462,
+        bob,
+        MemoryKind::Steering,
+        "canary steering",
+    );
+    let away = row(
+        46,
+        outside,
+        0xC463,
+        bob,
+        MemoryKind::Memory,
+        "the canary outside",
+    );
+    let rejected = row(
+        46,
+        inside,
+        0xC464,
+        bob,
+        MemoryKind::Memory,
+        "the canary rejected",
+    );
+    let foreign = row(
+        47,
+        inside,
+        0xC465,
+        bob,
+        MemoryKind::Memory,
+        "the canary foreign",
+    );
+    for memory in [&anns, &bobs, &steering, &away] {
+        hold(&mut rig, store, memory.clone()).await.expect("hold");
+    }
+    hold(&mut rig, store, rejected.clone()).await.expect("hold");
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    hold(&mut other_tenant, store, foreign).await.expect("hold");
+
+    let scope = |nodes: Vec<Uuid>| CandidateScope {
+        expired_at: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+        promoted_nodes: Vec::new(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            author_key_ids: Vec::new(),
+            nodes,
+            any_author: true,
+        }),
+    };
+    for kind in store.retrievers() {
+        // The time leg reads only a query's date window; its own laws hold it.
+        if kind == RetrieverKind::Sparse || kind == RetrieverKind::Time {
+            continue;
+        }
+        let read = |nodes: Vec<Uuid>| {
+            let scope = scope(nodes);
+            async move {
+                let mut ids: Vec<Uuid> = store
+                    .retrieve(
+                        rig_tenant(46),
+                        kind,
+                        &scope,
+                        RetrievalQuery {
+                            window: None,
+                            within: &[],
+                            query: "canary",
+                            match_mode: MatchMode::Any,
+                            k: 20,
+                            sparse: &[],
+                        },
+                    )
+                    .await
+                    .expect("retrieve")
+                    .candidates
+                    .iter()
+                    .map(|c| c.memory_id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+        let mut expected = vec![anns.memory_id, bobs.memory_id];
+        expected.sort();
+        assert_eq!(
+            read(vec![inside]).await,
+            expected,
+            "{kind:?}: every author's held memory and derived fact on the node"
+        );
+        assert_eq!(
+            read(vec![outside]).await,
+            vec![away.memory_id],
+            "{kind:?}: exactly the nodes named"
+        );
+        assert!(
+            read(Vec::new()).await.is_empty(),
+            "{kind:?}: no node, no row"
+        );
+    }
+}
+
 /// The set-wise read returns the rows named, in the order named; an id no
 /// row of this tenant has is absent, not an error (ADR-0024 d4, ADR-0025
 /// d7).
@@ -1780,6 +1942,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(7);
     rig.seed_chain(store, 0).await;
     let record = KeyRecord {
+        profile: None,
         key_id: Uuid::from_u128(0xD9),
         tenant_id: rig.tenant_id,
         role: oml_app::domain::Role::Writer,
@@ -3878,6 +4041,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
                 MetadataFold::TipSuperseded {
                     successor: m.memory_id,
                     replaced: v1.memory_id,
+                    replaced_valid_until: None,
                 },
             ),
         ]
@@ -4349,7 +4513,12 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
                 .expect("list"),
         )
     };
-    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes });
+    let tips = |nodes: Vec<Uuid>| {
+        listing(ListingScope::Tips {
+            nodes,
+            held: Vec::new(),
+        })
+    };
 
     assert_eq!(list(tips(vec![wa])).await, vec![tip.memory_id]);
     assert_eq!(
@@ -6035,6 +6204,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     let select = |artifact_id: Option<Uuid>, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: vec![root, side],
         reader_key_id: world.proposer.key_id,
     };
@@ -6168,6 +6338,7 @@ pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or
     let select = |nodes: Vec<Uuid>, reader: Uuid, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id: None,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: nodes,
         reader_key_id: reader,
     };
@@ -6760,6 +6931,101 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
 }
 
 /// Every journal-store law in one call, each against a fresh store.
+/// A ratified supersession that gives the replaced version an end writes it
+/// in the same commit that moves the tip, readable back exactly; an end the
+/// replaced version's own start forbids is refused and the commit changes
+/// nothing, its tip included (proposed ADR-0059 d4).
+pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: JournalStore>(store: &S) {
+    use oml_app::domain::valid_time::{ValidEnd, ValidTime};
+    let mut rig = ChainRig::new(433);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let mut v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x7201),
+        "rita",
+        key,
+        "the api is at v3",
+    );
+    *v1.valid = ValidTime::parse(Some("2025"), None).expect("ends");
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote v1");
+    let mut v2 = successor_of(&v1, Uuid::from_u128(0x7202), "the api is at v4", false);
+    *v2.valid = ValidTime::parse(Some("2026-06-01"), None).expect("ends");
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    // An end before v1's own start: refused, nothing moves.
+    let before = ValidEnd::from_stored(
+        "2024-01-01T00:00:00.000000Z".to_owned(),
+        1_704_067_200_000_000,
+    );
+    let refused = rig
+        .commit(
+            store,
+            event_types::LIFECYCLE_SUPERSEDE,
+            json!({ "new_artifact_id": v2.memory_id.to_string() }),
+            MetadataFold::TipSuperseded {
+                successor: v2.memory_id,
+                replaced: v1.memory_id,
+                replaced_valid_until: Some(Box::new(before)),
+            },
+            None,
+        )
+        .await;
+    assert!(refused.is_err(), "an end before the start is refused");
+    let still = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(
+        still.is_tip && still.valid.until.is_none(),
+        "the refused commit changed nothing"
+    );
+    let end = ValidEnd::from_stored(
+        "2026-06-01T00:00:00.000000Z".to_owned(),
+        1_780_272_000_000_000,
+    );
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({ "new_artifact_id": v2.memory_id.to_string() }),
+        MetadataFold::TipSuperseded {
+            successor: v2.memory_id,
+            replaced: v1.memory_id,
+            replaced_valid_until: Some(Box::new(end.clone())),
+        },
+        None,
+    )
+    .await
+    .expect("the ratification commits");
+    let ended = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1");
+    assert!(!ended.is_tip, "the tip moved");
+    assert_eq!(
+        ended.valid.until.as_ref(),
+        Some(&end),
+        "with the end it gave"
+    );
+    assert_eq!(
+        ended.valid.from.as_ref().map(ValidEnd::as_str),
+        Some("2025")
+    );
+    let tip = store
+        .memory(tenant, v2.memory_id)
+        .await
+        .expect("read")
+        .expect("v2");
+    assert!(tip.is_tip);
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -6779,6 +7045,10 @@ where
     )
     .await;
     Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(recall_serves_promoted_tips_only_within_the_readable_set(
         &new_store().await,
     ))
@@ -6802,6 +7072,10 @@ where
     .await;
     Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
         .await;
+    Box::pin(held_rows_of_every_author_are_read_on_the_named_nodes_alone(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(memories_reads_the_named_rows_in_the_order_named(
         &new_store().await,
     ))
@@ -9557,9 +9831,11 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
+            any_author: false,
             author_key_ids: vec![key],
             nodes: vec![wa],
         }),
+        expired_at: None,
     }
 }
 
@@ -9589,6 +9865,8 @@ async fn run<S: Retriever>(
                 match_mode,
                 k: 50,
                 sparse: &sparse,
+                window: None,
+                within: &[],
             },
         )
         .await
@@ -9664,6 +9942,7 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
                     own_held: None,
+                    expired_at: None,
                 };
                 assert!(
                     run(store, rig.tenant_id, kind, &empty, query, mode)
@@ -10493,6 +10772,8 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                                 match_mode: mode,
                                 k,
                                 sparse: &[],
+                                window: None,
+                                within: &[],
                             },
                         )
                     };
@@ -10509,6 +10790,63 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                     assert!(postings.pruned.is_empty(), "{what}: nothing pruned");
                 }
             }
+        }
+    }
+}
+
+/// An expired version counts in no statistic: `bm25` and `bm25-postings`
+/// rank the rows a scope keeps over the rows it keeps alone, so with
+/// readable versions ended both pipelines answer the same list, and the same
+/// list as a store in which those versions were never written; with
+/// `include_expired` both count them again (proposed ADR-0059 d3).
+pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S: JournalStore>(
+    store: &S,
+) {
+    if !store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+        return;
+    }
+    let mut rig = ChainRig::new(435);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let tenant = rig.tenant_id;
+    let other = Uuid::from_u128(0xE5);
+    for (id, body) in [
+        (0xF31_u128, "billing billing billing friday deploy"),
+        (0xF32, "invoices billing ledger reconciled monthly"),
+    ] {
+        let mut m = held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
+        *m.valid = oml_app::domain::valid_time::ValidTime::parse(None, Some("2020")).expect("ends");
+        hold_and_promote(&mut rig, store, m).await;
+    }
+    let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
+    for query in POSTINGS_QUERIES {
+        for (own_held, expired_at) in [(None, Some(now)), (Some(own), Some(now)), (None, None)] {
+            let scope = CandidateScope {
+                expired_at,
+                ..scope_of(wa, own_held)
+            };
+            let ask = |kind| {
+                store.retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 12,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+            };
+            let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
+            let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
+            same_list(
+                &postings,
+                &scan,
+                &format!("{query:?} own {own_held:?} expired_at {expired_at:?}"),
+            );
         }
     }
 }
@@ -10832,6 +11170,8 @@ pub async fn a_pruned_list_is_bm25s_over_the_rows_its_unpruned_words_reach<S: Jo
                             match_mode: MatchMode::Any,
                             k,
                             sparse: &[],
+                            window: None,
+                            within: &[],
                         },
                     )
                 };
@@ -10934,6 +11274,295 @@ pub async fn a_word_only_unreadable_rows_hold_is_answered_as_a_word_no_row_holds
     }
 }
 
+/// A fixture row of the valid-time laws with its declared ends.
+fn dated(mut m: MemoryRecord, from: Option<&str>, until: Option<&str>) -> MemoryRecord {
+    *m.valid = oml_app::domain::valid_time::ValidTime::parse(from, until).expect("fixture ends");
+    m
+}
+
+/// The `time` leg never returns a row outside the scope the core hands it:
+/// another node's dated row, another key's held dated row, a dated steering
+/// row, an own held row when no own keys are named; a row with no
+/// `valid_from` never matches a window; an empty scope ranks nothing; and
+/// its order is the rows that start inside the window first, then those
+/// that started before it, nearest first, ties by id (proposed ADR-0059 d7).
+pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let (wa, elsewhere) = (Uuid::from_u128(0xE2), Uuid::from_u128(0xE3));
+    let (own, other) = (Uuid::from_u128(0xE4), Uuid::from_u128(0xE5));
+    let row = |id: u128, node: Uuid, key: Uuid, body: &str| {
+        held_memory(tenant, node, Uuid::from_u128(id), "rita", key, body)
+    };
+    let in_2015 = Uuid::from_u128(0x7001);
+    let spans_2015 = Uuid::from_u128(0x7002);
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7001, wa, other, "moved the office"),
+            Some("2015-06"),
+            Some("2015-06"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7002, wa, other, "the office lease"),
+            Some("2012"),
+            Some("2019"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(row(0x7003, wa, other, "a later office"), Some("2017"), None),
+    )
+    .await;
+    hold_and_promote(&mut rig, store, row(0x7004, wa, other, "an undated office")).await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7005, elsewhere, other, "elsewhere office"),
+            Some("2015"),
+            None,
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Steering,
+            ..dated(
+                row(0x7006, wa, other, "steering office"),
+                Some("2015"),
+                None,
+            )
+        },
+    )
+    .await;
+    let own_held = Uuid::from_u128(0x7007);
+    hold(
+        &mut rig,
+        store,
+        dated(row(0x7007, wa, own, "own held office"), Some("2015"), None),
+    )
+    .await
+    .expect("hold own");
+    hold(
+        &mut rig,
+        store,
+        dated(
+            row(0x7008, wa, other, "another key's held office"),
+            Some("2015"),
+            None,
+        ),
+    )
+    .await
+    .expect("hold another's");
+    let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // As if the text list had found every fixture row.
+    let within: Vec<Uuid> = (0x7001..=0x7008_u128).map(Uuid::from_u128).collect();
+    let leg = |scope: CandidateScope| {
+        let window = window.clone();
+        let within = within.clone();
+        async move {
+            store
+                .retrieve(
+                    tenant,
+                    RetrieverKind::Time,
+                    &scope,
+                    RetrievalQuery {
+                        query: "in 2015",
+                        match_mode: MatchMode::Any,
+                        k: 50,
+                        sparse: &[],
+                        window: Some(&window),
+                        within: &within,
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        leg(scope_of(wa, None)).await,
+        vec![in_2015, spans_2015],
+        "the window's rows on the readable node, those starting inside it first"
+    );
+    assert_eq!(
+        leg(scope_of(wa, Some(own))).await,
+        vec![in_2015, own_held, spans_2015],
+        "the own held row joins only when its key is named"
+    );
+    let empty = CandidateScope {
+        promoted_nodes: Vec::new(),
+        kinds: HIT_KINDS.to_vec(),
+        own_held: None,
+        expired_at: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+    };
+    assert!(leg(empty).await.is_empty(), "an empty scope ranks nothing");
+}
+
+/// A version whose valid time ended at or before the scope's `expired_at`
+/// is outside every retriever's scope but `keyword_all`'s, whose v0.5.0
+/// statement the core re-checks after; with no `expired_at` it is served
+/// like any other (proposed ADR-0059 d3).
+pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let row =
+        |id: u128, body: &str| held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body);
+    let ended = Uuid::from_u128(0x7101);
+    let current = Uuid::from_u128(0x7102);
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(
+            row(0x7101, "billing deploy freeze"),
+            Some("2014"),
+            Some("2015"),
+        ),
+    )
+    .await;
+    hold_and_promote(
+        &mut rig,
+        store,
+        dated(row(0x7102, "billing deploy window"), Some("2014"), None),
+    )
+    .await;
+    let now = oml_app::domain::valid_time::parse_now("2026-11-05").expect("now");
+    let window = oml_app::domain::valid_time::parse_window("in 2015", now).expect("a window");
+    for kind in store.retrievers() {
+        if kind == RetrieverKind::KeywordAll {
+            continue;
+        }
+        for expired_at in [Some(now), None] {
+            let scope = CandidateScope {
+                expired_at,
+                ..scope_of(wa, None)
+            };
+            if kind == RetrieverKind::Sparse {
+                encode_sparse_backlog(store).await;
+            }
+            let sparse = if kind == RetrieverKind::Sparse {
+                oml_app::ports::SparseEncoder::encode_query(
+                    &FakeSparseEncoder::new(),
+                    "billing deploy",
+                )
+            } else {
+                Vec::new()
+            };
+            let got: Vec<Uuid> = store
+                .retrieve(
+                    tenant,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query: "billing deploy",
+                        match_mode: MatchMode::Any,
+                        k: 50,
+                        sparse: &sparse,
+                        window: Some(&window),
+                        within: &[ended, current],
+                    },
+                )
+                .await
+                .expect("retrieve")
+                .candidates
+                .iter()
+                .map(|c| c.memory_id)
+                .collect();
+            assert!(
+                got.contains(&current),
+                "{kind:?}: the current row is served"
+            );
+            assert_eq!(
+                got.contains(&ended),
+                expired_at.is_none(),
+                "{kind:?} {expired_at:?}: the ended row is hidden exactly when the scope says"
+            );
+        }
+    }
+}
+
+/// The `time` leg reads only the rows the text list found, named by id, so
+/// its cost is bounded by that list and a window holding more rows than any
+/// read cap still answers every one of them it holds; ties break by id,
+/// so equal input gives equal output (proposed ADR-0059 d7).
+pub async fn the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(434);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let mut ids = Vec::new();
+    for i in 0..205_u128 {
+        let mut m = held_memory(
+            tenant,
+            wa,
+            Uuid::from_u128(0x7300 + i),
+            "rita",
+            other,
+            "a dated note",
+        );
+        *m.valid =
+            oml_app::domain::valid_time::ValidTime::parse(Some("2015-06"), None).expect("ends");
+        hold_and_promote(&mut rig, store, m).await;
+        ids.push(Uuid::from_u128(0x7300 + i));
+    }
+    let window = oml_app::domain::valid_time::parse_window("in 2015", 0).expect("a window");
+    // The text list found the last row and one outside the window's rows.
+    let within = vec![ids[204], ids[3], Uuid::from_u128(0x7FFF)];
+    let read = || async {
+        store
+            .retrieve(
+                tenant,
+                RetrieverKind::Time,
+                &scope_of(wa, None),
+                RetrievalQuery {
+                    query: "in 2015",
+                    match_mode: MatchMode::Any,
+                    k: 50,
+                    sparse: &[],
+                    window: Some(&window),
+                    within: &within,
+                },
+            )
+            .await
+            .expect("retrieve")
+            .candidates
+            .iter()
+            .map(|c| c.memory_id)
+            .collect::<Vec<_>>()
+    };
+    let first = read().await;
+    assert_eq!(
+        first,
+        vec![ids[3], ids[204]],
+        "the text list's rows the window holds, by id"
+    );
+    assert_eq!(read().await, first, "equal input, equal output");
+}
+
 pub async fn run_retriever_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -10952,6 +11581,146 @@ where
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
+    similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key(
+        &new_store().await,
+    )
+    .await;
+    the_time_leg_never_returns_a_row_outside_the_scope(&new_store().await).await;
+    an_expired_memory_is_outside_every_retrievers_scope(&new_store().await).await;
+    the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds(&new_store().await)
+        .await;
+}
+
+/// The similar check's candidates (ADR-0050 d1, d17): of the versions
+/// holding one of the keys, the promoted served tips on the scope's nodes
+/// and the held rows of its own keys on theirs, of the kinds memory,
+/// derived fact and steering; never another key's held row, a replaced,
+/// rejected or retirement version, or a row outside the nodes; by keys
+/// held, then id; at most the limit.
+pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::similar::Fingerprint;
+    const TEXT: &str = "Production deploys run only on Tuesday and Thursday between 10:00 \
+                        and 12:00 CET; outside that window a deploy needs the lead's approval.";
+    let mut rig = ChainRig::new(45);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig_tenant(45);
+    let [wa, elsewhere] = [0xB450_u128, 0xB451].map(Uuid::from_u128);
+    let [own, other] = [0xD450_u128, 0xD451].map(Uuid::from_u128);
+    let row = |wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "wanda", author, body)
+    };
+    let tip = row(wa, 0xC450, own, MemoryKind::Memory, TEXT);
+    let steering = row(
+        wa,
+        0xC451,
+        other,
+        MemoryKind::Steering,
+        &format!("Note: {TEXT}"),
+    );
+    let held = row(wa, 0xC452, own, MemoryKind::DerivedFact, TEXT);
+    let theirs = row(wa, 0xC453, other, MemoryKind::Memory, TEXT);
+    let rejected = row(wa, 0xC454, own, MemoryKind::Memory, TEXT);
+    let away = row(elsewhere, 0xC455, own, MemoryKind::Memory, TEXT);
+    let replaced = row(wa, 0xC456, own, MemoryKind::Memory, TEXT);
+    let retired = row(
+        wa,
+        0xC458,
+        own,
+        MemoryKind::Memory,
+        "the canary lapsed in May",
+    );
+    let unrelated = row(wa, 0xC45A, own, MemoryKind::Memory, "zebra quartz");
+    for m in [&tip, &steering, &away, &replaced, &retired, &unrelated] {
+        hold_and_promote(&mut rig, store, m.clone()).await;
+    }
+    for m in [&held, &theirs, &rejected] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    supersede(
+        &mut rig,
+        store,
+        &replaced,
+        Uuid::from_u128(0xC457),
+        "The deploy window moved to Monday mornings.",
+        false,
+    )
+    .await;
+    supersede(
+        &mut rig,
+        store,
+        &retired,
+        Uuid::from_u128(0xC459),
+        TEXT,
+        true,
+    )
+    .await;
+
+    let keys: Vec<i64> = Fingerprint::of(TEXT)
+        .query_keys()
+        .into_iter()
+        .map(|(_, k)| k)
+        .collect();
+    let scope = |nodes: Vec<Uuid>, keys_: Vec<Uuid>| CandidateScope {
+        promoted_nodes: nodes.clone(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            any_author: false,
+            author_key_ids: keys_,
+            nodes,
+        }),
+        expired_at: None,
+        anchor: Default::default(),
+    };
+    let candidates = |scope: CandidateScope, keys: Vec<i64>, limit: usize| async move {
+        store
+            .similar_candidates(tenant, &scope, &keys, limit)
+            .await
+            .expect("similar candidates")
+    };
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 10).await,
+        vec![tip.memory_id, held.memory_id, steering.memory_id],
+        "the same text's two rows first, by id, then the near copy, which holds fewer keys"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![other]), keys.clone(), 10).await,
+        vec![tip.memory_id, theirs.memory_id, steering.memory_id],
+        "each key set reads its own held rows alone"
+    );
+    assert_eq!(
+        candidates(scope(vec![elsewhere], vec![own]), keys.clone(), 10).await,
+        vec![away.memory_id],
+        "exactly the scope's nodes"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 1).await,
+        vec![tip.memory_id],
+        "the limit keeps the prefix of the order"
+    );
+    assert!(
+        candidates(scope(vec![wa], vec![own]), Vec::new(), 10)
+            .await
+            .is_empty(),
+        "no key, no candidate"
+    );
+    assert!(
+        candidates(scope(Vec::new(), Vec::new()), keys, 10)
+            .await
+            .is_empty(),
+        "an empty scope, no candidate"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -11172,6 +11941,8 @@ pub async fn an_encoded_version_follows_promotion_supersession_and_retirement<S:
                             &FakeSparseEncoder::new(),
                             "quokka",
                         ),
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await

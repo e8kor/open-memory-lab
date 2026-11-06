@@ -293,7 +293,7 @@ a use case, and a capability is a parameter before it is a tool.
   generated SDKs, the [HTTP API](../api/http-api.md), the [CLI reference](../cli/reference.md),
   the [event catalog](../data/event-catalog.md) (`submission.remember` and `submission.learn`
   carry `origin`) and the [Postgres schema](../data/postgres-schema.md) (`memories.origin_kind`,
-  migrations 0030 and 0031, numbered past the parallel lanes' 0026 to 0029; 0031 validates and indexes outside any transaction) change in the same change as the code. The error enum is unchanged:
+  migrations 0029 and 0030, numbered after the other lanes' 0026 to 0028; 0030 validates and indexes outside any transaction) change in the same change as the code. The error enum is unchanged:
   `request.validation`, `submission.scan_veto` and `access.verb_ceiling` carry the new refusals.
 - The plugin gains three hook entries and one skill; `scripts/check_plugin.py` holds them. The
   plugin README names the three switches.
@@ -305,7 +305,7 @@ a use case, and a capability is a parameter before it is a tool.
   that runs it.
 - Costs carried openly: capture spends the session's tokens; an opted-in per-turn recall sends
   prompt words to the server on every turn; a kind is the author's statement and is not
-  verified; rows written before migration 0030 have no kind and drop out of every kind filter.
+  verified; rows written before migration 0029 have no kind and drop out of every kind filter.
 
 ## Rejected alternatives
 

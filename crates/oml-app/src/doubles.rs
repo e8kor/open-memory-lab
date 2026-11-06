@@ -5,6 +5,7 @@
 //! The doubles are deterministic — fixed clock, counting id generator — so
 //! every test chain is reproducible byte for byte.
 
+use oml_domain::similar::Fingerprint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,9 +46,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow,
-    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry,
-    WebSessionRecord, WorkareaRecord, WorkareaRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SourceCheck,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -209,6 +210,9 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// `similar_candidates` ignores its scope (a store that regressed), so
+    /// a test proves the core admits by recall's rule on its own.
+    widen_similar: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
     /// How many ancestries `workarea_ancestry` has read, across every
@@ -356,6 +360,14 @@ impl MemStore {
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes `similar_candidates` ignore its scope and name every version of
+    /// the tenant that shares a key, as a store whose scope predicate
+    /// regressed would: the core's own admission is then the only filter
+    /// between the writer and a row it may not read (ADR-0050 d1).
+    pub fn widen_similar_candidates(&self) {
+        self.widen_similar.store(true, Ordering::SeqCst);
     }
 
     /// Sets a stored row's status, journalling nothing: the demoted or
@@ -551,6 +563,7 @@ fn fold_poc_event(
             state.keys.insert(
                 key_id,
                 KeyRecord {
+                    profile: None,
                     key_id,
                     tenant_id,
                     role,
@@ -1098,6 +1111,25 @@ fn apply_fold(
             };
             workarea.crew_id = Some(crew_id);
         }
+        MetadataFold::WorkareaModeSet {
+            workarea_id,
+            in_progress,
+            held_free,
+        } => {
+            if state
+                .memories
+                .values()
+                .any(|m| m.status == MemoryStatus::Held && held_free.contains(&m.workarea_id))
+            {
+                return Err(StoreError::HeldRemaining);
+            }
+            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            };
+            workarea.in_progress = in_progress;
+        }
         MetadataFold::NamesAssigned(naming) => {
             assign_names_fold(state, tenant_id, &naming)?;
         }
@@ -1392,6 +1424,7 @@ fn apply_fold(
         MetadataFold::TipSuperseded {
             successor,
             replaced,
+            replaced_valid_until,
         } => {
             // The compare-and-set: the successor is held and replaces
             // `replaced`, which is still the promoted tip under the
@@ -1414,8 +1447,26 @@ fn apply_fold(
             if !cas {
                 return Err(StoreError::TipMoved { replaced });
             }
+            // memories_valid_time_ends: an end at or before the replaced
+            // version's start is refused, and nothing moves (proposed
+            // ADR-0059 d4, d11).
+            if let (Some(end), Some(target)) =
+                (&replaced_valid_until, state.memories.get(&replaced))
+                && target
+                    .valid
+                    .from
+                    .as_ref()
+                    .is_some_and(|f| f.unix_micros() >= end.unix_micros())
+            {
+                return Err(StoreError::Backend(
+                    "memories_valid_time_ends: the end is not after the start".to_owned(),
+                ));
+            }
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
+                if let Some(end) = replaced_valid_until {
+                    target.valid.until = Some(*end);
+                }
             }
             if let Some(memory) = state.memories.get_mut(&successor) {
                 memory.status = MemoryStatus::Promoted;
@@ -1686,6 +1737,7 @@ fn assign_names_fold(
                     )));
                 };
                 let workarea = WorkareaRecord {
+                    in_progress: false,
                     workarea_id: id,
                     tenant_id,
                     parent_id: unnamed.parent_id,
@@ -1782,14 +1834,22 @@ impl Retriever for MemStore {
     /// trigrams, so a composition over it serves `keyword-all` and
     /// `keyword-any` alone (ADR-0049 d7).
     fn retrievers(&self) -> Vec<RetrieverKind> {
+        // The `time` leg is a predicate over declared bounds, served with
+        // PostgreSQL's semantics (proposed ADR-0059 d7).
         if self.bm25_as_any_word {
             vec![
                 RetrieverKind::KeywordAll,
                 RetrieverKind::KeywordAny,
                 RetrieverKind::Bm25,
+                RetrieverKind::Bm25Postings,
+                RetrieverKind::Time,
             ]
         } else {
-            vec![RetrieverKind::KeywordAll, RetrieverKind::KeywordAny]
+            vec![
+                RetrieverKind::KeywordAll,
+                RetrieverKind::KeywordAny,
+                RetrieverKind::Time,
+            ]
         }
     }
 
@@ -1821,6 +1881,14 @@ impl Retriever for MemStore {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
                 return false;
             }
+            // An ended version is outside the scope unless asked for
+            // (proposed ADR-0059 d3); keyword-all's v0.5.0 statement keeps
+            // no such cut on PostgreSQL, and the core re-checks either way.
+            if kind != RetrieverKind::KeywordAll
+                && scope.expired_at.is_some_and(|now| m.valid.expired_at(now))
+            {
+                return false;
+            }
             if !scope.anchor.admits_row(m.anchor.as_deref(), m.origin_kind) {
                 return false;
             }
@@ -1829,11 +1897,46 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
-                    && own.author_key_ids.contains(&m.author_key_id)
+                    && (own.any_author || own.author_key_ids.contains(&m.author_key_id))
                     && own.nodes.contains(&m.workarea_id)
             })
         };
-        let kind = if kind == RetrieverKind::Bm25 {
+        if kind == RetrieverKind::Time {
+            let Some(window) = query.window else {
+                return Ok(Retrieved::default());
+            };
+            // Inside the window scores 1; an earlier start scores by its
+            // distance to the window's start (proposed ADR-0059 d7).
+            let start = window.from_us;
+            let mut candidates: Vec<Candidate> = state
+                .memories
+                .values()
+                .filter(admitted)
+                .filter(|m| query.within.contains(&m.memory_id))
+                .filter(|m| m.valid.overlaps(window))
+                .filter_map(|m| {
+                    let from = m.valid.from.as_ref()?.unix_micros();
+                    #[allow(clippy::cast_precision_loss, reason = "days apart")]
+                    let days = start.map_or(0, |s| (s - from).max(0)) as f64 / 86_400_000_000.0;
+                    #[allow(clippy::cast_possible_truncation, reason = "a score in (0, 1]")]
+                    let score = (1.0 / (1.0 + days)) as f32;
+                    Some(Candidate {
+                        memory_id: m.memory_id,
+                        body_bytes: m.body_bytes,
+                        score,
+                        matched: Vec::new(),
+                        tokens: Vec::new(),
+                    })
+                })
+                .collect();
+            hit_order(&mut candidates, |c| (c.score, c.memory_id));
+            candidates.truncate(query.k);
+            return Ok(Retrieved {
+                candidates,
+                ..Retrieved::default()
+            });
+        }
+        let kind = if matches!(kind, RetrieverKind::Bm25 | RetrieverKind::Bm25Postings) {
             RetrieverKind::KeywordAny
         } else {
             kind
@@ -1853,6 +1956,73 @@ impl Retriever for MemStore {
         _limit: usize,
     ) -> Result<Vec<String>, StoreError> {
         Ok(Vec::new())
+    }
+
+    /// The near-copy check's candidates, keyed as migration 0027 keys them
+    /// (ADR-0050 d17): each version's keys computed from its text on the
+    /// read, under the same scope predicates as [`Self::retrieve`].
+    async fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut found: Vec<(usize, Uuid)> = state
+            .memories
+            .values()
+            .filter(|m| {
+                if self.widen_similar.load(Ordering::SeqCst) {
+                    return true;
+                }
+                if m.retirement || !SIMILAR_KINDS.contains(&m.kind) {
+                    return false;
+                }
+                if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+                    return true;
+                }
+                scope.own_held.as_ref().is_some_and(|own| {
+                    m.status == MemoryStatus::Held
+                        && own.author_key_ids.contains(&m.author_key_id)
+                        && own.nodes.contains(&m.workarea_id)
+                })
+            })
+            .filter_map(|m| {
+                let shared = Fingerprint::of(&m.body)
+                    .stored_keys()
+                    .iter()
+                    .filter(|(_, key)| keys.contains(key))
+                    .count();
+                (shared > 0).then_some((shared, m.memory_id))
+            })
+            .collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        Ok(found.into_iter().take(limit).map(|(_, id)| id).collect())
+    }
+
+    async fn valid_time_counts(
+        &self,
+        tenant_id: Uuid,
+        now_us: i64,
+    ) -> Result<Option<crate::search::ValidTimeCounts>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Some(crate::search::ValidTimeCounts::default()));
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let served = || {
+            state
+                .memories
+                .values()
+                .filter(|m| served_tip(m) && !m.retirement)
+        };
+        Ok(Some(crate::search::ValidTimeCounts {
+            declared: served().filter(|m| m.valid.from.is_some()).count() as u64,
+            expired: served().filter(|m| m.valid.expired_at(now_us)).count() as u64,
+        }))
     }
 }
 
@@ -2144,8 +2314,13 @@ impl JournalStore for MemStore {
             ListingScope::Own { key_ids, masked } => {
                 key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
             }
-            ListingScope::Tips { nodes } => {
-                m.status == MemoryStatus::Promoted && m.is_tip && nodes.contains(&m.workarea_id)
+            ListingScope::Tips { nodes, held } => {
+                nodes.contains(&m.workarea_id)
+                    && ((m.status == MemoryStatus::Promoted && m.is_tip)
+                        || (held.contains(&m.workarea_id)
+                            && m.status == MemoryStatus::Held
+                            && !m.retirement
+                            && HIT_KINDS.contains(&m.kind)))
             }
         };
         let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);
@@ -2205,6 +2380,18 @@ impl JournalStore for MemStore {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| m.status == MemoryStatus::Held && nodes.contains(&m.workarea_id))
+            .count() as u64)
     }
 
     async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
@@ -2857,7 +3044,11 @@ impl JournalStore for MemStore {
             state.memories.get(&id).is_some_and(|m| {
                 selection.readable_nodes.contains(&m.workarea_id)
                     && (m.status == MemoryStatus::Promoted
-                        || m.author_key_id == selection.reader_key_id)
+                        || m.author_key_id == selection.reader_key_id
+                        || (m.status == MemoryStatus::Held
+                            && !m.retirement
+                            && HIT_KINDS.contains(&m.kind)
+                            && selection.held_nodes.contains(&m.workarea_id)))
             })
         };
         let position = |e: &ClaimEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);

@@ -1,0 +1,77 @@
+name: Practices
+
+# The merge gates of docs/contributing/review-checklist.md that a script can enforce: the
+# number registry, the changelog fragment, and the three lints, with the scripts' own tests.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: practices-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  script-tests:
+    name: practice scripts pass their tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s scripts/tests
+
+  numbers:
+    name: ADR, FR and migration numbers are reserved
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # check_numbers.py lists open pull requests with gh, so a closed PR's branch holds no numbers
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+      - run: python scripts/check_numbers.py --base origin/main
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  changelog-fragment:
+    name: change adds a changelog fragment
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: git fetch --no-tags origin main
+      - run: python scripts/check_changelog_fragment.py --base origin/main
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+
+  lints:
+    name: migration, port 5432 and LIKE lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/lint_practices.py migrations
+      - run: python scripts/lint_practices.py ports
+      - run: python scripts/lint_practices.py like

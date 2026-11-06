@@ -67,6 +67,7 @@ pub const USER_ACTIONS: &[&str] = &[
     "connect_code",
     "cut_off",
     "create_workarea",
+    "workarea_mode",
     "review_next",
     "verdict",
     "sign_out",

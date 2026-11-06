@@ -10,8 +10,8 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 **Status:** proposed · 2026-11-04
 
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
-each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; later
-increments not assigned ([releases](../product/releases.md#decisions))
+each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
+for v0.5.9; later increments not assigned ([releases](../product/releases.md#decisions))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
@@ -380,6 +380,35 @@ reorders results, and steering rows, which precede hits, are never ranked"
   returns more than it was asked for. The cost is nothing on today's adapters, which already
   stop at the depth; the cap is the guard for the next one.
 
+
+- **d14 — Every recall measures its stages, records them by pipeline and stage, and serves them
+  on request where an operator allows** (added 2026-11-05, v0.5.9; adopted from basic-memory's
+  per-stage search trace, `repository/search_trace.py`, which records `fts_ms`, `fusion_ms` and
+  the ranks before and after reranking). A recall times its stages, each a value of
+  `search::Stage`, a closed set: `scope` (the ancestry, the readable nodes, the steering in force
+  and the pipeline's choice), `retrieve_<retriever>` per list (the sparse query's encoding counted
+  in `retrieve_sparse`, a `match: all` fallback's second attempt summed into the first),
+  `fuse`, `rerank` (the reranker's scoring, only for a reranking pipeline), `suggest`
+  (`did_you_mean`'s read, only when it runs), `hydrate` (every read of rows by id and their
+  serving) and `cut` (the `k` cut, the floor and the budget cut). Each recall records them in
+  `oml_recall_stage_duration_seconds{pipeline, stage}`, on ADR-0042 d12's bounds: a pipeline
+  observes only its own stages, so the default `bm25-postings` creates five series sets, about
+  95 series, and no label carries a tenant, a key or a query (ADR-0042 d11, d12; ADR-0054 d1's
+  budget). A request sending `timings: true` receives `timings: {stages_ms, total_ms}` in the
+  answer, in the order the stages ran, when the deployment sets `search.timings`; otherwise it
+  is refused with `request.validation` naming `/timings`, never silently answered without. It is
+  served to any key that may recall when the deployment sets it: a tenant `admin` or `operator`
+  key holds no recall role (`admissible_grant_roles`), so restricting the block to an admin key
+  would remove it from every caller, and the switch stays the operator's alone; a narrower
+  holder is the maintainer's to name. It is
+  off by default, and for an operator diagnosing latency, because a stage's time over rows a key
+  cannot read (a scan's, a postings read's) says something about how many there are. No stage's
+  time enters a ranking. Laws: `a_recall_measures_each_stage_it_ran_in_order`,
+  `timings_are_refused_where_the_deployment_does_not_serve_them`, in `oml-app`'s
+  `recall_timings` suite. Rejected: timings in every answer (a side channel by default, and
+  tokens an agent does not use); timings on the request log line (a line per recall stays one
+  line; the histogram serves the aggregate); per-candidate ranks before and after reranking as
+  basic-memory keeps (each hit already carries `rank_before`, ADR-0053 d7).
 
 ## Consequences
 

@@ -1540,7 +1540,8 @@ async fn the_anchor_filter_is_an_index_range_for_the_serving_role_under_row_secu
             .bind(vec![w.node])
             .bind(vec!["memory"])
             .bind(Vec::<Uuid>::new())
-            .bind(Vec::<Uuid>::new());
+            .bind(Vec::<Uuid>::new())
+            .bind(i64::MIN);
         if repo {
             explain = explain.bind(REPO);
         }
@@ -1658,6 +1659,7 @@ async fn anchor_filter_latency_at_100k() {
         kinds: vec![oml_app::domain::MemoryKind::Memory],
         own_held: None,
         anchor: filter,
+        expired_at: None,
     };
     let p95 = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
@@ -1687,6 +1689,8 @@ async fn anchor_filter_latency_at_100k() {
                             match_mode: MatchMode::Any,
                             k: usize::MAX,
                             sparse: &[],
+                            window: None,
+                            within: &[],
                         },
                     )
                     .await
@@ -1723,6 +1727,8 @@ async fn anchor_filter_latency_at_100k() {
                             match_mode: MatchMode::Any,
                             k: 8,
                             sparse: &[],
+                            window: None,
+                            within: &[],
                         },
                     )
                     .await

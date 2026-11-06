@@ -12,6 +12,9 @@ from ..models.key_credential import KeyCredential
 from ..models.key_held_by_type_1 import KeyHeldByType1
 from ..models.key_held_by_type_2_type_1 import KeyHeldByType2Type1
 from ..models.key_held_by_type_3_type_1 import KeyHeldByType3Type1
+from ..models.key_profile_type_1 import KeyProfileType1
+from ..models.key_profile_type_2_type_1 import KeyProfileType2Type1
+from ..models.key_profile_type_3_type_1 import KeyProfileType3Type1
 from ..models.role import Role
 from ..types import UNSET, Unset
 
@@ -57,6 +60,8 @@ class KeyIssued:
             alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
             journalled in key.issued; no request changes it, and any other value is request.validation, details.field
             /guardrail_scope (ADR-0037 d4; since v0.5.1).
+        profile (KeyProfileType1 | KeyProfileType2Type1 | KeyProfileType3Type1 | None | Unset): The key's profile as
+            key.issued journals it; null for none (ADR-0030 d8).
         connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
             most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
             (ADR-0031 d11).
@@ -81,6 +86,9 @@ class KeyIssued:
     epoch: int | Unset = UNSET
     credential: KeyCredential | Unset = UNSET
     guardrail_scope: GuardrailScope | Unset = UNSET
+    profile: (
+        KeyProfileType1 | KeyProfileType2Type1 | KeyProfileType3Type1 | None | Unset
+    ) = UNSET
     connections: list[Connection] | Unset = UNSET
     value: str | Unset = UNSET
     connect_code: ConnectCode | Unset = UNSET
@@ -172,6 +180,18 @@ class KeyIssued:
         if not isinstance(self.guardrail_scope, Unset):
             guardrail_scope = self.guardrail_scope.value
 
+        profile: None | str | Unset
+        if isinstance(self.profile, Unset):
+            profile = UNSET
+        elif (
+            isinstance(self.profile, KeyProfileType1)
+            or isinstance(self.profile, KeyProfileType2Type1)
+            or isinstance(self.profile, KeyProfileType3Type1)
+        ):
+            profile = self.profile.value
+        else:
+            profile = self.profile
+
         connections: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.connections, Unset):
             connections = []
@@ -220,6 +240,8 @@ class KeyIssued:
             field_dict["credential"] = credential
         if guardrail_scope is not UNSET:
             field_dict["guardrail_scope"] = guardrail_scope
+        if profile is not UNSET:
+            field_dict["profile"] = profile
         if connections is not UNSET:
             field_dict["connections"] = connections
         if value is not UNSET:
@@ -393,6 +415,50 @@ class KeyIssued:
         else:
             guardrail_scope = GuardrailScope(_guardrail_scope)
 
+        def _parse_profile(
+            data: object,
+        ) -> (
+            KeyProfileType1 | KeyProfileType2Type1 | KeyProfileType3Type1 | None | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_1 = KeyProfileType1(data)
+
+                return profile_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_2_type_1 = KeyProfileType2Type1(data)
+
+                return profile_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_3_type_1 = KeyProfileType3Type1(data)
+
+                return profile_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                KeyProfileType1
+                | KeyProfileType2Type1
+                | KeyProfileType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        profile = _parse_profile(d.pop("profile", UNSET))
+
         _connections = d.pop("connections", UNSET)
         connections: list[Connection] | Unset = UNSET
         if _connections is not UNSET:
@@ -429,6 +495,7 @@ class KeyIssued:
             epoch=epoch,
             credential=credential,
             guardrail_scope=guardrail_scope,
+            profile=profile,
             connections=connections,
             value=value,
             connect_code=connect_code,

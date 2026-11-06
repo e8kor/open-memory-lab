@@ -545,6 +545,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/workareas` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/reparent` | admin (key role) | designed |
 | `POST /v2/workareas/{workarea}/crew` | admin (key role) | served |
+| `POST /v2/workareas/{workarea}/mode` | a dreamer key held by a human, dreamer on the node; never an agent key ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d1); *since v0.6.0* | served |
 | `GET /v2/crews` · `GET /v2/crews/{crew}` · `POST /v2/crews` · `POST /v2/crews/{crew}/update` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/transitions` | dreamer or admin; *since v0.5.2* | served |
 | `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin; *since v0.5.2* | served |
@@ -699,6 +700,18 @@ Success is `202 Accepted` — **held, visible to no one else until ratified** (R
 }
 ```
 
+*Since v0.5.9 ([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17):* every submission and supersession is checked, after
+every other check and before capture, against the rows its key may read in the workarea's recall
+scope: the served tips recall would read there and the key's own held rows, never another key's
+held row. The answer's `similar` lists up to three, each with `relation` `same_text` (the same
+words in the same order, case and punctuation aside) or `near_copy` (word sets at Jaccard 0.9 or
+more, both texts of 10 distinct words or more), `jaccard`, `version`, `state` and `own`. The check
+uses integer keys and an exact verification, no model and no recall. `on_similar: refuse` turns a
+non-empty list into `409 submission.similar_exists` with `details.similar`: nothing journalled,
+no idempotency record claimed, so the same `Idempotency-Key` may be resent with `hold`, the
+default. A replay serves `similar` as first answered. A supersession never lists its own claim,
+and a retirement is not checked. To replace a listed row instead, supersede it.
+
 ### Recall — `POST /v1/memories/recall`
 
 *Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` since v0.5.5 · [releases](../product/releases.md)*
@@ -821,6 +834,25 @@ recall did not serve it, an id named twice, or a member of another shape is
 recall is not run; past 1,000 feedback members from one key in a UTC day, refused or not, or
 1,000 of its explicit labels, it is `limit.rate`, before any lookup. A
 valid member changes nothing the recall answers. `oml_read` takes the same member in every mode.
+
+*Since v0.5.9 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d14):* a body sending `timings: true` receives
+`timings: {stages_ms, total_ms}`, each stage's milliseconds in the order they ran (`scope`,
+`retrieve_<retriever>` per list, `fuse`, `rerank`, `suggest`, `hydrate`, `cut`), where the
+deployment sets `search.timings`; elsewhere it is `request.validation` naming `/timings`. Every
+recall records the same stages in `oml_recall_stage_duration_seconds` either way.
+*Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)), built on draft branch `feat/valid-time`:* a memory may
+declare `valid_from` and `valid_until` on submit and supersede, each `YYYY`, `YYYY-MM`,
+`YYYY-MM-DD` or an RFC 3339 date-time with an offset; a period end names the whole period, so
+`valid_from: "2015", valid_until: "2015"` holds through 2015. Only `memory` and `derived_fact`
+take them, and every served memory carries both. Recall hides a version whose `valid_until` is at
+or before the request's `now` (the lead's clock when omitted) unless `include_expired` is true;
+get and the listings serve it. A ratified supersession whose successor declares `valid_from`
+ends the replaced version there, in the ratifying event; a held successor carries that instant
+as `replaces_valid_until`, so its reviewer sees it before the verdict. Periods and relative
+dates are read in UTC. `search.window` names the date window
+read from the query by rule (`in 2015`, `last week`, `since March 2025`), or `null`; the opt-in
+pipeline `bm25-postings-time` lifts the memories the words found whose valid time overlaps it,
+`matched.via` naming `time`.
 
 ### Recall telemetry
 
@@ -1174,6 +1206,7 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 | `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6):* a writer user key may also create, under a parent inside its own user root where its effective access confers `writer`, `parent` defaulting to that root, refused on the parent by the ordinary refusal order; `name` is then unique within the user's root; the `Workarea` object serves `user_root`. |
 | `POST /v2/workareas/{workarea}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v2/workareas/{workarea}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{workarea}/mode` | **A person's dreamer key.** `{mode}`: `in_progress` puts the node in progress — readers inside recall other authors' held memories, labelled `unreviewed`, and nothing inside reaches a read scoped outside it — or `standard`, which on an in-progress root is its commit, refused with `workarea.held_remaining` while anything in its subtree is held; `in_progress` is refused on `universe`, on a node not `development`, and where an ancestor or descendant is in progress (`workarea.in_progress_refused`). Journalled `workarea.mode_set`. → `200`, the node as the key reads it, with `mode` and `in_progress_root`. *Since v0.6.0* ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d1, d2, d6). |
 | `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`; any other `to` is `request.validation` naming `/to`. Backward does not exist; `validated` is refused while any child is not validated, and on a user root (`workarea.transition_refused`). → `202`, pending, the `Transition`. *Since v0.5.2.* |
 | `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot and `same_user` ([workareas.md](../architecture/workareas.md) transition matrix). → `200`, the ratified `Transition`. *Since v0.5.2.* |
 

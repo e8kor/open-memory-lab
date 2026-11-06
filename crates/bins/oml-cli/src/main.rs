@@ -438,6 +438,11 @@ struct KeysIssueArgs {
     /// (proposed ADR-0037 d4).
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
+    /// The key's profile: `curator`, a dreamer key held by an agent that
+    /// narrows inside an in-progress workarea and never promotes
+    /// (ADR-0030 d8).
+    #[arg(long, value_parser = ["curator"])]
+    profile: Option<String>,
 }
 
 #[derive(Args)]
@@ -525,6 +530,17 @@ enum WorkareasCommand {
     Show {
         /// The workarea's id or name.
         workarea: String,
+    },
+    /// Put a workarea in progress, or commit it back to standard: a
+    /// person's dreamer key only. Inside an in-progress workarea readers
+    /// recall unreviewed memories, labelled; nothing leaves until the
+    /// commit, refused while anything is held (ADR-0030 d1, d6).
+    Mode {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// `in_progress`, or `standard` to commit.
+        #[arg(value_parser = ["in_progress", "standard"])]
+        mode: String,
     },
     /// The crew record a workarea names (admin key role).
     Crew {
@@ -1447,6 +1463,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(l) = &args.label {
                 body["label"] = json!(l);
             }
+            if let Some(profile) = &args.profile {
+                body["profile"] = json!(profile);
+            }
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
@@ -1673,6 +1692,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    path    : {}", field(&response, "path"));
                 println!("    parent  : {}", field(&response, "parent_id"));
                 println!("    status  : {}", field(&response, "status"));
+                // ADR-0030 d13: the mode, and the root a node inside lies under.
+                println!("    mode    : {}", field(&response, "mode"));
+                if let Some(root) = response["in_progress_root"].as_object() {
+                    println!(
+                        "    inside  : {} (in progress; unreviewed memories are recalled here)",
+                        root.get("name").and_then(Value::as_str).unwrap_or("?")
+                    );
+                }
                 println!("    crew    : {}", crew_line(&response["crew"]));
                 for c in response["children"].as_array().into_iter().flatten() {
                     println!(
@@ -1696,6 +1723,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         verbs.join(", ")
                     }
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
+            command: WorkareasCommand::Mode { workarea, mode },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/mode", segment(workarea)?),
+                &json!({ "mode": mode }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({}) is {}",
+                    field(&response, "name"),
+                    field(&response, "id"),
+                    field(&response, "mode"),
+                );
+                if mode == "in_progress" {
+                    println!(
+                        "readers inside now recall unreviewed memories; commit with: oml workareas mode {} standard",
+                        field(&response, "name")
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2618,6 +2673,7 @@ fn run_review_next(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError
         );
         println!("  claim_key {}", field(item, "claim_key"));
         println!("  source    {}", anchor_line(&item["anchor"]));
+        println!("  valid     {}", valid_line(item));
         println!(
             "  body      | {}",
             field(item, "text").replace('\n', "\n            | ")
@@ -2689,10 +2745,34 @@ fn run_review_list(
                 }
             );
             println!("    source {}", anchor_line(&item["anchor"]));
+            println!("    valid  {}", valid_line(item));
             println!("    | {}", field(item, "text").replace('\n', "\n    | "));
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A version's valid time as one line for a reviewer, and on a held
+/// successor the end approving it gives the version it replaces, so a
+/// verdict is given on what it makes true (proposed ADR-0059 d2, d4).
+fn valid_line(item: &Value) -> String {
+    let (from, until) = (item["valid_from"].as_str(), item["valid_until"].as_str());
+    let mut line = if from.is_none() && until.is_none() {
+        "none declared".to_owned()
+    } else {
+        format!(
+            "from {}, {}",
+            from.unwrap_or("any time"),
+            until.map_or_else(|| "open".to_owned(), |u| format!("until {u}"))
+        )
+    };
+    if let (Some(end), Some(version)) = (
+        item["replaces_valid_until"].as_str(),
+        item["replaces"]["version"].as_u64(),
+    ) {
+        line.push_str(&format!("; approving ends version {version} at {end}"));
+    }
+    line
 }
 
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
@@ -4229,6 +4309,43 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     })
 }
 
+/// The in-progress lines (ADR-0030 d14): whether the default workarea lies
+/// inside an in-progress workarea, so recall serves unreviewed memories
+/// there; for a person's dreamer key, that it may set the mode and how many
+/// held items it can see blocking the commit; for a curator key, that it
+/// acts only inside one.
+fn in_progress_doctor(
+    me: Option<&Value>,
+    default_node: Option<&Value>,
+    held_blocking: Option<usize>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let Some(me) = me else {
+        return lines;
+    };
+    let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
+    match root {
+        Some(root) => lines.push(format!(
+            "ok in progress: the default workarea lies inside {root}, so recall there also serves memories still waiting for review, labelled unreviewed, and nothing leaves until a person commits it (ADR-0030 d3, d6)"
+        )),
+        None if me["profile"] == "curator" => lines.push(
+            "warn curator: the default workarea is not in progress, and a curator key acts only inside an in-progress workarea (access.verb_ceiling, curator_outside_in_progress; ADR-0030 d9)".to_owned(),
+        ),
+        None => {}
+    }
+    if me["role"] == "dreamer" && me["held_by"] == "human" && me["profile"].is_null() {
+        lines.push("ok mode: this key may put a workarea in progress and commit it (oml workareas mode <workarea> in_progress|standard; ADR-0030 d1)".to_owned());
+        if let (Some(root), Some(n)) = (root, held_blocking)
+            && n > 0
+        {
+            lines.push(format!(
+                "warn commit: {n} held item(s) this key can review block the commit of {root}: oml review list --workarea {root} (workarea.held_remaining; ADR-0030 d6)"
+            ));
+        }
+    }
+    lines
+}
+
 /// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
 /// URL and which set the key, never the key; `/healthz` and `/readyz` at
 /// the first source's URL, keyless, so a URL alone is enough to probe; and
@@ -4265,6 +4382,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // The chat workarea's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
+    let mut held_blocking: Option<usize> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -4292,6 +4410,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                // What a person's reviewer key sees held under the
+                // in-progress root, one page (ADR-0030 d14).
+                if v["role"] == "dreamer"
+                    && v["held_by"] == "human"
+                    && let Some(root) = default_node
+                        .as_ref()
+                        .and_then(|n| n["in_progress_root"]["id"].as_str())
+                {
+                    held_blocking = client
+                        .get(&format!("/v2/review/held?workarea={root}&limit=200"))
+                        .ok()
+                        .and_then(|(_, page)| page["items"].as_array().map(Vec::len));
+                }
                 // The claim edges there waiting for a second key, one page
                 // (ADR-0057 d17; ADR-0046 d4).
                 waiting_edges = client
@@ -4340,6 +4471,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
+    let in_progress = in_progress_doctor(
+        me.as_ref().and_then(|m| m.as_ref().ok()),
+        default_node.as_ref(),
+        held_blocking,
+    );
+    let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -4380,6 +4517,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || sync_warn
         || chat_warn
         || sources_warn
+        || in_progress_warn
     {
         "warn"
     } else {
@@ -4425,6 +4563,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "chat": chat,
             "telemetry": telemetry,
             "sources": sources,
+            "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -4538,6 +4677,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sources {
             println!("sources     : {line}");
+        }
+        for line in &in_progress {
+            println!("in progress : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
@@ -4689,6 +4831,7 @@ fn search_doctor(
         )
     });
     lines.extend(postings_doctor(recall_counts, settings));
+    lines.extend(valid_time_doctor(&enabled, settings));
     lines
 }
 
@@ -4769,7 +4912,7 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
     let sparse: Vec<&str> = enabled
         .iter()
         .copied()
-        .filter(|p| matches!(*p, "sparse" | "bm25-sparse"))
+        .filter(|p| matches!(*p, "sparse" | "bm25-sparse" | "bm25-sparse-rrf"))
         .collect();
     let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
     let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
@@ -4879,6 +5022,39 @@ impl Scrape {
     }
 }
 
+/// The valid-time doctor line (proposed ADR-0059 d12), read by an admin key
+/// from `GET /v2/search`: how many served memories declare valid time and
+/// how many have ended and are hidden from recall, under every pipeline,
+/// since the expiry rule binds the default too; and, where a time pipeline
+/// is enabled and none declares any, a warning that its `time` list is
+/// always empty.
+fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
+    let timed: Vec<&str> = enabled
+        .iter()
+        .copied()
+        .filter(|p| p.starts_with("bm25-postings-time"))
+        .collect();
+    let Some(v) = settings.map(|s| &s["valid_time"]).filter(|v| v.is_object()) else {
+        return Vec::new();
+    };
+    let (declared, expired) = (
+        v["declared"].as_u64().unwrap_or(0),
+        v["expired"].as_u64().unwrap_or(0),
+    );
+    if declared == 0 && !timed.is_empty() {
+        return vec![format!(
+            "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0059 d12)",
+            timed.join(", ")
+        )];
+    }
+    if declared == 0 && expired == 0 {
+        return Vec::new();
+    }
+    vec![format!(
+        "time: {declared} memories declare valid time; {expired} ended and hidden from recall unless include_expired"
+    )]
+}
+
 /// The `bm25-postings` doctor lines (ADR-0052 d12): from the metrics
 /// listener's recall counts, a warning when the scan answered more than 5%
 /// of its recalls since the lead started; and, read by an admin key from
@@ -4926,7 +5102,25 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("terms_checked")
         ));
     }
+    // The similar check's keys (ADR-0050 d15, d17); a server before 0026
+    // sends none of these fields, and none is read as a fault.
+    let similar_refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_similar_keys_refill('<tenant id>') rebuilds them (postgres-schema.md, similar keys)";
+    if h["similar_partition"] == Value::Bool(false) {
+        lines.push(
+            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0027 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
+        );
+    }
+    if n("similar_unfilled") > 0 || n("similar_drift") > 0 {
+        lines.push(format!(
+            "warn similar: the similar keys disagree with the versions: {} without keys, {} with keys of another state; the write-time check misses or names the wrong rows until rebuilt: {similar_refill}, and report it",
+            n("similar_unfilled"),
+            n("similar_drift")
+        ));
+    }
     let faulty = h["partition"] != Value::Bool(true)
+        || h["similar_partition"] == Value::Bool(false)
+        || n("similar_unfilled") > 0
+        || n("similar_drift") > 0
         || n("unfilled") > 0
         || n("served_behind") > 0
         || n("workarea_drift") > 0
@@ -5186,5 +5380,45 @@ mod tests {
             "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn doctor_warns_when_a_time_pipeline_has_no_memory_that_declares_valid_time() {
+        let none = serde_json::json!({ "valid_time": { "declared": 0, "expired": 0 } });
+        let lines = valid_time_doctor(&["bm25-postings", "bm25-postings-time"], Some(&none));
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].starts_with("warn time: bm25-postings-time enabled"),
+            "{lines:?}"
+        );
+        let some = serde_json::json!({ "valid_time": { "declared": 12, "expired": 3 } });
+        assert_eq!(
+            valid_time_doctor(&["bm25-postings-time"], Some(&some)),
+            vec!["time: 12 memories declare valid time; 3 ended and hidden from recall unless include_expired".to_owned()]
+        );
+        assert!(valid_time_doctor(&["bm25-postings"], Some(&none)).is_empty());
+        assert_eq!(
+            valid_time_doctor(&["bm25-postings"], Some(&some)).len(),
+            1,
+            "the expired count shows under the default pipeline too"
+        );
+    }
+
+    #[test]
+    fn a_review_line_shows_the_valid_time_and_the_end_approving_gives() {
+        let successor = serde_json::json!({
+            "valid_from": "2026-06-01",
+            "valid_until": null,
+            "replaces": { "artifact_id": "x", "version": 1 },
+            "replaces_valid_until": "2026-06-01T00:00:00.000000Z",
+        });
+        assert_eq!(
+            valid_line(&successor),
+            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
+        );
+        let open = serde_json::json!({ "valid_from": null, "valid_until": null });
+        assert_eq!(valid_line(&open), "none declared");
+        let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
+        assert_eq!(valid_line(&ended), "from any time, until 2015");
     }
 }

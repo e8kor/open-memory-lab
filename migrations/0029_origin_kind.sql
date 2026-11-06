@@ -5,12 +5,12 @@
 -- and are never backfilled: the kind would not be in their signed event
 -- (d2). The set is closed; a new kind is a new decision and a new check.
 --
--- Numbered 0030, past the 0026 to 0029 the parallel v0.6.0 lanes use.
+-- Numbered 0029, after valid time (0026), the similar keys (0027) and in progress (0028).
 --
 -- This file runs in one transaction and holds ACCESS EXCLUSIVE on memories
 -- only for catalog changes: the nullable column and the check added NOT
 -- VALID, which scan nothing. A lock is waited for at most 5 s. The scan that
--- validates the check, and the index builds, run in 0031 outside any
+-- validates the check, and the index builds, run in 0030 outside any
 -- transaction, so they take SHARE UPDATE EXCLUSIVE and SHARE one statement
 -- at a time while reads and writes go on.
 
