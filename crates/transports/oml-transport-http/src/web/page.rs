@@ -8,7 +8,7 @@
 //! escaped and stripped of control and bidirectional formatting characters
 //! by the connect page's functions.
 //!
-//! The look is the design system's (ADR-0068): night ground, paper under
+//! The look is the design system's (ADR-0069): night ground, paper under
 //! `prefers-color-scheme: light`, ice links, star for the one primary act,
 //! each state as its word, glyph and colour, and the wordmark inline.
 
@@ -24,7 +24,7 @@ use super::brand::{GLYPHS, GROUND_DARK, GROUND_LIGHT, MARK, WORDMARK};
 
 use crate::oauth::page::{base64_32, client_string, escape, sha256};
 
-/// The pages' one stylesheet, inline (ADR-0068 d3): the design system's
+/// The pages' one stylesheet, inline (ADR-0069 d3): the design system's
 /// tokens, generated into `tokens.css` by `scripts/gen_design_tokens.py`,
 /// followed by the hand-written `web.css`, which uses only `var(--…)`.
 pub const STYLESHEET: &str = concat!(include_str!("tokens.css"), include_str!("web.css"));

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every documented contrast pair in OML's design tokens (ADR-0068 d7).
+"""Check every documented contrast pair in OML's design tokens (ADR-0069 d7).
 
     python scripts/check_contrast.py [tokens.json] [--table]
 

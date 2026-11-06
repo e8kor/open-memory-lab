@@ -6,7 +6,7 @@
 </p>
 
 Every Open Memory Lab surface (the `/web` pages, the docs site, this repository's README and
-the landing page) draws from the files here ([ADR-0068](../docs/adr/ADR-0068-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)).
+the landing page) draws from the files here ([ADR-0069](../docs/adr/ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)).
 The full system, with every component, screen and the contrast table, is the
 [design system artifact](https://claude.ai/artifact/FNfuqHMqkNAheL2aKkc8es). This page is the
 short form.
