@@ -9,8 +9,14 @@
 use serde_json::{Map, Value};
 use unicode_normalization::UnicodeNormalization;
 
-/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1` in v0.5.8.
-pub const HASHERS: [&str; 1] = ["oml-md/1"];
+/// The hashers the server admits (ADR-0057 d3, d7; ADR-0062 d7): `oml-md/1`
+/// for documents and one for each claim a Delta table's log states.
+pub const HASHERS: [&str; 4] = [
+    "oml-md/1",
+    "oml-delta-table/1",
+    "oml-delta-schema/1",
+    "oml-delta-col/1",
+];
 
 /// The longest `repo`, in characters (ADR-0057 d3).
 pub const REPO_MAX: usize = 200;
@@ -158,7 +164,10 @@ impl Anchor {
                     ));
                 }
                 if !HASHERS.contains(&hasher) {
-                    return Err(refuse(&field("hasher"), "one of oml-md/1"));
+                    return Err(refuse(
+                        &field("hasher"),
+                        "one of oml-md/1, oml-delta-table/1, oml-delta-schema/1, oml-delta-col/1",
+                    ));
                 }
                 Some((hash.to_owned(), hasher.to_owned()))
             }
@@ -269,21 +278,43 @@ pub fn check_repo(repo: &str) -> Result<(), &'static str> {
 }
 
 fn check_uri(uri: &str) -> Result<(), &'static str> {
-    const WHY: &str =
-        "an absolute https URL of at most 2,048 bytes, with no user information and no #";
-    let Some(rest) = uri.strip_prefix("https://") else {
+    const WHY: &str = "an absolute https, s3, gs or file URL of at most 2,048 bytes, with no user \
+                       information, no ? and no #; a bucket is a DNS-safe name and a path has no \
+                       trailing /";
+    let Some((scheme, rest)) = uri.split_once("://") else {
         return Err(WHY);
     };
     if uri.len() > URI_MAX
         || rest.is_empty()
-        || rest.starts_with('/')
+        || rest.starts_with('/') && scheme != "file"
         || rest
             .chars()
-            .any(|c| c == '@' || c == '#' || c.is_whitespace() || c.is_control())
+            .any(|c| matches!(c, '@' | '#' | '?') || c.is_whitespace() || c.is_control())
     {
         return Err(WHY);
     }
-    Ok(())
+    match scheme {
+        "https" => Ok(()),
+        "s3" | "gs" => {
+            let bucket = rest.split('/').next().unwrap_or_default();
+            let ok = (3..=63).contains(&bucket.len())
+                && bucket.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.')
+                })
+                && bucket.as_bytes()[0].is_ascii_alphanumeric()
+                && bucket.as_bytes()[bucket.len() - 1].is_ascii_alphanumeric();
+            (ok && !uri.ends_with('/') && uri.nfc().collect::<String>() == uri)
+                .then_some(())
+                .ok_or(WHY)
+        }
+        "file" => (rest.starts_with('/')
+            && rest.len() > 1
+            && !uri.ends_with('/')
+            && uri.nfc().collect::<String>() == uri)
+            .then_some(())
+            .ok_or(WHY),
+        _ => Err(WHY),
+    }
 }
 
 /// `path`'s grammar, which `anchor_path_prefix` shares but for its last

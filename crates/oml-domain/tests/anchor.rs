@@ -212,14 +212,22 @@ fn lake(uri: &str, fragment: Option<&str>, hasher: &str) -> Value {
 #[test]
 fn a_lake_anchor_carries_a_location_a_delta_version_a_column_fragment_and_a_lake_hasher() {
     for (uri, fragment, hasher) in [
-        ("s3://acme-lake/warehouse/sales/orders", None, "oml-delta-table/1"),
+        (
+            "s3://acme-lake/warehouse/sales/orders",
+            None,
+            "oml-delta-table/1",
+        ),
         ("gs://acme-lake/sales/orders", None, "oml-delta-schema/1"),
         (
             "https://acct.dfs.core.windows.net/raw/sales/orders",
             Some("col=customer.email"),
             "oml-delta-col/1",
         ),
-        ("file:///srv/lake/sales/orders", Some("col=id"), "oml-delta-col/1"),
+        (
+            "file:///srv/lake/sales/orders",
+            Some("col=id"),
+            "oml-delta-col/1",
+        ),
     ] {
         let anchor = lake(uri, fragment, hasher);
         assert_eq!(
