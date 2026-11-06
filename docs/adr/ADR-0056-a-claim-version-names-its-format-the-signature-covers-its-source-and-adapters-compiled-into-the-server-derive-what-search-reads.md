@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads
 tier: engineering
-status: proposed
+status: accepted
 answers: whether a claim may be a Mermaid diagram, a JSON or YAML fragment or a code snippet, and how it says so; what the signature covers when it is; where the format code lives and why no plugin loads at run time; what each adapter validates, which text it gives the lexical, postings, sparse and rerank stages, what a page may render and how two versions are compared; how Mermaid is rendered on the pages without weakening their policy, and what that costs; how the deterministic scan reads a JSON or YAML claim without ever reading less than today; why PlantUML is not in the first set; how many facts one diagram claim may carry; what the reviewer sees; what recall serves and how the gain is measured; how formats feed `oml sync`; the field on every surface and the migration; the rejected roads, the cost, the doctor lines, the tests and the open questions
 -->
 
 # ADR-0056 — A claim version names its format, the signature covers its source as stored, and adapters compiled into the server derive what search reads and what a page may render
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted · 2026-11-06 (built in v0.6.x; the unbuilt parts are listed under [Build record](#build-record))
 
-**Release:** planned after v0.5.8, not assigned; nothing here is built ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.x ([releases](../product/releases.md#decisions)); migration 0033
 
 **Amends:** ADR-0039 (d3: `oml_write` gains `format`; d4: every claim item carries `format`).
 ADR-0045 (d8: the pages' policy gains one `frame-src` source, and one new route answers under its own
@@ -348,7 +348,7 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
    spellings? Nothing in the design depends on registration.
 2. Which pure-Rust YAML 1.2 parser: one that is maintained, refuses aliases and tags by
    configuration, and passes `cargo deny`. `serde_yaml` is archived by its author; the candidates
-   are to be checked at build.
+   are to be checked at build. *Answered at build: `saphyr-parser` 0.3.3; see the build record.*
 3. Is d6's secret-key list right, and should `secret.keyed_value` hold for review rather than veto
    when the value looks like a placeholder the list does not know? Veto is the fail-closed reading.
 4. Should recall take a `formats` filter? No use case asks for one yet (ADR-0039's Occam rule), so
@@ -357,6 +357,78 @@ and the serve binding ([ADR-0004](ADR-0004-bodies-and-attachments.md) d2, d5); c
    touches no signed text, so it may be the source-anchors design's to allow.
 6. Should a page draw a JSON or YAML fragment as a collapsible tree? It would be server-side markup
    from claim text; the source is readable without it, so not in the first set.
+
+## Build record
+
+Written when the decisions above were built, 2026-11-06. Nothing above changes; this section records
+what the build chose where the text left a choice, and what it did not build.
+
+**The YAML crate (question 2).** `saphyr-parser` 0.3.3, released 2026-10-27, `MIT OR Apache-2.0`,
+10.3 million downloads on crates.io, with `thiserror` and `arraydeque` as its only non-test
+dependencies (crates.io API, fetched 2026-11-06). It is the event parser of the `saphyr` project
+for YAML 1.2, in pure Rust, and it reports each anchor, alias, tag, document and scalar as an
+event with its line and column, so the adapter refuses an alias, a tag, a merge key, a second
+document and a duplicate key by name from the events and never builds a value an alias could
+expand. Rejected: `serde_yaml`, whose last release is 0.9.34+deprecated of 2024-03-25 and which
+its author archived; `serde_yaml_ng`, a fork over `unsafe-libyaml`, a machine translation of the
+C library, whose serde layer resolves aliases and merges before the adapter could refuse them;
+and `saphyr`, the loader above this parser, for the same reason. The pure-Rust rule of
+[ADR-0006](ADR-0006-pure-rust.md) holds. `cargo deny` is run in CI; the licence is on its allow
+list.
+
+**Readings the build made.**
+
+- `title` is built as ADR-0050 d5 defines it: one line, at most 100 characters, NFC, signed with
+  the version, served in the claim item, required of a claim whose format is not prose. It is
+  indexed by being the first line of the search text, not at a higher weight: a prose claim that
+  carries a title stores `search_text` as the title, a line break and its text, and a prose claim
+  without one stores none, so rows that predate the field rank as they did. The weight waits for
+  ADR-0050's own build.
+- The word `class` is a styling statement in a flowchart or a state diagram and is refused as
+  `mermaid.styling_refused`; in a `classDiagram` it declares a class and is accepted, while
+  `cssClass` and `:::` are refused everywhere.
+- A source line the subset does not read is `mermaid.syntax_error` with its line, not text the
+  parser drops, since the signature covers it. The reasons the build added to d5 and d6 are
+  `mermaid.syntax_error`, `mermaid.too_many_nodes`, `mermaid.too_many_relations`, `json.invalid`,
+  `yaml.invalid`, `yaml.empty`, `yaml.complex_key`, `yaml.merge_refused`, `yaml.second_document`,
+  `format.too_large`, `format.too_deep` and `format.too_many_scalars`.
+- The scan reads each key of a JSON or YAML mapping as a view, beside its values, since a key is
+  text a writer chose. The title is scanned as free text that reaches the journal.
+- The submission event always carries `format`, including `text/plain`; an event written before
+  the field reads as `text/plain` and keeps its digest, and `plaintext_digest` stays the digest of
+  the source whatever its format.
+- A render token seals the source it draws, the memory id, the session's CSRF token and a
+  5-minute expiry, so the frame draws what the session was shown and opens for no other session; the
+  route reads nothing from the store and journals nothing.
+- A Mermaid card shows the title, the source, the drawing, then the format and what the claim will
+  be found by; the structural diff on a card and the cross-format "format changed" line are not
+  built, since the diff is an operation of the port with no caller on a page yet.
+
+**The pinned bundle and the Chromium check (d9, d14).** Mermaid 12.3.0 (`mermaid.min.js`, MIT,
+5,537,838 bytes, SHA-256 `336df803…74b9a3`, from the npm registry on 2026-11-06), vendored under
+`crates/transports/oml-transport-http/assets/` with its digest in the file name, compiled in with
+`include_bytes!`, and held to that digest by a test. In Chrome for Testing 153.0.8010.12 (the Playwright cache's headless
+shell) the bundle drew a flowchart, a sequence, a class, a state and an entity-relationship diagram
+under the frame's own policy, whose `script-src` names the bundle and one hashed initialiser and has
+no `unsafe-eval`, and a source that does not parse printed Mermaid's message in the frame
+(`tests/render_frame_chromium.rs`). Because the check passed, the frame ships on by default, and
+no flag exists. FR-110 still asks for the bundle's size cost and its render time, unmeasured.
+
+**Not built in this change.**
+
+- `formats.enabled` and the doctor line for rows in a disabled format (d3, d14): the list is the
+  compiled-in one.
+- The adapter-upgrade refill of `search_text` (d4): no adapter has had a second version yet, so no
+  row can be behind; the check that `search_text_by` equals the adapter's version, and the doctor
+  line for the backlog, come with the first change to an adapter.
+- `oml_format_refusals_total` (d14), and the doctor lines for the served bundle's digest and for
+  the frame route's policy compared with d9's. The formats line of `oml doctor`, from `/readyz`,
+  is built.
+- `oml sync` calling the adapters' `diff` (d11, F6): the diff is built and tested in `oml-format`,
+  and the CLI's `oml write --format` and `--title` are built, with `-` reading the text from
+  standard input.
+- The recall eval's format rows and the task harness's diagram arm (d12, FR-112): until they pass,
+  the plugin's skill does not suggest a format (F7).
 
 ## Test plan
 

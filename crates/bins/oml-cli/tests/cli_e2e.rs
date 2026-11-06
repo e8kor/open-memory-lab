@@ -908,6 +908,58 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_reads_a_diagram_from_standard_input_and_signs_its_format() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-7",
+        "--principal",
+        "crew/agent-7",
+        "--workarea",
+        &wa,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let value = stdout
+        .lines()
+        .nth(1)
+        .and_then(|l| l.strip_prefix("export OML_API_KEY='"))
+        .and_then(|l| l.strip_suffix('\''))
+        .expect("the second line exports the key value")
+        .to_owned();
+    let (code, accepted, log) = oml_in(
+        &lab.server,
+        &lab.creds,
+        Some(&value),
+        &[
+            "write",
+            "-",
+            "--format",
+            "text/vnd.oml.mermaid",
+            "--title",
+            "The payment flow",
+        ],
+        "flowchart LR\n  A[Checkout] --> B[Payments]\n",
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(accepted["state"], "held", "{log}");
+    // Without the title, the diagram is refused before anything is stored.
+    let (code, _, log) = oml_in(
+        &lab.server,
+        &lab.creds,
+        Some(&value),
+        &["write", "-", "--format", "text/vnd.oml.mermaid"],
+        "flowchart LR\n  A --> B\n",
+    );
+    assert_ne!(code, 0, "{log}");
+    assert!(log.contains("title"), "the refusal names title: {log}");
+    lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_agent_out_writes_the_key_to_a_0600_file_and_prints_no_key_value() {
     let Some(lab) = Lab::start().await else {
         return;

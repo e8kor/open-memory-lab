@@ -1676,6 +1676,18 @@ the server derives from the session token and compares in constant time (`reques
 read the `Cookie` header, so a session cookie there is `auth.missing`. A key value or connect code
 issued on the user page is shown once, in the answering page, never in a redirect.
 
+*Since v0.6.0 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d9):* where `oauth.issuer` is set, the pages' CSP gains one
+source, `frame-src <issuer>/web/render/`, and a card that shows a Mermaid claim embeds
+`<iframe sandbox="allow-scripts" src="/web/render/<token>">` beside the source, which is always
+shown. The page itself still carries no script. The frame route, `/web/render/{token}`, answers the frame's
+document under its own CSP (`sandbox allow-scripts; default-src 'none'; script-src` the pinned
+bundle and one hashed initialiser; `style-src 'unsafe-inline'`; `img-src`, `font-src`,
+`connect-src` and `form-action` `'none'`; `frame-ancestors <issuer>`), `Cache-Control: no-store`,
+for a token sealed to the session that was shown the card, for 5 minutes, and `access.not_found`
+for any other; the bundle route, `/web/assets/mermaid-<sha256>.js`, serves the bundle, `immutable`. A frame is an
+opaque origin with no cookie, storage or network; a rendering is never signed and journals
+nothing.
+
 ### Admin read
 
 *Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21*

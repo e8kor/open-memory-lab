@@ -1816,7 +1816,7 @@ The rules:
 ```sql
 ALTER TABLE memories ADD COLUMN format text NOT NULL DEFAULT 'text/plain', ADD COLUMN title text,
     ADD COLUMN search_text text, ADD COLUMN search_text_by text;
--- CHECKs, NOT VALID then VALIDATE: format ~ '^[a-z]+/[a-z0-9.+-]+(; lang=[a-z0-9]+)?$';
+-- CHECKs, NOT VALID then VALIDATE: format is a media type, with an optional "; lang=<tag>";
 -- title one line of 1 to 100 characters; (search_text IS NULL) = (search_text_by IS NULL)
 -- oml_search_vector_fold, oml_search_postings_fold and oml_search_vocabulary_fold read
 -- coalesce(search_text, claim); the three triggers also fire on an update naming search_text

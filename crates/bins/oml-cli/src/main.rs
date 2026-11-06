@@ -865,6 +865,16 @@ struct WriteArgs {
     /// (ADR-0057 d1).
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
+    /// The media type of the text: text/plain (the default), text/markdown,
+    /// text/vnd.oml.mermaid, application/json, application/yaml or
+    /// "text/vnd.oml.code; lang=<language>". With the text `-`, the text is
+    /// read from standard input (ADR-0056 d13).
+    #[arg(long)]
+    format: Option<String>,
+    /// One line stating the fact the text shows, at most 100 characters;
+    /// required with a format that is not prose (ADR-0056 d10).
+    #[arg(long)]
+    title: Option<String>,
     /// Propose retiring the --replaces claim; the text says why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
@@ -1930,6 +1940,8 @@ struct Write<'a> {
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
     anchor: Option<&'a serde_json::Value>,
+    format: Option<&'a str>,
+    title: Option<&'a str>,
 }
 
 impl<'a> Write<'a> {
@@ -1948,6 +1960,8 @@ impl<'a> Write<'a> {
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
             anchor: args.anchor.as_ref(),
+            format: args.format.as_deref(),
+            title: args.title.as_deref(),
         }
     }
 }
@@ -1988,13 +2002,27 @@ fn parse_rule(text: &str) -> Result<serde_json::Value, String> {
 /// named (ADR-0039 d3, d6).
 fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let mut body = json!({ "body": write.text });
+    // The text `-` is read from standard input, so a diagram or a fragment
+    // is piped in as it is (ADR-0056 d13).
+    let piped;
+    let text = if write.text == "-" {
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
+            .map_err(|e| CliError::local(format!("reading the text from standard input: {e}")))?;
+        piped = input;
+        piped.as_str()
+    } else {
+        write.text
+    };
+    let mut body = json!({ "body": text });
     for (name, value) in [
         ("claim_key", write.claim_key),
         ("kind", write.kind),
         ("workarea", write.workarea),
         ("reason", write.reason),
         ("severity", write.severity),
+        ("format", write.format),
+        ("title", write.title),
     ] {
         if let Some(value) = value {
             body[name] = json!(value);

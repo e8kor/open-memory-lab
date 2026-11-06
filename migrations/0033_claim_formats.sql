@@ -28,10 +28,13 @@ ALTER TABLE memories
 
 ALTER TABLE memories
     ADD CONSTRAINT memories_format_shape CHECK (
-        format ~ '^[a-z]+/[a-z0-9.+-]+(; lang=[a-z0-9]+)?$') NOT VALID,
+        -- \x3b is the semicolon of `text/vnd.oml.code; lang=rust`
+        format ~ '^[a-z]+/[a-z0-9.+-]+(\x3b lang=[a-z0-9]+)?$') NOT VALID;
+ALTER TABLE memories
     ADD CONSTRAINT memories_title_line CHECK (
         title IS NULL OR (char_length(title) BETWEEN 1 AND 100
-                          AND title !~ '[\n\r]')) NOT VALID,
+                          AND title !~ '[\n\r]')) NOT VALID;
+ALTER TABLE memories
     ADD CONSTRAINT memories_search_text_by CHECK (
         (search_text IS NULL) = (search_text_by IS NULL)) NOT VALID;
 
