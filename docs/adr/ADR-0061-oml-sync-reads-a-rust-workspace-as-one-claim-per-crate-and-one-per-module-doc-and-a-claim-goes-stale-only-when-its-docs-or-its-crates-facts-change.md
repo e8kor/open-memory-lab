@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change
 tier: engineering
-status: proposed
-answers: what the `rust` source adapter of `oml sync` extracts from a Cargo workspace and what it never reads; why manifests are parsed from committed bytes and not by `cargo metadata`; why a prefix lexer reads module docs and syn is a test oracle only; how the adapter port reads a set of files and stays pure; each claim's key, anchor, fragment, hasher and text; why a code edit, a new pub item or an external dependency leaves a claim fresh; why dependencies are claim text and not edges; how the adapter avoids retiring what it did not write; which workareas the operator's targets load into; who reviews crate and module claims; volume, cost and the dry run; which of the operator's targets ship in v0.5.8 and which in v0.5.9; the tests, doctor lines and rejected alternatives
+status: accepted · 2026-11-06
+answers: what the `rust` source adapter of `oml sync` extracts from a Cargo workspace and what it never reads; why manifests are parsed from committed bytes and not by `cargo metadata`; why a prefix lexer reads module docs and syn is a test oracle only; how the adapter port reads a set of files and stays pure; each claim's key, anchor, fragment, hasher and text; why a code edit, a new pub item or an external dependency leaves a claim fresh; why dependencies are claim text and not edges; how the adapter avoids retiring what it did not write; which workareas the operator's targets load into; who reviews crate and module claims; volume, cost and the dry run; which of the operator's targets ship in v0.5.8 and which in v0.6.1; the tests, doctor lines and rejected alternatives
 -->
 
 # ADR-0061 — `oml sync` reads a Rust workspace as one claim per crate and one per module doc, and a claim goes stale only when its docs or its crate's facts change
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted · 2026-11-06 · proposed on 2026-11-05 as #70; accepted by the operator's order of 2026-11-06 to build it, with release v0.6.1
 
-**Release:** planned for v0.5.9, right after v0.5.8 ([releases](../product/releases.md#planned-releases))
+**Release:** planned for v0.6.1, after v0.6.0 ([releases](../product/releases.md#planned-releases))
 
 **Amends:** ADR-0057 (d3: two hashers join the closed set; d7: the port reads a set of files, and
 `rust` joins the adapters; d8: an adapter retires only claims in its own key namespace),
@@ -23,9 +23,9 @@ ADR-0056 (d11: a `.rs` file's module doc is `text/markdown`, never a code snippe
 [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 (bulk review).
 
-**Numbering.** ADR-0058 to ADR-0060 are left to lanes in flight on 2026-11-05; this record takes
-0061, and its roadmap rows take FR-130 to FR-133 for the same reason. Either is renumbered at
-merge if the gap is not taken.
+**Numbering.** This record takes 0061 and its roadmap rows FR-130 to FR-133, reserved in
+[the number registry](../NUMBERS.md) for `feat/rust-adapter`, the branch that builds it; the
+proposal's branch, `design/rust-adapter` (#70), is archived.
 
 ## Context
 
@@ -33,7 +33,7 @@ merge if the gap is not taken.
 scopes: one claim per crate (its purpose, dependencies and dependents); one claim per module (its
 `//!` doc); the markdown documents under `docs/`, through the `headings` adapter; and the
 decision records, through the `adr` adapter. Public item docs (`///`) come later. The Rust adapter
-ships as v0.5.9, right after v0.5.8.
+ships as v0.6.1, after v0.6.0 (first planned as v0.5.9).
 
 **What the tree holds,** measured at `origin/main` `ad2daa3` on 2026-11-05 by reading git's object
 store with a script kept outside the tree:
@@ -69,7 +69,8 @@ agent key promotes; R2, the reviewer is never the author; R4, nothing is deleted
 ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d8): every new call traces to a documented
 use case.
 
-Decided, not built: this lane writes no code and ran no build.
+Built on `feat/rust-adapter` in the same change that accepts it; d15 records the two places the
+build took a narrower reading than the proposal.
 
 ## Decision
 
@@ -216,7 +217,7 @@ Decided, not built: this lane writes no code and ran no build.
   values.
 
 - **d8 — A new or removed `pub` item does not make a module claim stale; a hasher that would is
-  designed, opt-in and not built in v0.5.9.** Over the 817 file changes, a doc-only hash asks for
+  designed, opt-in and not built in v0.6.1.** Over the 817 file changes, a doc-only hash asks for
   65 reviews; a hash that also covers module-level `pub` item names asks for 208, 3.2 times as
   many, and 143 of those would show the reviewer an unchanged doc. A module doc states purpose and
   structure, which a new function rarely contradicts, and the operator's scope is the doc. The
@@ -230,7 +231,7 @@ Decided, not built: this lane writes no code and ran no build.
   one review each, so it is chosen at the first load. It needs a lexer that walks item headers
   with brace matching, or syn (d3); both wait for the operator to ask, tracked as FR-131.
 
-- **d9 — Dependencies are claim text in v0.5.9, not `depends_on` claim edges.** The text already
+- **d9 — Dependencies are claim text in v0.6.1, not `depends_on` claim edges.** The text already
   answers "what does this crate depend on" for recall and for a reader with no checkout. An edge
   would add a proposal and a ratification per edge at the load (12 for `crates/`), and again for
   each edge whenever either endpoint is superseded (ADR-0057 d10), and crate claims are
@@ -265,9 +266,9 @@ Decided, not built: this lane writes no code and ran no build.
     `e8kor-design-sync` for `oml-design`: `e8kor-docs-sync` and `e8kor-code-sync`, since a writer
     supersedes only its own tips.
 
-- **d12 — A person reviews every crate and module claim in v0.5.9; an automated reviewer, once
+- **d12 — A person reviews every crate and module claim in v0.6.1; an automated reviewer, once
   built, may approve a crate claim only by re-deriving all of it, and never a module claim.**
-  *Amends ADR-0047 d9.* ADR-0047 d8's CI key is not built, so in v0.5.9 the operator's reviewer
+  *Amends ADR-0047 d9.* ADR-0047 d8's CI key is not built, so in v0.6.1 the operator's reviewer
   key approves each run's batch through `oml review list` and `oml review approve --ids -`
   (ADR-0055), each verdict marked `same_user` (ADR-0055 d7), since the sync key and the reviewer
   key act for one person in a single-person tenant. That mark says what the approval is worth to
@@ -343,12 +344,18 @@ Decided, not built: this lane writes no code and ran no build.
 
     And against the lead, in `cli_e2e`, `oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing`.
 
-- **d15 — Every new failure has a doctor line.** `oml doctor` names: a server that does not accept
-  the hashers `oml-rustdoc/1` and `oml-crate/1` (before v0.5.9), which `oml sync --adapter rust`
-  also refuses before reading anything; for the key's default workarea, the count of claims in
-  the `rust/` namespace whose last run reported them `unsupported`, `unreadable` or `undeclared`;
-  and a workarea that holds claims of more than one adapter's namespace, which d10 makes safe and
-  which d11's layout avoids.
+- **d15 — Every new failure is named, in `oml doctor` or in the run's own report.** `oml doctor`
+  names a server that does not accept the hashers `oml-rustdoc/1` and `oml-crate/1` (before
+  v0.6.1), as `sources_rust_unsupported`; the server's refusal of the hasher, a
+  `request.validation` naming `/anchor/hasher`, is what stops `oml sync --adapter rust` against it.
+  A file the adapter could not read or does not support (`unreadable`, `unsupported`) is printed
+  by the run, listed in its `--json` document and fails it with exit 1; an `undeclared` or
+  `generated` file is printed as `skipped` and does not. In each case the file's claims are kept,
+  never retired (d10). *Narrower than proposed:* a count of such claims in the default workarea,
+  and a line for a workarea holding claims of more than one adapter's namespace, are not built:
+  the server holds no record of a run's report, and d10 makes the mixed workarea safe. A pull
+  request's drafts mode (`--pr`) is refused with `--adapter rust`, since a crate claim names
+  dependents that live in manifests the pull request did not change (d4).
 
 ## The operator's sync targets by release
 
@@ -356,8 +363,8 @@ Decided, not built: this lane writes no code and ran no build.
 |---|---|---|---|---|
 | Decision records, `docs/adr` | `adr` | `oml-design` | v0.5.8 | ADR-0057 d14's load. |
 | Documents under `docs/` | `headings` | `oml-docs` | v0.5.8 | 121 files under `docs/` at `ad2daa3`, 49 of them in `docs/adr`. A `headings` run over `docs` would load the decision records a second time as sections, so the target is the 72 files outside `docs/adr`, about 1,005 sections with body text by a script's count, six runs of 200. v0.5.8 has no way to leave a subdirectory out of a source: the operator either runs one sync per subdirectory and per top-level file (17 sources), or v0.5.8 gains `--exclude <path>` (question 2). |
-| Crate claims | `rust` | `oml-code` | v0.5.9 | This record, d6. |
-| Module claims | `rust` | `oml-code` | v0.5.9 | This record, d5. |
+| Crate claims | `rust` | `oml-code` | v0.6.1 | This record, d6. |
+| Module claims | `rust` | `oml-code` | v0.6.1 | This record, d5. |
 | Public item docs (`///`) | `rust` | `oml-code` | later | The operator's later scope; at least 517 documented `pub` items by the operator's count. |
 
 ## Questions for the operator

@@ -338,7 +338,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        for `docs/adr` with the `adr` adapter; `oml-design-pr-<n>` for a draft pull request's
        records (item 3), also `adr`; `oml-docs` for `docs` with `--exclude 'docs/adr/**'` and the
        `headings` adapter; and `oml-code` for the Rust sources with the `rust` adapter, from
-       v0.5.9 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
+       v0.6.1 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
        `oml workareas create e8kor oml-knowledge`, then `oml workareas create oml-knowledge
        oml-design` and the same for `oml-docs`; a draft's `oml-design-pr-<n>` is created under
        `oml-knowledge` when its pull request is first loaded. Recall at `oml-knowledge` reads all
