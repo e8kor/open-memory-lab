@@ -37,7 +37,7 @@ What that means for a query:
   tokens and keeps them whole, so "deployment" does not match "deploy" and
   "what" is a required term. `docs/architecture/retrieval.md` (Text handling)
   chose `simple` on purpose, so that non-English text is never stemmed
-  wrongly, and says the cost was unmeasured (FR-4). This eval measures it.
+  wrongly, and says the cost was unmeasured (#102). This eval measures it.
 - **The tokenizer decides what an identifier is.** PostgreSQL's default
   parser splits `fct_mrr_daily` into `fct`, `mrr` and `daily`. It keeps
   `InvoiceNumberingTest.concurrentIssue` and `useInvoiceFilters.ts` whole as

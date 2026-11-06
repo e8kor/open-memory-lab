@@ -1,17 +1,11 @@
 <!--
 id: operations/observability
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: which metrics and structured-log fields each workload commits to emit, what oml doctor reads, and the starting points for alerting
 -->
 
 # Observability
-
-**Status:** design draft for review · the request log, the MCP call line, four request-metric
-families and trace export built; every other metric name below is a design commitment no binary
-emits yet.
-
-**Release:** `oml doctor` since v0.1.0; the request log, the four request-metric families, `/metrics` and trace export since v0.4.1; the other metrics and the SLOs not scheduled ([releases](../product/releases.md)).
 
 This page declares what each workload measures, what `oml doctor` reads and
 returns, the structured-logging rules (including the one that is a correctness
@@ -19,7 +13,7 @@ rule, not a style rule), and the starting points for alerting. The workloads
 themselves are placed in [deployment](deployment.md); the guarantees the
 signals watch are declared in [storage](../architecture/storage.md),
 [admission](../architecture/admission.md),
-[reconciliation](../architecture/reconciliation.md) and
+[reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) and
 [retrieval](../architecture/retrieval.md).
 
 Two principles shape everything here:
@@ -40,13 +34,13 @@ Two principles shape everything here:
 
 Metrics are Prometheus-style, prefixed `oml_`, labelled by `tenant_id` where
 the cardinality is per-tenant (quota and ceiling concerns for that labelling
-are part of [FR-7](../product/roadmap.md)). Names below are normative for the
+are part of #99). Names below are normative for the
 implementation; thresholds are deliberately absent — nothing is measured yet
-([D17 discipline](../product/roadmap.md)).
+([D17 discipline](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 ### `oml-server`
 
-*Available since v0.4.1, the rows marked so · [releases](../product/releases.md)*
+*Available since v0.4.1, the rows marked so · [releases](../changelog.md)*
 
 The lead serves these on a listener of its own, `GET /metrics` at `server.metrics_listen`, off
 unless that setting names an address; the API listener never routes `/metrics`, so a proxy that
@@ -66,11 +60,11 @@ has no modes.
 | `oml_chain_append_duration_seconds` (tenant) | histogram | Time to assign and commit one journal event: advisory-lock wait + transaction commit, including synchronous replication in the scaled profile. Per-tenant writes serialize on the chain lock, so this histogram **is** the per-tenant write-throughput ceiling made visible. |
 | `oml_review_queue_depth` (tenant, workarea) | gauge | Held items waiting in the review queue |
 | `oml_review_queue_oldest_age_seconds` (tenant, workarea) | gauge | Age of the oldest held item — the signal that races `held_item_expiry` ([admission](../architecture/admission.md)) |
-| `oml_review_verdicts_total` (tenant, outcome) | counter | Drain rate of the review queue; the measured counterpart [FR-2](../product/roadmap.md) asks for |
+| `oml_review_verdicts_total` (tenant, outcome) | counter | Drain rate of the review queue; the measured counterpart #98 asks for |
 | `oml_serves_active` / `oml_serve_invalidations_total` | gauge / counter | Review serves outstanding and serves invalidated by content change ([CLI review ceremony](../cli/reference.md)) |
 | `oml_outbox_depth` | gauge | Outbox rows not yet drained — the producer-side view of the lag the lake-writer reports from the consumer side |
 | `oml_rls_denied_total` (service_role) | counter | Postgres RLS denials observed by the server's own roles. The expected value is zero: a nonzero count means a service bug or a tenant-isolation probe, and either deserves attention ([security](../architecture/security.md)) |
-| `oml_quota_rejections_total` (tenant) | counter | 429s issued by the per-replica token buckets — the enforcement approximation [FR-8](../product/roadmap.md) tracks |
+| `oml_quota_rejections_total` (tenant) | counter | 429s issued by the per-replica token buckets — the enforcement approximation #133 tracks |
 | `oml_idempotency_replays_total` / `oml_idempotency_conflicts_total` | counter | Stored-response replays vs. same-key-different-digest errors ([HTTP API](../api/http-api.md)). **Since v0.4.1.** |
 | `oml_upload_sessions_active` (tenant) | gauge | Resumable upload sessions open |
 | `oml_lead_lease_age_seconds` | gauge | Age of the current lead lease since acquisition ([deployment — the lead lease](deployment.md)). Paging-adjacent on the frontier-lag precedent: during a takeover, writes are refused until a new lead holds the lease and passes the fork check, so lease state — not pod status — is what says the write path is up. |
@@ -91,7 +85,7 @@ has no modes.
 | `oml_review_wait_seconds` (verdict) | histogram | Time from a memory's submission to its verdict, by `approve` or `reject`, on bounds from one minute doubling to about 23 days; its count by verdict is the rejection rate, deployment-wide. **Since v0.5.7.** |
 | `oml_oauth_connect_code_failures_total` | counter | Wrong connect-code entries on the authorization page; a sustained rate is someone guessing ([security](../architecture/security.md#connections-the-oauth-surface)) |
 | `oml_oauth_client_metadata_fetch_total` (outcome) | counter | Client metadata document fetches by outcome — fetched, cached, a stale copy served, refused address, timeout, oversize, invalid, busy; a deployment with no outbound HTTPS shows only failures |
-| `oml_lead_takeovers_total` | counter | `system.lead_acquired` events observed — lead takeovers. Nonzero during failover or rolling updates is the lease working; a climbing rate in steady state means lead churn, and every takeover is a write-refusal window ([FR-24](../product/roadmap.md) measures that window). |
+| `oml_lead_takeovers_total` | counter | `system.lead_acquired` events observed — lead takeovers. Nonzero during failover or rolling updates is the lease working; a climbing rate in steady state means lead churn, and every takeover is a write-refusal window (#117 measures that window). |
 
 ### `oml-lakewriter`
 
@@ -113,7 +107,7 @@ has no modes.
 |---|---|---|
 | `oml_reconcile_last_success_timestamp_seconds` | gauge | When a pass last completed — the CronJob's own freshness |
 | `oml_reconcile_cursor_lag_events` (tenant) | gauge | Journal head minus the reconciler's persisted cursor |
-| `oml_reconcile_findings_total` (class) | counter | Findings by the closed vocabulary — `missing`, `orphan`, `duplicate`, `state-mismatch`, `digest-mismatch`, `stale-frontier`, `dead-lettered` ([reconciliation](../architecture/reconciliation.md)) |
+| `oml_reconcile_findings_total` (class) | counter | Findings by the closed vocabulary — `missing`, `orphan`, `duplicate`, `state-mismatch`, `digest-mismatch`, `stale-frontier`, `dead-lettered` ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) |
 | `oml_reconcile_repairs_emitted_total` (class) | counter | Repairs emitted through the outbox via `oml-server` |
 | `oml_reconcile_repair_halts` (tenant) | gauge | Artifacts whose finding recurred N times, halting auto-repair and raising an operator condition |
 | `oml_reconcile_pass_duration_seconds` | histogram | Pass cost against `activeDeadlineSeconds` ([deployment](deployment.md)) |
@@ -124,7 +118,7 @@ has no modes.
 |---|---|---|
 | `oml_index_backlog_depth` (tenant, kind) | gauge | Promoted rows not yet embedded / not yet in FTS |
 | `oml_index_lag_seconds` (tenant) | gauge | Age of the oldest unindexed promotion — the gap between "promoted" and "findable" |
-| `oml_embedding_failures_total` (tenant) | counter | Embedding computation failures (the model and its location are open — [RS-1](../product/roadmap.md)) |
+| `oml_embedding_failures_total` (tenant) | counter | Embedding computation failures (the model and its location are open — #153) |
 
 ### Store-level signals (not emitted by OML binaries)
 
@@ -182,7 +176,7 @@ deployment-level fields marked so:
 | `connections` | `oauth_connections` + `oauth_tokens` + `api_keys` | Per key: live connections, as [roles and keys](../architecture/roles-and-keys.md#connections) defines them, and, apart, open connections that are not live, by why. Connections revoked for `refresh_reuse` or `code_reuse` in the window; any reuse revocation is `attention`: a stolen token, or a client that lost a refresh answer, and either way someone needs a new connect code |
 | `search` (rerank) and `web` (providers) | `oml_reranks_total{outcome="skipped"}` and `oml_web_exchanges_failed_total` on the metrics listener, read where `OML_METRICS_URL` names it | *Since v0.5.7 ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d1).* `/readyz` names the reranker and the providers and counts nothing. `warn` when reranks were skipped busy or late, or failed, since the lead started, and when a provider's exchanges failed, with the reasons; without `OML_METRICS_URL` doctor says where the counts are |
 | `telemetry` | the metrics listener: `oml_recall_events_total`, `oml_telemetry_queue_depth`, `oml_telemetry_purge_overdue`, `oml_labeller_lag_seconds` | *Since v0.5.7 ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d13).* `warn` when more than 1% of recall events were dropped since start, by reason; when more than 5,000 wait for the writer; when a tenant's events past the 30 days were found at a pass's start, so the purge is behind; and when the labeller's last pass is more than 10 minutes old. `off` when the server records no recall |
-| `search` (postings) | `oml_recalls_total{pipeline="bm25-postings", access}` on the metrics listener, read where `OML_METRICS_URL` names it (never `/readyz`, which answers anyone), and, for an admin key, `GET /v2/search` `postings` | *Unreleased ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d12).* `warn` when the scan answered more than 5% of `bm25-postings`'s recalls since the lead started, over at least 20; and, per tenant: no postings partition (every memory write for the tenant fails until the lead's next start creates and fills it); the fill incomplete (memory versions with no postings); served memories with no served postings; per-workarea counts or sampled word counts that disagree with the postings. Each fault line names the repair, the owner's `oml_search_postings_refill('<tenant id>')` ([schema](../data/postgres-schema.md#search-postings-adr-0052)); a clean read prints `postings complete; counts agree (<n> sampled word counts)` |
+| `search` (postings) | `oml_recalls_total{pipeline="bm25-postings", access}` on the metrics listener, read where `OML_METRICS_URL` names it (never `/readyz`, which answers anyone), and, for an admin key, `GET /v2/search` `postings` | *Unreleased ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d12).* `warn` when the scan answered more than 5% of `bm25-postings`'s recalls since the lead started, over at least 20; and, per tenant: no postings partition (every memory write for the tenant fails until the lead's next start creates and fills it); the fill incomplete (memory versions with no postings); served memories with no served postings; per-workarea counts or sampled word counts that disagree with the postings. Each fault line names the repair, the owner's `oml_search_postings_refill('<tenant id>')` ([schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)); a clean read prints `postings complete; counts agree (<n> sampled word counts)` |
 | `scan` | `/readyz` `scan` (the rule set, its rule count, the personal-data setting) and `oml_scan_findings_total{class, rule, action}` on the metrics listener, read where `OML_METRICS_URL` names it | *Unreleased ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d11).* Prints `oml-scan/1, 40 rules loaded, personal-data rules off` and `findings since start: n refused, m held; most: <rule> ×k`, counts only, never a matched value. `warn scan_ruleset` when the server names no rule set (one before v0.6.0 scans for two test markers only); `warn scan_rules` when it loaded none. Rows stored before the rule set are checked with `oml admin rescan` |
 
 Doctor renders each field with a verdict (`ok` / `attention` / `failing`) and
@@ -208,7 +202,7 @@ check list on top of the common fields above:
 
 ## Structured logging
 
-*Available since v0.4.1 · [releases](../product/releases.md)*
+*Available since v0.4.1 · [releases](../changelog.md)*
 
 Every binary logs JSON lines to **stderr**; stdout is reserved for the show-once enrollment
 token. Each line is `tracing-subscriber`'s JSON format with the event's fields at the top level:
@@ -232,7 +226,7 @@ or `error` for a 5xx. A probe answered `200` writes none ([ADR-0042](../adr/ADR-
 | `method`, `route`, `status` | the method, the matched route template (`/v2/keys/{key}`, never the raw path; `unmatched` where none matched), the status |
 | `error_code` | the envelope's `error.code`, the RFC `error` on an OAuth endpoint, or `null` |
 | `duration_ms` | request seen to response head, milliseconds to three decimals |
-| `auth_ms`, `store_ms`, `store_calls` | time until the credential resolved or was refused; wall time and count of the request's store-port calls, pool acquisition and lock waits included (ADR-0042 d14). The other stages are not timed ([FR-70](../product/roadmap.md)) |
+| `auth_ms`, `store_ms`, `store_calls` | time until the credential resolved or was refused; wall time and count of the request's store-port calls, pool acquisition and lock waits included (ADR-0042 d14). The other stages are not timed (#109) |
 | `bytes_in`, `bytes_out` | body bytes read; response body length when exact-sized |
 | `tenant_id`, `key_id`, `key_name`, `principal`, `role` | the resolved key's, `null` when none resolved |
 | `credential`, `connection_id` | `bearer` or `connection`, and the connection's id; *since v0.5.0 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d14):* `session` on the web pages, the key fields naming the session key the act ran as, and `connection_id` null |
@@ -244,7 +238,7 @@ or `error` for a 5xx. A probe answered `200` writes none ([ADR-0042](../adr/ADR-
 | `user_agent` | the `User-Agent` header, cut to 200 bytes, non-printable bytes replaced by `?`: `oml-cli/<version>`, `oml-cli/<version> hook/<name>`, `oml-sdk-python/<version>`, `oml-sdk-typescript/<version>`, or what another client sends (ADR-0042 d9) |
 
 What the request line costs per request, and how many bytes it writes, is unmeasured
-([FR-71](../product/roadmap.md)).
+(#109).
 
 ### The MCP call line
 
@@ -275,7 +269,7 @@ Doctor cannot read any of these and states the rule as not checkable
 ([per-profile checks](#per-profile-checks)).
 
 Built: the lead's hourly removal of the connections' lapsed rows (its start, then every hour;
-[Postgres schema](../data/postgres-schema.md#connections-adr-0031)) writes `event`
+[Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) writes `event`
 `connection_sweep` with the count of each kind of row it removed, `registrations_removed`,
 `connections_removed`, `tokens_removed`, `codes_cleared` and `authorizations_removed`, and the
 `tenants` it swept; a sweep that fails writes `connection_sweep_failed` with its `reason`, stops
@@ -308,8 +302,8 @@ What logs may carry instead:
   request line, the key's name and principal and the client's address
   ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8 amends this bullet, which said never principal values,
   so a request line reads without a second lookup). These survive erasure by
-  the stated boundary ([FR-1](../product/roadmap.md)), and the log keeps them
-  at most 30 days ([log retention](#log-retention)); when FR-1 closes with a
+  the stated boundary (#146), and the log keeps them
+  at most 30 days ([log retention](#log-retention)); when #146 closes with a
   pseudonymization act, the log joins that act's inventory with that bound.
 - **Never**: API key values (key ids only — the stored form is already a
   hash), DEK/KEK material or wrapped keys, serve payloads, scan excerpts that
@@ -344,8 +338,8 @@ log archive.
 SLIs are defined here over the exported metric names; **target percentages
 are deployment policy and do not appear on this page** — a target is a choice
 made against measured baselines, and no measurement of OML exists
-([FR-25](../product/roadmap.md), [FR-2](../product/roadmap.md),
-[FR-7](../product/roadmap.md)). What this section fixes is the formula: which
+(#150, #98,
+#99). What this section fixes is the formula: which
 requests count, which count against, and where the latency targets come from.
 
 - **Write availability.** Good events are write-route requests answered
@@ -358,7 +352,7 @@ requests count, which count against, and where the latency targets come from.
   would hide the availability-for-integrity trade
   [commitments](../product/commitments.md) §2 makes on purpose; counting
   them is that trade made visible in the one number operators watch. The
-  takeover window's size is what [FR-24](../product/roadmap.md) measures.
+  takeover window's size is what #117 measures.
 - **Read availability.** The same formula over read routes. Followers keep
   reads flowing through a lead takeover ([deployment — the lead
   lease](deployment.md)), so in a deployment with followers a takeover
@@ -367,7 +361,7 @@ requests count, which count against, and where the latency targets come from.
 - **Latency.** Per-verb SLIs — submit, get, recall, supersede, attachment IO
   — as the fraction of requests completing under the verb's target, computed
   from the `oml_http_request_duration_seconds` histogram. The targets are
-  [FR-25](../product/roadmap.md)'s declared per-ring targets
+  #150's declared per-ring targets
   ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d7), reused rather
   than restated: no latency number appears here, and no target may be met by
   weakening durability — the quorum floor is outside the optimizable budget.
@@ -381,7 +375,7 @@ Example expressions, Prometheus shape — `$WINDOW`, the route sets and every
 /
   sum(rate(oml_http_request_duration_seconds_count{route=~"$WRITE_ROUTES"}[$WINDOW]))
 
-# recall latency: fraction under the FR-25 recall target
+# recall latency: fraction under the #150 recall target
   sum(rate(oml_http_request_duration_seconds_bucket{route="recall", le="$FR25_RECALL_TARGET"}[$WINDOW]))
 /
   sum(rate(oml_http_request_duration_seconds_count{route="recall"}[$WINDOW]))
@@ -397,7 +391,7 @@ configuration is a deployment-site choice like the rest of the scrape stack.
 Starting points, not a tuned alert book: the structural alerts (zero/nonzero,
 boolean) are meaningful on day one; every threshold alert needs numbers this
 design does not have yet and must be set against measured baselines
-([FR-2](../product/roadmap.md), [FR-7](../product/roadmap.md)). Each
+(#98, #99). Each
 condition links its runbook — one anchored section per condition on the one
 [runbooks](runbooks.md) page.
 
@@ -405,19 +399,19 @@ condition links its runbook — one anchored section per condition on the one
 |---|---|---|
 | [Fork check failing](runbooks.md#fork-check-failing) | `/readyz` red on all `oml-server` replicas after restart; `chain_head` failing in doctor | The deployment is refusing writes because the chain head did not verify — by design it stays down until an operator resolves it ([deployment](deployment.md)). Page. |
 | [Review unavailable](runbooks.md#review-unavailable) | `review_availability: false` for a workarea | Admission fails closed; every write to that workarea will hold until expiry. Page if the workarea is in active use. |
-| [Oldest held age approaching expiry](runbooks.md#oldest-held-approaching-expiry) | `oml_review_queue_oldest_age_seconds` vs. the policy's `held_item_expiry` | Items are about to dead-letter not because they are poison but because review capacity lagged — the failure mode [FR-2](../product/roadmap.md) exists to quantify. Alert ahead of the expiry, at a margin set locally. |
+| [Oldest held age approaching expiry](runbooks.md#oldest-held-approaching-expiry) | `oml_review_queue_oldest_age_seconds` vs. the policy's `held_item_expiry` | Items are about to dead-letter not because they are poison but because review capacity lagged — the failure mode #98 exists to quantify. Alert ahead of the expiry, at a margin set locally. |
 | [Dead letters present](runbooks.md#dead-letters-present) | `oml_dead_letter_count > 0`, or doctor's `dead_letter_count` | Every dead-lettered row is a journalled skip awaiting a human decision (re-enqueue or not). Ticket on first occurrence, page on growth. |
 | [Frontier lag growing monotonically](runbooks.md#frontier-lag-growing) | `oml_outbox_frontier_lag_seconds` trend | Brief lag is normal (micro-batching, lease failover); monotonic growth means the lake-writer is down, conflicted, or poisoned. Alert on sustained growth, not on a fixed depth. |
 | [Txn conflicts in steady state](runbooks.md#txn-conflicts-in-steady-state) | `oml_delta_txn_conflicts_total` increasing outside failover windows | Two writers are alive; the second fence is absorbing what the lease should have prevented. Ticket: investigate lease churn. |
 | [Lease churn](runbooks.md#lease-churn) | `oml_leader_lease_transitions_total` rate | Predicts frontier-lag spikes; usually node or kubelet trouble. Ticket. |
 | [Lead takeovers in steady state](runbooks.md#lead-churn) | `oml_lead_takeovers_total` rate outside deploy windows | Every takeover is a write-refusal window ([deployment — the lead lease](deployment.md)); churn means the lead keeps losing its lease. Ticket, page if writes are failing. |
 | [RLS denials](runbooks.md#rls-denials) | `oml_rls_denied_total > 0` | Expected zero. A service bug or an isolation probe — either way, investigate ([security](../architecture/security.md)). Ticket, page on spike. |
-| [Repair halted](runbooks.md#repair-halted) | `oml_reconcile_repair_halts > 0` | A finding recurred past its attempt budget; auto-repair stopped on purpose and raised an operator condition ([reconciliation](../architecture/reconciliation.md)). Ticket, with the artifact id from doctor. |
+| [Repair halted](runbooks.md#repair-halted) | `oml_reconcile_repair_halts > 0` | A finding recurred past its attempt budget; auto-repair stopped on purpose and raised an operator condition ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)). Ticket, with the artifact id from doctor. |
 | [Reconciler stale](runbooks.md#reconciler-stale) | `oml_reconcile_last_success_timestamp_seconds` older than a few schedules | `concurrencyPolicy: Forbid` means slow passes queue up silently; staleness is how that surfaces. Ticket. |
 | [Backup job failed](runbooks.md#backup-failed) | store-level backup success signal | A missed backup stretches no erasure window, but a *changed retention configuration* or failed expiry does — and a failed backup chain breaks the restore ceremony ([restore](restore.md)). Ticket. |
-| [Sustained 429s for one tenant](runbooks.md#sustained-429s) | `oml_quota_rejections_total` rate | Either the tenant outgrew its journalled quota grant or the per-replica approximation is misbehaving under replica churn ([FR-8](../product/roadmap.md)). Ticket. |
+| [Sustained 429s for one tenant](runbooks.md#sustained-429s) | `oml_quota_rejections_total` rate | Either the tenant outgrew its journalled quota grant or the per-replica approximation is misbehaving under replica churn (#133). Ticket. |
 
 What this page does not decide: the scrape/alert stack (Prometheus, the
 managed equivalent, or none locally), dashboard layouts, and every numeric
 threshold. Those are deployment-site choices and, for the thresholds,
-measurement work the [roadmap](../product/roadmap.md) tracks.
+measurement work the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) tracks.

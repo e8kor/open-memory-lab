@@ -9,14 +9,14 @@ answers: why standalone, docker and Kubernetes are three first-class install pro
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. It makes two connected moves: the
 Kubernetes-only deployment story of [ADR-0016](ADR-0016-kubernetes-workloads.md) becomes one of
 three first-class install profiles, and `oml-server` gains a cluster mode — one lead, N
 followers — that supersedes the every-replica-signs design. Every guarantee a profile weakens is
 stated in [commitments](../product/commitments.md), and every unmeasured claim carries a roadmap
-handle ([FR-22, FR-23, FR-24, RS-12, RS-13](../product/roadmap.md)).
+handle ([#117, #117, #117, #154, #154](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 ## Context
 
@@ -48,12 +48,12 @@ Two technical findings make the standalone profile honest rather than hopeful:
   The second fence of ADR-0016 d3 — put-if-absent on the next Delta log entry — is therefore
   native on local disk, same shape as S3/MinIO. The `SetTransaction` exactly-once mechanism is
   Delta log content, not backend behavior; the only backend-dependent part is commit atomicity,
-  which F1 covers. The [FR-3](../product/roadmap.md) harness simply runs per backend.
+  which F1 covers. The #101 harness simply runs per backend.
 
 ADR-0016 rejected docker-compose — but as a *rehearsal of the Kubernetes deployment*, and that
 argument stands. What changed is the requirement: docker and standalone are now targets in their
 own right, and the drift risk that rejection priced is answered by a conformance suite that must
-pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the payloads.
+pass on all three profiles (#117), not by refusing the payloads.
 
 ## Decision
 
@@ -61,7 +61,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   `docker` (one compose file), `kubernetes` (the existing chart, now one of three). Identical in
   every profile: the four processes (the server counted once — its lead/follower compositions
   are [ADR-0006](ADR-0006-pure-rust.md) d6's), the Postgres schema and journal, the commit protocol, the
-  constitution, the bootstrap ceremony, the CLI, and the conformance suite (FR-22). Profiles
+  constitution, the bootstrap ceremony, the CLI, and the conformance suite (#117). Profiles
   differ only in (a) who supervises the processes, (b) what backs the object-store and KMS
   ports, and (c) which guarantees weaken — each weakening stated in
   [commitments](../product/commitments.md), never discovered. The deployment principle changes
@@ -111,7 +111,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   scoping in docker). The keyring file is a new copy class in the
   [erasure inventory](../architecture/audit-and-lineage.md): any backup of it extends the
   erasure SLO exactly as wrapped-DEK copies in Postgres backups do. The exact keyring mechanism
-  is [RS-12](../product/roadmap.md).
+  is #154.
 
 - **d5 — Standalone supports the full feature set; nothing is excluded, only guarantees
   weaken.** Lake, reconciler, indexer, simulations, erasure, evidence export — all run.
@@ -181,7 +181,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   ADR-0016's rejected alternative "docker-compose as the local story" argued against compose as
   a rehearsal of the Kubernetes deployment, and that argument stands. The requirement changed:
   docker and standalone are first-class targets, and the drift risk the rejection priced is
-  answered by FR-22's conformance bar, not by refusing the payloads. ADR-0016 gains a scope
+  answered by #117's conformance bar, not by refusing the payloads. ADR-0016 gains a scope
   line ("this record governs the Kubernetes profile") and a pointer from its compose rejection
   here; its d1–d5 are otherwise untouched, except that d13 below supersedes the
   every-replica-signs portion of its d4.
@@ -200,7 +200,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   guarantees.** Writes accepted under standalone were one-disk-durable and host-admin-custodied
   *when accepted*; migration upgrades the future, not the past, and the evidence export says
   under which profile (settings digest) each era ran — journalled settings make that a query,
-  not archaeology. The rehearsal is [FR-23](../product/roadmap.md).
+  not archaeology. The rehearsal is #117.
 
 - **d11 — Critical path: standalone is M1's profile; compose lands at M2; the Kubernetes local
   profile moves to M3.** Decided here, flagged as a critical-path edit: M1's exit
@@ -209,9 +209,9 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   on. Compose joins M2, the provider-floor milestone, when early users first want a trivial
   install. The k3d/Helm local profile moves to M3, the first milestone that exercises the
   Kubernetes-specific machinery (lease, CronJob) against the lake; M0 spike 2 already tests
-  MinIO conditional put without a chart, and M0 spike 1 extends to run the FR-3 harness on
+  MinIO conditional put without a chart, and M0 spike 1 extends to run the #101 harness on
   `file://` as well. M6's scaled profile is unchanged. This edits M1's exit criterion; the
-  [critical path](../product/critical-path.md) carries the change as of this record's date.
+  critical path carries the change as of this record's date.
 
 - **d12 — Positioning.** One sentence in [positioning](../product/positioning.md), backed by
   the dated category evidence above: *OML installs like the category used to promise — one
@@ -232,7 +232,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   ([deployment](../operations/deployment.md) says so), so the lead ceiling mostly renames an
   existing bound. The honest residual: cross-tenant *aggregate* write throughput, which N
   signing replicas could spread, now funnels through one node —
-  [FR-24](../product/roadmap.md), next to FR-7's unmeasured ceiling.
+  #117, next to #99's unmeasured ceiling.
 
 - **d14 — Lead election is a Postgres lease, and the lease is never load-bearing — the chain
   lock is.** Exactly the lake-writer precedent: no Raft, no external coordinator; Postgres is
@@ -256,10 +256,10 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   no partial writes — only unanswered clients. A follower forwarding a write that gets no
   answer surfaces the same retryable error a client would see, and the existing idempotency
   machinery (the facade's idempotency keys, [ADR-0014](ADR-0014-http-api-and-mcp-facade.md);
-  per-item batch idempotency, [FR-12](../product/roadmap.md)) makes the retry safe. No write
+  per-item batch idempotency, #122) makes the retry safe. No write
   queue lives on the lead; nothing drains on takeover. Lease parameters — TTL, heartbeat,
   takeover latency, which together set the availability window during which writes are
-  refused — are unmeasured and ship as profile defaults; [FR-24](../product/roadmap.md)
+  refused — are unmeasured and ship as profile defaults; #117
   measures them.
 
 - **d16 — Defaults: lead-only everywhere; followers are scale-out, never a prerequisite.**
@@ -285,7 +285,7 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   digest is a journal act and therefore the lead's, on the lead's cadence. The consequence,
   stated honestly: the unanchored-tail exposure window (already a §2 bound with no committed
   cadence) now also covers follower-written rows awaiting the lead's anchor — the same bound,
-  one more sentence. The exact split is [RS-13](../product/roadmap.md).
+  one more sentence. The exact split is #154.
 
 ## Consequences
 
@@ -299,23 +299,23 @@ pass on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
   table. Construction-tier commitments are profile-independent,
   with one made explicit: C6's role split binds in **all three** profiles; compose and
   standalone do not get to skip it.
-- **Roadmap handles opened**: [FR-22](../product/roadmap.md) (profile conformance — the same
-  suite green on all three, FR-3 run per backend including the NFS-refusal check),
-  [FR-23](../product/roadmap.md) (migration rehearsal), [FR-24](../product/roadmap.md) (lead
-  failover semantics, measured), [RS-12](../product/roadmap.md) (keyring mechanism),
-  [RS-13](../product/roadmap.md) (read-log split).
+- **Issues opened**: #117 (profile conformance — the same
+  suite green on all three, #101 run per backend including the NFS-refusal check),
+  #117 (migration rehearsal), #117 (lead
+  failover semantics, measured), #154 (keyring mechanism),
+  #154 (read-log split).
 - **`system.lead_acquired` joins the [event catalog](../data/event-catalog.md)**; the keyring
   file joins the [erasure inventory](../architecture/audit-and-lineage.md) as a copy class for
   the non-KMS profiles; the custody map in [security](../architecture/security.md) gains a
   follower column, and its "every replica" paragraph is rewritten to "the signing key lives
   only in the lead, at most one, lease-guarded, takeover journalled".
 - **The honest costs, in one place**: standalone's tamper-evidence against the host admin
-  rests entirely on externally retained chain heads (RS-9); the docker host is one trust
+  rests entirely on externally retained chain heads (#152); the docker host is one trust
   domain whatever the mounts say; cross-tenant write throughput funnels through one lead; and
   a lead takeover refuses writes while reads keep flowing — the window is unmeasured until
-  FR-24.
+  #117.
 - **d11 is a critical-path edit** (M1 standalone, M2 compose, M3 Helm local), applied in
-  [critical path](../product/critical-path.md) together with this record.
+  critical path together with this record.
 
 ## Rejected alternatives
 

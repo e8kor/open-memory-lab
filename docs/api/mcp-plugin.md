@@ -1,15 +1,11 @@
 <!--
 id: api/mcp-plugin
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: which MCP tools the agent plugin exposes over streamable HTTP and how each translates to one call on the two-ring HTTP API; the one claim-item shape; how a tool's workarea argument takes an id or a name; how an agent authenticates, by key or by a connection, and how Claude's hosted apps are wired in
 -->
 
 # The agent plugin: MCP over streamable HTTP
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the three task-shaped tools since v0.4.0; the eight they replace, four since v0.1.0 and four since v0.2.0, answered unlisted through v0.5.0 and were removed in v0.5.1 ([releases](../product/releases.md)).
 
 This page declares the surface an AI agent wires into its tool loop: an MCP
 server speaking the streamable HTTP transport, mounted on `oml-server` as a
@@ -45,7 +41,7 @@ common or mcp-tools.json differs from the served `tools/list`.
 
 ## Transport: streamable HTTP, stateless
 
-*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the `instructions` naming `oml_read`, and the events tail off MCP, since v0.4.0 · [releases](../changelog.md)*
 
 The plugin runs the MCP streamable HTTP transport in stateless mode, declared
 up front:
@@ -92,7 +88,7 @@ time — the same sourcing discipline the auth question below already follows.
 
 ## Authentication: bearer keys and connections
 
-*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; one key per agent since v0.2.0; OAuth by connect code since v0.4.0 · [releases](../changelog.md)*
 
 Every HTTP request carrying an MCP message presents one credential in the same header: the
 agent's API key, or, for a client that cannot hold a key, a connection's access token:
@@ -153,7 +149,7 @@ Concretely:
 - Review verdicts and the ratification of connection proposals are
   dreamer(review) verbs on the [HTTP API](http-api.md), bound to the serve
   ceremony — a server-issued, expiring `serve_id` consumed by its first verdict (D14,
-  [review guide](../review-guide.md)). They are deliberately not MCP tools:
+  review guide). They are deliberately not MCP tools:
   the catalog stays writer/reader/propose-safe, so handing an agent this
   plugin config hands it no path to a verdict, whatever role its key carries.
   The crew-side verdict flow is worked end to end in
@@ -204,7 +200,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   `request.validation` with `details.field` and `details.renamed_to`; no
   code is added for it. Until then the v0.3.0 argument names are the served
   ones. One shared example, the
-  per-replica-approximated quota limit (D6, [FR-8](../product/roadmap.md)),
+  per-replica-approximated quota limit (D6, #133),
   as the `result` of a `tools/call`:
 
 ```json
@@ -243,7 +239,7 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   [http-api.md](http-api.md).
 - **Simulation fencing** applies to every read below: rows with
   `provenance: simulation` are served only to keys in that simulation's
-  audience ([simulations](../architecture/simulations.md)). This is a
+  audience ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). This is a
   predicate, not an error — fenced rows are simply absent.
 - All identifiers in the examples are illustrative.
 
@@ -298,7 +294,7 @@ items carry `text` and `tokens` like every other item, never a score.
 
 ## `oml_write`
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 Store a claim, a claim derived from others, a new version of one, or a
 proposal to retire one. Every write is **held on arrival**: scanned, then
@@ -372,7 +368,7 @@ banned author.
 
 ## `oml_read`
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 Find, fetch or list claims. Every mode answers
 [claim items](#the-claim-item) with their `text`, under a `mode` field
@@ -444,7 +440,7 @@ naming it in `details.field`:
 
 ## `oml_workarea`
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 One workarea as the calling key may see it: its identity, derived path,
 status, crew record, readable immediate children, and the verbs the key's
@@ -470,7 +466,7 @@ transition or an edge: those run on the HTTP API and the CLI.
 
 ## The prompt `guardrails`
 
-*Since v0.5.1 · [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d11 · [releases](../product/releases.md)*
+*Since v0.5.1 · [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d11 · [releases](../changelog.md)*
 
 Beside its three tools the server declares the `prompts` capability and serves one prompt,
 `guardrails`, with no arguments. `prompts/get` answers one user message holding the text
@@ -557,7 +553,7 @@ workarea arguments are `workarea`, as on the served tools
 ### `oml_relate_propose`
 
 *Not built; links between memories arrived in v0.5.2 on HTTP and the CLI, and this tool is not
-part of them ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4) · [releases](../product/releases.md)*
+part of them ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4) · [releases](../changelog.md)*
 
 Propose a labelled edge — claim↔claim or workarea↔workarea. The proposal is
 journalled and **pending**; it confers nothing and changes no access until a
@@ -590,7 +586,7 @@ proposals are part of the admission pipeline and enter the lineage closure
 computed at promotion time, pending and ratified alike
 ([audit and lineage](../architecture/audit-and-lineage.md)). The claim-edge
 label vocabulary is not fixed by the design — an open detail tracked in the
-[roadmap](../product/roadmap.md) ([http-api.md](http-api.md)); the proposal
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) ([http-api.md](http-api.md)); the proposal
 event's payload shape is owned by the
 [event catalog](../data/event-catalog.md).
 
@@ -625,7 +621,7 @@ the closed set for workarea edges. Example:
 
 ### `oml_vocab`
 
-*Parked · [releases](../product/releases.md)*
+*Parked · [releases](../changelog.md)*
 
 Read the tenant's vocabularies: term lookup, deterministic typeahead,
 hierarchy over the per-release closure, and SSSOM-shaped mappings. One tool,
@@ -724,7 +720,7 @@ like any tool not served, and no call logs `mcp_alias_called` (d12).
 
 ### `oml_remember`
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 Submit a memory. The text, any attachments (by upload-session reference) and
 the declared lineage enter the admission pipeline as one claim, **held on
@@ -832,7 +828,7 @@ an idempotency-key reuse with a different request; a banned author or source
 
 ### `oml_recall`
 
-*Available since v0.1.0; own held rows, budgets and steering first since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; own held rows, budgets and steering first since v0.2.0 · [releases](../changelog.md)*
 
 Search promoted memories within a workarea subtree — and, on request, the
 caller's own held rows — under an optional budget. FTS and vector search are
@@ -957,7 +953,7 @@ budget never cuts them. Hits are promoted served tips plus, with
 version 2, listed beside the promoted version 1 it would replace; the two are
 never merged. Every item is a [claim item](#the-claim-item) with `text` and
 `tokens`; `budget` is present if and only if `max_tokens` was sent. Recall
-quality and latency are unmeasured — [FR-4](../product/roadmap.md).
+quality and latency are unmeasured — #102.
 
 **Refusals** — scope outside the key's read access (same error as a
 nonexistent node, fail closed); `max_tokens` with `include_text: false` on
@@ -978,7 +974,7 @@ Example:
 
 ### `oml_learn`
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 Submit a **derived fact**: a conclusion distilled from memories the agent has
 already read, carrying the lineage that produced it. Mechanically it is one
@@ -1037,7 +1033,7 @@ closed, no existence leak), and a target inside a simulation forces the
 simulation fence — a submission deriving from a simulation row must carry
 that row's `simulation_id`, server-enforced, which this key can only do if it
 is in the simulation's audience (D10,
-[simulations](../architecture/simulations.md#no-nesting)). An audience key
+[simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). An audience key
 supplies that id through the same optional `simulation_id` / `simulated_time`
 pass-through fields as on [`oml_remember`](#oml_remember). Example:
 
@@ -1055,7 +1051,7 @@ pass-through fields as on [`oml_remember`](#oml_remember). Example:
 
 ### `oml_get`
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 Read one claim version by id: the caller's own rows in any state, anyone
 else's promoted versions within read access. It is how an agent reads back
@@ -1103,7 +1099,7 @@ ancestors this key can read, and `replaces` is null when the key cannot read
 the replaced version: a promoted version derived from its author's held row
 names that row in neither field. The lineage read on the HTTP API does name
 it, as a redacted bare id, so a reader learns that it exists and its id,
-never its content ([FR-31](../product/roadmap.md)).
+never its content (#129).
 
 **Refusals** — `access.not_found` for anything the key may not read, a held
 row of another key included: unknown and unreadable are indistinguishable;
@@ -1113,7 +1109,7 @@ erasure, and `access.not_found` for any other erased version
 
 ### `oml_supersede`
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 Propose a new version of a claim, or with `retirement: true` propose retiring
 it. The new version is a submission like any other — **held on arrival**,
@@ -1141,7 +1137,7 @@ retirement included; no proposer is then its reviewer (R2).
 
 - `artifact_id` — the claim's current served tip; the new version lands in
   that claim's workarea. A held version cannot be superseded
-  ([RS-17](../product/roadmap.md)), and a target of a vocabulary kind
+  (#156), and a target of a vocabulary kind
   (`term`, `term_mapping`, `vocab_release`) is refused on this tool with
   `request.validation`; supersede it on the HTTP API.
 - `retirement` — **optional**, default `false`. `true` proposes retiring the
@@ -1215,7 +1211,7 @@ of the supersede rule. Example:
 
 ### `oml_my_work`
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 The caller's own submissions and where each stands: held, promoted, demoted,
 rejected, erased. It is the one view of its held rows a key has without a
@@ -1313,7 +1309,7 @@ the decision trail belongs to the evidence export, an admin surface.
 
 ### `oml_workarea_info`
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 One workarea as the calling key is allowed to see it: identity, derived path,
 status, crew record, immediate structure, and — the part an agent actually
@@ -1389,7 +1385,7 @@ marked.
 
 ### `oml_events_tail`
 
-*Available since v0.1.0; filtered per key since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; filtered per key since v0.2.0 · [releases](../changelog.md)*
 
 Poll the journalled event stream for the key's scope, from the last journal
 sequence the client processed. This is the stateless substitute for push: an
@@ -1476,7 +1472,7 @@ sees only its own `submission.*` and `simulation.write` events and, under the
 author clause, the `lifecycle.*` events of its own versions. `seq` and `head_seq` count every
 event in the tenant's journal, so the gaps tell a key how many events it
 cannot see occurred, and when — a count, never content
-([FR-31](../product/roadmap.md)). The cost of poll-over-push is stated above under
+(#129). The cost of poll-over-push is stated above under
 [transport](#transport-streamable-http-stateless): reaction latency is the
 polling interval, by design in v1.
 
@@ -1486,7 +1482,7 @@ refusal, never a silent restart from zero.
 
 ### `oml_attach`
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Manage a **resumable upload session** for a file, image or PDF (D3). The
 session is the unit a memory references: open it with the expected plaintext
@@ -1575,7 +1571,7 @@ mismatched session from `oml_remember`. Example:
 
 ### `oml_graph`
 
-*Not built; links between memories arrived in v0.5.2 on HTTP and the CLI · [releases](../product/releases.md)*
+*Not built; links between memories arrived in v0.5.2 on HTTP and the CLI · [releases](../changelog.md)*
 
 A scoped read of claims and their edges: the declared lineage
 (`derives_from`), claim↔claim connection edges with their pending/ratified
@@ -1635,7 +1631,7 @@ a `depth`/`limit` above the served ceiling returns the typed limit error from
 
 ## Wiring it into your agent
 
-*Available since v0.1.0; setup through Claude Code's plugin settings since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; setup through Claude Code's plugin settings since v0.4.0 · [releases](../changelog.md)*
 
 A generic MCP client configuration — the shape most harnesses accept, adjust
 the key names to yours:
@@ -1691,7 +1687,7 @@ this shape (ADR-0040 d6, ADR-0043 d8).
 
 Claude's hosted apps — claude.ai, Claude Desktop, and the Claude iOS and Android
 apps — cannot carry the header above, so they connect through a connection
-instead (since v0.4.0, no live connection yet: [FR-34](../product/roadmap.md)).
+instead (since v0.4.0, no live connection yet: #115).
 The deployment must set `oauth.issuer` to its public origin, and its reverse
 proxy must pass the discovery and OAuth paths through
 ([deployment](../operations/deployment.md#connections-behind-a-reverse-proxy)).

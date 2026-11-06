@@ -14,10 +14,10 @@ pipeline exists. The reason it exists now is [ADR-0019](../adr/ADR-0019-hexagona
 rejecting dynamic plugin loading moved the entire supply chain "inside `cargo build`", and a
 supply chain inside the build is only a security property if the build is pinned, audited and
 attested — which is this page's job to specify. The first pipeline is an M1 item on the
-[critical path](../product/critical-path.md). Since 2026-10-30 `.github/workflows/ci.yml` runs
+critical path. Since 2026-10-30 `.github/workflows/ci.yml` runs
 the format, lint, test, docs, cargo-deny and end-to-end gates, and `release.yml` ships the signed
 artifacts below; since 2026-10-31 `ci.yml` also runs the three jobs of the
-[client SDKs](sdks.md), and `m0-spikes.yml` holds the M0 spike gate below. Not running yet: the
+[client SDKs](../engineering/sdks.md), and `m0-spikes.yml` holds the M0 spike gate below. Not running yet: the
 MSRV build, the sqlx offline check, container tests against MinIO, the scheduled `cargo audit` and
 the bench job.
 
@@ -47,7 +47,7 @@ ratchet that only ever loosens, so it starts tight:
 | Gate | Command shape | What it holds |
 |---|---|---|
 | Format | `cargo fmt --check` | one style, no diff noise |
-| Lints | `cargo clippy --all-targets --all-features` with warnings denied | the workspace lint table ([workspace plan](workspace-plan.md)) is enforced, not advisory |
+| Lints | `cargo clippy --all-targets --all-features` with warnings denied | the workspace lint table (workspace plan) is enforced, not advisory |
 | Tests | `cargo test --workspace` | domain properties and port contracts against doubles ([test strategy](test-strategy.md)); fast, container-free |
 | Container tests | the integration and adapter-contract jobs | real Postgres + MinIO at the [deployment](../operations/deployment.md) pins |
 | Docs | `cargo doc` with `RUSTDOCFLAGS="-D warnings"` | every public item documented; broken intra-doc links fail |
@@ -56,8 +56,8 @@ ratchet that only ever loosens, so it starts tight:
 | Quick start | job `compose`: the repository's `docker-compose.yml` built and started, `scripts/quickstart.sh` inside it, then `oml quickstart` from a release build against the same image tagged with the CLI's version, the owner-only modes of what it wrote, and a second run refused as `quickstart.exists` | the compose file `oml quickstart` writes starts the lead over its owner and serving roles, and the verb claims it, issues its keys and passes its self-check ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9) |
 | CLI platforms | job `cli-matrix`: `cargo build --bin oml`, `oml --version` and `cargo test -p oml-cli --lib --bins`, each on the native runner of one CLI release target | every platform the CLI ships for still builds and passes its unit tests, before a tag ([release artifacts](#release-artifacts-sbom-signing-provenance)) |
 | Installers | job `install-smoke`: `scripts/install/install.sh` piped to `sh` on `ubuntu-24.04` (once with cosign and `--require-signature`) (macOS paused), `install.ps1` under PowerShell 7 and Windows PowerShell 5.1 on `windows-2025`, each against the newest published release, then the installed `oml --version`; `shellcheck` on `install.sh` | the one-line install still works on each OS, against real signed release files ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d8) |
-| Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](../data/postgres-schema.md#migrations) |
-| M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](spikes/index.md)) |
+| Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](https://github.com/e8kor/open-memory-lab/tree/main/migrations) |
+| M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](https://github.com/e8kor/open-memory-lab/blob/main/design/research/spikes-index.md)) |
 
 ## Supply chain: cargo-deny and cargo-audit
 
@@ -212,7 +212,7 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
 - Release versioning starts where the spec is: the documentation set is versioned `0.6.0-design`
   (matching the [OpenAPI document](../api/openapi.yaml)'s `info.version`); code releases begin
   their own series when code exists, and the provider ring's compatibility covenant
-  ([FR-21](../product/roadmap.md)) binds versioning from the v1-stable declaration, not before.
+  (#150) binds versioning from the v1-stable declaration, not before.
 
 ## Bench-regression job
 
@@ -227,14 +227,14 @@ CI carries a bench job wired to the [benchmark harness](benchmark-harness.md):
   pinned rig environment; the CI job exists to catch order-of-magnitude mistakes early, and its
   advisory status is stated here so nobody upgrades it into a fact.
 - No benchmark number from this job ever appears in documentation; every published number goes
-  through [FR-25](../product/roadmap.md)'s publication rule (date, hardware, settings).
+  through #150's publication rule (date, hardware, settings).
 
 ## What CI deliberately does not do
 
 - No nightly-toolchain features anywhere: the pinned stable is the only toolchain, which keeps
   the MSRV promise honest and the build reproducible.
 - No auto-publish of measurements: harness reports are artifacts a person publishes under the
-  roadmap's rules, never pipeline side effects.
+  the documentation rules, never pipeline side effects.
 - No doc deployment on PR branches: the site deploys from the default branch only, so an
   unreviewed page is never public.
 

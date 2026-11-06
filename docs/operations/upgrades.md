@@ -1,18 +1,11 @@
 <!--
 id: operations/upgrades
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: who runs migrations and when; in what order the binaries move; how much version skew a rolling update may hold; what rollback does and does not mean
 -->
 
 # Upgrades
-
-**Status:** design draft for review · decided, not built — no upgrade has ever
-run, because no version has ever shipped; this spec is `0.6.0-design`
-([openapi.yaml](../api/openapi.yaml)) and the page commits the shape of every
-future N → N+1.
-
-**Release:** forward-only migrations since v0.1.0; the role split since v0.3.1 ([releases](../product/releases.md)).
 
 This page owns the upgrade discipline: who runs migrations, in what order the
 binaries move, how much version skew a rolling update may hold, and what
@@ -44,7 +37,7 @@ first install and on every upgrade**. The reasons, one per clause:
   mint, enrollment secret) are skipped when their artifacts exist. The
   standalone invocation that re-runs only the migration step has no named
   verb yet — performed by the bootstrap workload is the commitment; the verb
-  is a CLI-reference question, tracked in the [roadmap](../product/roadmap.md).
+  is a CLI-reference question, tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 The bootstrap workload is decided, not built. Until it is, the lead runs the
 migrations at boot under `postgres.owner_url`, closes that pool and serves
@@ -93,13 +86,13 @@ Every upgrade, every profile, in this order:
    unavoidable write-refusal window of the upgrade lands after every other
    component is already proven on N+1 — if anything earlier went wrong, the
    upgrade aborts without ever having touched the write path. The window's
-   size is unmeasured ([FR-24](../product/roadmap.md)); it counts against
+   size is unmeasured (#117); it counts against
    the write SLI ([observability — SLOs](observability.md#slos)), which is
    the honest accounting, not an exemption.
 
 **The upgrade that adds names is outside the expand-contract rule.** Its
 migration renames the PoC's `tenants.name` and `workareas.name` to
-`prior_name` ([PostgreSQL schema](../data/postgres-schema.md#names-and-tenants)),
+`prior_name` ([PostgreSQL schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)),
 columns the N binaries read, so every N binary stops before step 2, and the
 deployment serves nothing from step 2 until the N+1 lead has journalled
 `system.names_assigned` at step 5 and the followers have folded it. The
@@ -113,7 +106,7 @@ restart, stated plainly: a one-host profile upgrades with a one-host outage.
 
 ## Splitting a single-role install (the upgrade to v0.3.1)
 
-*Available since v0.3.1 · [releases](../product/releases.md)*
+*Available since v0.3.1 · [releases](../changelog.md)*
 
 A build before v0.3.1 migrated and served under one Postgres role, which
 owned every table. v0.3.1 refuses that role on both URLs, so an install made
@@ -188,7 +181,7 @@ recorded in ADR-0034 d7 with the date.
 
 ## Server, CLI and plugin together (the upgrade to v0.4.0)
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 v0.4.0 rewrites the agent and HTTP surfaces and leaves the data alone: keys, grants, stored
 memories and the journal do not change
@@ -237,14 +230,9 @@ and an old CLI verb or flag is a usage error, exit `2`. Rolling back means the v
 server, CLI and plugin together; the two migrations stay, as every migration does, and no
 v0.3 binary has been run on the v0.4.0 schema yet.
 
-**The maintainer's deployment** ran these steps on 2026-11-04: the server, the CLI and the
-plugin together, with the plugin configured and `oauth.issuer` set. The same day it moved from
-`oml.doublegate.io` to `memory.doublegate.io`, with no redirect from the old name: the issuer moved
-with it, and the clients were set to the new URL.
-
 ## Upgrading from v0.5.1 or earlier (the upgrade to v0.5.4)
 
-*Available since v0.5.4 · [releases](../product/releases.md)*
+*Available since v0.5.4 · [releases](../changelog.md)*
 
 **Install v0.5.4, not v0.5.3, over a database a v0.5.1 or earlier server ran.** v0.5.3 refuses
 to start on a database whose `universe` root stores the status `development`:
@@ -280,7 +268,7 @@ No migration number is free between 0016 and 0017, and sqlx runs every pending f
 a correction cannot be a new file that runs first. Keeping 0017's bytes and running the
 alignment in code before the migrator costs one function in the store, which applies only while
 0017 is pending; its header's sentence about earlier roots stays wrong, and
-[postgres-schema](../data/postgres-schema.md#workareas-and-edges) records the correction.
+[postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) records the correction.
 
 **Why nothing is journalled.** The journal records what a workarea read served, and that does
 not change: every read before v0.5.2 served the derived status, and the alignment stores that same
@@ -316,7 +304,7 @@ expand-contract rule is scoped to it. Consequences:
   most. Upgrade through N+1.
 - A skew held longer than one upgrade window — half a fleet parked on N for
   a week — is outside the policy's intent even though nothing enforces it
-  yet; the conformance suite that would ([FR-22](../product/roadmap.md))
+  yet; the conformance suite that would (#117)
   tests profiles, and a skew case belongs in it when upgrades become real.
 
 ## Rollback: binaries only, never schema
@@ -332,14 +320,14 @@ What rollback never does is move the schema: there are no down migrations,
 deliberately. If the N+1 *data* is the problem — a migration corrupted rows,
 a defective binary wrote bad state — binaries cannot fix it and the answer is
 the pre-upgrade backup through the full [restore](restore.md) ceremony, with
-everything that costs ([disaster recovery](disaster-recovery.md) states the
+everything that costs ([disaster recovery](restore.md#disaster-recovery) states the
 loss structurally). That cost is the reason step 1 is a requirement.
 
 ## What this page does not decide
 
 Numeric upgrade cadences, maintenance windows, and how long two minors may
 coexist in hours are deployment-site choices. The measured size of the lead's
-write-refusal window is [FR-24](../product/roadmap.md); proof that the three
+write-refusal window is #117; proof that the three
 profiles upgrade as one product belongs to the same conformance effort as
-[FR-22](../product/roadmap.md); the standalone migration verb is a
-roadmap-tracked CLI gap.
+#117; the standalone migration verb is a
+CLI gap tracked as an issue.

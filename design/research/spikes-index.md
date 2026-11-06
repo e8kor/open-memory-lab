@@ -9,9 +9,9 @@ answers: how the critical path's M0 experiments run in this repository — which
 
 **Status:** design draft for review · decided — the chain-vector cross-check and the spike 3 harness are built; spikes 1, 2 and 4 are not run
 
-The [critical path](../../product/critical-path.md) owns M0: the four spikes, their scenario
+The critical path owns M0: the four spikes, their scenario
 matrices, the pass assertions and the recorded-finding template. This page does not restate
-them ([ADR-0018](../../adr/ADR-0018-the-documentation-set.md) d5). It decides what the critical
+them ([ADR-0018](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0018-the-documentation-set.md) d5). It decides what the critical
 path leaves open: the tools and libraries each experiment uses, how the RLS spike gets its roles
 and data, where a finding is written, and what CI runs. It also lists which experiments have run.
 
@@ -34,8 +34,8 @@ critical path's matrices has a finding on the pinned versions.
 
 `scripts/check_chain_vectors.py` reads the test key's PEM blocks, each vector's stated
 `signed_bytes`, its byte count, `hash` and `sig`, and the stated raw public key and fingerprint
-from [chain format](../../data/chain-format.md) itself, and the page stays the fixture every tier
-verifies ([test strategy](../test-strategy.md#test-data-and-fixtures)). The script holds the vectors'
+from [chain format](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/chain-format.md) itself, and the page stays the fixture every tier
+verifies ([test strategy](../../docs/contributing/test-strategy.md)). The script holds the vectors'
 **inputs**: the nine signed fields of each event, in a member order that is deliberately not
 canonical, so that the canonicalizer does the sorting. It also holds the body plaintext and the
 stand-in rule of vector 2. It does not copy derived values. It computes `plaintext_digest` and
@@ -82,7 +82,7 @@ passes.
 Pure Ed25519 is deterministic (RFC 8032 §5.1.6), so each Ed25519 library signs every
 reproduced `signed_bytes` with the test key and must produce exactly the stated `sig`. Each
 library also verifies the stated `sig` against the stated public key. The script then runs the
-page's [verification procedure](../../data/chain-format.md#verification) steps 1–7 and 9 over the
+page's [verification procedure](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/chain-format.md#verification) steps 1–7 and 9 over the
 three events. It also runs the page's own claim in reverse: it flips one byte in each
 `signed_bytes`, puts the events in every other order, and drops each event in turn, and each of
 those mutations must fail the steps the page names. A check that cannot fail is not counted as a check.
@@ -123,12 +123,12 @@ roles only when the connecting role is a superuser:
 - **CI** (`pgvector/pgvector:pg17`, whose `POSTGRES_USER` is a superuser): the script mints an
   owner role and a service role with unique names, both `NOSUPERUSER NOBYPASSRLS`, and creates
   the database owned by the owner role. It migrates as the lead does
-  ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9): as the
+  ([ADR-0034](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9): as the
   owner, it creates `_sqlx_migrations` with sqlx's own DDL, sets `oml.serving_role` to the
   service role, and applies the files in order. The service role holds only the grants the
   migrations make it. The harness grants it nothing of its own, so `journal` gives it
   `SELECT, INSERT` only (the append-only rule of
-  [ADR-0002](../../adr/ADR-0002-postgresql-system-of-record.md) d4), a table it may not `SELECT`
+  [ADR-0002](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0002-postgresql-system-of-record.md) d4), a table it may not `SELECT`
   is checked as refused with `42501` and left out of the row probes, and `_sqlx_migrations` is
   checked to grant it nothing. It runs S3.1 as the owner, S3.2's mechanism as both, and S3.3 and
   S3.4 as both roles. Both roles are dropped at the end.
@@ -156,10 +156,10 @@ so it reports them as two findings:
   attributes would only show that it ran its own `CREATE ROLE` statements, so it does not do
   that. It treats them as preconditions of the mechanism finding: if they are not as minted, that
   finding is inconclusive. OML has no roles of its own to test.
-  [Deployment](../../operations/deployment.md) names the bootstrap workload's owner role and a
-  service role, and [configuration](../../operations/configuration.md) designs `postgres.owner_url`.
+  [Deployment](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/deployment.md) names the bootstrap workload's owner role and a
+  service role, and [configuration](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/configuration.md) designs `postgres.owner_url`.
   No page states those roles' attributes and grants, and the lead as built migrates and serves as
-  one role ([spike 3](spike-3-rls.md#s31)). This finding is **inconclusive, not testable** on
+  one role ([spike 3](spike-3-rls.md)). This finding is **inconclusive, not testable** on
   every host, CI included. It does not fail the run, and the run's last line names it. It stays
   open until a deployment's bootstrap specifies roles and grants. The harness then takes them
   from there, in place of its own.
@@ -187,11 +187,11 @@ finding re-recorded instead of going stale. A failure not on the list fails the 
 This is a strict expected failure: the scenario's verdict stays `fail`, and only the exit code
 treats a known result as known. A recorded failure belongs to the role that showed it.
 Both estimate checks were recorded, `S3.4/owner/estimate` and `S3.4/service/estimate`
-([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9 and d10 step
+([ADR-0034](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d9 and d10 step
 2): PostgreSQL gives the same estimate to every role the policy binds. Over migration 0009's
 per-tenant partitions (ADR-0034 d11) the owner's passed on 18.6 on 2026-11-03, so the list is
 empty, as ADR-0034 d10 step 4 states, and CI fails if either estimate check fails on the pinned pg17 (the
-[spike 3 findings](spike-3-rls.md#s34)). The owner serves nothing under the split, so its
+[spike 3 findings](spike-3-rls.md)). The owner serves nothing under the split, so its
 `pg_stats` view is no longer a check: in S3.1 and S3.4 it is a control that must show tenant
 B's lexemes, or `S3.4/service/pg_stats`, which is not on the list, could not have caught them
 (ADR-0034 d8). Recording a failure does not decide it. A failed scenario's
@@ -214,7 +214,7 @@ a separate record, and this page does not write it.
 `rls-spike` runs spike 3 against a `pgvector/pgvector:pg17` service with `--require-all`. Both
 use the pinned uv and Python versions the workflow names. They keep the critical path's
 findings reproducible on every pull request. That is what
-[test strategy](../test-strategy.md#integration-tier) asks of spike 3 when it says "kept green
+[test strategy](../../docs/contributing/test-strategy.md) asks of spike 3 when it says "kept green
 forever after", and it ties `rls-spike` to `migrations/` (next section).
 
 ### The harness follows the migrations
@@ -267,7 +267,7 @@ again, with the estimate's recorded failure among them, and reported `crews` as 
 - **Spike 3 as a Rust integration test.** The spike tests what Postgres does with these
   migrations, not the adapter. A Rust test in `crates/` would also land in code that is being
   rewritten. The integration tier will carry these assertions in Rust once the adapter settles
-  ([test strategy](../test-strategy.md#integration-tier)).
+  ([test strategy](../../docs/contributing/test-strategy.md)).
 - **pgTAP.** The pinned image does not ship it, and installing an extension needs the superuser
   that this harness avoids outside CI.
 - **psql scripts.** A psql script cannot hold one pooled connection across interleaved

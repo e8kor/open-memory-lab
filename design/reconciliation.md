@@ -9,35 +9,35 @@ answers: how oml-reconciler proves the derived stores still agree with the journ
 
 **Status:** design draft for review · decided, not built
 
-**Release:** not scheduled ([releases](../product/releases.md)).
+**Release:** not scheduled ([releases](https://github.com/e8kor/open-memory-lab/blob/main/docs/changelog.md)).
 
 This page is the single declaration site for reconciliation (D16): how
 `oml-reconciler` proves that the derived stores still agree with the journal,
 what it may find, and how findings are repaired. The stores being compared —
 the journal, the outbox protocol, the lake and its dead-letter handling — are
-declared in [storage.md](storage.md); the lake tables and their transaction
-protocol are specified in [data/delta-tables.md](../data/delta-tables.md); the
+declared in [storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md); the lake tables and their transaction
+protocol are specified in [data/delta-tables.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/delta-tables.md); the
 workload shape (CronJob, `concurrencyPolicy: Forbid`, deadline) is declared in
-[operations/deployment.md](../operations/deployment.md); the operator-facing
+[operations/deployment.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/deployment.md); the operator-facing
 surfaces that report its findings are declared in
-[operations/observability.md](../operations/observability.md) and
-[cli/reference.md](../cli/reference.md) (`oml status`, `oml doctor`).
+[operations/observability.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/observability.md) and
+[cli/reference.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/cli/reference.md) (`oml status`, `oml doctor`).
 
 ## What reconciliation is for
 
 PostgreSQL is the system of record; Delta Lake and the Postgres metadata
-tables are derived from the journal ([storage.md](storage.md)). Derivation can
+tables are derived from the journal ([storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md)). Derivation can
 drift — a materialization bug, a dead-lettered row, a failover that replayed a
 batch, a fold that missed an event. Reconciliation is the standing proof
 obligation that derived state still folds out of the journal, run as a job
 rather than assumed as a property. It never decrypts anything and never writes
 derived state directly: the reconciler runs **read-only, key-less** (its
 privilege posture is part of the tenancy design in
-[security.md](security.md)), and every repair it wants travels through
+[security.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/security.md)), and every repair it wants travels through
 journalled channels described below. A reconciler that could silently rewrite
 the stores it audits would be worthless as evidence; the read-only posture is
 what makes its findings citable in an evidence export
-([audit-and-lineage.md](audit-and-lineage.md)).
+([audit-and-lineage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/audit-and-lineage.md)).
 
 ## Incremental fold with a journalled cursor
 
@@ -77,7 +77,7 @@ of racing the lake-writer mid-batch; with it, every finding names a consistent
 snapshot that can be re-read verbatim when the finding is investigated. The
 expected state for that snapshot is the journal fold **up to the outbox seq
 that snapshot's transaction metadata records as applied**
-([storage.md](storage.md) declares the per-table txn protocol) — the
+([storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md) declares the per-table txn protocol) — the
 reconciler compares like with like, never the live journal head against a lake
 snapshot that has not seen it yet.
 
@@ -86,13 +86,13 @@ the comparand: every event that first journals a body or attachment
 (`submission.remember`, `submission.learn`, `simulation.write`,
 `submission.attach`) carries the ciphertext digest of the stored encrypted
 object alongside the plaintext digest, under the signature
-([storage.md](storage.md); payload shapes in
-[data/event-catalog.md](../data/event-catalog.md)). The reconciler checks
+([storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md); payload shapes in
+[data/event-catalog.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/event-catalog.md)). The reconciler checks
 that the digest of the bytes actually held by the lake row or object store
 matches the ciphertext digest in the journal fold without ever holding a
 DEK — journal against store, never store against store. Plaintext-digest
 verification is scoped to the serving path, which holds keys
-([retrieval.md](retrieval.md)).
+([retrieval.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md)).
 
 ## The finding vocabulary is closed
 
@@ -106,8 +106,8 @@ design gap to be raised, not an eighth ad-hoc label:
 | `duplicate` | more than one live row represents one (artifact_id, version) |
 | `state-mismatch` | the row exists, but its state disagrees with the fold (e.g. the journal says demoted, the lake row says promoted) |
 | `digest-mismatch` | the ciphertext digest of a stored object or lake row disagrees with the ciphertext digest the submission event journalled — checked keylessly, as above; the plaintext digest is never this check's input |
-| `stale-frontier` | a store's recorded frontier lags the outbox beyond the declared bound; the data may be internally consistent but is behind — including when a long-running Postgres transaction holds back the snapshot horizon that bounds the batch cut ([storage.md](storage.md)): the stable-prefix rule turns a late-committing outbox row into lag reported here, never into loss |
-| `dead-lettered` | the lake-writer dead-lettered a row and journalled a materialize-skipped event ([storage.md](storage.md)); reconciliation surfaces it as a standing finding until it is repaired, so dead-lettering can never become silent loss |
+| `stale-frontier` | a store's recorded frontier lags the outbox beyond the declared bound; the data may be internally consistent but is behind — including when a long-running Postgres transaction holds back the snapshot horizon that bounds the batch cut ([storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md)): the stable-prefix rule turns a late-committing outbox row into lag reported here, never into loss |
+| `dead-lettered` | the lake-writer dead-lettered a row and journalled a materialize-skipped event ([storage.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/storage.md)); reconciliation surfaces it as a standing finding until it is repaired, so dead-lettering can never become silent loss |
 
 The vocabulary is closed on purpose: alert routing, the `oml doctor` contract,
 and the evidence export all enumerate these seven names, and a closed set is
@@ -151,7 +151,7 @@ makes the finding disappear on the next run; a finding that recurs under the
 same identity increments its counter. When the counter reaches the configured
 bound **N**, auto-repair **halts for that artifact** and an operator
 condition is raised through the doctor contract
-([operations/observability.md](../operations/observability.md)). Where N is
+([operations/observability.md](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/observability.md)). Where N is
 configured — tenant policy or deployment setting — is genuinely open; the
 halt itself is not.
 
@@ -173,9 +173,9 @@ second implementation, so it cannot drift from the incremental job's
 semantics. How often it runs is an operational choice this design does not
 fix; its runtime against realistic
 journal sizes is **unmeasured — decided, not built**, and the Postgres scale
-ceiling FR in [product/roadmap.md](../product/roadmap.md) is where that
+ceiling issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) is where that
 measurement obligation lives.
 
 ## Decision record
 
-The decision is ADR-0017 in the [decision register](../adr/index.md).
+The decision is ADR-0017 in the [decision register](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/index.md).

@@ -1,13 +1,11 @@
 <!--
 id: data/chain-format
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: the byte-level chain spec — the signed envelope fields, JCS signed_bytes, SHA-256 hash, Ed25519 signature, the genesis rule, and the verification procedure an auditor can implement from this page alone
 -->
 
 # Journal chain format
-
-**Status:** design draft for review · decided, not built
 
 This page is the normative byte-level specification of the per-tenant signed hash chain: which
 envelope fields are signed, how `signed_bytes` is constructed, how `hash` and `sig` are computed,
@@ -17,7 +15,7 @@ of D1 ([ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md)); the commit p
 chain-head lock and key custody are declared in
 [storage](../architecture/storage.md#the-per-tenant-hash-chain) and
 [security](../architecture/security.md); the journal DDL is in
-[postgres-schema](postgres-schema.md); event payload shapes are in
+[postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations); event payload shapes are in
 [event-catalog](event-catalog.md). The test vectors at the end are computed, not sketched: every
 digest and signature below was produced over the exact bytes shown.
 
@@ -67,7 +65,7 @@ of the JSON object holding exactly the nine signed fields: members sorted by cod
 insignificant whitespace, UTF-8, JCS string escaping, JCS number serialization. The `payload`
 object is canonicalized as part of the same document — payload members sort by the same rule.
 
-The stored `signed_bytes` column ([postgres-schema](postgres-schema.md)) is the authoritative
+The stored `signed_bytes` column ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) is the authoritative
 byte string: the signature is verified over the stored bytes, never over a re-serialization of
 the row. The construction rule above is the writer's obligation; the verifier's corresponding
 check is that the stored bytes re-canonicalize to themselves and that their parsed fields match
@@ -267,7 +265,7 @@ head.
 
 On 2026-10-31 these vectors were reproduced byte for byte outside Rust, by two RFC 8785 and two
 Ed25519 implementations, and `scripts/check_chain_vectors.py` keeps them reproduced; the
-[recorded finding](../engineering/spikes/chain-vectors.md) names the implementations and
+[recorded finding](https://github.com/e8kor/open-memory-lab/blob/main/design/research/chain-vectors.md) names the implementations and
 versions.
 
 ## Decision record

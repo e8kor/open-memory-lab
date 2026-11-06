@@ -1,15 +1,11 @@
 <!--
 id: architecture/roles-and-keys
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key
 -->
 
 # Roles and keys
-
-**Status:** design draft for review · decided, not built
-
-**Release:** reader, writer, dreamer and admin keys since v0.1.0; one key with grants since v0.2.0; names since v0.3.0 ([releases](../product/releases.md)).
 
 This page owns decision **D9**: the role vocabulary, the verb ceiling per role, the dreamer's two
 capability classes, the admin and operator verbs, key issuance and lifecycle, and the independence
@@ -49,7 +45,7 @@ requirement is satisfied through a journalled, issuance-time attestation: a key 
 evidence exports. The honesty boundary is the same sentence: the server verifies the
 attestation, never the humanness — a mis-attested key is an admin's journalled misstatement, not
 a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
-keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
+keys attested `held_by: human` satisfy it ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md),
 [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
 `held_by: service`, which a tenant admin issues under the ordinary
 [issuer ceiling](#issuer-ceiling) for infrastructure processes — the reconciler's repair key, a
@@ -158,7 +154,7 @@ matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
 
-*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` since v0.4.0 · [releases](../changelog.md)*
 
 This section is the single declaration site for which grant roles a key may carry and for the
 order in which a workarea-scoped verb is refused
@@ -299,7 +295,7 @@ reader key submitting answers `access.verb_ceiling` whether or not it has a defa
 
 ## Own
 
-*Available since v0.2.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../changelog.md)*
 
 A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
 key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
@@ -356,7 +352,7 @@ set states the access conferred, not what a given server build serves; `tools/li
 
 ## The dreamer split
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 A dreamer key carries one role name and two capability classes:
 
@@ -406,7 +402,7 @@ suspicious review patterns visible after the fact (see
 
 In a simulation, the reviewer pool narrows further: simulation writes are reviewed only by dreamer
 keys in the simulation's journalled audience, and a simulation with no dreamer in its audience can
-promote nothing ([simulations.md](simulations.md)).
+promote nothing ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 
 ## Admin verbs
 
@@ -449,14 +445,14 @@ journalled, per the preview-every-mass-act rule ([cli/reference.md](../cli/refer
 
 **Erasure.** Journalled crypto-shred with the honest boundary stated in
 [audit-and-lineage.md](audit-and-lineage.md): the guarantee is scoped to body and attachment
-bytes; attribution metadata is not erased by shredding (tracked roadmap FR,
-[roadmap](../product/roadmap.md)).
+bytes; attribution metadata is not erased by shredding (tracked tracked issue,
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 **Demotion.** Journalled; bytes are kept (R4). The lifecycle states and what a frozen workarea
 still admits are declared in [admission.md](admission.md) and [workareas.md](workareas.md).
 
 **Simulations.** Creating, ending, and auditing the fenced provenance channel —
-[simulations.md](simulations.md).
+[simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md).
 
 **The writer-scoped-key path.** An admin who needs to write an ordinary claim does not get a
 back door: they use a key issued with the writer role, and the write is held on arrival and
@@ -468,7 +464,7 @@ unreviewed admin write, because none can exist.
 
 ## Operator and the bootstrap ceremony
 
-*Available since v0.1.0, as the first admin key; the operator not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0, as the first admin key; the operator not scheduled · [releases](../changelog.md)*
 
 The operator is the provider-level role. Its verbs are creating tenants, issuing operator keys and
 issuing each tenant's first admin key. It holds no grant inside any tenant: it never writes, reads
@@ -484,7 +480,7 @@ secret is consumed on first use. A
 lost root operator key is therefore not recoverable from the system; it is replaced by the
 rotation path below, or, if no operator key survives, by re-running the bootstrap ceremony — a
 deliberate ceremony, not an everyday verb. The mockup transcript lives in
-[cli/sessions.md](../cli/sessions.md).
+[cli/sessions.md](../cli/reference.md).
 
 From the root operator key the chain of custody is: operator creates a tenant and issues its
 first admin key (show-once, journalled issued-without-value); that admin issues the tenant's
@@ -510,7 +506,7 @@ design — it prevents escalation above the issuer.
 
 ## Key names, principals and labels
 
-*Available since v0.3.0 · [releases](../product/releases.md)*
+*Available since v0.3.0 · [releases](../changelog.md)*
 
 A key carries three identifying fields, and they are independent: none is derived from another on
 the server ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d9). This section is their single
@@ -535,7 +531,7 @@ reads.
 
 ## User keys
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
+*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../changelog.md)*
 
 This section is the single declaration site for user keys. A key
 carries a fourth identifying field, `user`: the person an admin attests the key acts for, named as
@@ -573,7 +569,7 @@ key**; a key without it is a **tenant key**, which every key issued before the b
 
 ## Session keys
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../product/releases.md)*
+*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../changelog.md)*
 
 A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
 `held_by: human` with no value and no connection, held by the server for one person and acted
@@ -613,7 +609,7 @@ an OML key — which is the prefix's purpose: a fixed, greppable prefix lets sec
 content, logs and repositories with a low false-positive rate.
 
 **Hash at rest.** The system stores `SHA-256(full key string, prefix included)` in
-`api_keys.hash` ([postgres-schema.md](../data/postgres-schema.md)) and never the value. The hash
+`api_keys.hash` ([postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) and never the value. The hash
 is plain — unsalted, single-round — and that choice is defended rather than assumed: a password
 hash's salt and work factor exist to protect low-entropy, human-chosen secrets from dictionary
 and rainbow-table attacks, and a 256-bit uniformly random key has no dictionary to resist —
@@ -640,12 +636,12 @@ owner-only (mode 0600), written once, never overwritten, and the operator's to d
 is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
 [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). The stored response in the idempotency
 record of an issuance or a rotation is a copy this rule does not yet exclude
-([FR-36](../product/roadmap.md)). A connector key has no value anywhere: the server mints none,
+(#127). A connector key has no value anywhere: the server mints none,
 and `api_keys.hash` is null ([connections](#connections)).
 
 ## Key lifecycle
 
-*Available since v0.1.0 (issuance); revocation, rotation and expiry not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (issuance); revocation, rotation and expiry not scheduled · [releases](../changelog.md)*
 
 ```mermaid
 stateDiagram-v2
@@ -657,7 +653,7 @@ stateDiagram-v2
 ```
 
 **Issue.** Show-once: the value is returned exactly once at issuance; the system stores only the
-hash (`api_keys.hash`, [postgres-schema.md](../data/postgres-schema.md)) and the journal records
+hash (`api_keys.hash`, [postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) and the journal records
 issued-without-value. There is no "show me the key again" verb anywhere in the system.
 
 **Expiry.** Every key carries an expiry set at issuance. An expired key fails closed with a typed
@@ -673,8 +669,8 @@ deadline the old key is revoked — a journalled `key.revoked` citing the rotati
 the export shows exactly when each credential could act. An admin who wants different grants on
 the successor amends them afterward, as ordinary journalled grant acts. A connector key is not
 rotated ([connections](#connections)). Bulk rotation ergonomics
-for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
-([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
+for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a tracked issue
+([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap): key rotation ergonomics for crews).
 
 **Revocation and the permission epoch.** Revocation is a journalled act that takes effect at the
 key's next request served by the lead: keys and effective access are resolved on every request and
@@ -703,7 +699,7 @@ the `/v2` connect-code and connection-revoke routes and a key's connections on i
 `--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
 `oml keys show`; and doctor's `oauth_discovery`. **Not built:** whether a listed connection is
 live, the doctor checks `connect_codes` and `connections`, and the cluster lease's issuer. No live
-claude.ai connection has run ([FR-34](../product/roadmap.md)).
+claude.ai connection has run (#115).
 
 **Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
 --connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
@@ -798,7 +794,7 @@ admissible ranges are declared on [configuration](../operations/configuration.md
 is bound to its connection's resource, `<issuer>/mcp` when the connection was created. Every
 refresh answers a new pair and marks the presented refresh token rotated, in one conditional
 update that two racing refreshes cannot both pass
-([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). A rotated refresh token
+([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). A rotated refresh token
 presented again revokes the connection and every token it holds. A redeemed authorization code
 presented again does the same only when the request's `client_id` is the connection's and the
 S256 of its `code_verifier` is the stored challenge, because only the holder of the verifier can
@@ -847,7 +843,7 @@ set, so an admin can clean up while the surface is off.
 
 ## Review independence and the evidence of collusion
 
-*Available since v0.1.0 (the lineage check); crew and manager comparisons not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (the lineage check); crew and manager comparisons not scheduled · [releases](../changelog.md)*
 
 Lineage-closure exclusion stops a key from reviewing its own declared work. The **independence
 axis** in per-workarea review policies ([admission.md](admission.md)) goes further, and is

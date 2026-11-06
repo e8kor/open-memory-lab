@@ -9,7 +9,7 @@ answers: which part of ADR-0036's valid time this slice builds and in what shape
 
 **Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
-**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0036 (d1, d2, d4: narrowed and built in part), ADR-0049 (d4: two pipelines;
 d6: `search.window`, `matched.via` `time`), ADR-0039 (d3, d4: arguments on `oml_write` and
@@ -337,7 +337,7 @@ loaded host.
 - A tenant that declares no valid time sees no change but one comparison per scanned row: no
   row is expired, and the time pipelines answer as `bm25-postings`.
 - Valid time is clear metadata outside the encrypted body, as ADR-0036 d2 said; an erasure
-  leaves the ends wherever it leaves attribution metadata, under FR-1.
+  leaves the ends wherever it leaves attribution metadata, under #146.
 - The time leg reads only the text list's rows, at most the depth that list was read to, so
   its cost does not grow with a window's width; a row in the window that no word found is never
   reached, by design (d7).

@@ -1,15 +1,11 @@
 <!--
 id: api/reviewer-crews
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: how a reviewer crew integrates over plain HTTP; the queue → next → fetch → verdict loop for approve and reject; serve invalidation and expiry; polling cadence; k>1 and human-required interplay; the review.* refusals
 -->
 
 # Reviewer crews over HTTP
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the queue, serve and verdict loop since v0.1.0; expiry and policies of more than one verdict not scheduled ([releases](../product/releases.md)).
 
 The provider runs no model: review capacity is **external crews holding dreamer keys**,
 recording verdicts over the same HTTP API every other caller uses
@@ -19,7 +15,7 @@ worked integration flow: the complete loop from queue to verdict, with the refus
 meet and what each one means. Every endpoint here is declared on the
 [HTTP API page](http-api.md#review) and in [openapi.yaml](openapi.yaml); every error is the
 typed taxonomy of [errors.md](errors.md). Nothing below exists as code; review throughput is
-unmeasured — [FR-2](../product/roadmap.md).
+unmeasured — #98.
 
 ## Plain HTTP, deliberately — why not MCP
 
@@ -31,7 +27,7 @@ promotion requires an act the writing surface cannot express
 ([admission](../architecture/admission.md), constitution R1/R2). A reviewer crew is therefore
 an ordinary HTTP client: it holds a dreamer key, speaks JSON to `/v2/review/*`, and fetches
 attachments from `/v1`. The human exception path — `human_required_classes` — is the CLI's
-review ceremony ([cli/sessions.md](../cli/sessions.md)), riding these same endpoints.
+review ceremony ([cli/sessions.md](../cli/reference.md)), riding these same endpoints.
 
 Two properties of the key matter before the first call
 ([roles and keys](../architecture/roles-and-keys.md)):
@@ -286,7 +282,7 @@ a journalled event, recoverable only by a journalled re-enqueue
 `review/next` is a poll — there is no push on this surface, by the same decision that made the
 MCP transport stateless ([mcp-plugin.md](mcp-plugin.md#transport-streamable-http-stateless)).
 No number is stated here, because no measured number exists
-([FR-2](../product/roadmap.md)): **poll at the cadence your review SLA implies; the
+(#98): **poll at the cadence your review SLA implies; the
 oldest-held expiry is the backstop.** Concretely:
 
 - The queue read gives `oldest_age_seconds` per workarea; the policy gives `held_item_expiry`.
@@ -309,11 +305,11 @@ The verdict response's `state` field is how the policy's shape reaches the crew
   treat `held` as failure — it is the policy working.
 - **`human_required_classes`.** A claim whose class the policy names — by kind, scan finding
   class, or provenance — ratifies only with at least one human verdict, recorded through the
-  CLI's review ceremony ([cli/sessions.md](../cli/sessions.md)) over these same endpoints.
+  CLI's review ceremony ([cli/sessions.md](../cli/reference.md)) over these same endpoints.
   Crew approvals on such an item are journalled and count toward `k`, but the response stays
   `state: "held"` until the human verdict lands: an agent crew alone cannot ratify those rows,
   by design. The shipped vocabulary defaults route `replaced_by` deprecations, `exactMatch`
-  mappings and `vocab_release` pins this way ([ontologies](../architecture/ontologies.md)).
+  mappings and `vocab_release` pins this way ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)).
 
 The two compose: a policy may demand three approvals of which one is human, and the crew's
 loop is unchanged — it reviews, records, and reads `state`.

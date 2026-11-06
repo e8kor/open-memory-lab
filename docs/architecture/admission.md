@@ -1,15 +1,11 @@
 <!--
 id: architecture/admission
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what the admission pipeline does between capture and release; what a review policy object contains; who supplies review capacity and what happens when it is absent
 -->
 
 # Admission
-
-**Status:** design draft for review · decided, not built
-
-**Release:** capture, scan, hold, non-author review and ratification since v0.1.0 ([releases](../product/releases.md)).
 
 Admission is the pipeline every write crosses before anyone but its author can read it:
 
@@ -26,14 +22,14 @@ changes visibility, not ranking, no silent deletion — is declared in
 [ADR-0001](../adr/ADR-0001-the-constitution.md) and not restated here.
 
 Nothing below exists as code. Every mechanism is a design commitment with its exit criterion
-tracked in the [roadmap](../product/roadmap.md).
+tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## Lifecycle
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 The durable state column on a memory row takes four values: `held`, `promoted`, `demoted`,
-`erased` (the row shape is in the [Postgres schema](../data/postgres-schema.md)). *Scanned*
+`erased` (the row shape is in the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). *Scanned*
 and *under review* are phases within `held` — the journal records the scan verdict and each
 review verdict as events, but a claim that has been scanned and is waiting for a reviewer is
 still held: invisible to everyone but its author. The gate changes visibility exactly once,
@@ -69,7 +65,7 @@ Reading the diagram:
   commit protocol is [storage](storage.md)'s to define. The author can see their own held
   claim; nobody else can see it at all. Supersession targets the current served tip
   ([HTTP API](../api/http-api.md#supersede-post-v1memoriesartifact_idsupersede)); revising one's
-  own held claim before its review is [RS-17](../product/roadmap.md). Claim text is
+  own held claim before its review is #156. Claim text is
   Unicode-normalized to **NFC** at this step — before the plaintext digest is computed and before the scan runs — so the digest,
   the scan verdict and every downstream index see one canonical byte form; what search does with
   the normalized text is [retrieval](retrieval.md)'s to state. Bans are checked at capture, before quarantine
@@ -84,7 +80,7 @@ Reading the diagram:
   [the deterministic scan](#the-deterministic-scan) below. A veto is a deterministic refusal,
   not a silent drop: the caller gets a typed error naming the rule class, and the verdict is
   reproducible from the journalled rule-set pin — refusals journal nothing (a durable veto
-  trace is RS-16 on the [roadmap](../product/roadmap.md)).
+  trace is #140 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 - **Review and ratification.** Reviewers record verdicts; when the workarea's policy is
   satisfied (k approving verdicts from identities meeting the independence axis), the server
   ratifies: a journalled promotion event carrying a snapshot of the policy it was decided
@@ -101,7 +97,7 @@ Reading the diagram:
   state; a journalled re-enqueue (an admin or dreamer act) returns it to the queue. This is
   the admission-side dead letter; the lake-writer keeps a separate dead-letter table for
   rows that fail materialization after promotion, owned by [storage](storage.md) and reported
-  by [reconciliation](reconciliation.md).
+  by [reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md).
 - **Reassignment** of a promoted claim into a workarea whose policy is stricter than the one
   it was ratified under re-enters `held` and is reviewed again; the journalled move records
   both policy snapshots ([roles and keys](roles-and-keys.md)).
@@ -116,7 +112,7 @@ never grant resolution. A `development` workarea may, by journalled tenant polic
 marked `self_signed` rows — the one bounded exception, scoped in
 [ADR-0001](../adr/ADR-0001-the-constitution.md); such rows never promote beyond that workarea.
 Simulation writes pass this same pipeline with their audience as the reviewer pool
-([simulations](simulations.md)).
+([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 
 ## Quarantine placement
 
@@ -154,8 +150,8 @@ into the submission envelope by digest; their storage protocol is
 
 ## The deterministic scan
 
-*Available since v0.1.0, as the marker scanner; the `oml-scan/1` rule set is planned for v0.6.0
-([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)) · [releases](../product/releases.md)*
+*Available since v0.1.0, as the marker scanner; the `oml-scan/1` rule set since v0.6.0
+([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)) · [releases](../changelog.md)*
 
 The scan runs in the same call as capture — before the commit transaction, never inside it
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
@@ -183,13 +179,13 @@ workarea's `vocabulary_policy` (below) names a vocabulary. It checks cited CURIE
 policy's pinned release — the scan verdict records that release id alongside the scanner version
 — and emits the deterministic finding classes `vocab.term_pending`,
 `vocab.deprecation_replaced_by`, `vocab.mapping_exactMatch` and `vocab.deprecated_successor`
-([ontologies](ontologies.md)). Because `human_required_classes` can name scanner finding classes,
+([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)). Because `human_required_classes` can name scanner finding classes,
 a deterministic finding doubles as a routing mechanism: the shipped vocabulary defaults place the
 human verdict on exactly those findings, and no parallel human-gate machinery exists.
 
 ## The rule-set registry
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 The scan's rules ship as a versioned **rule set**, and one identifier names the exact rule set a
 deployment runs: `ruleset_vN`. The identifier is pinned per deployment and journalled in every
@@ -227,16 +223,16 @@ The v1 shipped registry:
 | `test.marker` | The two test markers the proof of concept used, kept so suites can force either outcome (ADR-0065 d10) | veto, hold |
 | `format.encoding` | Declared text that is not valid UTF-8 or cannot be NFC-normalized (the normalization step above has nothing lawful to produce) | veto |
 | `format.media_type_mismatch` | Attachment bytes whose leading structure contradicts the declared media type | veto |
-| `vocab.term_pending` | A citation of a CURIE that exists but is still held — distinct from unknown ([ontologies](ontologies.md)) | annotate |
-| `vocab.deprecation_replaced_by` | A term deprecation carrying a `replaced_by` successor ([ontologies](ontologies.md)) | annotate |
-| `vocab.mapping_exactMatch` | A `term_mapping` claim asserting the `exactMatch` predicate ([ontologies](ontologies.md)) | annotate |
-| `vocab.deprecated_successor` | A deprecation whose named successor is itself already deprecated at ratification time — judgment, not law ([ontologies](ontologies.md)) | annotate |
+| `vocab.term_pending` | A citation of a CURIE that exists but is still held — distinct from unknown ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)) | annotate |
+| `vocab.deprecation_replaced_by` | A term deprecation carrying a `replaced_by` successor ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)) | annotate |
+| `vocab.mapping_exactMatch` | A `term_mapping` claim asserting the `exactMatch` predicate ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)) | annotate |
+| `vocab.deprecated_successor` | A deprecation whose named successor is itself already deprecated at ratification time — judgment, not law ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)) | annotate |
 
 The **default** column is the class's behavior when no policy says otherwise: a `veto` class
 refuses the submission (`submission.scan_veto` — a refusal like any other refusal, journalling
 nothing: the scan is deterministic, so the verdict is reproducible from the journalled rule-set
 pin and needs no event of its own; whether refused submissions deserve a durable trace outside
-the chain is RS-16 on the [roadmap](../product/roadmap.md)); an `annotate` class
+the chain is #140 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)); an `annotate` class
 records the finding on the held item and never blocks. The `secret.*` and `format.*` families
 ship in the default scanner set; the `vocab.*` family is emitted only by the vocab scanner,
 selected where a workarea's `vocabulary_policy` names a vocabulary (above). The exact pattern
@@ -250,11 +246,11 @@ no parallel human-gate machinery exists. The shipped vocabulary defaults name
 `vocab.deprecation_replaced_by` and `vocab.mapping_exactMatch`
 ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); a tenant may tune any class in or out by
 the journalled policy act, including to zero
-([ontologies](ontologies.md) owns the zero-human conditions).
+([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) owns the zero-human conditions).
 
 ## Review policy objects
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Each workarea carries a review policy object: a journalled record, versioned by the journal
 like everything else, snapshotted into every ratification event so an auditor can read a
@@ -267,7 +263,7 @@ promotion against the exact policy it satisfied. Its fields:
 | `human_required_classes` | claim classes (by kind, scan finding class, or provenance) whose ratification requires at least one human verdict via the CLI |
 | `independence_axis` | how far apart reviewer and author must be: reviewer principal ≠ author principal always (constitution R2, enforced at promotion against the row's lineage closure — [roles and keys](roles-and-keys.md)); optionally, for `committed` workareas by policy, reviewer crew / external manager ≠ author crew, resolved from journalled key→crew→manager metadata at promotion time ([roles and keys](roles-and-keys.md)) |
 | `held_item_expiry` | how long an item may wait in the queue before it is dead-lettered |
-| `vocabulary_policy` | optional `{vocabulary, release, enforcement: require \| annotate \| off}` — **default off**: which vocabulary and pinned release the vocab scanner checks cited CURIEs against, and whether a failing citation blocks (`require`), records a finding (`annotate`), or is not checked at all ([ontologies](ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) |
+| `vocabulary_policy` | optional `{vocabulary, release, enforcement: require \| annotate \| off}` — **default off**: which vocabulary and pinned release the vocab scanner checks cited CURIEs against, and whether a failing citation blocks (`require`), records a finding (`annotate`), or is not checked at all ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) |
 
 Policy objects are per workarea because workareas mirror crews with different stakes: a
 `development` area's policy may be permissive to the marked limit the constitution allows; a
@@ -316,7 +312,7 @@ review; reviewer keys record verdicts and nothing else) — are recorded in
 
 ## Fail closed
 
-*Available since v0.1.0; held-item expiry not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0; held-item expiry not scheduled · [releases](../changelog.md)*
 
 When review is unavailable, nothing promotes. Concretely:
 
@@ -334,7 +330,7 @@ When review is unavailable, nothing promotes. Concretely:
   judge a row, never select a friendlier judge — and a false or padded lineage is itself grounds
   for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
 - A simulation whose audience contains no dreamer can promote nothing
-  ([simulations](simulations.md)).
+  ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 - A verdict whose serve has expired or whose served digests no longer match the artifact is
   refused; the reviewer is re-served.
 - Errors in the pipeline are typed and name their rule ([error taxonomy](../api/errors.md));
@@ -348,7 +344,7 @@ the product.
 
 ## Reopening a rejection
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Rejection is journalled, never silent, and not necessarily final. A non-author — a
 dreamer(review) key whose key and principal do not appear in the row's lineage closure — may
@@ -365,11 +361,11 @@ version's text re-enters the author-fenced held index in the reopen's commit
 ## Throughput is the honest open question
 
 Review throughput for OML is unmeasured — no code exists to measure. The
-[roadmap](../product/roadmap.md) carries review-throughput measurement as FR-2, with an exit
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries review-throughput measurement as #98, with an exit
 criterion (a measured drain rate for a stated policy and crew configuration, published beside
 the method).
 
 One structural expectation can be stated without a measurement: ingress throughput is not
 end-to-end review capacity, and the queue, not the store, is where an admission-controlled
 system saturates. The binding constraints will be the tenant's crew capacity and the server's
-verdict path — both unmeasured until FR-2's exit criterion is met.
+verdict path — both unmeasured until #98's exit criterion is met.

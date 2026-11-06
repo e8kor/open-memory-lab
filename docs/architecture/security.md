@@ -1,15 +1,11 @@
 <!--
 id: architecture/security
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves
 -->
 
 # Security and tenancy
-
-**Status:** design draft for review · decided, not built
-
-**Release:** tenant derivation and row security since v0.1.0; the owner and serving split since v0.3.1 ([releases](../product/releases.md)).
 
 This page owns decision **D6**: the tenancy model, the controls on privileged services, the key
 custody map, and the threat model — written against hostile co-tenants from the start, not
@@ -26,7 +22,7 @@ another tenant. Every control below is judged against that attacker first.
 
 ## Tenancy model
 
-*Available since v0.1.0; the owner and serving split and per-tenant FTS partitions since v0.3.1 · [releases](../product/releases.md)*
+*Available since v0.1.0; the owner and serving split and per-tenant FTS partitions since v0.3.1 · [releases](../changelog.md)*
 
 Tenancy is first-class, not a column added later.
 
@@ -37,14 +33,14 @@ vocabulary to do it in. This removes the entire class of confused-deputy bugs in
 is combined with someone else's tenant identifier.
 
 **Row-level security on every table, keyed by `tenant_id`, with one named exemption.** Every
-Postgres table in the [PostgreSQL schema](../data/postgres-schema.md) carries an RLS policy and
+Postgres table in the [PostgreSQL schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) carries an RLS policy and
 sets `FORCE ROW LEVEL SECURITY`, except `_sqlx_migrations`, sqlx's record of which migrations ran,
 which holds no tenant data and no `tenant_id` to key a policy on; its fence is privilege, and only
 the owner reaches it ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
 d6). No role used by any OML workload holds `BYPASSRLS` (see privileged services below). `FORCE`
 binds the owner's table reads; it does not bind the owner's `pg_stats` view, which showed another
 tenant's indexed words, or its DDL, which can lift `FORCE`
-([spike 3](../engineering/spikes/spike-3-rls.md)). The owner/serving role split keeps both from
+([spike 3](https://github.com/e8kor/open-memory-lab/blob/main/design/research/spike-3-rls.md)). The owner/serving role split keeps both from
 every workload: the owner owns what the migrations create and only migrates and creates each new
 tenant's partitions; every request runs under the serving role, which owns nothing and holds only
 the DML its statements use; and a lead given one URL for both refuses to start (ADR-0034 d1–d5).
@@ -55,9 +51,9 @@ is the second fence behind application-level scoping: a query that escapes a `WH
 still cannot cross a tenant boundary, because the policy is evaluated by Postgres, not by our code.
 The cost is stated plainly: RLS predicates sit on every query plan; an FTS read scans its
 tenant's partition under RLS, since no function is marked `LEAKPROOF`, and its latency per tenant
-size is unmeasured ([FR-25](../product/roadmap.md), ADR-0034 d13); and the performance of per-tenant
-partitioned vector indexes under RLS is unmeasured — tracked with the pgvector FR in the
-[roadmap](../product/roadmap.md).
+size is unmeasured (#150, ADR-0034 d13); and the performance of per-tenant
+partitioned vector indexes under RLS is unmeasured — tracked with the pgvector issue in the
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 **Per-tenant isolation extends through every storage layer:**
 
@@ -91,7 +87,7 @@ bytes — the lake-writer moves them verbatim and never re-encrypts, so a compro
 cannot decrypt a single body nor substitute bytes without tripping the keyless digest check. It
 writes to the lake under the per-tenant storage credential for the tenant it is currently serving.
 
-**oml-reconciler** compares the lake against the journal fold ([reconciliation.md](reconciliation.md)).
+**oml-reconciler** compares the lake against the journal fold ([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 It runs **read-only**: a read-only Postgres role, read access to the lake, and **no KMS grant at
 all** — digest comparison is over ciphertext digests, keylessly, by design (D3 records the
 ciphertext digest in object metadata precisely so the reconciler never needs a key). When it finds
@@ -104,8 +100,8 @@ journal event someone can audit.
 per-tenant credentials and never the signing key. It necessarily handles plaintext (you cannot
 embed ciphertext); it holds no KMS decrypt grant: promoted plaintext reaches it on the serving
 side of decryption ([retrieval.md](retrieval.md)), keeping oml-server the single decryption locus.
-Where the embedding model runs is the embedding RS row in the
-[roadmap](../product/roadmap.md); an answer that required an indexer decrypt grant would revise
+Where the embedding model runs is the embedding issue in the
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap); an answer that required an indexer decrypt grant would revise
 this custody map as its own journalled decision.
 
 The common pattern: **the authority to make something true (sign a journal event) lives only in
@@ -146,7 +142,7 @@ against the last signed head, and key rotation after a suspected compromise is a
 (the ceremony is [Signing-key rotation](#signing-key-rotation) below).
 What the design does *not* claim: per-replica keys, HSM-resident signing, or threshold signatures.
 Those are possible hardenings with real operational cost, and none is committed — if one becomes a
-requirement it enters the roadmap as its own row.
+requirement it is opened as an issue.
 
 **The KEK never leaves KMS — and it rotates on a schedule.** Per-artifact DEKs are wrapped and
 unwrapped by KMS calls; no OML process ever holds the KEK. Crypto-shredding
@@ -167,15 +163,15 @@ the claim:
 |---|---|---|---|
 | What enforces a "never" | Composition (no port) **+** external KMS IAM grants **+** pod/Secret separation | Composition **+** container mount boundaries (the keyring is simply not mounted); no external IAM | Composition **+** OS process boundary and file permissions; under one uid, "keyless" is code structure, not custody |
 | KEK custody | Never leaves KMS | A file in a compose secret on the host — **host admin ≡ KMS admin** | A file on the same disk as the data it protects; encrypt-only grants do not exist |
-| The host admin | Outside the pod trust domain, inside the platform trust (residual 5) | **Is a key-holding attacker by default** — reads every volume, secret and keyring | Strongest form: one host holds signing key, KEK, database, lake and backups — tamper-evidence against the host admin rests entirely on exported chain heads (RS-9) |
+| The host admin | Outside the pod trust domain, inside the platform trust (residual 5) | **Is a key-holding attacker by default** — reads every volume, secret and keyring | Strongest form: one host holds signing key, KEK, database, lake and backups — tamper-evidence against the host admin rests entirely on exported chain heads (#152) |
 
 The collapse is stated, not apologized for: standalone and docker trade custody separation for
 installability, every weakened row is named in [commitments](../product/commitments.md), and the
-keyring mechanism itself is RS-12.
+keyring mechanism itself is #154.
 
 ## Signing-key rotation
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 The custody map gives the signing key to exactly one process; this section says how the
 deployment changes that key. There are two paths — scheduled and under suspicion — and the
@@ -212,7 +208,7 @@ its own. The committed sequence, stepped through operationally in the
    was established — plus evidence retained outside the deployment, not cryptography.
 3. **Fork-check.** Verify every tenant chain against the last chain heads retained outside the
    deployment — the evidence exports tenants kept; a standing anchoring mechanism is
-   [RS-9](../product/roadmap.md). Events signed inside the suspected window are flagged for
+   #152. Events signed inside the suspected window are flagged for
    audit, never silently trusted.
 4. **Re-attest.** The new lead starts under the startup fork check
    ([storage.md](storage.md)), its first act is journalled, and a fresh evidence export of the
@@ -276,7 +272,7 @@ credentials, and the distinction is deliberate:
       ([the role each verb needs](roles-and-keys.md#grant-admissibility-and-refusal-order)), so a
       stolen reconciler key can still propose within its grants, which only returns work to
       non-author review under other keys. That is a stated residual
-      ([FR-32](../product/roadmap.md)); residual risk 8 below.
+      (#128); residual risk 8 below.
     - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
       the forwarding hop to the lead and authorizes nothing. The client's own credential — its
       bearer key, or at `/mcp` its connection's access token — travels with the forwarded request,
@@ -303,15 +299,15 @@ remains. Nothing in this table is built or measured; every control is a design c
 | Threat | Co-tenant attack | Controls | Residual |
 |---|---|---|---|
 | **S**poofing | Steal or phish another tenant's bearer key; present it as that tenant. | Keys are stored as hashes, shown once at issuance and journalled as issued-without-value ([roles-and-keys.md](roles-and-keys.md)); expiry on every key; revocation is a journalled act effective at the key's next request on the lead, and after replication lag on a follower (EoP row below); tenant is derived from the key, so a stolen key spoofs *one tenant's one role*, never a chosen tenant. | A bearer key is full capability of that key until expiry or revocation. Key theft on the client side is outside OML's reach; short expiry and scoped grants bound the blast radius, they do not remove it. |
-| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite by a party without the deployment signing key fail verification; a key-holding attacker's rewrite is detectable only against chain heads retained outside the deployment — evidence exports today, an anchoring mechanism if RS-9 adopts one ([roadmap](../product/roadmap.md)). | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
+| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite by a party without the deployment signing key fail verification; a key-holding attacker's rewrite is detectable only against chain heads retained outside the deployment — evidence exports today, an anchoring mechanism if #152 adopts one ([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)). | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
 | **R**epudiation | A writer denies having written a claim; a reviewer denies a verdict; a tenant disputes what was served. | Every mutation is a signed, hash-chained, attributed journal event (key id, principal, timestamp). Verdicts are bound to a serve record of exactly what was reviewed (serve_id, below). Reads are logged with per-batch digests anchored into the journal ([retrieval.md](retrieval.md)). The evidence export replays the decision trail per memory ([audit-and-lineage.md](audit-and-lineage.md)). | Attribution says which *key* acted. Binding a key to a human or crew member is the tenant's key-hygiene problem; shared keys dilute repudiation evidence and the docs say so rather than pretending otherwise. |
-| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by design requirement — who wrote what, when, where is what the lake is for ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)); its erasure is a tracked FR ([audit-and-lineage.md](audit-and-lineage.md)). Two catalog channels stay open ([FR-45](../product/roadmap.md)): EXPLAIN's row estimate still adds each other tenant's partition's floor row, and each partition's `reltuples` and bound give every role one tenant's row count and id ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d1, d11). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
-| **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is [FR-8](../product/roadmap.md). Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
+| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by design requirement — who wrote what, when, where is what the lake is for ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)); its erasure is a tracked issue ([audit-and-lineage.md](audit-and-lineage.md)). Two catalog channels stay open (#134): EXPLAIN's row estimate still adds each other tenant's partition's floor row, and each partition's `reltuples` and bound give every role one tenant's row count and id ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d1, d11). Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
+| **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is #133. Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
 | **E**levation of privilege | Mint a stronger key; keep using a revoked or widened-then-narrowed grant; act as reviewer on one's own work. | **Issuer ceiling**: a key is issued with a role no higher than its issuer's — no chain of issuance ever ascends ([roles-and-keys.md](roles-and-keys.md)). **Per-request access**: effective access is recomputed from journalled grants and denials on every request, so a revocation or deny applies to the key's next request served by the lead; the permission epoch labels the state an answer was computed against ([workareas.md](workareas.md)), reproducibly from journalled grants. Verb ceiling R1: no agent-callable surface promotes, signs, demotes or deletes, whatever the key. Admin ≠ reviewer; reviewer ≠ author enforced against the lineage closure at promotion time ([roles-and-keys.md](roles-and-keys.md)). Operator never reads or writes content. | **Follower-served reads lag revocation.** A follower resolves keys, grants and denials from its local replica, so a revoked key, a withdrawn grant or a new deny keeps reading there until replication catches up: the window is replication lag, exposed as a follower metric ([retrieval.md](retrieval.md#reads-in-cluster-mode)), and a lead-only deployment, the default, has none. No effective-access cache adds to it; a cache would be a new decision that states its own window here. Collusion between distinct keys is not an elevation the ceiling can stop — see residual risks. |
 
 ## serve_id binding as anti-replay
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 The review ceremony's serve record is a security mechanism, not an ergonomic one, so its properties
 are restated here (the ceremony itself is declared in [cli/reference.md](../cli/reference.md), the
@@ -338,7 +334,7 @@ that pattern visible over time, they do not prevent a single instance.
 
 ## Bans are enforced at admission
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 A ban is a journalled admin act against an author or source, and it is **checked at admission** —
 the first step of the pipeline, before quarantine, scanning or review spend a cycle
@@ -409,13 +405,13 @@ measured.
 | **A connect code read or intercepted** (shoulder-surfed, a forwarded message, a shared screen) and entered first by someone else | Single use; alive `oauth.connect_code_ttl` (shipped 10 minutes); never in a URL, a log line or the journal; one live code per key. `connection.opened` records that a connection opened and when, and `oml keys show` lists the connection, so the admin sees an unexpected one and revokes it. | For its minutes, the code is a bearer secret: whoever enters it first connects as the key, within the key's grants and only at `/mcp`. For claude.ai every connection names the same client and redirect URI, so the admin learns that and when, but not whose claude.ai account connected. |
 | **Consent phishing**: an attacker starts an authorization from their own client, their own claude.ai account included, and sends the person the link | The page names the client — a document client by the whole host that served its document, in lower-case ASCII, a registered one marked "name not verified" — and the redirect URI's host, before the code is asked for, and above the code field tells the person to enter the code only on a page they opened themselves by adding the connector, and to close a link someone sent them; the redirect allowlist delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request, and `connection.opened` cannot tell the admin either; if claude.ai completes a callback by `state` alone, a person who enters a code on a forwarded link connects the sender's account. Whether claude.ai refuses a callback its own sign-in did not start is claude.ai's behavior and is not in the cited sources. The page's warning is the defense, and it holds only if the person reads it. |
 | **Connection injection**: a co-tenant gives a person a code for the co-tenant's own key, under names copied from the person's organization | The confirmation names the tenant the key belongs to by the name the operator gave it at `POST /v2/tenants`, which no tenant admin can set, beside the key's name, principal, role and workareas. | A person who does not read the tenant name connects into the other tenant: their Claude writes into it and recalls what it holds. |
-| **Mix-up**: a malicious connector the same person added steers OML's authorization code to its own token endpoint, since claude.ai uses one callback for every server | Every authorization response, success or error, carries `iss`, and the RFC 8414 document advertises `authorization_response_iss_parameter_supported` (RFC 9207; RFC 9700 §4.4.2). | The defense works only if the client checks `iss`; whether claude.ai does is not in the cited sources ([FR-34](../product/roadmap.md)). |
+| **Mix-up**: a malicious connector the same person added steers OML's authorization code to its own token endpoint, since claude.ai uses one callback for every server | Every authorization response, success or error, carries `iss`, and the RFC 8414 document advertises `authorization_response_iss_parameter_supported` (RFC 9207; RFC 9700 §4.4.2). | The defense works only if the client checks `iss`; whether claude.ai does is not in the cited sources (#115). |
 | **Cross-site request forgery** on the page | No cookie is set, so a cross-site form has no ambient credential to ride; each `POST` must carry the authorization request's handle and either `Sec-Fetch-Site: same-origin` or, without that header, an `Origin` equal to the issuer's, and `Origin: null` is refused as `oauth.origin_refused`; the page is served with `Referrer-Policy: same-origin`, so the browser sends its real origin on the page's own `POST`; `state` is echoed verbatim for the client's own check. | — |
 | **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; client-supplied names HTML-escaped and shortened; `logo_uri` never loaded. | — |
 | **Open redirect** | A redirect URI is admitted only by exact match against the fixed allowlist, at registration, in a fetched document and in the request; a refused client or redirect URI is a page, never a redirect (RFC 6749 §4.1.2.1). | — |
 | **Authorization code interception** | S256 PKCE only; a 60-second, single-use code, whose second redemption is judged by the reuse rule on [roles and keys](roles-and-keys.md#connections); a reverse proxy's access log records neither the authorize redirect's `Location` nor the OAuth request bodies ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). | The proxy rule is stated, not checkable: doctor cannot read a proxy's configuration. |
 | **Access-token theft** | Opaque, stored as digests, accepted only at `/mcp` and only in the `Authorization` header, alive `oauth.access_token_ttl` (shipped 1 hour); each request re-resolves the key, so a revoked connection or key refuses it at the next request on the lead. | A stolen access token is the key's capability at `/mcp` until it expires or the connection is revoked; on a follower, until replication catches up. |
-| **Refresh-token theft** | Never accepted at `/mcp`, where only an access token authenticates; rotation on every use, and a rotated refresh token presented again revokes the connection ([roles and keys](roles-and-keys.md#connections)), journalled as `connection.revoked` with cause `refresh_reuse`. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. The same check ends a connection whose legitimate refresh answer was lost, and the person reconnects with a new code ([FR-34](../product/roadmap.md)). |
+| **Refresh-token theft** | Never accepted at `/mcp`, where only an access token authenticates; rotation on every use, and a rotated refresh token presented again revokes the connection ([roles and keys](roles-and-keys.md#connections)), journalled as `connection.revoked` with cause `refresh_reuse`. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. The same check ends a connection whose legitimate refresh answer was lost, and the person reconnects with a new code (#115). |
 | **Server-side request forgery** through a client metadata document URL | The document URL's form and the fetch bounds on the [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients): public unicast addresses only, no second resolution, no proxy, no redirect, size, time and concurrency caps; the token path never fetches. | The lead, which holds the signing key, makes outbound HTTPS requests to hosts an unauthenticated client names. The bounds keep them off internal addresses and cap how many run at once; they do not make the lead's egress something a client cannot cause. A network-specific NAT64 prefix (RFC 6052) on the lead's own network carries internal IPv4 addresses inside public-looking IPv6 ones and is not detectable from the address, so the deployment's egress policy must refuse it. |
 | **Registration and request flooding** | Dynamic registrations open nothing by themselves, lapse after 24 hours unused, and are capped at 10 000 unused, past which registration answers `429 limit.rate`; an authorization request writes no row until an admin-minted code verifies; the document cache evicts rather than refuses, never evicts the document of a client that has connected, and serves a copy up to 24 hours old when a fetch fails or is busy; fetches are capped per host name and per resolved address; every authorize parameter is length-bounded before anything is fetched. | A flood of registrations stalls new dynamic registrations. A flood of slow document hosts on distinct addresses can hold every fetch slot and stall new document clients the cache holds no copy of, for as long as it lasts. Open connections, and clients with a cached copy, are unaffected. |
 | **Guessing a connect code** | 60 bits per code; one message for an unknown, expired, voided, spent, or revoked or expired key's code; doctor counts wrong entries, under an operator key. | With L live codes and G wrong entries during their life, the chance any entry hits one is at most L·G / 2⁶⁰ — a bound, not a measurement. Pages are free to open, so G is bounded only by the request rate the deployment serves, and L counts every tenant's live codes, since a code is looked up before its tenant is known. The five attempts per page bound one page's typing errors, not guessing. No limit keys on a source address: behind a proxy it is the proxy's. |
@@ -425,7 +421,7 @@ Tenancy is unchanged: a connection's rows carry its key's `tenant_id` and its te
 deployment-level rows — clients, and authorization requests whose code verified but which no
 connection yet holds — belong to the
 reserved provider tenant and hold no tenant content
-([Postgres schema](../data/postgres-schema.md#connections-adr-0031)).
+([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 
 ## Web pages: sign-in and sessions
 
@@ -437,7 +433,7 @@ pages that act with a person's authority. The origin policy, the CSP and the fra
 connect page's, already built. Every act runs as a **session key** the server holds for the
 person — credential `session`, no value, one key per capacity — so the role matrix, the grants and
 the journal are the same as for every key. The threats below are the delta; every control is a
-built since v0.5.0; none is penetration-tested or measured, and no sign-in has reached a live provider ([FR-76](../product/roadmap.md)).
+built since v0.5.0; none is penetration-tested or measured, and no sign-in has reached a live provider (#119).
 
 | Threat | Controls | Residual |
 |---|---|---|
@@ -450,7 +446,7 @@ built since v0.5.0; none is penetration-tested or measured, and no sign-in has r
 | **A moved or recycled email address** | Only a verified address the provider returns over TLS; GitHub's primary verified address alone; the provider account is pinned per entry at first sign-in, and another account with the same address is `identity_changed`. | A provider that calls an address verified is trusted as far as the allowlist reaches. Before an entry's first sign-in nothing is pinned, so whoever controls the address at the provider first holds it. |
 | **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; every rendered string escaped and stripped of control and bidirectional formatting characters. | Memory text an agent wrote is shown to a person; it is escaped, never rendered as markup, and still says whatever it says. |
 | **Secrets in logs** | The route template, never the query: the callback's `code` and `state` and the sign-in redirect's `Location` are never logged; no cookie, token or email reaches a line; the journal holds an email's digest, never the address. | A reverse proxy's access log must drop `/web/callback/*`'s query too: stated, not checkable. |
-| **Sign-in flooding** | A sign-in start writes no row; a callback whose cookie does not open makes no outbound call; provider calls are capped per provider and timed out. | Anyone can start flows of their own and make the lead call the providers' token endpoints at the cap's rate (unmeasured, FR-76). No limit keys on a source address. |
+| **Sign-in flooding** | A sign-in start writes no row; a callback whose cookie does not open makes no outbound call; provider calls are capped per provider and timed out. | Anyone can start flows of their own and make the lead call the providers' token endpoints at the cap's rate (unmeasured, #119). No limit keys on a source address. |
 | **A person outliving their access** | Removing an email ends its sessions and, when it was the user's last, makes the user's session keys unreachable at once. | The person's agent keys keep working until an admin cuts each off, which the removal confirmation lists; revocation is not built. |
 | **Admin authority through the pages** | The admin key never reviews; review runs as the person's reviewer key, R2 checked on that key and the lineage closure. The admin key reads content only on the two [admin read](../api/http-api.md#admin-read) routes, and each read is journalled as `memory.admin_read` with the ids served. | A person may approve their own agents' writes through their reviewer key; the journal shows both keys. A tenant's admin reads every person's memories, held ones included, so people who need privacy from that admin need a tenant of their own. |
 
@@ -524,13 +520,13 @@ rounded up to a guarantee.
    not prevention.
 3. **Rate limiting is a per-replica approximation.** Token buckets at limit/N per replica, no
    shared counter in v1; transient over- and under-admission is expected under skewed load
-   balancing. Its resolution is [FR-8](../product/roadmap.md).
+   balancing. Its resolution is #133.
 4. **Lead compromise is signing-key compromise — and decrypt-everything compromise.** The lead
    holds the signing key *and* the KMS decrypt grant, so a compromised lead can both sign
    arbitrary events and unwrap any tenant's DEKs. This is the largest single trust statement in
    the design, and it is two statements, not one. Detection (fork check at startup and at
    failover promotion, chain verification against prior heads — which requires heads retained
-   outside the deployment, RS-9) and journalled rotation
+   outside the deployment, #152) and journalled rotation
    ([Signing-key rotation](#signing-key-rotation)) are the answer for the signing half;
    nothing detects quiet reads by a compromised key-holding process. Prevention via HSM-resident
    signing or threshold decryption is not committed. **Follower compromise is narrower by
@@ -540,7 +536,7 @@ rounded up to a guarantee.
    topology the narrowing is vacuous and the lead admission stands alone.
 4b. **Indexer compromise exposes promoted plaintext.** `oml-indexer` necessarily handles promoted
    plaintext to embed it; its compromise exposes every promoted body of the tenants it serves,
-   bounded by its per-tenant credentials. Until RS-1 decides where the embedding model runs, the
+   bounded by its per-tenant credentials. Until #153 decides where the embedding model runs, the
    standing commitment is that no promoted plaintext leaves the deployment's trust boundary.
 5. **The platform operator is trusted.** A Postgres superuser, a KMS administrator, or whoever
    holds the Kubernetes Secrets can read attribution metadata, destroy or exfiltrate keys, and
@@ -549,8 +545,8 @@ rounded up to a guarantee.
    design, and no page claims otherwise.
 6. **Attribution metadata outlives erasure.** Crypto-shredding destroys body and attachment
    bytes; who wrote what, when, where remains, in Postgres and in the lake, until the
-   attribution-erasure FR lands ([audit-and-lineage.md](audit-and-lineage.md),
-   [roadmap](../product/roadmap.md)).
+   attribution-erasure issue lands ([audit-and-lineage.md](audit-and-lineage.md),
+   [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 7. **Counts leak what reads hide.** A key that can read nothing of another author's held work
    still counts it. `seq`, `head_seq`, `next_after_seq` and `permission_epoch` are tenant-wide
    journal positions, so a key learns how many events it cannot see occurred between two it
@@ -561,14 +557,14 @@ rounded up to a guarantee.
    the [lineage read](../api/http-api.md#lineage-get-v2memoriesartifact_idlineage) names every
    unreadable ancestor of a version the key can read as a redacted bare id, so a reader of a promoted version
    derived from its author's held row learns that the held row exists and its id. Each is a
-   count, a name or an id, never content; together they are [FR-31](../product/roadmap.md).
+   count, a name or an id, never content; together they are #129.
 8. **A service key's grant is broader than its job.** The reconciler's dreamer-role service key
    needs only the repair re-enqueue, but a grant carries a role, not a verb list, so it confers
    every dreamer verb. A stolen reconciler key can therefore propose edits and connection edges
    inside the nodes it is granted; it can never review or ratify one, so every such proposal still
    waits for non-author review under other keys
    ([transport and internal authentication](#transport-and-internal-authentication)). Its
-   resolution is [FR-32](../product/roadmap.md).
+   resolution is #128.
 9. **A connect code is a bearer secret for its minutes, and the lead now fetches client-chosen
    URLs.** Whoever enters a code first connects as its key, within that key's grants and only at
    `/mcp`; the admin learns from `connection.opened`, after the fact, that a connection opened and
@@ -579,8 +575,8 @@ rounded up to a guarantee.
    still egress an unauthenticated client can cause from the process that holds the signing key,
    and a flood of slow document hosts can stall new document clients
    ([Connections](#connections-the-oauth-surface)). Verifying the flow against a live
-   client is [FR-34](../product/roadmap.md).
+   client is #115.
 
 Everything on this page is decided, not built; no control here has been penetration-tested,
-load-tested or measured, and the roadmap rows named above are where each open edge is tracked to an
+load-tested or measured, and the issues named above are where each open edge is tracked to an
 exit criterion.

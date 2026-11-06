@@ -10,9 +10,9 @@ answers: what M0 spike 3 found for S3.1–S3.4 (FORCE and the owner, the owner/s
 **Status:** recorded findings · 2026-10-31 — on PostgreSQL 18.6 S3.1 and S3.4 fail on the statistics of a cross-tenant FTS index, which the owner reads in pg_stats and EXPLAIN's estimate follows (decided 2026-10-31: the role split, the migration ledger as d2's one exemption and a per-tenant FTS index, proposed as ADR-0034), S3.3 passes, S3.2's mechanism did not run, and S3.2's claim about OML's roles is open because no run can test it; the pinned pg17 has not run; 2026-11-03, over migration 0009's per-tenant partitions, the owner's estimate check passes on 18.6 and the pinned pg17 has not run over them
 
 These are the findings for the four scenarios of the critical path's
-[spike 3](../../product/critical-path.md#spike-3-rls-hardening), one per scenario, in its
+spike 3, one per scenario, in its
 template. The harness is `testing/spikes/rls/spike_rls.py`, and its decisions (roles, seeding,
-controls, recorded failures) are on the [M0 spikes](index.md) page.
+controls, recorded failures) are on the [M0 spikes](spikes-index.md) page.
 
 **Where they ran.** On the host PostgreSQL 18.6, as a role that can create databases but not
 roles. The connecting role therefore owned the database and every table, ran S3.1, S3.3 and
@@ -47,7 +47,7 @@ to tenant A along two channels:
   measure that, and has not run. The role split does not close this channel.
 
 The harness's `RECORDED_FAILURES` held the two `estimate` checks alone, `S3.4/owner/estimate` and
-`S3.4/service/estimate` ([ADR-0034](../../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
+`S3.4/service/estimate` ([ADR-0034](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
 d9 and d10 step 2), and CI stayed green while they reproduced. Over migration 0009's per-tenant
 partitions (ADR-0034 d11) `S3.4/owner/estimate` passed in the owner-only run on 18.6 on
 2026-11-03, and the service role's is read to pass under the same policy, so the list is now empty,
@@ -146,7 +146,7 @@ settle.
   claims, and its statistics leak through `pg_stats` (the owner, measured) and through EXPLAIN's
   estimate (the owner, measured; the service role, not yet measured, CI's `S3.4/service/estimate`).
   The designed `memories_fts`
-  and `held_fts` ([postgres-schema](../../data/postgres-schema.md#full-text-search-and-embeddings))
+  and `held_fts` ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations))
   are each one table with one GIN index across tenants. Only `memory_embeddings` is
   list-partitioned per tenant. So the schema sketch already disagrees with the STRIDE row before
   any code, and a wording edit to security.md does not settle this half. Either d4 and the STRIDE
@@ -163,7 +163,7 @@ The finding asks for three more things whichever way the maintainer decides:
   at that commit agrees. `crates/bins/oml-server-lead/src/main.rs` connects one `PgStore` to
   `postgres.url`, calls `migrate()` on it and serves over the same store, and the lead's
   `Config` has no `postgres.owner_url`, the owner URL that
-  [configuration](../../operations/configuration.md) designs. As built, the role that serves
+  [configuration](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/configuration.md) designs. As built, the role that serves
   tenant requests is the owner, so both the statistics leak and the `NO FORCE` capability reach
   it. Using either still needs SQL that the server does not issue. This is an implementation
   gap against C6: the split is decided and not built.
@@ -239,7 +239,7 @@ no script for it, because the harness, not the lead, is what CI runs.
 
 S3.2 asserts that migrations succeed and that "no application role can read across the policy".
 The harness reports that as two findings
-([M0 spikes](index.md#s32-is-two-findings-and-the-one-about-omls-roles-stays-open)).
+([M0 spikes](spikes-index.md)).
 The first is PostgreSQL's mechanism, which a run can test. The second is the claim about OML's
 own roles, which no run can test yet.
 
@@ -299,9 +299,9 @@ action:        keep open; when a deployment's bootstrap specifies its roles and 
 ```
 
 **Why it is not testable.** "No application role can read across the policy" is a claim about
-the roles an OML deployment uses. OML has none to test. [Deployment](../../operations/deployment.md)
+the roles an OML deployment uses. OML has none to test. [Deployment](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/deployment.md)
 names the bootstrap workload's owner role and a service role created at init, and
-[configuration](../../operations/configuration.md) designs `postgres.owner_url`. No page states
+[configuration](https://github.com/e8kor/open-memory-lab/blob/main/docs/operations/configuration.md) designs `postgres.owner_url`. No page states
 those roles' attributes and grants statement by statement. The lead as built migrates on boot as
 its serving role ([S3.1](#s31), the lead run), so for the PoC as built S3.2's premise does not
 hold. The harness's owner and service roles are its own. It mints them `NOBYPASSRLS` and writes
@@ -357,7 +357,7 @@ that set one and ended the transaction (`''`). The migrations' policies give thi
 `NULLIF(current_setting('oml.tenant_id', true), '')::uuid`. A write with no tenant set is a typed
 error, `42501 new row violates row-level security policy`.
 
-**What disagrees.** The sketch on [postgres-schema](../../data/postgres-schema.md#row-level-security)
+**What disagrees.** The sketch on [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)
 writes the predicate as `current_setting('oml.tenant_id')::uuid`. That form raises `42704`
 (unrecognized parameter) on a connection that never set the tenant, and `22P02` (`''` is not a
 uuid) on a connection that set one before. So under the sketch the error would depend on the
@@ -389,7 +389,7 @@ action:        ADR amendment needed (ADR-0007 d2 and d4; security.md's FORCE com
                fix that makes the FTS index per tenant, which this run does not test;
                awaiting maintainer decision; recorded in the harness as
                S3.4/owner/pg_stats and S3.4/owner/estimate; the observations below go to
-               M6's security pass, and one goes to FR-4 and FR-7
+               M6's security pass, and one goes to #102 and #99
 ```
 
 **What held.** Every probe below returned 0 rows of tenant B and raised no error under tenant A.
@@ -460,7 +460,7 @@ rows and the estimate takes the one-row floor, whatever the word; tenant A's own
 estimates from tenant A's lexemes. That is a measurement on 18.6 for the owner and a reading of
 the planner for the service role, which runs under the same policy. CI's `S3.4/service/estimate`
 on the pinned pg17 has not run over the partitions. What the partitions leave stays as d11
-states (FR-45): each other tenant's partition still adds its floor row to the estimate, and its
+states (#134): each other tenant's partition still adds its floor row to the estimate, and its
 `reltuples`, its bound and its name, which carries the tenant's id, are in the catalog for every
 role.
 
@@ -476,9 +476,9 @@ role.
   barrier views before any user-supplied conditions from the query itself that contain
   non-leakproof functions", and only a superuser can mark a function leakproof. The adapter's
   recall shapes therefore use no FTS index under RLS. The designed `memories_fts_gin` and
-  `held_fts_gin` ([postgres-schema](../../data/postgres-schema.md)) sit under the same policies,
+  `held_fts_gin` ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) sit under the same policies,
   so they would serve no RLS-bound query either. This is a measured plan, not a latency number.
-  It belongs with [FR-4](../../product/roadmap.md) and [FR-7](../../product/roadmap.md), and it may
+  It belongs with #102 and #99, and it may
   re-open the FTS index strategy before M2's retrieval work. The maintainer decides whether that
   needs a record.
 - **Catalog row counts span tenants.** `pg_class.reltuples` for `memories` reads 8, both tenants'

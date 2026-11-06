@@ -1,7 +1,7 @@
 <!--
 id: operations/lake
 tier: engineering
-status: accepted with ADR-0060
+status: current
 answers: how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics
 -->
 
@@ -17,11 +17,11 @@ questions about how the system is used.
 ## Running it
 
 ```sh
-oml-lakewriter keygen --out /etc/oml/lake.kek          # once; owner-only, back it up with the database
-export OML_LAKE_URL=/srv/data/oml/lake
+oml-lakewriter keygen --out <kek-file>          # once; owner-only, back it up with the database
+export OML_LAKE_URL=<lake-dir>
 export OML_LAKE_DATABASE_URL=postgres://oml_lake:…@127.0.0.1/oml   # its own role
 export OML_LAKE_OWNER_URL=postgres://oml_owner:…@127.0.0.1/oml     # grants that role at start
-export OML_LAKE_KEK_FILE=/etc/oml/lake.kek
+export OML_LAKE_KEK_FILE=<kek-file>
 oml-lakewriter run --metrics-addr 127.0.0.1:9466
 ```
 
@@ -35,7 +35,7 @@ group or others can read. Rotate it with the writer stopped
 (ADR-0060 d19):
 
 ```sh
-oml-lakewriter keygen --rotate --kek-file /etc/oml/lake.kek   # takes the lease, re-wraps, retires the old KEK
+oml-lakewriter keygen --rotate --kek-file <kek-file>   # takes the lease, re-wraps, retires the old KEK
 ```
 
 If it stops part way the file keeps both versions; run it again. Back up the new file with the
@@ -73,7 +73,7 @@ The same questions in DuckDB, with its `delta` extension, against one tenant:
 
 ```sql
 INSTALL delta; LOAD delta;
-SET VARIABLE lake = '/srv/data/oml/lake/<tenant id>';
+SET VARIABLE lake = '<lake-dir>/<tenant id>';
 -- writes per kind per day
 SELECT event_date, coalesce(kind, 'memory') AS kind, count(*) AS writes
 FROM delta_scan(getvariable('lake') || '/bronze/events')

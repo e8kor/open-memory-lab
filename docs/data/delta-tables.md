@@ -1,13 +1,11 @@
 <!--
 id: data/delta-tables
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: every lake table column by column — Delta and Arrow types, partitioning, per-table commit protocol, and the maintenance that keeps the lake compact and erasable
 -->
 
 # Delta tables
-
-**Status:** design draft for review · built in part by [ADR-0060](../adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md) (proposed): `bronze.events`, `silver.claims`, `gold.lineage`, `telemetry.recall_daily`, `bench.results` and `lake.batches` exist as its d2–d10 state; `gold.areas` and `gold.curated_<id>` are not built. Where this page and ADR-0060 differ, ADR-0060 states what the code does.
 
 This page is the column-level specification of the lake: every Delta table, its
 Delta and Arrow types, its partitioning, its per-table commit protocol, and the
@@ -18,7 +16,7 @@ delta-rs as the writer (D5), per-tenant isolation (D6) — are declared in
 [architecture/storage.md](../architecture/storage.md) and
 [architecture/security.md](../architecture/security.md) and only instantiated
 here. The Postgres side of every row is in
-[postgres-schema.md](postgres-schema.md); the journal events the lake mirrors
+[postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations); the journal events the lake mirrors
 are in [event-catalog.md](event-catalog.md).
 
 One rule governs everything on this page: **no zone serves client reads.**
@@ -41,17 +39,17 @@ touches these tables.
 > is load-bearing: **deletion vectors are read-only in delta-rs**, so no table
 > here assumes DV-based deletes — every retract and erase is a copy-on-write
 > file rewrite. The exit criterion for the exactly-once claims is the delta-rs
-> conformance-test FR in [product/roadmap.md](../product/roadmap.md).
+> conformance-test issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## What each zone is for
 
 | Zone / table | What it is FOR | What never enters it | Mutated by |
 |---|---|---|---|
 | `bronze.events` | Digest-only columnar mirror of the per-tenant journal: the substrate for event analytics and for cross-checking the lake against the chain without loading Postgres | Body plaintext, body ciphertext, held content of any kind — payloads are digests and ciphertext *references* only | Append only; never MERGEd |
-| `silver.claims` | One row per promoted claim version with ciphertext body and full attribution: the reconciliation target ([architecture/reconciliation.md](../architecture/reconciliation.md)) and the materialized record of who wrote what, when, in which workarea | Held bodies (materialization is enqueued by promotion only); `self_signed` development rows (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)); plaintext anywhere | Append on promotion; MERGE on retract |
+| `silver.claims` | One row per promoted claim version with ciphertext body and full attribution: the reconciliation target ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) and the materialized record of who wrote what, when, in which workarea | Held bodies (materialization is enqueued by promotion only); `self_signed` development rows (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)); plaintext anywhere | Append on promotion; MERGE on retract |
 | `gold.lineage` | Ratified edges of the claim graph and the workarea relation graph, for lineage analytics and the evidence export | Pending edges (the promotion-time lineage closure over pending + ratified edges is computed in Postgres, never here) | Append on ratification; MERGE on retract |
 | `gold.areas` | Current snapshot of the workarea tree — node, name, parent, path, status, crew id — so lineage and analytics can join claims to governance context | Grants, denies, keys and crew records (authorization state and crew records stay in Postgres only) | MERGE-maintained snapshot |
-| `gold.curated_<table>` | One table per **validated** workarea: the frozen area's promoted claim versions, ciphertext-bodied, as a stable curated set; the substrate for future per-audience decrypted exports (deferred — FR in [product/roadmap.md](../product/roadmap.md)) | New writes, promotions, reassignments in — refused by the status ladder itself ([architecture/workareas.md](../architecture/workareas.md)); simulation-tainted rows (refused promotion into validated, [architecture/simulations.md](../architecture/simulations.md)) | Created at validation; thereafter MERGE on demote/erase only |
+| `gold.curated_<table>` | One table per **validated** workarea: the frozen area's promoted claim versions, ciphertext-bodied, as a stable curated set; the substrate for future per-audience decrypted exports (deferred — issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)) | New writes, promotions, reassignments in — refused by the status ladder itself ([architecture/workareas.md](../architecture/workareas.md)); simulation-tainted rows (refused promotion into validated, [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)) | Created at validation; thereafter MERGE on demote/erase only |
 
 The medallion words name these physical zones and nothing else; the workarea
 status ladder keeps its own words
@@ -150,7 +148,7 @@ already pins:
   feature flags delta-rs stamps on a new table**, are not decided by anything
   the existing D17 notes imply — they are **pinned at M3 when the writer
   lands, tracked by the M3 exit criteria**
-  ([critical path](../product/critical-path.md)). Until that pin exists, no
+  (critical path). Until that pin exists, no
   page states a protocol version number.
 
 **Discovery: the prefix layout is the catalog.** No catalog service — Hive
@@ -220,7 +218,7 @@ Notes that only make sense at this level:
 - Reconciler repairs re-enter through the outbox as ordinary operations
   carrying a journal **fold seq**; the lake-writer refuses an operation older
   than the artifact's last applied `fold_seq`
-  ([architecture/reconciliation.md](../architecture/reconciliation.md)), which
+  ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)), which
   is why `silver.claims` carries that column.
 
 ## bronze.events
@@ -394,8 +392,8 @@ same transaction version, so the two can never disagree for longer than one
 in-flight batch (and the reconciler reports it if they do).
 
 Bodies here are ciphertext, exactly as in silver. The decrypted per-audience
-export of a curated table is a deferred, journalled feature — the FR row in
-[product/roadmap.md](../product/roadmap.md) — and until it exists, nothing
+export of a curated table is a deferred, journalled feature — the issue in
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) — and until it exists, nothing
 reads a curated table but the reconciler and metadata analytics.
 
 ## Retracts: MERGE semantics per table
@@ -429,7 +427,7 @@ Two honesty notes on this table:
   `dead-lettered` as a named finding class and `oml doctor` surfaces the
   count; the erasure SLO clock does not stop for a dead-lettered erase — it
   is a breach in progress and is treated as an operator condition
-  ([architecture/reconciliation.md](../architecture/reconciliation.md)).
+  ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 ## Maintenance: OPTIMIZE, VACUUM, checkpoints
 
@@ -480,7 +478,7 @@ With defaults: roughly eight days from erase event to no ciphertext copy in
 the lake, stated as such in the evidence export rather than rounded down.
 Shortening the bound tightens the SLO and shrinks the time-travel window the
 reconciler can use for named-version comparisons
-([architecture/reconciliation.md](../architecture/reconciliation.md)); that
+([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)); that
 trade is the tenant's to make, journalled as policy. `bronze.events` needs no
 bound: it is digest-only by construction and the D4 inventory marks it "never
 needs touching". VACUUM and log cleanup on bronze exist purely for storage

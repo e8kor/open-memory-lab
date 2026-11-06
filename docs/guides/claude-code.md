@@ -1,17 +1,11 @@
 <!--
 id: guides/claude-code
 tier: engineering
-status: draft for review · describes v0.4.0
+status: current
 answers: how to connect Claude Code to an OML server from nothing: install the CLI, oml login, oml setup claude-code, reload, the first write and read and why the write is held, the session-start hook and the permission rule it needs, the librarian and failure recall, the manual path without the CLI, and removal
 -->
 
 # Guide: Claude Code
-
-**Status:** draft for review · describes v0.4.0
-
-**Release:** the plugin since v0.1.0; setup through Claude Code's plugin settings and `oml setup
-claude-code` since v0.4.0; the maintainer's public server as the default since v0.4.1
-([releases](../product/releases.md))
 
 From nothing to an agent that saves and finds shared memory in Claude Code. You need Claude Code
 2.1.285 or later and an agent key from your administrator. The plugin connects to the maintainer's
@@ -62,9 +56,8 @@ plugin configure --values-stdin`, so the key reaches neither a command line nor 
 claude-code --url <url> --key-file <file>`. With `--print` it runs nothing and prints the
 commands.
 
-Then run `/reload-plugins` in Claude Code, or restart it. Unverified: the verb has been run
-against a fake `claude` in its test suite and its `claude` commands by hand on Claude Code
-2.1.312, but not end to end against a real Claude Code (ADR-0041, "Where each item stands").
+Then run `/reload-plugins` in Claude Code, or restart it. A run against a real Claude Code is
+tracked as [#114](https://github.com/e8kor/open-memory-lab/issues/114).
 
 ## 4. The first write and read
 
@@ -72,7 +65,7 @@ Ask the agent to remember a decision. It calls `oml_write` and the answer carrie
 "held"`: the agent reads it back at once with `oml_read` and `include_unreviewed: true`, and no
 other key reads or recalls it until a reviewer who did not write it approves it. The agent
 learns that outcome by listing its own work with `oml_read` and `state`. About two minutes from
-step 1 to this held write is a target, unmeasured ([FR-68](../product/roadmap.md)).
+step 1 to this held write is a target, unmeasured (#107).
 
 ## 5. Every session starts from memory
 

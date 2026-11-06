@@ -1,17 +1,11 @@
 <!--
 id: operations/failure-modes
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what each dependency failure does to each client-facing operation; which refusals fire with which typed error code; which degradations are visible in which signal
 -->
 
 # Failure modes
-
-**Status:** design draft for review · decided, not built — every cell below is a
-consequence derived from the architecture pages, not an observed behavior;
-nothing has failed because nothing has run.
-
-**Release:** not scheduled for the dependencies the build does not run ([releases](../product/releases.md)).
 
 This page is the dependency-failure matrix: for each dependency a deployment
 runs on, what each client-facing operation does while that dependency is
@@ -109,7 +103,7 @@ The KMS wraps and unwraps per-artifact DEKs; the KEK never leaves it
   masks the outage for artifacts whose keys are cached, within the cache TTL;
   a cache miss refuses `system.unavailable` for the body-bearing read. The
   degradation window is exactly the TTL, which is itself a term in
-  [FR-17](../product/roadmap.md)'s erasure bound.
+  #108's erasure bound.
 - **Verdict**: recording a verdict against a valid serve is a journalled write
   with no decryption — unaffected. Creating a *new* serve decrypts the held
   body and its attachments for the reviewer, so serves refuse
@@ -117,7 +111,7 @@ The KMS wraps and unwraps per-artifact DEKs; the KEK never leaves it
 - **Attachment upload** sessions store and digest-verify bytes; the DEK work
   happens at the submission that binds the digest, which is where a KMS outage
   refuses (the precise encryption moment for session bytes is an ADR-0004 open
-  point, [FR-15](../product/roadmap.md)).
+  point, #147).
 - **Evidence export** is digest-only and verifies signatures keylessly — the
   bundle never decrypts a body — so it is unaffected.
 
@@ -205,7 +199,7 @@ no client-facing column at all. What it does touch:
   copies awaiting cleanup, stated as such.
 - Analytics and reconciliation targets go stale; the reconciler reports the
   gap rather than guessing
-  ([reconciliation](../architecture/reconciliation.md)).
+  ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 ## Reviewer capacity
 
@@ -239,6 +233,6 @@ visibly, instead of converting it into a trust problem silently
 Timing. How long each refusal window lasts, how fast staleness grows, how
 quickly a follower drains its buffered read events after reconnecting — every
 such number is unmeasured, tracked by the rows the architecture pages already
-cite ([FR-2](../product/roadmap.md), [FR-17](../product/roadmap.md),
-[FR-24](../product/roadmap.md), [RS-13](../product/roadmap.md)). This page
+cite (#98, #108,
+#117, #154). This page
 commits to the shape of each failure, and refuses to guess its duration.

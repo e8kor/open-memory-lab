@@ -3946,7 +3946,7 @@ impl PgStore {
 /// The most readable anchored rows a filtered recall reads anchor-first:
 /// their ids from the anchor index, then their postings by id; above it the
 /// filter is joined to the postings on the indexed columns (ADR-0057 d4;
-/// FR-115 measures both).
+/// #138 measures both).
 pub const ANCHOR_FIRST_MAX: usize = 2_000;
 
 /// How a filtered list narrows its candidates (ADR-0057 d4).

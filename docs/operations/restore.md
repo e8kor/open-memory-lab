@@ -1,17 +1,11 @@
 <!--
 id: operations/restore
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: how the restore ceremony runs and why it is a ceremony — the erased-content-resurrection and chain-rewind hazards and how each step contains them
 -->
 
 # Restore
-
-**Status:** design draft for review · decided, not built — no restore below has
-run; the ceremony is rehearsed under [FR-23](../product/roadmap.md) before any
-claim about it is made.
-
-**Release:** not scheduled ([releases](../product/releases.md)).
 
 This page owns the restore ceremony [deployment](deployment.md) defers to it.
 The reason a restore is a ceremony and not a routine act is the dual hazard
@@ -23,11 +17,11 @@ than the one the deployment signed. Both hazards have designed answers — the
 erase replay and the fork check below — and both answers run *before* the
 deployment serves traffic again, never after. The structural statement of what
 each profile can lose, and what recovery costs, is
-[disaster recovery](disaster-recovery.md)'s; this page is the procedure.
+[disaster recovery](restore.md#disaster-recovery)'s; this page is the procedure.
 
 One scoping rule before any procedure: **a derived-store loss is not a restore
 scenario.** The lake, the indexes and the fold tables all refold from the
-journal ([reconciliation](../architecture/reconciliation.md)); losing them
+journal ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)); losing them
 costs a repair pass, not a ceremony. A Postgres restore is the answer only
 when the **system of record** itself is lost or corrupted, and nothing smaller
 justifies the hazards this page manages.
@@ -60,7 +54,7 @@ Before any store is touched, the operator holds:
   verifies internally at the rewound head — rewinding is invisible from
   inside. Detecting what the restore discarded requires a head retained
   outside the deployment: the last evidence export's verified head
-  ([RS-9](../product/roadmap.md) tracks a standing mechanism; until it
+  (#152 tracks a standing mechanism; until it
   closes, exports are what exists).
 
 ## The ceremony
@@ -100,7 +94,7 @@ The same sequence in every profile; only step 3 differs per profile.
       `missing` rows. Both are the reconciler's to repair from the journal
       fold, through the outbox, and restoring lake files by hand would only
       manufacture a store-against-store comparison the design refuses
-      ([reconciliation](../architecture/reconciliation.md)).
+      ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 6. **Run migrations if the binaries moved.** A backup from version N restored
    under version N+1 binaries needs the schema brought forward: performed by
    the bootstrap workload under the owner role, exactly as on any upgrade —
@@ -122,7 +116,7 @@ The same sequence in every profile; only step 3 differs per profile.
    index rows. In the KMS profile the KMS-side state was never rewound, but
    the restored Postgres rows were — the replay is what reconverges them.
    No replay verb reads an export directly yet; the composition is by hand
-   and tracked in the [roadmap](../product/roadmap.md).
+   and tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 9. **Full-genesis reconcile before traffic.** Two acts, both named:
    `oml audit verify-chain --genesis` verifies every per-tenant chain from
    the first event; the **full-genesis verification job** — the reconciler
@@ -132,7 +126,7 @@ The same sequence in every profile; only step 3 differs per profile.
    and compares the stores. Its findings drain through the ordinary repair
    channels. Traffic resumes only when the pass completes and `oml doctor`
    reports no failing field; its runtime at realistic journal sizes is
-   unmeasured, tracked as [FR-18](../product/roadmap.md).
+   unmeasured, tracked as #99.
 10. **Resume traffic and file the evidence.** Scale the services back up,
     take a fresh `oml audit export`, and retain it outside the deployment —
     the restored era's first externally held head.
@@ -145,7 +139,7 @@ Host Postgres, host tooling. Either the host's base-backup + WAL machinery
 replayed to the recovery point (point-in-time recovery, the host facility's
 documented procedure), or `pg_restore` of a logical dump where that is all
 the deployment kept — the dump restores a single moment and archives nothing
-after it, and the [disaster recovery](disaster-recovery.md) RPO statement is
+after it, and the [disaster recovery](restore.md#disaster-recovery) RPO statement is
 blunter for it. The object store is the local data directory: if host backups
 covered `<data-dir>`, restore `quarantine` and `bodies` (ciphertext) and
 leave `lake/` to the disposition rule above. The restored data directory must
@@ -177,21 +171,49 @@ The chart does not own the restore; the store's procedure does, by reference:
   without synchronous standbys silently reopens the durability reduction the
   profile exists to close.
 
+## Disaster recovery
+
+What a disaster costs is a composition of mechanisms. Recovery time is the ceremony above end to
+end: store restore, keyring placement, migrations where the binaries moved, the startup fork
+check, erase replay, the full-genesis verification pass and a clean `oml doctor`. The
+full-genesis pass runs before traffic resumes, because serving reads from stores the journal has
+not re-verified would trade integrity for a faster-looking recovery. Recovery point is whatever
+your backup cadence makes it; the figures to measure are
+[#99](https://github.com/e8kor/open-memory-lab/issues/99) and
+[#117](https://github.com/e8kor/open-memory-lab/issues/117).
+
+| Scenario | What is lost | Recovery |
+|---|---|---|
+| Single node lost (Kubernetes `scaled`) | no acknowledged write: the quorum has it | the lease moves; watch [lead churn](runbooks.md#lead-churn) and [frontier lag](runbooks.md#frontier-lag-growing) |
+| Postgres primary lost, quorum intact (`scaled`) | nothing | managed failover; the fork check at the next lead start verifies the head ([fork check failing](runbooks.md#fork-check-failing)) |
+| Host disk lost (standalone, docker, Kubernetes `local`) | everything since the last base backup and archived WAL, or since the last `pg_dump` for a dump-only regimen | the full ceremony above |
+| Object store lost, Postgres intact | ciphertext bodies and Delta tables; the journal still names every digest | restore the ciphertext prefixes from their backups; the lake refolds; `missing` findings drain through repair |
+| Keyring file lost, no usable copy (`kms-file`) | every body and attachment becomes permanent noise; the journal, chain and attribution still verify | none for content: this is crypto-shredding of the whole deployment, so back the keyring up as carefully as the database |
+| KMS KEK destroyed (Kubernetes) | the DEKs it wrapped and nobody re-wrapped decay to noise | none for that content; follow the [KEK rotation](runbooks.md#kek-rotation) ceremony so it never happens unscheduled |
+| Total site loss | everything co-located | the ceremony into new infrastructure from **off-site** backups; a backup stored next to what it backs up is no mitigation |
+
+Not recoverable by design: erased content (a destroyed DEK is destroyed everywhere, and the
+ceremony re-destroys what backups resurrect), acknowledged writes past the recovery point (the
+chain rewinds consistently; only an externally retained head shows the gap,
+[#152](https://github.com/e8kor/open-memory-lab/issues/152)), and content whose KEK is gone.
+Losing or rotating the signing key never loses history: signatures verify against the key that
+made them ([signing-key compromise](runbooks.md#signing-key-compromise)).
+
 ## What a restore cannot do
 
 - **Un-erase.** A destroyed DEK stays destroyed; the replay step re-destroys
   what the backup resurrected. Erasure is senior to recovery, by design.
 - **Recover acknowledged writes past the recovery point** in the profiles
-  whose RPO is the backup composition ([disaster recovery](disaster-recovery.md)).
+  whose RPO is the backup composition ([disaster recovery](restore.md#disaster-recovery)).
   The journal is honest about the rewind only to a reader holding an external
   head — which is why step 10 exists.
 - **Prove its own innocence.** A restore and a key-holding attacker's chain
   rewrite look identical from inside the deployment. The pre-restore evidence
   (step 2) and the retained exports are what distinguish them, and the
-  standing-anchor question is [RS-9](../product/roadmap.md).
+  standing-anchor question is #152.
 
 The profile migration path
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d10)
-inherits this ceremony wholesale, and [FR-23](../product/roadmap.md)'s
+inherits this ceremony wholesale, and #117's
 rehearsal is the exit criterion that turns this page from design into
 procedure.

@@ -1,15 +1,11 @@
 <!--
 id: architecture/overview
 tier: engineering
-status: design draft for review · decided, not built
-answers: what the system looks like end to end — what the v0.4.0 build runs, the clients and the one pair each starts from, the per-platform artifacts, plugins and kit, OAuth on the same origin, context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
+status: current
+answers: what the system looks like end to end — what the v0.6.0 build runs, the clients and the one pair each starts from, the per-platform artifacts, plugins and kit, OAuth on the same origin, context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
 -->
 
 # Architecture overview
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the first slice since v0.1.0, see each page; the clients section as of v0.4.0; most containers are not scheduled ([releases](../product/releases.md)).
 
 Open Memory Lab (OML) is an external memory provider for AI agents and crews. Every memory
 asserts a claim; every claim is held on arrival, scanned, reviewed by an identity that did not
@@ -21,16 +17,16 @@ is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
 
 ## 0. What the build runs
 
-Sections 1 to 6 are the design. Release v0.4.0 runs a subset of it:
+Sections 1 to 6 are the design. Release v0.6.0 runs a subset of it:
 
 | Part | As built | Decision |
 |---|---|---|
-| Server | one binary, `oml-server-lead`, holding the signing key; no follower, lake-writer, reconciler or indexer | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md); the rest [not scheduled](../product/releases.md#not-scheduled) |
-| Store | PostgreSQL alone: journal, metadata, outbox rows nothing drains, full-text search per tenant. No object store, no lake, no vector search | [ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md), [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) |
+| Server | `oml-server-lead`, holding the signing key, and since v0.6.0 `oml-lakewriter`; no follower, reconciler or separate indexer | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md); the rest [not scheduled](../changelog.md) |
+| Store | PostgreSQL alone: journal, metadata, outbox rows the lake writer drains into Delta tables since v0.6.0, full-text search per tenant. No object store or vector search | [ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md), [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) |
 | Database roles | the lead migrates as the owner role (`postgres.owner_url`) and serves as a role that owns nothing (`postgres.url`), and refuses to start when both log in as one role | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4 |
 | Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answered hidden through v0.5.0 and are unknown tools since v0.5.1 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2, d12 |
 | OAuth | the lead is the protected resource and its own authorization server, on the origin that serves `/mcp`, only where `oauth.issuer` names that origin | [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1 |
-| Release artifacts | the CLI per platform (four Unix targets and Windows x86_64), the server for Intel and Arm Linux, one image index for both, the chart, the plugins as an archive and a pinned marketplace, and the agent kit, each signed with cosign and summed in `SHA256SUMS` | [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance) |
+| Release artifacts | the CLI per platform (four Unix targets and Windows x86_64), the server for Intel and Arm Linux, one image index for both, the chart, the plugins as an archive and a pinned marketplace, and the agent kit, each signed with cosign and summed in `SHA256SUMS` | [release artifacts](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md) |
 | Installers | `install.sh` and `install.ps1` fetch the CLI archive and `SHA256SUMS`, verify with cosign when present, and write one file | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1, d2 |
 
 ## Clients and how they start
@@ -115,9 +111,9 @@ flowchart TB
 |---|---|---|---|
 | oml-server | The only API surface; the single transactional commit point is the Postgres transaction it runs | **lead only** — followers never ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) | [storage.md](storage.md) |
 | oml-lakewriter | Sole outbox drain; lake writes and all lake maintenance | no | [storage.md](storage.md) |
-| oml-reconciler | Read-only journal-vs-lake comparison; repairs re-emitted via oml-server | no | [reconciliation.md](reconciliation.md) |
+| oml-reconciler | Read-only journal-vs-lake comparison; repairs re-emitted via oml-server | no | [reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) |
 | oml-indexer | Computes embeddings for the serving tier | no | [retrieval.md](retrieval.md) |
-| PostgreSQL | System of record: journal, metadata, outbox, FTS + vector serving tier | — | [storage.md](storage.md), [data/postgres-schema.md](../data/postgres-schema.md) |
+| PostgreSQL | System of record: journal, metadata, outbox, FTS + vector serving tier | — | [storage.md](storage.md), [data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations) |
 | Object store | Quarantine bucket and ciphertext bodies, content-addressed by plaintext digest | — | [storage.md](storage.md) |
 | Delta lake | Derived body lakehouse for reconciliation, lineage, analytics, future exports | — | [storage.md](storage.md), [data/delta-tables.md](../data/delta-tables.md) |
 
@@ -265,7 +261,7 @@ Transitions are forward-only; there is no unfreeze ([workareas.md](workareas.md)
 
 ### 4.5 A simulation — a fenced provenance channel
 
-Owned by [simulations.md](simulations.md).
+Owned by [simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md).
 
 ```mermaid
 sequenceDiagram
@@ -315,8 +311,8 @@ service; lineage exclusion is exactly as good as the declared graph.
 - **The provider runs no model.** Scanning is deterministic; review is external crews holding
   dreamer keys ([admission.md](admission.md)).
 - **No cross-tenant federation yet.** The "whole world" claim mapping is explicitly future — an
-  RS row with its trigger in the [roadmap](../product/roadmap.md).
+  issue with its trigger in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 Everything on this page is a design commitment with a tracked exit criterion, not a property of
 running software; open measurements (review throughput, pgvector recall and latency, the delta-rs
-exactly-once conformance test) are FR rows in the [roadmap](../product/roadmap.md).
+exactly-once conformance test) are issues in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).

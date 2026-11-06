@@ -7,9 +7,9 @@ answers: what the documentation set commits — the two tiers, the honesty disci
 
 # ADR-0018 — The documentation set: tiers, honesty discipline, llms.txt, frontmatter
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0066](ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md), [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** in force since spec-v0.1; no release ships it ([releases](../product/releases.md#decisions))
+**Release:** in force since spec-v0.1; no release ships it ([releases](../changelog.md))
 
 ## Context
 
@@ -30,13 +30,13 @@ bind every writer, and it is the page a reviewer holds any other page against.
 
 - **d2 — Two tiers, and the boundary is enforceable.** Client tier: `README.md`, `docs/index.md`
   and `docs/product/` — no table names, no D-numbers, no jargon; `FR-n` handles may appear in
-  the [roadmap](../product/roadmap.md) only, because a public commitment needs a public handle.
+  the [roadmap](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) only, because a public commitment needs a public handle.
   Engineering tier: everything else — full precision, identifiers and filenames expected. A
   sentence that leaks engineering vocabulary onto a client page is a defect, not a style choice.
 
 - **d3 — The honesty discipline.** These rules bind every page:
     - Every factual claim is sourced or marked unverified. Limitations are tracked FR rows with
-      exit criteria in the [roadmap](../product/roadmap.md) — the honesty ledger — never
+      exit criteria in the [roadmap](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) — the honesty ledger — never
       apologies in prose, and a limitation leaves only when its exit criterion is met.
     - Every unbuilt or unmeasured claim carries its marker: "decided, not built" or
       "unmeasured — FR-n". No present-tense capability claims for software that does not exist.
@@ -107,9 +107,9 @@ bind every writer, and it is the page a reviewer holds any other page against.
   accepted in the same breath as the benefit: pages carrying "decided, not built" and
   "unmeasured" read more hedged than competitor copy, and that hedging is the product's
   credibility, not a weakness to edit out.
-- [review-guide.md](../review-guide.md) is the entry point for the drafts-for-review reading
+- review-guide.md is the entry point for the drafts-for-review reading
   of the whole set.
-- Open rows this record depends on, carried in the [roadmap](../product/roadmap.md): the
+- Open rows this record depends on, carried in the [roadmap](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap): the
   market-claim re-verification with fetch date (an FR row — positioning may not assert the
   scoped claim until it is run), and the MCP OAuth RS row written in d3's fixed form.
 - d6's enforcement gap is a known cost: frontmatter and llms.txt contracts held only by review

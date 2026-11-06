@@ -9,7 +9,7 @@ answers: why the code is a hexagon with compile-time plugin modularity, and why 
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0; the rest not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. The Cargo workspace that implements
 this shape is decided in [ADR-0006](ADR-0006-pure-rust.md); the module view it produces is drawn
@@ -40,7 +40,7 @@ infrastructure — including the plugin points — behind an adapter boundary.
   admission state machine ([admission](../architecture/admission.md)), the workarea algebra and
   status ladder ([workareas](../architecture/workareas.md)), the role and verb ceilings
   ([roles and keys](../architecture/roles-and-keys.md)), and the simulation taint predicate
-  ([simulations](../architecture/simulations.md)). R1–R4 and the one bounded development
+  ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). R1–R4 and the one bounded development
   exception are encoded here as types and transition functions, nowhere else — so no adapter,
   transport or plugin can enforce a different constitution, because none of them contains one.
   The core is testable without a running database, which is where the invariant tests live.
@@ -81,7 +81,7 @@ infrastructure — including the plugin points — behind an adapter boundary.
 - **d4 — Plugin points exist where deployments legitimately differ, and plugins obey a stated
   law.** The plugin points are the **scanner port** (which deterministic rule-sets run at
   admission), the **embedder port** (which embedding model the indexer calls — the open model
-  choice in the [roadmap](../product/roadmap.md)), and the **exporter port** (evidence-bundle
+  choice in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)), and the **exporter port** (evidence-bundle
   formats). In v1 a plugin is a compiled-in Rust implementation behind the port trait, selected
   by deployment configuration — and configuration changes are journalled
   (`system.settings_applied`, [event catalog](../data/event-catalog.md)), so which plugin was

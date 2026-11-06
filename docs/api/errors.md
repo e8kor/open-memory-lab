@@ -1,15 +1,11 @@
 <!--
 id: api/errors
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; what a malformed, unknown or taken name answers; how the oauth family travels inside RFC error shapes on the OAuth endpoints
 -->
 
 # Error taxonomy
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the codes of the served operations arrived with them; see each operation on the [HTTP API](http-api.md) ([releases](../product/releases.md)).
 
 This page declares the typed, fail-closed error taxonomy of the [HTTP API](http-api.md) (D13).
 Every refusal the service makes is one of the codes below — a closed vocabulary: a new refusal
@@ -88,7 +84,7 @@ At `/mcp` both codes carry the RFC 9728 challenge, `WWW-Authenticate: Bearer
 resource_metadata="…", scope="mcp"`, with `error="invalid_token"` added to an `auth.invalid`, and
 `Bearer realm="oml"` where the deployment sets no `oauth.issuer`
 ([HTTP API — connections](http-api.md#connections-oauth-for-hosted-mcp-clients)). The bodies are
-unchanged, and no ring route's `401` carries the header ([FR-35](../product/roadmap.md)).
+unchanged, and no ring route's `401` carries the header (#126).
 
 ## `oauth` — connections
 
@@ -194,12 +190,12 @@ A successful replay is not an error: it answers the stored response with header
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `submission.scan_veto` | 422 | The deterministic scan, running in the same call as capture, vetoes the submission (`details.finding` names each finding as `class: rule at field line n` — the class, the rule that fired and where, never the matched text; [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d8). The veto is a refusal and journals nothing — the verdict is reproducible from the journalled rule-set pin (a durable veto trace is RS-16). | The scan is rules, not a model: same input, same verdict, reproducible from the journalled rule-set version — and it can veto but never promote (D11; [admission](../architecture/admission.md)). |
+| `submission.scan_veto` | 422 | The deterministic scan, running in the same call as capture, vetoes the submission (`details.finding` names each finding as `class: rule at field line n` — the class, the rule that fired and where, never the matched text; [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d8). The veto is a refusal and journals nothing — the verdict is reproducible from the journalled rule-set pin (a durable veto trace is #140). | The scan is rules, not a model: same input, same verdict, reproducible from the journalled rule-set version — and it can veto but never promote (D11; [admission](../architecture/admission.md)). |
 | `submission.attachment_missing` | 422 | The submission binds an attachment digest with no completed upload session owned by this key. | The claim and its files are one signed unit; the envelope binds only bytes the service already holds and has digest-verified (D3). |
 | `submission.simulation_id_required` | 422 | `derives_from` touches a simulation row but the submission does not carry that row's `simulation_id`. | Taint propagates and nesting is forbidden: a derivation from a simulation row carries that simulation's id, server-enforced, so one end-act demotes the closure (D10). |
 | `submission.lineage_required` | 422 | A `verb: "learn"` submission arrives with an empty or omitted `derives_from`. | `learn` asserts a derived claim, so its lineage is required, never optional; a derived conclusion whose author cannot or will not name lineage is submitted as `remember` with `kind: derived_fact` ([http-api](http-api.md)). |
-| `submission.tip_conflict` | 409 | A supersession's target is not the current served tip — at submission, or at verdict time when the target is no longer the tip because a competing successor was ratified first, or when the target or the successor was moved to another workarea or re-keyed so that the two no longer share a workarea and `claim_key` (the verdict is refused, nothing is journalled, and its serve is not consumed). `details.current_tip`: `{artifact_id, version}`, present only when the caller can read it. | Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update ([postgres-schema](../data/postgres-schema.md)). |
-| `submission.version_conflict` | 409 | *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):* a supersession's `expected_version` is not the claim's latest version the caller can read: the greatest `version` among its promoted versions (where the caller reads the workarea) and the versions the caller's own keys wrote; another author's held version never counts; answered after the target is known readable and before the tip check, nothing captured. `details.current_version`: that ordinal. | Optimistic concurrency: two sessions of one key that read the same version cannot each leave a successor for the reviewer to arbitrate; the ordinal is the count residual FR-31 already states, never content. |
+| `submission.tip_conflict` | 409 | A supersession's target is not the current served tip — at submission, or at verdict time when the target is no longer the tip because a competing successor was ratified first, or when the target or the successor was moved to another workarea or re-keyed so that the two no longer share a workarea and `claim_key` (the verdict is refused, nothing is journalled, and its serve is not consumed). `details.current_tip`: `{artifact_id, version}`, present only when the caller can read it. | Supersession promotion CAS-checks its target is the current tip; the tip flip is one journalled fact, never a lost update ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). |
+| `submission.version_conflict` | 409 | *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):* a supersession's `expected_version` is not the claim's latest version the caller can read: the greatest `version` among its promoted versions (where the caller reads the workarea) and the versions the caller's own keys wrote; another author's held version never counts; answered after the target is known readable and before the tip check, nothing captured. `details.current_version`: that ordinal. | Optimistic concurrency: two sessions of one key that read the same version cannot each leave a successor for the reviewer to arbitrate; the ordinal is the count residual #129 already states, never content. |
 | `submission.claim_key_conflict` | 409 | A new claim (version 1), or a reopen, would put a second live version under one `claim_key` and ordinal in a workarea — a version-1 capture that lost the ordinal race to a concurrent one included, which is never renumbered (below) — when the key is released and which reopens collide is declared on [audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip); or a reassignment would collide at its destination without recording a re-key. | A `claim_key` names one live claim per (tenant, workarea) ([audit-and-lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a colliding move is refused unless the journalled move event records the re-key (D7). |
 | `submission.similar_exists` | 409 | *Since v0.5.9 ([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17):* a submission or supersession sent `on_similar: refuse`, and a row the key may read — a served tip of the workarea's recall scope or its own held row — holds the same words in the same order or a word set at Jaccard 0.9 or more; decided after every other check and before capture, nothing journalled and no idempotency record claimed, so the same key may be resent with `hold`. `details.similar`: up to three `SimilarItem`s. | The check names and never decides: the writer reads the rows and writes nothing, replaces one, or holds beside it; nothing is dropped or merged by the server. |
 | `submission.universe_refused` | 409 | A claim write addresses the tenant's `universe` root. *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d7, d14):* a write a [user key](../architecture/roles-and-keys.md#user-keys) addresses to `universe`, answered in place of `access.grant_refused`; a curator's write there is admitted and held. | Universe holds only curated claims: a curator writes there and a second identity reviews it; a user key reads it and never writes it (ADR-0044 d7). |
@@ -257,7 +253,7 @@ not advertise. The codes below fire where the caller has already named the simul
 ## `vocab` — vocabulary structure refusals
 
 The vocabulary surface ([http-api.md](http-api.md#vocabularies);
-[ontologies](../architecture/ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) adds four refusals. The scanner **finding
+[ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) adds four refusals. The scanner **finding
 classes** (`vocab.term_pending`, `vocab.deprecation_replaced_by`, `vocab.mapping_exactMatch`,
 `vocab.deprecated_successor`) are *not* in this taxonomy: they are review-policy vocabulary —
 deterministic scan findings a workarea's `human_required_classes` may name — and live with the
@@ -292,7 +288,7 @@ existed.
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `limit.rate` | 429 | The key or tenant exceeds its journalled rate-limit grant attribute. **Retryable**, with `Retry-After`. Also a read whose `feedback` member would take the key past 1,000 explicit labels in a UTC day; the read is not run ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d6). | Rate limits are journalled grant attributes (D6). v1 enforcement is per-replica token buckets at limit/N — a documented approximation, [FR-8](../product/roadmap.md); a burst may transiently pass, a refusal is always honest. |
+| `limit.rate` | 429 | The key or tenant exceeds its journalled rate-limit grant attribute. **Retryable**, with `Retry-After`. Also a read whose `feedback` member would take the key past 1,000 explicit labels in a UTC day; the read is not run ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d6). | Rate limits are journalled grant attributes (D6). v1 enforcement is per-replica token buckets at limit/N — a documented approximation, #133; a burst may transiently pass, a refusal is always honest. |
 | `limit.quota` | 429 | A journalled quota attribute (e.g. a storage or submission budget) is exhausted. **Retryable** only where the budget replenishes; `details.quota` names the attribute. | Quotas are journalled grant attributes, so every enforcement decision is reproducible from the journal (D6). |
 
 ## `export`, `settings`
@@ -337,7 +333,7 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 
 ## Implementation mapping
 
-In the planned workspace ([workspace-plan](../engineering/workspace-plan.md)), each domain refusal
+In the planned workspace (workspace-plan), each domain refusal
 is a typed variant in `oml-domain` — the pure core refuses in types, not in strings. The
 `code`/`rule`/HTTP-status/`retryable` attachment happens once, at the `oml-server` edge, where the
 HTTP transport maps domain variants into this envelope. The tables on this page are the source

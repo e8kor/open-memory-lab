@@ -1,19 +1,17 @@
 <!--
 id: engineering/sdks
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: which generators make the Python and TypeScript clients from openapi.yaml and at which pinned versions, the package names, what the hand-written wrappers add — the URL-and-key start, one Idempotency-Key per write, cursor iteration, one error type carrying the envelope, the seven verbs — and the rule that regenerates both clients whenever openapi.yaml changes
 -->
 
 # Client SDKs
 
-**Status:** design draft for review · decided, not built
-
-[FR-12](../product/roadmap.md) asks for "generated Python and TypeScript clients from
+#122 asks for "generated Python and TypeScript clients from
 [openapi.yaml](../api/openapi.yaml) with hand-written wrappers for idempotency, uploads and
 pagination". This page decides how those clients are made and kept current: the generators and
 their pins, the package names, what the hand-written wrapper covers, and the regeneration rule.
-FR-12's other half, `POST /v1/memories:batch`, changes the server and is not decided here; the
+#122's other half, `POST /v1/memories:batch`, changes the server and is not decided here; the
 row stays open until the batch path and the upload wrapper are built. Since 2026-10-31 both
 clients are in `sdks/` and their tests run against a real `oml-server-lead`. Neither offers an
 upload: the server serves no upload sessions yet, and the raising stub that stood for one left
@@ -64,7 +62,7 @@ so its output does not depend on any ruff configuration found around the output 
 
 Both names were unclaimed on PyPI and npm on 2026-10-31. Neither package is released to a
 registry: both install from a checkout, as each package's README shows, and the release
-pipeline ([CI and toolchain](ci-and-toolchain.md)) ships no SDK artifact. Both carry their own
+pipeline ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)) ships no SDK artifact. Both carry their own
 version, `0.2.0` since the v0.4.0 rewrite renamed their verbs
 ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12), independent of the Cargo
 workspace's version.

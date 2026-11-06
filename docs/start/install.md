@@ -1,26 +1,25 @@
 <!--
 id: start/install
 tier: engineering
-status: draft for review · the installers since v0.4.0
+status: current
 answers: what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered
 -->
 
 # Install the `oml` command
 
-**Status:** draft for review · the installers since v0.4.0
-
-**Release:** the per-platform archives since v0.3.1; the installers since v0.4.0, the first
-tag to carry them ([releases](../product/releases.md))
-
 Two scripts install the `oml` CLI for the current user, write one file and print the next command
 ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d5). The lines
-below fetch them at the tag `v0.5.2`. Before that release the scripts
-were run against v0.3.1 on Linux x86_64, with cosign, without it and with `latest`
-(ADR-0041, "Where each item stands"), and `install.ps1` runs only in CI's `install-smoke` job.
+below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on every change.
+
+| Platform | Build |
+|---|---|
+| Linux x86_64 and arm64 | static musl binary |
+| Windows x86_64 | native; Windows on ARM64 runs it under emulation |
+| macOS | none since v0.5.3; build from source (below) |
 
 ## The line
 
-**macOS is paused.** Releases after v0.5.2 carry no macOS build while GitHub's macOS runners are unreliable ([paused targets](../engineering/ci-and-toolchain.md#paused-targets)); on a Mac the installer stops with that message. Build the CLI from source instead: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
+**macOS.** Releases after v0.5.2 carry no macOS build while GitHub's macOS runners are unreliable ([paused targets](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)); on a Mac the installer stops with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
 
 Linux:
 
@@ -48,7 +47,6 @@ irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/insta
     ```
 
 - The script never asks for sudo, writes one file and edits no shell profile.
-- What it checked is stated as one of the two outcomes below, never as "verified".
 
 ## What it checks, and its two outcomes
 
@@ -60,7 +58,7 @@ the release's `SHA256SUMS` over HTTPS, and compares the archive's SHA-256 with i
   verify-blob` under the release workflow's identity, pinned to the exact tag. It prints:
 
     ```text
-    oml install: checked: cosign verified SHA256SUMS's signature by the release workflow at v0.4.0, and the archive matches it
+    oml install: checked: cosign verified SHA256SUMS's signature by the release workflow at v0.6.0, and the archive matches it
     ```
 
 - **Without cosign** it compares the checksum only, and prints:
@@ -69,8 +67,7 @@ the release's `SHA256SUMS` over HTTPS, and compares the archive's SHA-256 with i
     oml install: checked: the archive matches SHA256SUMS; its signature was NOT checked, because cosign is not on PATH. That catches a damaged download, not a tampered release: install cosign and rerun with --require-signature for that
     ```
 
-    The PowerShell script names `-RequireSignature` instead. The roadmap tracks the gap as
-    [FR-69](../product/roadmap.md).
+    The PowerShell script names `-RequireSignature` instead. Issue #132 tracks verifying the signature without cosign.
 
 Every refusal names its reason and installs nothing: a cosign failure, a checksum mismatch, a
 missing line in `SHA256SUMS`, or `--require-signature` without cosign. After the copy the script
@@ -82,7 +79,7 @@ throws rather than exits, so `| iex` never closes your shell.
 
 | `install.sh` | `install.ps1` | Variable | Default |
 |---|---|---|---|
-| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.5.2 at `v0.5.2` (ADR-0041 d3) |
+| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.0 at `v0.6.0` (ADR-0041 d3) |
 | `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
 | `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 
@@ -111,7 +108,7 @@ reference](../cli/reference.md#start-settings)); delete it too to forget the ser
 ## By hand, with cosign
 
 Each release carries the CLI as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
-targets under [release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance),
+targets under [release artifacts](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md),
 each with a cosign signature bundle.
 
 Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static:

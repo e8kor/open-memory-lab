@@ -35,14 +35,14 @@ built." if any sentence could be read as a claim about running software.]
 - **d1 — [One decision, stated as a commitment, in bold up to the em dash.]** [The reasoning:
   what it buys, and the cost carried openly in the same breath. One decision per handle, so a
   later record can amend by `dn`. Numbers for unmeasured quantities are never stated — write
-  "unmeasured, tracked as FR-n" and open the row in the roadmap.]
+  "unmeasured, tracked as #n" and open the issue.]
 
 - **d2 — [The next decision.]** [...]
 
 ## Consequences
 
-- [What the decision commits downstream pages and the build to, including every FR/RS row it
-  opens in the roadmap — the honesty ledger. Costs are consequences too; state them here, not
+- [What the decision commits downstream pages and the build to, including every issue it
+  opens as a GitHub issue. Costs are consequences too; state them here, not
   in an apology elsewhere.]
 
 ## Rejected alternatives

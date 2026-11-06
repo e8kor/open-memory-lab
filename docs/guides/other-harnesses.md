@@ -1,17 +1,11 @@
 <!--
 id: guides/other-harnesses
 tier: engineering
-status: draft for review · the kit since v0.3.1; the one pair since v0.4.0; the default server since v0.4.1
+status: current
 answers: how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_API_KEY, the maintainer's public server by default; the one URL edit for another server; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link yet
 -->
 
 # Guide: Codex, Cursor, Gemini CLI, VS Code and Claude Desktop
-
-**Status:** draft for review · the kit since v0.3.1; the one pair since v0.4.0; the default server since v0.4.1
-
-**Release:** the agent kit since v0.3.1; `OML_URL` and `OML_API_KEY` as its only settings since
-v0.4.0; every configuration naming the maintainer's public server, so the key is the only
-setting, since v0.4.1 ([releases](../product/releases.md))
 
 Every tool here reaches the same `/mcp` endpoint with the same three tools. The configurations
 come from the agent kit, `oml-agent-kit-X.Y.Z.tar.gz` (or `.zip`), attached to each release and

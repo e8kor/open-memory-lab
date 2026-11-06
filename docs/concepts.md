@@ -1,22 +1,26 @@
 <!--
 id: concepts
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what each term of the design vocabulary means, in reading order, and which page or ADR decides it
 -->
 
 # Concepts
 
-**Status:** design draft for review · decided, not built
+Four ideas carry the product; the sections below explain the rest in reading order.
 
-This page is the design's vocabulary, explained in reading order. Nothing is declared here:
-every concept below is decided on an owning page or ADR, and this page links it rather than
-restating it. Where a sentence here and an owning page disagree, the owning page wins. The
-fixed term-by-term table that binds every engineering page is
-[ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows the proposed
-[ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed
-[ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add; the end of this page maps each concept to where
-it is decided.
+- **Held, then visible.** A write is held where only its author can read it, scanned, and made
+  visible by an identity that did not write it. The reviewer is never the author.
+- **The gate changes visibility, not ranking.** Approval decides who can read a memory; nothing
+  reorders results because someone approved.
+- **An agent cannot open the gate.** It may remember and recall; it may never promote, sign,
+  demote or delete, over any transport.
+- **Nothing is deleted silently.** Removal is a recorded act; the history is signed and a fork
+  stops the server.
+
+What the server promises and what it does not are on [guarantees](product/commitments.md). Each
+section links the page or [design record](adr/index.md) that decides the concept; where a
+sentence here and that page disagree, that page wins.
 
 ## Tenant
 
@@ -24,7 +28,7 @@ A tenant is one organization's isolated space in a deployment. Everything below 
 keys, claims, the journal — exists per tenant. Tenant identity is derived server-side from the
 API key, never taken from the request, and row-level security applies it to every table. No
 structure in this design crosses a tenant boundary; relating tenants into one "whole world" is
-an explicitly future federation item, not a latent feature. A tenant has a name, unique in the
+not built ([#151](https://github.com/e8kor/open-memory-lab/issues/151)). A tenant has a name, unique in the
 deployment.
 
 ## Names
@@ -143,7 +147,7 @@ re-minted with a different meaning. A **release** pins the vocabulary at a momen
 can be checked against something stable; whether a workarea's writes must cite valid terms is a
 per-workarea policy that defaults off. The whole capability is additive: a tenant that never
 registers a vocabulary runs a plain memory provider
-([ontologies](architecture/ontologies.md) owns the mechanism end to end).
+([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) owns the mechanism end to end).
 
 ## Roles and keys
 
@@ -237,7 +241,7 @@ bit-for-bit what it would be if the simulation did not exist. The shared tip ind
 records an overlay tip, any act that would make a tainted version the default served tip is
 refused, and when the simulation ends its overlay tips demote with the rest of the tainted
 closure — the default tip never moved, so nothing needs restoring
-([simulations](architecture/simulations.md) owns the fence;
+([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) owns the fence;
 [retrieval](architecture/retrieval.md) owns tip resolution on the read path).
 
 ## The journal and evidence
@@ -264,7 +268,7 @@ same fold independently — incrementally, from a journalled cursor — and comp
 against the live stores, so "the derived stores still agree with the journal" is a standing
 proof run as a job, not an assumed property; when they disagree, the repair is built from the
 current fold, never from the defective row
-([reconciliation](architecture/reconciliation.md)).
+([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 ## The lake
 
@@ -302,17 +306,17 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 | Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) |
 | Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
 | The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
-| Vocabularies, terms, releases | [architecture/ontologies.md](architecture/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
+| Vocabularies, terms, releases | [architecture/ontologies.md](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
 | Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
 | The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | [ADR-0012](adr/ADR-0012-admission-and-review.md) |
 | Attachments | [architecture/storage.md](architecture/storage.md) | [ADR-0004](adr/ADR-0004-bodies-and-attachments.md) |
-| Simulations and taint | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
+| Simulations and taint | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
 | The journal and the commit point | [architecture/storage.md](architecture/storage.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) |
 | The evidence export and erasure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) |
 | The lake and the outbox | [architecture/storage.md](architecture/storage.md), [data/delta-tables.md](data/delta-tables.md) | [ADR-0003](adr/ADR-0003-delta-lake-derived-lakehouse.md) |
 | Reads and the read log | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
 | Steering and the recall order | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
-| The overlay tip | [architecture/simulations.md](architecture/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
-| The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](architecture/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
+| The overlay tip | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
+| The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
 | The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
 | The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed [ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add |

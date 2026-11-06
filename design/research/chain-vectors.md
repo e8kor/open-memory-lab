@@ -10,10 +10,10 @@ answers: whether the chain-format test vectors (RFC 8785 canonical bytes, SHA-25
 **Status:** recorded finding · 2026-10-31 — the chain-format test vectors reproduce outside Rust
 
 This is the finding for the critical path's M0 exit item: the vectors that
-[chain format](../../data/chain-format.md#test-vectors) states, cross-checked against
+[chain format](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/chain-format.md#test-vectors) states, cross-checked against
 independent implementations so that they are corroborated rather than self-confirmed. The
 harness and the reason it uses two implementations of each primitive are on the
-[M0 spikes](index.md) page.
+[M0 spikes](spikes-index.md) page.
 
 ## The finding
 
@@ -64,7 +64,7 @@ What that line covers:
 - **Signatures.** Pure Ed25519 is deterministic, so `cryptography` and PyNaCl each sign each
   vector's bytes with the test key, and each produces exactly the stated `sig`. Each also
   verifies the stated `sig` under the stated public key.
-- **Procedure.** Steps 1–7 and 9 of the [verification procedure](../../data/chain-format.md#verification)
+- **Procedure.** Steps 1–7 and 9 of the [verification procedure](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/chain-format.md#verification)
   pass over the three events. Step 8 needs a provider chain, which the vectors leave out, as the
   page says.
 - **Mutations.** One flipped byte in each event fails steps 3 and 4. Each of the five
@@ -76,7 +76,7 @@ What that line covers:
 - **The Rust tests' copies.** `crates/oml-domain/tests/vectors.rs`,
   `crates/bins/oml-cli/tests/vectors.rs` and `crates/oml-domain/tests/keys_and_format.rs` hold 6
   `signed_bytes` literals and 34 hex values between them, and every one equals the page. The
-  harness decision is on the [M0 spikes](index.md#the-rust-tests-copies-are-compared-with-the-page)
+  harness decision is on the [M0 spikes](spikes-index.md)
   page.
 
 ## The Rust tests' copies
@@ -110,7 +110,7 @@ there. Having the Rust tests read the page, so that no copy remains, is a follow
   or omission fails step 1 or step 5". The first run of the check failed on exactly that claim:
   `omitting vector 3 fails steps [9], not 1 or 5`. A chain cut short at its tail is still
   contiguous and correctly linked, and only the stated head, which comes from outside the chain,
-  shows that it is short. The sentence in [chain format](../../data/chain-format.md#test-vectors)
+  shows that it is short. The sentence in [chain format](https://github.com/e8kor/open-memory-lab/blob/main/docs/data/chain-format.md#test-vectors)
   now says so. This is a page edit and leaves no decision changed: the procedure already had
   step 9.
 - **RFC 8785 orders members by UTF-16 code units, and the page says "by code point".**

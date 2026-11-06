@@ -9,7 +9,7 @@ answers: what a user is and where their root workarea sits; how a key is tied to
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** introduced in v0.5.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0008 (d1, d3, d4), ADR-0010 (d1), ADR-0018 (d4), ADR-0025 (d2, d3, d8), ADR-0026 (d1, d4, d5, d7), ADR-0028 (d1), ADR-0039 (d15)
 
@@ -258,7 +258,7 @@ Decided; introduced in v0.5.0.
     - on the lineage read, when it is built, a closure that stops at `universe`: nodes outside
       `universe` are omitted, not elided to redacted ids, so no id that points into a user's
       root is served (this narrows, for universe claims, the redacted-id residual of
-      [FR-31](../product/roadmap.md));
+      #129);
     - on the events tail, what it already serves: `lifecycle.*` events of universe versions
       carry no key ids and no principal for a key outside the actor's key set, and
       `submission.*`, the only events whose payload names `derives_from`, reach the curator's
@@ -282,8 +282,8 @@ Decided; introduced in v0.5.0.
     Three residuals, stated plainly: a curated claim whose text equals its source's carries the
     same `plaintext_digest`, so anyone who can read both rows — the source's own readers — can
     link them; a curator who reuses a source's wording or chooses a telling `claim_key` discloses
-    what it wrote; and the tail's seq gaps still count events a key cannot see (FR-31). The first
-    two are the curator's to avoid; FR-73 tracks giving the curator a check for them.
+    what it wrote; and the tail's seq gaps still count events a key cannot see (#129). The first
+    two are the curator's to avoid; #144 tracks giving the curator a check for them.
 
 - **d10 — Recall at a scope inside a user root also searches `universe`'s own claims, and
   steering and guardrails reach `universe` as an ancestor.** The hits of a recall whose scope
@@ -303,7 +303,7 @@ Decided; introduced in v0.5.0.
   their subtree scopes: a user who wants universe's claims as a list, or its events, names
   `workarea: universe`, where subtree(`universe`) within its access is `universe` and its own
   root. This amends ADR-0025 d8's hit membership. The cost is that universe hits compete for
-  rank and budget with a project's own hits and no field turns them off; FR-74 tracks measuring
+  rank and budget with a project's own hits and no field turns them off; #145 tracks measuring
   whether they crowd out the hits a project needs.
 
 - **d11 — The surface grows by three fields, one grant attribute and two CLI flags, and a client
@@ -338,7 +338,7 @@ Decided; introduced in v0.5.0.
   The maintainer's own user root appears with the first key issued with `--user`; a name a
   shared workarea already holds, such as `crew` or `oml`, cannot be a user's name there
   (`name.taken`). Moving existing work into a user root needs re-parenting across a root
-  boundary, which d1 forbids and which is not scheduled in any form; it is tracked as FR-72.
+  boundary, which d1 forbids and which is not scheduled in any form; it is tracked as #143.
   Until then a curator can place what should be shared into `universe` (d7), and the old tenant
   keys stay valid until an admin revokes them, which is not built either. A migration that moved
   the live subtree under a user root was weighed and rejected (below): it would change the paths
@@ -395,17 +395,17 @@ Decided; introduced in v0.5.0.
 - [Concepts](../concepts.md), [workareas](../architecture/workareas.md),
   [roles and keys](../architecture/roles-and-keys.md), [retrieval](../architecture/retrieval.md),
   the [HTTP API](../api/http-api.md), the [CLI reference](../cli/reference.md),
-  [errors](../api/errors.md), [releases](../product/releases.md) and [llms.txt](../llms.txt) mark
+  [errors](../api/errors.md), [releases](../changelog.md) and [llms.txt](../llms.txt) mark
   each part planned for v0.5.0 and not built. The event catalog, the Postgres schema and the
   OpenAPI documents change only with the build (d15).
 - ADR-0008 d1, d3 and d4, ADR-0010 d1, ADR-0018 d4, ADR-0025 d2, d3 and d8,
   ADR-0026 d1, d4, d5 and d7, ADR-0028 d1 and ADR-0039 d15 keep their text; each Status line
   points here. The decision register's D7, D9, D13 and D14 rows cite this record.
-- The roadmap opens three rows: **FR-72**, moving existing shared workareas into a user root
-  (d12); **FR-73**, a curator's check that a curated claim's text, digest and `claim_key` do not
-  identify its source (d9); **FR-74**, measuring whether universe hits in a user's recall crowd
+- Three issues are open: **#143**, moving existing shared workareas into a user root
+  (d12); **#144**, a curator's check that a curated claim's text, digest and `claim_key` do not
+  identify its source (d9); **#145**, measuring whether universe hits in a user's recall crowd
   out the hits of the user's own scope (d10). Review capacity on `universe` and on each user root
-  is part of the unmeasured review throughput of [FR-2](../product/roadmap.md).
+  is part of the unmeasured review throughput of #98.
 - The quick start (`oml quickstart`, [ADR-0041](ADR-0041-a-quick-start-in-one-command-per-role.md))
   is unchanged in v0.5.0: it creates the shared workarea `crew` and issues tenant keys. Moving it
   onto a user root is a later decision.

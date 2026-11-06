@@ -1,15 +1,11 @@
 <!--
 id: operations/deployment
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what runs where and how many of each; what state and credentials each workload holds; how the three install profiles differ
 -->
 
 # Deployment
-
-**Status:** design draft for review · decided, not built
-
-**Release:** standalone and docker since v0.1.0, the interim chart since v0.3.0, the server archive since v0.3.1 ([releases](../product/releases.md)).
 
 This page is the single declaration site for D15: what runs where, how many of
 each, what state and credentials each workload holds, and how the three install
@@ -17,7 +13,7 @@ profiles differ. The guarantees the workloads implement are declared elsewhere
 and only *placed* here: the commit point and chain in
 [storage](../architecture/storage.md), key custody and tenancy controls in
 [security](../architecture/security.md), the reconciler's job in
-[reconciliation](../architecture/reconciliation.md), the erasure inventory this
+[reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md), the erasure inventory this
 page's retention windows feed in
 [audit and lineage](../architecture/audit-and-lineage.md), and the per-profile
 guarantee differences in [commitments](../product/commitments.md). The
@@ -42,7 +38,7 @@ Three first-class profiles, one system:
 
 Identical in every profile: the four binaries, the Postgres schema and journal,
 the commit protocol, the constitution, the bootstrap ceremony, the CLI, and the
-conformance suite ([FR-22](../product/roadmap.md) — the same suite must be
+conformance suite (#117 — the same suite must be
 green on all three). Profiles differ only in who supervises the processes, what
 backs the object-store and KMS ports, and which guarantees weaken. Every
 weakening is stated in the profile-dependent bounds of
@@ -138,10 +134,10 @@ correctness environment, not a durability one.
   in Postgres, so followers add read capacity without touching ordering.
   Per-tenant write throughput is bounded by the per-tenant chain lock as
   before; cross-tenant aggregate write throughput now funnels through the one
-  lead — stated, unmeasured, tracked as [FR-24](../product/roadmap.md).
+  lead — stated, unmeasured, tracked as #117.
 
 Where the scale ceiling actually sits is unmeasured — tracked as
-[FR-7](../product/roadmap.md).
+#99.
 
 ### Kubernetes quickstart
 
@@ -170,19 +166,19 @@ for the root operator key — the key value appears only in the operator's termi
 log, and the consumed secret cannot be claimed twice
 ([CLI reference](../cli/reference.md#oml-bootstrap-claiming-the-root-operator-key)).
 
-From here the ceremony continues in [cli/sessions.md](../cli/sessions.md):
+From here the ceremony continues in [cli/sessions.md](../cli/reference.md):
 create a tenant, issue its first admin key, create workareas, issue crew keys.
 
 ### The interim chart: the current build on Kubernetes
 
-*Available since v0.3.0 · [releases](../product/releases.md)*
+*Available since v0.3.0 · [releases](../changelog.md)*
 
 **Built** — `deploy/helm/oml`, decided in the proposed
 [ADR-0033](../adr/ADR-0033-interim-helm-chart.md). CI job `chart` installs it on kind; no other
 cluster is recorded running it. The chart holds the one server binary the build has,
 `oml-server-lead`, and nothing else. It is the first revision of the umbrella chart above, not a
 second chart: the designed workloads and the `local` and `scaled` value sets join it at their
-milestones ([critical path](../product/critical-path.md)). Where it differs from the designed
+milestones (critical path). Where it differs from the designed
 chart:
 
 | | Designed chart ([ADR-0016](../adr/ADR-0016-kubernetes-workloads.md), [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d16) | Interim chart |
@@ -195,13 +191,13 @@ chart:
 | Postgres | CloudNativePG (`local`) or a managed service (`scaled`) | external, through an existing Secret's key (ADR-0033 d6) |
 | Object store | MinIO at the pinned tag (`local`) or S3 (`scaled`) | none: the build has no attachments |
 | Value sets | `local` and `scaled` | one `values.yaml`, whose comments carry each value's meaning |
-| Publication | a chart repository (the mockup above) | the `.tgz` and its signature bundle on each release page, from the first tag that runs the chart jobs ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)) |
+| Publication | a chart repository (the mockup above) | the `.tgz` and its signature bundle on each release page, from the first tag that runs the chart jobs ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)) |
 
 The pod runs as the image's `oml` user, uid and gid 999, with `fsGroup: 999` under
 `fsGroupChangePolicy: OnRootMismatch`, a read-only root filesystem, every capability dropped,
 seccomp `RuntimeDefault` and no service account token (ADR-0033 d4, d5). Resource requests and limits
 ship as comments in `values.yaml`, not values; no number for them is measured
-([capacity](capacity.md)).
+([capacity](deployment.md#capacity)).
 
 #### Install
 
@@ -267,7 +263,7 @@ connections to DNS and the Postgres port alone.
 
 Every upgrade and every restart stops the API, reads included, until the new lead is ready:
 `Recreate` stops the old pod first. The window is unmeasured; lead replacement is
-[FR-24](../product/roadmap.md)'s to measure. `helm uninstall` leaves the keyring claim
+#117's to measure. `helm uninstall` leaves the keyring claim
 (`oml-keyring` for a release named `oml`), and a reinstall under the same release name and
 namespace takes it back; under another name, `--set keyring.existingClaim=<claim>` attaches it.
 Losing the claim while the database is kept — deleting it, or losing the volume behind it —
@@ -285,12 +281,12 @@ loses the deployment's identity, and the lead then refuses readiness (the fork-c
 
 ## The server archive
 
-*Available since v0.3.1 · [releases](../product/releases.md)*
+*Available since v0.3.1 · [releases](../changelog.md)*
 
 A release attaches
 `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
 `aarch64-unknown-linux-gnu`, holding `oml-server-lead` with the README and licence; the `oml` CLI
-is a separate archive ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+is a separate archive ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)).
 An upgrade of a host that runs the binary downloads and verifies the new archive before it stops
 anything:
 
@@ -311,7 +307,7 @@ runs. An archive that does not verify is not installed.
 
 ## Connections behind a reverse proxy
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 Claude's hosted apps — claude.ai, Claude Desktop and the Claude mobile apps — reach OML through a
 connection opened by a one-time connect code
@@ -375,7 +371,7 @@ access log holds the same addresses and falls under the same 30 days
 
 ## The standalone profile
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 One host, no orchestrator
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d2–d5).
@@ -405,7 +401,7 @@ Backing choices:
   passphrase-protected) behind the existing KMS port. What that collapses is
   stated in [security](../architecture/security.md) and bounded in
   [commitments](../product/commitments.md); the mechanism is
-  [RS-12](../product/roadmap.md). The keyring file is a copy class in the
+  #154. The keyring file is a copy class in the
   [erasure inventory](../architecture/audit-and-lineage.md) — see the backup
   table below.
 
@@ -437,7 +433,7 @@ root operator key (shown once, journalled as issued-without-value): oml_8Wkd****
 
 ## The docker profile
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 One compose file
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d7). The
@@ -483,7 +479,7 @@ the consequences.
 
 ### Docker quickstart
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 `oml quickstart` is the docker profile's quick start as built: one verb writes a compose file with
 the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with an owner-only
@@ -491,7 +487,7 @@ the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with a
 and a reviewer key into owner-only files and checks one write end to end
 ([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9;
 [CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start);
-[self-hosting](../guides/self-hosting.md)). It is not the full profile above: it runs no
+[self-hosting](../start/run-your-own.md)). It is not the full profile above: it runs no
 `oml-bootstrap` service, no MinIO and none of the other workloads, and reads the enrollment
 token from the lead's log until `oml-bootstrap` exists.
 
@@ -505,7 +501,7 @@ reference's row, held by `oml-cli`'s `quickstart` suite against a fake `docker`.
 
 ## The lake-writer singleton and its two fences
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Exactly one lake-writer drains the outbox (declared in
 [storage](../architecture/storage.md)). No profile's supervisor can promise
@@ -537,13 +533,13 @@ The cost of this arrangement: failover is not instant (lease expiry or restart
 before a new process drains), so outbox frontier lag is the metric that pages,
 not process restarts ([observability](observability.md)). Whether delta-rs
 exposes transaction ids exactly as this relies on is verified at
-implementation time — the conformance test is [FR-3](../product/roadmap.md),
+implementation time — the conformance test is #101,
 run per object-store backend (`file://`, pinned MinIO, S3) under
-[FR-22](../product/roadmap.md).
+#117.
 
 ## The lead lease
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Cluster mode gives `oml-server` two roles
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d13–d17):
@@ -571,7 +567,7 @@ lead when". During the takeover window, writes are refused and reads keep
 flowing wherever followers exist; in-flight writes are atomic by construction
 (one Postgres transaction, C1) and retried safely under the existing
 idempotency machinery. Lease TTL, heartbeat and the measured takeover window
-ship as unmeasured profile defaults — [FR-24](../product/roadmap.md).
+ship as unmeasured profile defaults — #117.
 
 Defaults per profile — lead-only everywhere; followers are scale-out, never a
 prerequisite:
@@ -590,14 +586,14 @@ Read-log writes split by role: followers append read-log rows directly (a
 non-journal table, their own RLS-scoped credentials); anchoring a batch digest
 into the journal is the lead's act, on the lead's cadence. The
 unanchored-tail window therefore also covers follower-written rows awaiting
-the lead's anchor — the exact split is [RS-13](../product/roadmap.md).
+the lead's anchor — the exact split is #154.
 
 ## The reconciler: three schedulers, one binary
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 The reconciler's work is a bounded incremental pass
-([reconciliation](../architecture/reconciliation.md)) that must never overlap
+([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) that must never overlap
 itself and must die rather than hang. The binary carries both modes — `--once`
 and `--every <interval> --pass-deadline <d>` — and each profile schedules it
 natively:
@@ -630,7 +626,7 @@ Kubernetes and a one-off invocation of the same binary in the other two
 profiles, with its own, larger deadline. The
 deadline values themselves are unmeasured; they ship as profile defaults to be
 revised when reconciliation has numbers (the measurement belongs to the same
-effort as [FR-7](../product/roadmap.md)).
+effort as #99).
 
 ## Probes
 
@@ -656,19 +652,51 @@ docker, and the supervisor in standalone — same endpoints, three consumers.
   it catches a MinIO upgrade outside the pin; in standalone it is the check
   that refuses an NFS/SMB data directory.
 
+## Capacity
+
+What grows with load, and what binds each workload first. Measured figures are in
+[Operating OML](operating.md#capacity-measured-so-far); open measurements are
+[#99](https://github.com/e8kor/open-memory-lab/issues/99) and
+[#150](https://github.com/e8kor/open-memory-lab/issues/150).
+
+- **One submit** writes one idempotency record, one signed journal row (digests, never body
+  bytes), the fold rows and one outbox row in a single transaction serialised per tenant on the
+  chain lock. The lake writer then drains the outbox row, and after promotion the indexer writes
+  the search rows. A memory's whole life adds one journal event per scan verdict, review verdict
+  and ratification. The journal grows linearly and is never compacted.
+- **Body bytes** exist in several copy classes at once: the quarantine object, the lake copy,
+  superseded Parquet versions until `VACUUM`, object-store versions until lifecycle expiry, and
+  every backup inside its retention window. Body storage is about admitted body bytes times the
+  number of classes your windows keep live. Ciphertext adds a constant AES-GCM overhead per body.
+- **Delta log** entries grow with drain frequency, not row count. Checkpoints every 100 commits,
+  a daily bin-pack `OPTIMIZE` and a daily `VACUUM` at the erasure bound keep it in check
+  ([Delta tables](../data/delta-tables.md)).
+- **The read log** is the fastest-growing table in a read-heavy deployment. It is partitioned and
+  dropped on the tenant's retention window, and only one signed anchor event per
+  `readlog.anchor_cadence` enters the journal.
+
+| Workload | Binds first | Why |
+|---|---|---|
+| Lead, per tenant | commit latency inside the chain lock | the lock holds read-head, hash, sign, one insert and the commit; a tenant cannot exceed about one submit per commit latency ([ADR-0024](../adr/ADR-0024-performance-foundation.md)) |
+| Lead, aggregate | group-commit amortisation, then admission CPU and KMS wrap calls | tenants do not share locks |
+| Followers | page cache | they serve recall and get from replicas; staleness equals replication lag |
+| Lake writer | object-store PUT latency per Delta commit | frontier lag is the signal that pages |
+| Indexer | embedding throughput | `oml_index_lag_seconds` shows the gap between promoted and findable |
+| PostgreSQL | everything above, eventually | one store under the journal, folds, indexes, outbox and read log |
+
 ## Backups, retention windows, and the erasure SLO
 
 Backups are a deployment concern with a correctness consequence: every backup
 is a copy class in the [erasure inventory](../architecture/audit-and-lineage.md),
 and the windows chosen here become terms in the erasure SLO. What the backups
 exist to recover, and what recovery can never get back, is
-[disaster recovery](disaster-recovery.md)'s to state.
+[disaster recovery](restore.md#disaster-recovery)'s to state.
 
 | Store | Mechanism | Retention window's role |
 |---|---|---|
 | Postgres (kubernetes) | Base backups + WAL archiving (CloudNativePG-managed locally; the managed service's facility when scaled) | Plaintext-derived rows — pgvector embeddings, tsvector entries — are removed from live tables at erase time but **persist in base backups and WAL until the retention window expires**. The window is therefore an upper bound on how long erased-memory derivatives survive, and it is stated, per tenant policy, in the evidence export. |
 | Postgres (docker, standalone) | The host's own facility: `pg_dump` / base backups + WAL archiving against the host or containerized Postgres | Same shape, same window arithmetic — the erasure SLO follows the backup facility, not the profile. A profile with **no** backups has a trivially short window and a trivially absent restore story; both facts belong in the operator's declaration, not in silence. |
-| **Keyring file (`kms-file` profiles: docker, standalone, and the [interim chart](#the-interim-chart-the-current-build-on-kubernetes))** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies, snapshots of the interim chart's keyring claim | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md), [RS-12](../product/roadmap.md)). |
+| **Keyring file (`kms-file` profiles: docker, standalone, and the [interim chart](#the-interim-chart-the-current-build-on-kubernetes))** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies, snapshots of the interim chart's keyring claim | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md), #154). |
 | Delta tables | Table history until `VACUUM` + checkpoint cleanup, run inside the lake-writer — identical in all three profiles | Old parquet versions and checkpoints hold **ciphertext** of erased bodies until vacuumed. The DEK is already destroyed, so the bytes are unreadable, but the inventory still names them, and the vacuum cadence is the stated bound on their lifetime. |
 | Object store | Versioning (if enabled) on quarantine and bodies prefixes; in standalone, any host-level backup of the data directory plays the same role | Same shape: ciphertext versions survive until lifecycle rules (or host backup expiry) remove them; the window is the stated bound. Quarantine objects of refused submissions get a short, named expiry of their own. |
 | Read-event log | Partition drops on the retention window set by tenant policy ([retrieval](../architecture/retrieval.md)) | Not a backup, but the same discipline: the window is declared, and exports scope to it. |
@@ -692,10 +720,10 @@ operator ceremony, not a routine act, and the ceremony — per-profile store
 restore, keyring ordering, the fork check, erase replay, a full-genesis
 reconciliation pass before traffic — is specified in [restore](restore.md).
 What each profile can lose and what recovery costs, stated structurally and
-never as a number, is [disaster recovery](disaster-recovery.md)'s. The
+never as a number, is [disaster recovery](restore.md#disaster-recovery)'s. The
 profile migration path
 ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d10,
-rehearsed as [FR-23](../product/roadmap.md)) inherits the restore ceremony
+rehearsed as #117) inherits the restore ceremony
 wholesale.
 
 ## What this page does not decide
@@ -705,8 +733,8 @@ node counts, ingress and TLS termination, and the Prometheus stack that
 scrapes the metrics are deployment-site choices the payloads parameterize but
 this design does not fix. The configuration surface those payloads feed is
 specified in [configuration](configuration.md), and what can honestly be said
-about sizing before anything is measured is [capacity](capacity.md)'s. Postgres sizing beyond "the journal domain is
-synchronous" is open until [FR-7](../product/roadmap.md) has a measured
+about sizing before anything is measured is [capacity](deployment.md#capacity)'s. Postgres sizing beyond "the journal domain is
+synchronous" is open until #99 has a measured
 ceiling; lease TTLs and takeover windows are open until
-[FR-24](../product/roadmap.md) has numbers; the keyring mechanism is
-[RS-12](../product/roadmap.md).
+#117 has numbers; the keyring mechanism is
+#154.

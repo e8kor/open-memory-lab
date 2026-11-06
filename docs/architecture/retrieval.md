@@ -1,15 +1,11 @@
 <!--
 id: architecture/retrieval
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: where reads are served from and in what order; how recall ranks, through which pipelines, and how a deployment, a tenant or a request picks one; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
 -->
 
 # Retrieval: reads are served from Postgres, journalled
-
-**Status:** design draft for review · decided, not built
-
-**Release:** reads served from Postgres since v0.1.0; budgets, own held rows and steering first since v0.2.0; search pipelines since v0.5.5, `bm25-postings` and `bm25-rerank` since v0.5.6, `sparse` and `bm25-sparse` since v0.5.7 ([releases](../product/releases.md)).
 
 This page is the single declaration site for the read path (D12): where reads
 are served from, how the serving indexes are laid out, what order results come
@@ -17,14 +13,14 @@ back in, how bodies are decrypted, how reads are logged, and which read-shaped
 features are out of scope. The storage decisions it builds on — the commit
 point, the outbox, the lake — are declared in [storage.md](storage.md); the
 schema of the tables named here is in
-[data/postgres-schema.md](../data/postgres-schema.md); the simulation fence
+[data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations); the simulation fence
 whose read predicate this page applies is declared in
-[simulations.md](simulations.md); the reader role whose reads are logged is
+[simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md); the reader role whose reads are logged is
 declared in [roles-and-keys.md](roles-and-keys.md).
 
 ## The rule: Postgres serves, the lake never does
 
-*Available since v0.1.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../changelog.md)*
 
 Every client read — recall, fetch, FTS, vector search, graph and lineage
 reads — is served from PostgreSQL. **Delta Lake serves no client read.** The
@@ -33,8 +29,8 @@ and future journalled exports ([storage.md](storage.md)); putting it on the
 read path would make a derived copy an authority, and the design refuses that.
 The cost is accepted plainly: Postgres must hold everything serving needs —
 promoted bodies reachable for decryption, `tsvector` entries, embeddings — and
-the Postgres scale ceiling that follows is a tracked FR in
-[product/roadmap.md](../product/roadmap.md) (Postgres scale ceiling and
+the Postgres scale ceiling that follows is a tracked issue in
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) (Postgres scale ceiling and
 partition strategy), not a solved problem.
 
 Reads return **promoted rows only**, within the key's effective access
@@ -67,11 +63,11 @@ Two indexes over promoted rows, both in Postgres, both under tenant RLS:
   tenant, so a read reaches its tenant's partition alone, and row-level
   security stays the fence. No function is marked `LEAKPROOF`, so an FTS read
   scans its tenant's partition rather than using its index; its latency per
-  tenant size is unmeasured ([FR-25](../product/roadmap.md)). The built form
+  tenant size is unmeasured (#150). The built form
   today is the PoC's `memories_claim_fts` over `memories`
   ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
   d11, d13;
-  [postgres-schema](../data/postgres-schema.md#the-built-fts-index-per-tenant-partitions)).
+  [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
 Of the rows they admit, the indexes hold every promoted version, superseded
@@ -123,7 +119,7 @@ that it has. The cost is stated plainly: with no stemming, morphological
 variants do not match — a query for "deploy" does not find "deployments" — and
 FTS recall for morphology-rich languages is lower than a language-specific
 configuration would give. How much lower is unmeasured, like every retrieval
-number (FR-4).
+number (#102).
 
 Two consequences of the setting's scope:
 
@@ -131,7 +127,7 @@ Two consequences of the setting's scope:
   with one configuration, and rows built under different configurations do not
   compare. The setting is deployment-level in v1 for exactly this reason; a
   per-tenant (or per-workarea) FTS configuration is a tracked deferral in
-  [product/roadmap.md](../product/roadmap.md) (per-tenant FTS configuration),
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) (per-tenant FTS configuration),
   not a quiet gap.
 - **Input is already canonical**: claim text is NFC-normalized at admission,
   before digesting and scanning ([admission](admission.md) owns the mechanics),
@@ -139,7 +135,7 @@ Two consequences of the setting's scope:
 
 ### pgvector layout
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 `memory_embeddings` is **list-partitioned by `tenant_id`**, with a
 **per-partition HNSW index** and RLS on top of the partitioning. The
@@ -157,7 +153,7 @@ Two query-shape decisions:
   the limit is satisfied or the configured scan ceiling is reached
   (`hnsw.max_scan_tuples` and the scan-memory bound), trading extra index
   traversal for far less silent under-returning. The ceiling and its tuning are
-  part of FR-4's measurement — under-return is reduced, not eliminated. The
+  part of #102's measurement — under-return is reduced, not eliminated. The
   trade is still the point: a filtered search that quietly returns 3 of 10
   requested hits is a correctness bug wearing a latency costume.
 - **Subtree filtering is a filter column, not a join.** Each embedding row
@@ -174,7 +170,7 @@ Two query-shape decisions:
 
 Nothing has run. **Recall quality, query latency, and the exact-vs-approximate
 behaviour of filtered HNSW at our data shapes are unmeasured** — tracked as
-the pgvector recall/latency FR in [product/roadmap.md](../product/roadmap.md),
+pgvector recall/latency issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap),
 with measurement as the exit criterion. The choice of embedding model and
 where it runs is an open RS on the same page. No vector-search number is
 asserted anywhere in this design until that measurement runs (D17).
@@ -257,7 +253,7 @@ reads no model file.
 
 **Postings, pruning and the scan** *(since v0.5.6, ADR-0052)*. Under row security no text operator
 reaches an index, but integer equality does, so `bm25-postings` reads each version's lexemes as
-integer postings (`search_postings`, one partition per tenant under the same policy; [schema](../data/postgres-schema.md#search-postings-adr-0052)).
+integer postings (`search_postings`, one partition per tenant under the same policy; [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 Before it reads a posting it sums the served versions' counts over the readable workareas, adding
 the caller's own held rows when it asked for them: the row count, the mean length and each query
 form's document frequency are the readable rows', never the tenant's. While the query forms'
@@ -303,7 +299,7 @@ a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 m
 `bm25` stays served as its fallback and comparison. *Since v0.5.7:* `bm25-sparse` passes the same gate (success@1 0.860,
 success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685 nDCG@10), NFCorpus
 (0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
-two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; FR-118).
+two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; #104).
 
 **Capped before fusion.** *Since v0.5.8 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13):*
 the depth the core reads each list to (`k` alone, at least 50 for reciprocal rank, at least 100
@@ -318,7 +314,7 @@ it, a list scores only those ids' postings or rows (anchor-first); above it, the
 the filter on the indexed columns (postings-first). The repository is an equality and the prefix
 the range `[prefix, upper)` on `text_pattern_ops`' leakproof `~>=~` and `~<~`, so the index
 serves the serving role under row security. Corpus statistics and document frequencies stay the
-unfiltered ones, so a filtered list is the unfiltered list filtered then cut; FR-115 records the
+unfiltered ones, so a filtered list is the unfiltered list filtered then cut; #138 records the
 latency. Every served item carries its
 `anchor`, and `stale` (`changed` or `removed`) from its latest source check: checks are recorded
 only on promoted served tips, so a mark never derives from a held version and tells no reader
@@ -326,7 +322,7 @@ that one exists (R3).
 
 ## The recall-ordering contract: steering rows first, unranked
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 A recall result has two segments, in this order:
 
@@ -384,7 +380,7 @@ Membership and order of both segments are fixed
   ([the simulation read predicate](#the-simulation-read-predicate)).
 - **Determinism** holds over a fixed candidate list: the same candidates
   always come back in the same order. Whether approximate vector search fixes
-  the candidate list for a given query is part of FR-4's measurement, not a
+  the candidate list for a given query is part of #102's measurement, not a
   property this page claims.
 
 *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):*
@@ -396,7 +392,7 @@ scope's own hits in the one total order above. Applicable steering needs no chan
 principal, no `derives_from` and no path below `universe`
 ([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)). Whether universe
 hits crowd out a project's own is unmeasured, tracked as
-[FR-74](../product/roadmap.md).
+#145.
 
 The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
 and the MCP `recall` tool): clients may rely on segment order, and nothing a
@@ -413,7 +409,7 @@ wire.
 
 ## Own held rows in recall
 
-*Available since v0.2.0; the name `include_unreviewed` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the name `include_unreviewed` since v0.4.0 · [releases](../changelog.md)*
 
 A recall with `include_unreviewed: true`, v0.3.0's `include_own_held`
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4;
@@ -457,7 +453,7 @@ compare directly. Because a held row has no vector term, under any fusion in
 which an absent list contributes nothing and a vector match never lowers a
 score, it scores no higher than it would once promoted, so own held rows rank
 at or below their promoted rank; this affects only the author's own result,
-and how far below is unmeasured ([FR-4](../product/roadmap.md)). In cluster
+and how far below is unmeasured (#102). In cluster
 mode the request is an own-held read
 ([reads in cluster mode](#reads-in-cluster-mode)).
 
@@ -472,7 +468,7 @@ predicate fails toward invisibility.
 
 - **Designed form (decided, not built).** A `held_fts` table holds one
   `tsvector` row per held version, keyed by author key and workarea
-  ([data/postgres-schema.md](../data/postgres-schema.md#full-text-search-and-embeddings)).
+  ([data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
   Every transition into held inserts the row, in the commit that makes the
   transition: the capture commit, with the `tsvector` computed from the NFC
   plaintext before `BEGIN`; a [reopen](admission.md#reopening-a-rejection), and
@@ -509,7 +505,7 @@ predicate fails toward invisibility.
 
 ## Token budgets
 
-*Available since v0.2.0; the name `include_text` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0; the name `include_text` since v0.4.0 · [releases](../changelog.md)*
 
 This section is the single declaration site for recall budgets
 ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d7).
@@ -523,7 +519,7 @@ submission event journals: `submission.remember`, `submission.learn`, or
 Only the body text is counted, never ids, paths or metadata. The divisor 4 is a
 convention, not a measured ratio, and the count is not any model's tokenizer
 count; how far the two differ for real text is unmeasured —
-[FR-30](../product/roadmap.md). Clients convert with their own ratio from the
+#106. Clients convert with their own ratio from the
 per-row counts. Changing the function mints a new counter id; `oml-tc/1` never
 changes meaning.
 
@@ -572,7 +568,7 @@ budget; the budget object says so.
 
 ## Decrypt on serve
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Bodies are stored as per-artifact-DEK ciphertext everywhere at rest —
 Postgres, lake, object store ([storage.md](storage.md)). **Plaintext exists
@@ -581,7 +577,7 @@ decrypts per request, after access and the simulation predicate have passed.
 No other workload decrypts — the lake-writer is keyless, moving
 admission-produced ciphertext verbatim, and the reconciler verifies
 ciphertext digests keylessly
-([reconciliation.md](reconciliation.md)) — so crypto-shredding (D4, declared
+([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) — so crypto-shredding (D4, declared
 in [audit-and-lineage.md](audit-and-lineage.md)) has exactly one decryption
 locus to reason about. The cost is per-read decryption work on the server;
 caching decrypted bodies anywhere outside that path is refused by design, and
@@ -596,14 +592,14 @@ design object and not an optimization detail. Its rules: it is a named copy
 class in the erasure inventory
 ([audit-and-lineage.md](audit-and-lineage.md)); erase purges it
 **synchronously**; it is TTL-bounded, and that TTL composes into
-[FR-17](../product/roadmap.md)'s end-to-end erasure bound. Whether it caches
+#108's end-to-end erasure bound. Whether it caches
 per-artifact DEKs or an unwrapped per-tenant KEK — different KMS-call
 profiles, blast radii and erasure reasoning — is the open decision recorded
-as [RS-14](../product/roadmap.md).
+as #154.
 
 ## Reads in cluster mode
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 In cluster mode ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md))
 a follower's hot path is recall and get, only — writes forward to the lead —
@@ -629,7 +625,7 @@ and its reads follow one routing policy
 
 ## The read log
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 *Not the recall telemetry.* Since v0.5.7 each recall is also recorded in `recall_events`, with
 the labels of what its reader did next, for 30 days, to a tenant admin alone
@@ -683,7 +679,7 @@ Design commitments:
   loses its unflushed read-event buffer — which is stated where
   [commitments](../product/commitments.md) states the read-log bound; who
   batches and anchors the follower-written rows is the open decision
-  [RS-13](../product/roadmap.md)
+  #154
   ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)).
 - **Retention is tenant policy.** The retention window of `read_events` is a
   journalled per-tenant policy, not a constant. Evidence exports scope their
@@ -699,13 +695,13 @@ claim (D17).
 
 ## The simulation read predicate
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Every read path — FTS, vector, fetch, graph — applies one predicate:
 
 > `provenance ≠ simulation` **OR** `key ∈ simulation audience`
 
-Simulation rows ([simulations.md](simulations.md)) are never in the shared
+Simulation rows ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)) are never in the shared
 FTS and vector indexes; they are indexed per simulation, so the shared indexes
 are structurally incapable of leaking a simulation row to a key outside the
 audience — the predicate on the shared path is a second fence, not the only

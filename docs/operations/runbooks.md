@@ -1,17 +1,11 @@
 <!--
 id: operations/runbooks
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: how to diagnose and act on each named operational condition — what it means, the doctor fields and metrics to read, the decision tree, and the evidence to capture first
 -->
 
 # Runbooks
-
-**Status:** design draft for review · decided, not built — every command below
-is a designed verb that has never run, and every metric is a declared name no
-binary emits yet.
-
-**Release:** each runbook applies once the mechanism it names ships; most are not scheduled ([releases](../product/releases.md)).
 
 This is the one runbook page. `oml doctor` names its next action as a command
 or an anchor on this page ([CLI reference](../cli/reference.md)); the alerting
@@ -24,7 +18,7 @@ condition is resolved the state that explained it is usually gone.
 
 Two standing rules apply to every section. First, **no store is ever edited
 by hand**: every repair travels a journalled channel
-([reconciliation](../architecture/reconciliation.md)), and a condition whose
+([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)), and a condition whose
 fix seems to need a manual table edit is a design gap to raise, not a
 procedure to improvise. Second, the plaintext rule binds evidence capture as
 it binds logs ([observability](observability.md)): evidence is ids, digests,
@@ -53,7 +47,7 @@ actually in force), and whether anyone restored Postgres.
   [restore ceremony](restore.md); continue that ceremony, not this runbook.
 - An unplanned Postgres failover preceded it → the standby that won was
   behind the signed head: acknowledged writes are gone. Treat as a
-  recovery-point event ([disaster recovery](disaster-recovery.md)); verify
+  recovery-point event ([disaster recovery](restore.md#disaster-recovery)); verify
   the quorum settings that should have made this impossible before trusting
   the store again.
 - Neither → suspect the stored head itself (corruption or tampering);
@@ -106,7 +100,7 @@ long.
 **Meaning.** `oml_review_queue_oldest_age_seconds` is closing on the
 policy's `held_item_expiry`: items are about to dead-letter not because they
 are poison but because review capacity lagged arrivals — the failure mode
-[FR-2](../product/roadmap.md) exists to quantify, arriving before FR-2 has
+#98 exists to quantify, arriving before #98 has
 numbers.
 
 **Diagnose.** `oml doctor`: `queue_depth_per_step` and `oldest_held_age` vs
@@ -129,7 +123,7 @@ window; `review_availability` to rule out the harder condition above.
   quietly turn.
 
 **Evidence.** Queue ages and depths per workarea, the verdict rate over the
-window, the policy's expiry value — the FR-2-shaped numbers this incident
+window, the policy's expiry value — the #98-shaped numbers this incident
 produced for free.
 
 ## Dead letters present
@@ -138,7 +132,7 @@ produced for free.
 the lake-writer abandoned rows after their retry budget. Each is already a
 journalled materialize-skipped event and a standing `dead-lettered`
 reconciliation finding — nothing is lost silently; something is waiting for a
-human decision ([reconciliation](../architecture/reconciliation.md)).
+human decision ([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 **Diagnose.** Doctor's `dead_letter_count` with oldest age;
 `oml_dead_letter_moves_total` for the arrival rate; the lake-writer's log
@@ -150,8 +144,8 @@ letters is otherwise healthy.
 
 - The failure was transient (object-store outage spanning the retry budget)
   → re-enqueue. The re-enqueue is a journalled act through the repair
-  channel; no operator verb fronts it yet — roadmap-tracked
-  ([roadmap](../product/roadmap.md)) — so today it is requested through the
+  channel; no operator verb fronts it yet — tracked as an issue
+  ([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)) — so today it is requested through the
   reconciler's repair path, never by editing the dead-letter table.
 - The failure reproduces (a poison payload) → diagnose before re-enqueueing;
   a re-enqueued poison row just dead-letters again and burns a second retry
@@ -193,7 +187,7 @@ self-test catches an object store changed under the pin
 - Batches completing but slow → capacity, and Delta commit cost grows with
   version-history depth; check `oml_lake_maintenance_duration_seconds` —
   overdue OPTIMIZE/checkpoint work is the usual suspect. Throughput numbers
-  are unmeasured, tracked as [FR-16](../product/roadmap.md).
+  are unmeasured, tracked as #101.
 - A `stale-frontier` finding with a healthy writer → the cached frontier
   column is behind, not the lake; the reconciler corrects it
   ([observability — doctor](observability.md)).
@@ -259,7 +253,7 @@ writes refuse as `system.unavailable` until a lead-eligible node takes the
 lease and passes the fork check ([deployment — the lead lease](deployment.md)).
 Nonzero during failover or rolling updates is the lease working; a climbing
 steady-state rate is this condition. The window's size is unmeasured
-([FR-24](../product/roadmap.md)).
+(#117).
 
 **Diagnose.** `oml_lead_lease_age_seconds` (a sawtooth is churn), doctor's
 `lead_lease` (holder, address, epoch — a climbing epoch counts fights), the
@@ -319,7 +313,7 @@ recurred past its attempt budget and auto-repair stopped **for that
 artifact, on purpose** — a finding that survives N honest repairs means the
 fold, the writer, or the comparison itself is wrong, and looping would
 convert a defect into unbounded journalled churn
-([reconciliation](../architecture/reconciliation.md)).
+([reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 **Diagnose.** Doctor's `reconciler` field: open findings by class, the
 halted artifact id, attempt count. The finding names its class (the closed
@@ -364,7 +358,7 @@ is itself a finding, not a starting point.
 - Passes hitting the deadline → a killed pass redoes work, never corrupts
   it, but it also never finishes: raise the deadline (an unmeasured profile
   default) or investigate what grew — journal size growth is
-  [FR-18](../product/roadmap.md)'s territory.
+  #99's territory.
 - Scheduler dead → restart it; the cursor's journalled checkpoints mean the
   next pass resumes, not restarts.
 - Cursor fails verification → stop; that is a `repair-halted`-grade event:
@@ -381,7 +375,7 @@ value, cursor seq and running hash.
 stretches no erasure window — but a **changed retention configuration or a
 failed expiry does**, and a broken backup chain silently converts the
 recovery story to "the composition since the last *good* backup"
-([disaster recovery](disaster-recovery.md)).
+([disaster recovery](restore.md#disaster-recovery)).
 
 **Diagnose.** The backup machinery's own signals — this is the one condition
 whose diagnosis is mostly outside OML. Establish: the last verified-good base
@@ -413,7 +407,7 @@ retention configuration diff, which copy classes the change touches.
 either the tenant outgrew its journalled quota grant, or the per-replica
 token-bucket approximation is misbehaving under replica churn — each replica
 enforces limit/N on the read path, so churn moves the effective limit
-([FR-8](../product/roadmap.md), [commitments](../product/commitments.md)).
+(#133, [commitments](../product/commitments.md)).
 
 **Diagnose.** The rejection rate per tenant; which path (write-path limits
 are exact — one lead, nothing to divide; read-path limits divide across
@@ -426,7 +420,7 @@ followers); follower replica count over the window; the effective quota via
   (`oml settings validate`, then `oml settings apply`) — never an in-place
   edit.
 - Replica churn artifact → stabilize the follower count; the enforcement
-  error is FR-8's open bound, documented rather than hidden.
+  error is #133's open bound, documented rather than hidden.
 - Abusive traffic → the admission-side valve is `oml bans add` with its
   reach preview; quota is for budgeting, bans are for refusal.
 
@@ -466,7 +460,7 @@ the damage; it cannot undo it.
    is a deployment-payload act, and the journalled event is the system's.
 4. **Fix the trust boundary in time.** Events signed before the compromise
    window are trustworthy exactly as far as externally retained chain heads
-   can corroborate them ([RS-9](../product/roadmap.md) — until it closes,
+   can corroborate them (#152 — until it closes,
    retained evidence exports are what exists). Take `oml audit export` now,
    retain it outside the deployment: the first externally held head of the
    new era.
@@ -490,12 +484,12 @@ SLO's wrapped-DEK term at backup retention + KEK rotation period
 
 1. Mint the successor KEK: a KMS key rotation in the kubernetes profile; a
    new KEK minted into the keyring file in the `kms-file` profiles
-   ([RS-12](../product/roadmap.md) owns the keyring mechanism).
+   (#154 owns the keyring mechanism).
 2. Re-wrap **live DEKs only** under the new KEK — never the copies in
    backups; that is the design, not an omission: backup copies decay by KEK
    retirement, not by rewriting backups. The re-wrap is a journalled act,
    recorded as `system.kek_rotated` ([event catalog](../data/event-catalog.md));
-   no CLI verb fronts it yet — roadmap-tracked.
+   no CLI verb fronts it yet — tracked as an issue.
 3. The retired KEK **remains** until destruction day: restores of backups
    taken under it still need it ([restore](restore.md) preconditions).
 
@@ -524,7 +518,7 @@ still proves what happened. Run in this order — each step depends on the
 previous one being complete.
 
 1. **Suspend writes.** No dedicated suspension verb exists yet —
-   roadmap-tracked ([roadmap](../product/roadmap.md)). Today's composition:
+   tracked as an issue ([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)). Today's composition:
    revoke the tenant's writer and dreamer keys —
    `oml keys revoke --matching <selector> --reason offboarding` (the default
    `--dry-run` reach preview, then `--apply`). Keep the admin key until
@@ -534,10 +528,10 @@ previous one being complete.
    the complete decision trail, grants history,
    chain verification and separated simulation record. Retain it outside the
    deployment: after offboarding this bundle is also the tenant's last
-   externally held chain head ([RS-9](../product/roadmap.md)).
+   externally held chain head (#152).
 3. **Erase content.** `oml erase <artifact>` per artifact, `--dry-run` first
    where the inventory should be inspected. No bulk-erase verb exists yet —
-   roadmap-tracked — so offboarding a large tenant is an enumerated loop
+   tracked as an issue — so offboarding a large tenant is an enumerated loop
    today, stated plainly rather than papered over. Each erase is journalled;
    the backup-resident copies decay on the stated windows
    ([audit and lineage](../architecture/audit-and-lineage.md#the-honest-boundary)).
@@ -552,7 +546,7 @@ previous one being complete.
 6. **What survives, on purpose.** The tenant's digest-only chain remains in
    the journal and still verifies end to end — the evidence outlives the
    content. Attribution metadata survives too; its erasure is
-   [FR-1](../product/roadmap.md), and an offboarding agreement that needs it
+   #146, and an offboarding agreement that needs it
    gone is blocked on that row, stated honestly.
 
 **Evidence.** The export bundle, the erase event ids, the revocation events,
@@ -563,8 +557,8 @@ the disposition record for the prefixes.
 A rehearsal that an erase does what the
 [inventory](../architecture/audit-and-lineage.md#the-erasure-inventory) says,
 run on a canary before a data subject or an auditor makes it urgent. The
-drill rehearses [FR-17](../product/roadmap.md)'s end-to-end bound; it does
-not produce FR-17's measurement — that requires the published, dated run the
+drill rehearses #108's end-to-end bound; it does
+not produce #108's measurement — that requires the published, dated run the
 row's exit criterion names.
 
 1. **Plant the canary.** Submit a marked memory with an attachment through

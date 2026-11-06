@@ -9,7 +9,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
-**Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -40,7 +40,7 @@ Everything here is decided, not built.
   caller. Bootstrap: on first start, a Helm job mints a show-once root operator key; the journal
   records the issuance as issued-without-value (the key value appears exactly once, on the
   operator's terminal, and is never stored or journalled). The ceremony transcript is mocked up
-  in [CLI sessions](../cli/sessions.md).
+  in [CLI sessions](../cli/reference.md).
 
 - **d3 — Issuer ceiling.** A key is issued with a role no higher than its issuer's. Operator
   issues operator keys (its own rotation path) and each tenant's first admin key; admin issues
@@ -80,7 +80,7 @@ Everything here is decided, not built.
   key is journalled with its tenant, role, grants and the key→crew→external-manager metadata
   that [ADR-0012](ADR-0012-admission-and-review.md)'s independence axis resolves at promotion
   time. Human sign-in (OAuth) for the CLI is a tracked research row on the
-  [roadmap](../product/roadmap.md), written to the honesty discipline of
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), written to the honesty discipline of
   [ADR-0018](ADR-0018-the-documentation-set.md) — spec revision and client support verified with
   a fetch date before any commitment; v1 ships bearer keys everywhere.
 
@@ -94,8 +94,8 @@ Everything here is decided, not built.
   is reconstructible from the journal, which is what the evidence export's grants history
   serves ([audit and lineage](../architecture/audit-and-lineage.md)).
 - d5's cost is paid at promotion time: every verdict computes a lineage closure. The closure
-  query's cost at scale is unmeasured — the [roadmap](../product/roadmap.md) carries Postgres
-  scale ceilings as an FR.
+  query's cost at scale is unmeasured — the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries Postgres
+  scale ceilings as an issue.
 - d6 forces an admin who also works as a crew member to hold two keys. That is the point: the
   journal then shows which capacity acted, and reciprocal-approval statistics
   ([ADR-0012](ADR-0012-admission-and-review.md)) can see key pairs, not blurred identities.

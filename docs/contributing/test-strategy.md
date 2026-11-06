@@ -16,8 +16,8 @@ and fixes the test-data policy. The structure follows the hexagon
 where it lives (the pure core), adapters are proven against their port contracts, and the composed
 system is proven against real infrastructure. Nothing here is built; every "passes" below is a
 design commitment, and the rows that will hold the first real results are
-[FR-3](../product/roadmap.md), [FR-22](../product/roadmap.md) and the invariant-test exit of
-[critical path](../product/critical-path.md) M1.
+#101, #117 and the invariant-test exit of
+critical path M1.
 
 ## The tiers
 
@@ -26,8 +26,8 @@ design commitment, and the rows that will hold the first real results are
 | Domain properties | `oml-domain`, the pure core | none — no database, no clock, no I/O | every `cargo test`, every PR |
 | Port contracts | every adapter and every test double, per port trait | the adapter's own backend (containers) for real adapters; none for doubles | every PR (doubles), container jobs (adapters) |
 | Integration | composed binaries against real Postgres + MinIO | containers, per object-store backend | container jobs, nightly and pre-merge |
-| Crash harness | the lake-writer's exactly-once claim ([FR-3](../product/roadmap.md)) | real Postgres + per-backend object store, kill injection | nightly and per release |
-| Conformance | the three install profiles as one product ([FR-22](../product/roadmap.md)) | a running deployment of each profile | per release; the dated three-column matrix |
+| Crash harness | the lake-writer's exactly-once claim (#101) | real Postgres + per-backend object store, kill injection | nightly and per release |
+| Conformance | the three install profiles as one product (#117) | a running deployment of each profile | per release; the dated three-column matrix |
 
 The tiers are ordered by cost, and the ordering is the point: a constitution bug must be
 reproducible in milliseconds without a container, which is why
@@ -39,7 +39,7 @@ core being testable without infrastructure is the cheapest correctness instrumen
 `oml-domain` carries a property-test suite (proptest) in which every constitution invariant and
 every chain and erasure invariant is a **named property**. The names below are design identifiers
 — normative in shape, adjustable in spelling at implementation without a design change (the
-[schema page](../data/postgres-schema.md)'s convention) — and once a property exists, other pages
+[schema page](https://github.com/e8kor/open-memory-lab/tree/main/migrations)'s convention) — and once a property exists, other pages
 may cite it by id instead of re-asserting the invariant.
 
 | Property | Statement under test | Declared in |
@@ -64,7 +64,7 @@ Two notes bind the suite's honesty:
   documentation carries that caveat verbatim.
 - The chain properties run twice: once over generated chains, and once over the committed
   cross-implementation test vectors that [chain format](../data/chain-format.md) specifies and
-  [critical path](../product/critical-path.md) M0 generates. Property tests alone would only prove
+  critical path M0 generates. Property tests alone would only prove
   the Rust implementation agrees with itself; the vectors are what make the format a format.
 
 ## Port contracts
@@ -73,7 +73,7 @@ Two notes bind the suite's honesty:
 dependency an adapter behind a trait. The test consequence is the **port law**: for each port
 trait there is exactly one contract suite, and **every implementation of the trait — the real
 adapter and its in-memory test double alike — runs the identical suite**. The suites live in a
-dedicated workspace crate (`oml-port-contracts`, [workspace plan](workspace-plan.md)) as generic
+dedicated workspace crate (`oml-port-contracts`, workspace plan) as generic
 functions over the trait, so a new adapter inherits its obligations by construction and cannot
 pass a weaker test than the double it replaces.
 
@@ -91,18 +91,18 @@ the sqlx adapter's run doubles as the compile-time query check against the migra
 
 Integration tests drive composed binaries — not traits — against real Postgres and real MinIO in
 containers, plus the `file://` backend, matching the three object-store backends
-[FR-22](../product/roadmap.md) names. This tier owns what no pure test can see: RLS behaviour
-under pooled connections (the [critical path](../product/critical-path.md) M0 spike 3 assertions,
+#117 names. This tier owns what no pure test can see: RLS behaviour
+under pooled connections (the critical path M0 spike 3 assertions,
 kept green forever after), advisory-lock serialization under concurrency, outbox stable-prefix
 draining across concurrent committing transactions, and the admission pipeline end to end
 including quarantine placement. Container pins follow the
 [deployment](../operations/deployment.md) page's pins — one fact declared once, consumed by
 compose, chart and test rig alike.
 
-## The FR-3 crash harness
+## The #101 crash harness
 
 The exactly-once claim of [storage](../architecture/storage.md) is tested by destruction, not by
-review. The harness (`oml-crash-harness`, [workspace plan](workspace-plan.md)) supervises a real
+review. The harness (`oml-crash-harness`, workspace plan) supervises a real
 lake-writer against a seeded journal and kills it at **named kill points**, then restarts it and
 compares the lake against the journal fold:
 
@@ -112,7 +112,7 @@ compares the lake against the journal fold:
    transaction id, not the cache, must be the recovery authority
    ([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md) d4);
 4. during checkpoint writing, and during `VACUUM` — the cases
-   [FR-16](../product/roadmap.md) added, because `SetTransaction` expiry would silently reset
+   #101 added, because `SetTransaction` expiry would silently reset
    recovery to "never applied".
 
 The invariant asserted after every kill schedule, on every backend (`file://`, pinned MinIO, S3):
@@ -123,19 +123,19 @@ Passing runs are what let the documentation write "exactly-once, verified by con
 `CONF-LAKE-001`" instead of "exactly-once"; until the harness runs, every such sentence keeps its
 unverified marker per [ADR-0018](../adr/ADR-0018-the-documentation-set.md).
 
-## The FR-22 conformance suite
+## The #117 conformance suite
 
 The conformance suite is a **profile-parameterized binary** (`oml-conformance`): one program,
 pointed at a running deployment, taking the profile and backend as parameters —
 `oml-conformance --profile standalone|docker|kubernetes --backend file|minio|s3`. It is the
-instrument that closes [FR-22](../product/roadmap.md)'s three-column matrix and, once the provider
-ring freezes, the covenant guard of [FR-21](../product/roadmap.md): every `/v1` operation is
+instrument that closes #117's three-column matrix and, once the provider
+ring freezes, the covenant guard of #150: every `/v1` operation is
 exercised by a conformance test that future changes must keep green.
 
 Every test has a **named id**, `CONF-<AREA>-<NNN>`, stable once assigned and never reused — the
-same rule the [roadmap](../product/roadmap.md) applies to row numbers, for the same reason: the id
+same rule the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) applies to row numbers, for the same reason: the id
 is a citation target. A documentation page may then say "verified by conformance test
-`CONF-CHAIN-002`" and the sentence is checkable. The areas mirror FR-22's list:
+`CONF-CHAIN-002`" and the sentence is checkable. The areas mirror #117's list:
 
 | Area | Covers | Example ids |
 |---|---|---|
@@ -143,10 +143,10 @@ is a citation target. A documentation page may then say "verified by conformance
 | `CONF-CHAIN-*` | commit and chain semantics: genesis shape, contiguity, signature verification against the exported head, chain order equals visibility order | `CONF-CHAIN-002` — an exported chain verifies against the [chain format](../data/chain-format.md) test vectors' rules |
 | `CONF-ADMIT-*` | admission end to end: hold, scan veto, serve binding and expiry, idempotent replay inside the committed 24-hour minimum window | `CONF-ADMIT-003` — same idempotency key, different digest is the typed error |
 | `CONF-ERASE-*` | erasure end to end across the copy classes reachable in the profile | `CONF-ERASE-001` — post-erase, body unrecoverable, attribution intact |
-| `CONF-LAKE-*` | the FR-3 crash harness, run per backend, including the NFS refusal | `CONF-LAKE-001` — the kill-schedule equality above |
-| `CONF-V1-*` | every provider-ring operation, the FR-21 covenant surface | `CONF-V1-001` — submit → review → promote → recall round trip |
+| `CONF-LAKE-*` | the #101 crash harness, run per backend, including the NFS refusal | `CONF-LAKE-001` — the kill-schedule equality above |
+| `CONF-V1-*` | every provider-ring operation, the #150 covenant surface | `CONF-V1-001` — submit → review → promote → recall round trip |
 
-A cell in FR-22's matrix is the dated output of one full run; the suite emits a machine-readable
+A cell in #117's matrix is the dated output of one full run; the suite emits a machine-readable
 report in the same shape the [benchmark harness](benchmark-harness.md) emits, so the matrix is
 generated, never hand-maintained.
 
@@ -154,7 +154,7 @@ generated, never hand-maintained.
 
 - **No production data, ever.** Test corpora are generated, and every corpus commits its
   generation recipe — seed, generator version, size and claim-kind mix — next to the generator
-  (`oml-corpus`, [workspace plan](workspace-plan.md)). A fixture that cannot be regenerated from
+  (`oml-corpus`, workspace plan). A fixture that cannot be regenerated from
   its recipe is a defect.
 - Generated text is NFC-normalized at generation to match admission's normalization rule, so
   fixtures cannot mask a normalization bug by already being normalized differently.

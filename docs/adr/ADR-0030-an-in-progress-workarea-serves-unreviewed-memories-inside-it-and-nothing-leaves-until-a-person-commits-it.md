@@ -11,7 +11,7 @@ answers: what an in-progress workarea is and who may mark it (a person's key, ne
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
 `archive/feat/in-progress-workareas`
 
-**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0001 (d3, d5: a second bounded relaxation of R3, inside an opted-in scope only),
 ADR-0009 (d3: a transition on a node inside an in-progress subtree waits for its commit),
@@ -149,7 +149,7 @@ Questions revision 1 left open are settled below at their recommended answers, e
   test runs in the committing transaction under the chain lock, as every capture takes it, so no
   held version lands between the test and the commit; one `EXISTS` over the subtree's nodes
   through `memories_workarea (tenant_id, workarea_id, state)`, unmeasured beyond the build's test
-  (FR-25). The person empties the subtree with bulk review (ADR-0055): `oml review list
+  (#150). The person empties the subtree with bulk review (ADR-0055): `oml review list
   --workarea <root>` then `oml review approve --ids -` or `reject --ids - --reason …`, each item
   judged and signed as one verdict, R2 per item, `same_user` marked where it applies. From the
   commit no node of the former subtree has a root, so its promoted rows reach every scope.

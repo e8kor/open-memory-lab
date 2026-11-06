@@ -1,32 +1,28 @@
 <!--
 id: architecture/storage
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: where the transactional commit point is; how the per-tenant signed hash chain, the outbox protocol and the derived lake interlock; where attachment bytes live
 -->
 
 # Storage: commit point, chain, outbox, lake
 
-**Status:** design draft for review · decided, not built
-
-**Release:** the commit point and the signed chain since v0.1.0; the lake and attachments not scheduled ([releases](../product/releases.md)).
-
 This page is the single declaration site for the transactional commit point and
 per-tenant hash chain (D1), the derived Delta lakehouse and the outbox protocol
 that feeds it (D2, with the pure-Rust delta-rs writer as D5), and attachment
 storage (D3). The tables named here are
-specified column-by-column in [data/postgres-schema.md](../data/postgres-schema.md)
+specified column-by-column in [data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)
 and [data/delta-tables.md](../data/delta-tables.md); journal event payload shapes
 are in [data/event-catalog.md](../data/event-catalog.md). Erasure and the
 copy-class inventory are declared in
 [audit-and-lineage.md](audit-and-lineage.md); the reconciler that audits the
-lake against the journal is declared in [reconciliation.md](reconciliation.md);
+lake against the journal is declared in [reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md);
 the read path that deliberately never touches the lake is declared in
 [retrieval.md](retrieval.md).
 
 ## The commit point (D1)
 
-*Available since v0.1.0; the durability domain's replication not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0; the durability domain's replication not scheduled · [releases](../changelog.md)*
 
 PostgreSQL is the system of record and the only transactional commit point.
 One Postgres transaction commits, atomically:
@@ -118,7 +114,7 @@ same ciphertext bytes. The ed25519 signature covers this digest envelope
 (`signed_bytes`), not the bodies. Journalling the ciphertext digest is what
 gives the key-less reconciler a journal-side comparand: store bytes are
 verified against what the signed event says, never store against store
-([reconciliation.md](reconciliation.md)).
+([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 This is why chain verification survives crypto-shredding: erasure destroys the
 artifact's DEK ([audit-and-lineage.md](audit-and-lineage.md)), which makes the
@@ -128,9 +124,9 @@ the erased event was about. The cost of digest-only payloads is that the
 journal alone cannot reproduce content; replaying history into readable form
 requires the body stores, which is the lake's and object store's job. Identity
 metadata in the chain (writer identity, principal) is minimized but present;
-full erasure of attribution metadata is an open, tracked FR with an exit
+full erasure of attribution metadata is an open, tracked issue with an exit
 criterion — see the attribution-metadata erasure row in
-[product/roadmap.md](../product/roadmap.md) and the boundary statement in
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) and the boundary statement in
 [audit-and-lineage.md](audit-and-lineage.md).
 
 ## Time
@@ -138,7 +134,7 @@ criterion — see the attribution-metadata erasure row in
 The single authoritative source for a journal event's `at` is the **Postgres
 primary's clock, read inside the committing transaction**. No application clock
 participates: a server replica's clock, a client's clock, and a declared
-`simulated_time` ([simulations.md](simulations.md)) are never what `at` records.
+`simulated_time` ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)) are never what `at` records.
 One clock per deployment means two events' timestamps are comparable without
 asking which machine stamped them.
 
@@ -162,7 +158,7 @@ order is proven by `seq` alone
 
 ## The lake and the outbox protocol (D2, D5)
 
-*Not scheduled; outbox rows are written since v0.1.0 · [releases](../product/releases.md)*
+*Not scheduled; outbox rows are written since v0.1.0 · [releases](../changelog.md)*
 
 Delta Lake is the derived body lakehouse. Its purpose is narrowed and named:
 **reconciliation, lineage, metadata analytics, and future journalled
@@ -170,7 +166,7 @@ per-audience exports.** It serves no client read — recall, search, fetch and
 graph reads are all answered from Postgres
 ([retrieval.md](retrieval.md)) — and it is never the authority: when journal
 and lake disagree, the journal wins and the lake is repaired
-([reconciliation.md](reconciliation.md)). The benefit of a lake that nothing
+([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)). The benefit of a lake that nothing
 reads online is that its write path can be asynchronous, batchy, and
 repairable without a serving outage; the cost is running a second storage
 system whose only consumers are batch jobs, accepted because the data the lake
@@ -182,7 +178,7 @@ Containment rules, restated from their owning pages because the lake writer
 enforces them: **no held body ever reaches the lake** — `bronze.events` mirrors
 journal events with digest-only payloads, and silver materialization is
 enqueued by promotion only ([admission.md](admission.md)); simulation
-provenance is indelible in lake rows ([simulations.md](simulations.md)).
+provenance is indelible in lake rows ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 Lake bodies are per-artifact-DEK ciphertext; lake rows carry `artifact_id`,
 `workarea_id` (the stable key; path-at-write kept as history), writer identity,
 principal, timestamps, provenance class, plaintext digest **and** ciphertext
@@ -207,7 +203,7 @@ Exactly-once delivery rests on Delta application transaction ids: appId
 > check-and-record semantics is **to be verified against delta-rs
 > documentation, with a fetch date, at writing time** (D17); as of this draft
 > it is unverified. The exit criterion is the delta-rs exactly-once conformance
-> test FR in [product/roadmap.md](../product/roadmap.md) ("exactly-once,
+> test issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) ("exactly-once,
 > verified by conformance test T-n"). Until that test passes, every
 > "exactly-once" in this section reads as a design commitment, not a property.
 
@@ -229,7 +225,7 @@ Exactly-once delivery rests on Delta application transaction ids: appId
    never land at or below the frontier: it is simply cut into a later batch.
    A long-running transaction holds the horizon back; that surfaces as
    frontier lag (`stale-frontier`,
-   [reconciliation.md](reconciliation.md)), never as loss.
+   [reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)), never as loss.
 2. **Group by target table.** Rows in the batch are partitioned by the Delta
    table each operation touches (`bronze.events`, `silver.claims`, gold
    tables).
@@ -318,7 +314,7 @@ retry budget, the lake writer:
 3. advances past it.
 
 The reconciler reports dead-lettered rows as a named finding class
-(`dead-lettered`, [reconciliation.md](reconciliation.md)); `oml doctor`
+(`dead-lettered`, [reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)); `oml doctor`
 surfaces the count. Repair is a journalled re-enqueue — never a manual table
 edit. The cost of advancing past a poison row is a lake that is knowingly,
 visibly incomplete until repair; the alternative — a stalled frontier — hides
@@ -328,18 +324,18 @@ the problem inside unbounded lag, so the skip is journalled instead.
 
 Lake-writer throughput and Delta commit latency are unmeasured — nothing has
 run — and no figure is asserted until one is measured (D17); the exactly-once
-claim itself awaits FR-3's conformance test
-([roadmap](../product/roadmap.md)).
+claim itself awaits #101's conformance test
+([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 ## Attachments (D3)
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Files, images and PDFs are content-addressed encrypted objects.
 
 **Upload.** Attachments upload through resumable upload sessions: chunked, with
 the session recording the expected digest up front (`upload_sessions` in
-[data/postgres-schema.md](../data/postgres-schema.md)). A retry resumes the
+[data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). A retry resumes the
 session or restarts it — the behavior is defined by the session state machine,
 not improvised per client. The session is scoped to the uploading key.
 

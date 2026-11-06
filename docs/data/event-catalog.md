@@ -1,18 +1,16 @@
 <!--
 id: data/event-catalog
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named; the connection events and why refreshes are not events
 -->
 
 # Journal event catalog
 
-**Status:** design draft for review · decided, not built
-
 Every state change in OML is a journal event: signed, hash-chained per tenant, append-only. This
 page catalogues every event type and its payload shape. The chain mechanics (sequencing, signing,
 the commit transaction) are declared in [storage](../architecture/storage.md); the table that holds
-these events is in [postgres-schema](postgres-schema.md). Event names and field spellings below are
+these events is in [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations). Event names and field spellings below are
 design identifiers — normative in shape, adjustable in spelling at implementation without a design
 change.
 
@@ -24,10 +22,10 @@ Two rules govern every payload:
   that first journals a body or attachment carries both the plaintext digest (content identity)
   and the ciphertext digest of the stored per-artifact-DEK encrypted object, computed at admission
   and covered by `signed_bytes` — the ciphertext digest is what the key-less reconciler compares
-  store bytes against ([architecture/reconciliation.md](../architecture/reconciliation.md)).
+  store bytes against ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 - **Attribution in the clear.** `principal`, `api_key_id` and timestamps sit in the envelope, not
-  the payload, and are not erased by shredding — attribution-metadata erasure is a tracked FR in
-  the [roadmap](../product/roadmap.md).
+  the payload, and are not erased by shredding — attribution-metadata erasure is a tracked issue in
+  the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## The envelope
 
@@ -277,7 +275,7 @@ Claim↔claim connection proposals enter the admission pipeline; ratification is
 
 A dreamer(propose) key proposes a labelled claim↔claim edge; the proposal is pending, confers
 nothing, and enters the lineage closure computed at promotion time. The label vocabulary is not
-fixed by the design — an open detail in the [roadmap](../product/roadmap.md).
+fixed by the design — an open detail in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## Brief-edge family
 
@@ -894,7 +892,7 @@ through the named pipelines; the counts, never a query. Folds nothing.
 ## Simulation family
 
 The fenced provenance channel. Semantics and taint rules:
-[simulations](../architecture/simulations.md).
+[simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md).
 
 ### simulation.opened
 
@@ -1015,7 +1013,7 @@ The lake-writer exhausted a poison row's retry budget, dead-lettered it, and adv
 
 One finding from the closed vocabulary (missing, orphan, duplicate, state-mismatch,
 digest-mismatch, stale-frontier, dead-lettered), with the identity and attempt counter that let
-recurrence halt auto-repair (D16, [reconciliation](../architecture/reconciliation.md)).
+recurrence halt auto-repair (D16, [reconciliation](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 
 ### system.reconciliation_repair
 
@@ -1177,8 +1175,8 @@ become visible. A **scan veto is not an event either**: `submission.scan_veto` i
 any other refusal, and refusals journal nothing — the deterministic scan's verdict is reproducible
 from the journalled rule-set pin, and letting hostile input write into the signed chain would hand
 an attacker the chain's growth. Whether refused submissions should leave a durable trace outside
-the chain (a scan-refusal log shaped like the read log) is RS-16 on the
-[roadmap](../product/roadmap.md). Upload-session part arrivals are operational state in `upload_sessions`; only the
+the chain (a scan-refusal log shaped like the read log) is #140 on the
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). Upload-session part arrivals are operational state in `upload_sessions`; only the
 completed attachment binding (`submission.attach`) is journalled. On the connection surface
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d12), issuing an access token
 and refreshing are not events: they change no authority, and one event per access-token lifetime
@@ -1189,4 +1187,4 @@ scan-veto reasoning never writes into the chain. A connect code spent with no to
 visible in `connect_codes` and journals nothing, since no authority came of it. Where an event's exact payload
 fields are still open (for example the independence-axis fields a `policy_snapshot` must carry for
 crew-level independence), the owning page says so and the gap is tracked in the
-[roadmap](../product/roadmap.md).
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).

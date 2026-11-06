@@ -224,9 +224,9 @@ The files under `results/offline/` are not rendered into the API docs' benchmark
 ## What moves "needs more" to "serve"
 
 1. Kind 2's read in Postgres under row security at 10,000 and 100,000 rows, floor 0.1 and 128
-   tokens, p50 / p95 beside `bm25-postings` (ADR-0052 d4, FR-100).
+   tokens, p50 / p95 beside `bm25-postings` (ADR-0052 d4, #103).
 2. A `candle` port of distill whose weights match this encoder's to 1e-4 on the synthetic set,
-   and its CPU per write on the lead (FR-101).
+   and its CPU per write on the lead (#104).
 3. For dense: an exact cosine scan over readable rows in Postgres (pgvector `halfvec`, no index)
    at the same sizes, and the query encoder pinned to 4 threads under concurrent recalls;
    arctic-s first.

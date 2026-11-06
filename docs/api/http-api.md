@@ -1,15 +1,11 @@
 <!--
 id: api/http-api
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what the two-ring JSON surface commits — /v1 provider and /v2 lab routes, authentication, idempotency records, the pagination convention, and the verb ceiling per endpoint; which events a key sees on the events tail; which records carry a name, what a name may spell, and how a name is accepted and resolved wherever an id is; the /mcp challenge, the discovery documents, the OAuth endpoints and the authorization page of connections
 -->
 
 # HTTP API
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the routed operations arrived in v0.1.0, v0.2.0 and v0.3.0; the rewrite arrived in v0.4.0 ([releases](../product/releases.md)).
 
 This page owns decision **D13** as contract: the two-ring JSON surface — the provider ring
 (`/v1`) and the lab ring (`/v2`) — authentication, idempotency
@@ -41,16 +37,16 @@ wrappers and the rule that regenerates them on every change to this contract are
 
 ## Two rings
 
-*Available since v0.1.0; `workarea` in the request in place of the `X-OML-Workarea` header since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `workarea` in the request in place of the `X-OML-Workarea` header since v0.4.0 · [releases](../changelog.md)*
 
 One keyed listener carries two **stability rings**
 ([ADR-0022](../adr/ADR-0022-two-ring-api.md)); this page remains the one contract document for
 both, and `/healthz` and `/readyz` stay unversioned.
 
 - **The provider ring (`/v1`)** is the memory provider foundation: submit (and the reserved
-  `POST /v1/memories:batch`, [FR-12](../product/roadmap.md)), read own and promoted, recall,
+  `POST /v1/memories:batch`, #122), read own and promoted, recall,
   supersede, and the attachment upload/fetch flow. **The covenant:** once
-  [FR-21](../product/roadmap.md) declares v1 stable, v1 changes are additive only — no field
+  #150 declares v1 stable, v1 changes are additive only — no field
   removed, no semantic changed, no status code repurposed; anything that would break a v1 client
   is, by definition, a v2 capability. A provider-ring request names its workarea in one field,
   `workarea` — a node id or [name](#names-and-ids), honored only within the key's grants — in the
@@ -78,7 +74,7 @@ the constitution.
 
 | Convention | Rule |
 |---|---|
-| Base path | Two rings on one listener ([Two rings](#two-rings)): `/v1` the provider ring (covenant-bound once FR-21 closes), `/v2` the lab ring (evolving; may re-version to `/v3` without touching `/v1`). Additive fields are not breaking, and clients must ignore unknown response fields. |
+| Base path | Two rings on one listener ([Two rings](#two-rings)): `/v1` the provider ring (covenant-bound once #150 closes), `/v2` the lab ring (evolving; may re-version to `/v3` without touching `/v1`). Additive fields are not breaking, and clients must ignore unknown response fields. |
 | Content type | `application/json; charset=utf-8`, except attachment part upload (`application/octet-stream`) and the export bundle download. A request body in any other media type answers `415 request.unsupported_media` ([errors.md](errors.md)). Responses are `application/json`; `Accept` is not negotiated in v1. The OAuth endpoints of [connections](#connections-oauth-for-hosted-mcp-clients) are outside both rings and take their RFCs' media types: the token request and the page's form are `application/x-www-form-urlencoded`, and the authorization page is `text/html`. |
 | Rate and quota | `429 limit.rate` / `limit.quota` may be answered by any operation; it is declared explicitly only on the v1 ring and high-traffic v2 surfaces ([errors.md](errors.md)). |
 | Timestamps | RFC 3339, UTC, e.g. `2026-10-29T14:03:17Z`. |
@@ -89,7 +85,7 @@ the constitution.
 
 ## Request ids, correlation and trace context
 
-*Available since v0.4.1 · [releases](../product/releases.md)*
+*Available since v0.4.1 · [releases](../changelog.md)*
 
 Three request headers are read and two response headers returned on every route, the probes,
 `/mcp` and the OAuth endpoints included ([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d4–d6, d13). None of them is refused:
@@ -138,14 +134,14 @@ overlap window of **one minor release cycle**, and the overlap is announced with
 Deprecated endpoints will carry `Deprecation` and `Sunset` headers once implemented — decided,
 not built, like everything on this page.
 
-**Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
+**Freezing v1.** #150 is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
 (currently `0.6.0-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
 
-*Available since v0.1.0; grants of several roles per key since v0.2.0; `tenant` in place of `tenant_id` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; grants of several roles per key since v0.2.0; `tenant` in place of `tenant_id` since v0.4.0 · [releases](../changelog.md)*
 
 Every request on either ring carries `Authorization: Bearer <api-key>`. `/mcp` is designed to
 take the same header with either a key value or, where the deployment sets `oauth.issuer`, a
@@ -191,7 +187,7 @@ token, as exactly the key the connection is bound to, and no other route does
 
 ## Names and ids
 
-*Available since v0.3.0; request fields named after the kind they reference, the v0.3.0 spellings refused, and `text` in place of `body` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.3.0; request fields named after the kind they reference, the v0.3.0 spellings refused, and `text` in place of `body` since v0.4.0 · [releases](../changelog.md)*
 
 This section is the single declaration site for names
 ([ADR-0026](../adr/ADR-0026-names-are-keys.md)): which records carry one, what a name may spell,
@@ -385,13 +381,13 @@ unnamed and unlisted — lists every row of the chain that
 predates names, those rule 2 keeps included (with `name` equal to `prior_name`), and every crew
 record it creates ([event catalog](../data/event-catalog.md)). The fold takes every such row's
 name from this event alone, never from a creation event, and a re-fold reads it before the
-creation events it names ([folds](../data/postgres-schema.md#folds-of-the-journal-vs-operational-tables)).
+creation events it names ([folds](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 `prior_name` is read from the journal, as the creation event carried it; the migration carries no
 creation-time name into `name`, and keeps the PoC's `tenants.name` and `workareas.name` as
 `prior_name` columns that no reference reads. Every earlier event stays as it was signed. The
 schema steps around the event — the PoC's columns renamed, the new `name` columns added
 nullable, filled by the fold, then made `NOT NULL` — are on
-[PostgreSQL schema](../data/postgres-schema.md#names-and-tenants).
+[PostgreSQL schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations).
 
 A follower on the schema version that adds names reports not ready on `/readyz` until it has
 folded `system.names_assigned` for every chain; until then it serves no request. Because the
@@ -404,7 +400,7 @@ revokes the old one; the derived name stays on the old key, and still addresses 
 
 ## Idempotency
 
-*Available since v0.1.0; the body's `workarea` as the resolved workarea component since v0.4.0; the in-progress answer is not built · [releases](../product/releases.md)*
+*Available since v0.1.0; the body's `workarea` as the resolved workarea component since v0.4.0; the in-progress answer is not built · [releases](../changelog.md)*
 
 Every state-creating `POST` requires an `Idempotency-Key` header (missing →
 `request.idempotency_key_required`). Read-shaped `POST`s — `recall`, `settings/validate` — do not
@@ -413,7 +409,7 @@ and verified by digest at completion, so replaying a part is harmless.
 
 The semantics are D13's **idempotency record**: `(key_id, workarea, idem_key) → request digest +
 state + stored response`, claimed in its own transaction **before any side effect** (the row lives
-in Postgres; [postgres-schema.md](../data/postgres-schema.md)). On the provider ring the
+in Postgres; [postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). On the provider ring the
 workarea component is the **resolved** target — the body's `workarea`, else the key's
 `default_workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). For supersede, and for lab
 endpoints that name no workarea (keys, bans, review verdicts, simulations, exports, settings, tenants), the
@@ -470,7 +466,7 @@ caller that lost it mints a new one
 byte-for-byte replay above, decided, not built
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, amending ADR-0014 d3). A
 bearer key's issuance or rotation replays byte for byte, value included
-([FR-36](../product/roadmap.md)). As built, the key routes keep no idempotency record at all: a
+(#127). As built, the key routes keep no idempotency record at all: a
 retried connector-key issuance answers `name.taken`, and a retried `connect-codes` call mints
 another code, which voids the first.
 
@@ -513,7 +509,7 @@ supersede and the listing take `workarea`, which supersede accepts only when it 
 target's workarea, and every one of them, get included, refuses the v0.3.0 `X-OML-Workarea`
 header with `request.validation`. Get, the own-work listing and supersede never answer
 `request.workarea_unresolved`: get resolves no workarea, an own-work listing without `workarea`
-reads every workarea the key wrote in, and supersede takes the target's workarea. The reserved `POST /v1/memories:batch` ([FR-12](../product/roadmap.md)) will
+reads every workarea the key wrote in, and supersede takes the target's workarea. The reserved `POST /v1/memories:batch` (#122) will
 join this table. The Contract column says where each endpoint is declared: **served** in
 [openapi.yaml](openapi.yaml), routed by the server, or **designed** in
 [openapi-designed.yaml](openapi-designed.yaml), decided and answering 404 until it is built:
@@ -606,7 +602,7 @@ exist (R1, R4).
 
 ### Submit — `POST /v1/memories`
 
-*Available since v0.1.0; `workarea` in the body, the optional `verb` and `kind`, and the derived `claim_key` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `workarea` in the body, the optional `verb` and `kind`, and the derived `claim_key` since v0.4.0 · [releases](../changelog.md)*
 
 One endpoint for the two submission verbs; `verb` selects the journal event
 (`submission.remember` / `submission.learn`, [event catalog](../data/event-catalog.md)). The
@@ -675,7 +671,7 @@ with `request.workarea_unresolved` (422).
   submit is refused (`submission.attachment_missing`).
 - A `derives_from` that touches a simulation row forces `simulation_id` to that row's simulation
   (`submission.simulation_id_required` otherwise); writing with a `simulation_id` requires the key
-  to be in that simulation's audience ([simulations.md](../architecture/simulations.md)).
+  to be in that simulation's audience ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 - `universe` refuses direct claim writes (`submission.universe_refused`); a `validated` workarea
   refuses all new writes (`workarea.frozen`). *Since v0.5.0
   ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d7):* `universe` admits writes from a curator — a tenant
@@ -715,7 +711,7 @@ and a retirement is not checked. To replace a listed row instead, supersede it.
 
 ### Recall — `POST /v1/memories/recall`
 
-*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` since v0.5.5 · [releases](../product/releases.md)*
+*Available since v0.1.0; budgets, own held rows and steering since v0.2.0; `workarea` in the body, `include_text`, `include_unreviewed` and `text` since v0.4.0; `search`, `match` and the answer's `search` and `matched` since v0.5.5 · [releases](../changelog.md)*
 
 Ranked retrieval over **promoted** rows in scope by a named search pipeline, served from Postgres,
 never from the lake (D12; [retrieval.md](../architecture/retrieval.md#search-pipelines)). The scope is the subtree of the
@@ -909,7 +905,7 @@ deployment's applies, and `oml doctor` warns.
 
 ### Search — `GET /v1/memories`
 
-*Available since v0.2.0, as the own-work listing; the `workarea` parameter, and an own-work listing across every workarea the key wrote in, since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.2.0, as the own-work listing; the `workarea` parameter, and an own-work listing across every workarea the key wrote in, since v0.4.0 · [releases](../changelog.md)*
 
 Structured listing, paginated. Parameters: `workarea` (the subtree read), `claim_key`, `state`,
 `kind`, `since` (inclusive), `until` (exclusive), `own`. Returns memory summaries (no text), each carrying `tokens`,
@@ -946,7 +942,7 @@ re-applies the filters ([Pagination](#pagination)). On every listing, as on get 
 
 ### Get — `GET /v1/memories/{artifact_id}`
 
-*Available since v0.1.0; `text` in place of `body` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; `text` in place of `body` since v0.4.0 · [releases](../changelog.md)*
 
 One memory with its `text` (decrypted on the serving path only), its `tokens` and attachment
 descriptors. The calling key may fetch its own rows in any state, with no grant needed (global
@@ -974,7 +970,7 @@ descendant can derive from its author's held row, and its readers never learn th
 from either field. The [lineage read](#lineage-get-v2memoriesartifact_idlineage) does name it:
 the full closure appears there, with every node outside the caller's read scope elided to a
 redacted bare id, so a reader learns that an unreadable ancestor exists and its id, never its
-content — a stated residual, [FR-31](../product/roadmap.md).
+content — a stated residual, #129.
 
 <a id="universe-claims"></a>**A claim that lives in `universe` — since v0.5.0** ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9). To every key outside its authoring key set, a
 version whose workarea is `universe` is served with `workarea_id` the universe id and
@@ -987,7 +983,7 @@ The journal and the [evidence export](#evidence-export) keep every attribution f
 
 ### Lineage — `GET /v2/memories/{artifact_id}/lineage`
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 The derivation closure over `derives_from` and claim edges, **pending and ratified both**,
 serialized as stored — the server serializes the graph, it does not compute analytics over it
@@ -995,13 +991,13 @@ serialized as stored — the server serializes the graph, it does not compute an
 `redacted: true`, so the shape of the closure is visible without leaking content. A redacted
 node still discloses that the version exists and its id — another author's held or rejected
 ancestor of a promoted version included — which is the residual
-[FR-31](../product/roadmap.md) tracks. For a claim in `universe`, read by a key outside its
+#129 tracks. For a claim in `universe`, read by a key outside its
 authoring key set, the closure stops at `universe`: nodes outside it are omitted, not redacted
 (since v0.5.0, [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9).
 
 ### Supersede — `POST /v1/memories/{artifact_id}/supersede`
 
-*Available since v0.1.0; the tip moves at ratification since v0.2.0; `workarea` in the body since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the tip moves at ratification since v0.2.0; `workarea` in the body since v0.4.0 · [releases](../changelog.md)*
 
 Proposes a replacement for the version `{artifact_id}` names: a new attributed submission of the
 same `claim_key`, held like any write, whose `derives_from` includes the target and whose response
@@ -1010,7 +1006,7 @@ key through edit-as-proposal (D9) — is the supersede rule declared on
 [roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), and
 R2 keeps every proposer off the review. The target must be the current served tip, else
 `submission.tip_conflict` with `details.current_tip` when the caller can read it; a held version
-cannot be superseded ([RS-17](../product/roadmap.md)).
+cannot be superseded (#156).
 
 *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d19):*
 `expected_version` is required: the claim's latest version the caller can read, as it last read
@@ -1072,7 +1068,7 @@ anchor index and scores only them, a broad one joins the indexed columns; the re
 equality and the prefix a range on leakproof operators. The statistics a score uses are the
 unfiltered ones, so a filtered recall is the unfiltered list filtered then cut.
 
-**Origin kind and the chat anchor.** *Planned for v0.6.0 ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1–d5).* Submit
+**Origin kind and the chat anchor.** *Since v0.6.0 ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1–d5).* Submit
 and supersede take an optional `origin: {kind}`, one of `repo`, `doc`, `code`, `lake`, `chat`,
 `web`, `manual`; omitted, `manual` is recorded and journalled. It is signed in the submission
 event, immutable, and never inherited. `chat` requires a chat anchor and a chat anchor requires
@@ -1099,7 +1095,7 @@ derived from a held version. `Idempotency-Key` required.
 
 ### Guardrails — `GET /v1/guardrails`
 
-*Since v0.5.1 · [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · [releases](../product/releases.md)*
+*Since v0.5.1 · [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · [releases](../changelog.md)*
 
 A guardrail is a claim of kind `guardrail`: a rule for every agent at its workarea or below,
 with a `severity` (`never`, `must` or `should`) and an optional `rule` in the `oml-gr/1` grammar,
@@ -1153,7 +1149,7 @@ it.
 
 ## Attachments
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Resumable upload sessions, then content-addressed fetch (D3;
 [storage.md](../architecture/storage.md)).
@@ -1181,7 +1177,7 @@ counts (D3).
 - **`Range` requests are not supported in v1.** A `Range` header is ignored and the full object
   is served with `200`, never `206`. The cost is stated rather than hidden: an interrupted fetch
   restarts from byte zero, which at the attachment bound ([Limits](#limits)) means re-moving up
-  to 64 MiB — tracked as [FR-29](../product/roadmap.md).
+  to 64 MiB — tracked as #121.
 
 The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 [Evidence export](#evidence-export)) has the same fetch semantics: whole object, no
@@ -1189,7 +1185,7 @@ The export bundle download (`GET /v2/exports/{export_id}/bundle`,
 
 ## Workareas
 
-*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status transitions and the policy, pending transitions and brief fields since v0.5.2 · [releases](../product/releases.md)*
+*Available since v0.1.0 (create), v0.2.0 (read) and v0.3.0 (tree, crew); `parent` in place of `parent_id` since v0.4.0; status transitions and the policy, pending transitions and brief fields since v0.5.2 · [releases](../changelog.md)*
 
 Reads require reader effective access on the node, and nodes outside scope are absent
 (`access.not_found`) — or the admin key role, which reads the structure of every workarea in its
@@ -1213,7 +1209,7 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 
 ## Crews
 
-*Available since v0.3.0 · [releases](../product/releases.md)*
+*Available since v0.3.0 · [releases](../changelog.md)*
 
 A crew is a named record of an externally operated AI crew — `{crew_id, name, charter_uri,
 external_manager}` — recorded, not operated; a workarea names at most one, and a key may name one
@@ -1231,7 +1227,7 @@ workarea sees that workarea's crew record in the [workarea read](#workareas), an
 
 ## Edges
 
-*Available since v0.5.2 for `kind` claim and brief; `kind` workarea designed · [releases](../product/releases.md) · [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4, d7*
+*Available since v0.5.2 for `kind` claim and brief; `kind` workarea designed · [releases](../changelog.md) · [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d4, d7*
 
 Claim↔claim and workarea↔workarea connections are one designed family of three operations, keyed
 by `kind` ∈ `claim` | `workarea`, each kind keeping its own authority, refusal codes and journal
@@ -1247,7 +1243,7 @@ and an edge confers zero access.
 - `POST /v2/edges` — `kind=claim`: `{kind, from_artifact_id, to_artifact_id, label}` under
   dreamer(propose); the label vocabulary for claim edges is not fixed by the design (the closed
   label set exists for workarea edges only), and fixing it is an open detail for the
-  [roadmap](../product/roadmap.md). `kind=workarea`: `{kind, from_workarea_id, to_workarea_id,
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). `kind=workarea`: `{kind, from_workarea_id, to_workarea_id,
   label}`, label ∈ `relates_to` \| `continues` \| `derived_from` \| `mirrors`, under dreamer(propose)
   effective access on at least one endpoint and reader effective access on both (an admin who must
   act here holds a separate dreamer key — a key never combines admin with dreamer grants,
@@ -1260,12 +1256,12 @@ and an edge confers zero access.
 
 ## Vocabularies
 
-*Parked · [releases](../product/releases.md)*
+*Parked · [releases](../changelog.md)*
 
 The thin read surface over AI+Human vocabularies — terms, hierarchy, mappings and releases are
 claims in vocabulary workareas, ridden through the ordinary pipeline; the model is owned by
 ADR-0021 ([decision register](../adr/index.md)) and
-[ontologies.md](../architecture/ontologies.md). Everything here is reader-ceiling, cursor-paginated
+[ontologies.md](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md). Everything here is reader-ceiling, cursor-paginated
 per the convention, and fails closed as absence: an unknown CURIE and one outside the key's read
 scope are indistinguishable (`access.not_found` on the term get, an empty match elsewhere).
 
@@ -1287,7 +1283,7 @@ successors for one-hop self-healing) — are declared in [errors.md](errors.md).
 
 ## Events tail
 
-*Available since v0.1.0; filtered per key since v0.2.0; the `workarea` parameter since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; filtered per key since v0.2.0; the `workarea` parameter since v0.4.0 · [releases](../changelog.md)*
 
 `GET /v2/events?after_seq=<n>&limit=<m>&workarea=<node>` — the per-tenant journal, served as
 the [event catalog](../data/event-catalog.md)'s envelopes with **digest-only payloads** (D1: no
@@ -1304,7 +1300,7 @@ the journal up to the event and on the key's current access, never on later row 
 
 | Event family | Who sees it |
 |---|---|
-| `lifecycle.*` | a key for which **(a)** or **(b)** holds, and no other. **(a) Reader clause:** the key has reader access on the subject's workarea, and the subject passes three conditions. *Promoted:* in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`; a version never promoted fails it; a `lifecycle.reassign` is judged on the journal before it, so the readers it takes a promoted version from see it leave. *Audience:* the subject is not a simulation row or sim-derived version outside the key's audience ([simulations](../architecture/simulations.md)). *Self-signed:* the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea ([retrieval](../architecture/retrieval.md)). **(b) Author clause:** the key's [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, read from the journal as the version's submission event (`submission.*` or `simulation.write`) says; the subject's workarea lies within the tail's subtree minus the key's global denials; and the subject is not a simulation row or sim-derived version outside the key's audience. So the erase of another author's held or never-promoted version reaches no reader, and an author sees every `lifecycle.*` event of its own versions in the tail's subtree |
+| `lifecycle.*` | a key for which **(a)** or **(b)** holds, and no other. **(a) Reader clause:** the key has reader access on the subject's workarea, and the subject passes three conditions. *Promoted:* in the journal up to and including the event, the subject version's latest transition between held and promoted is a promotion (`lifecycle.promote` or `lifecycle.supersede`), not a `lifecycle.reassign` with `re_enters_held: true` or a `review.reopen`; a version never promoted fails it; a `lifecycle.reassign` is judged on the journal before it, so the readers it takes a promoted version from see it leave. *Audience:* the subject is not a simulation row or sim-derived version outside the key's audience ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). *Self-signed:* the subject is not `self_signed` unless the tail's `workarea_id` is the subject's own workarea ([retrieval](../architecture/retrieval.md)). **(b) Author clause:** the key's [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, read from the journal as the version's submission event (`submission.*` or `simulation.write`) says; the subject's workarea lies within the tail's subtree minus the key's global denials; and the subject is not a simulation row or sim-derived version outside the key's audience. So the erase of another author's held or never-promoted version reaches no reader, and an author sees every `lifecycle.*` event of its own versions in the tail's subtree |
 | `workarea.*` | keys with reader access on the subject workarea, per the table below |
 | `submission.*`, `simulation.write` | only a key whose [own](../architecture/roles-and-keys.md#own) key set holds the subject version's authoring key, `memories.author_key_id` — for `submission.*` and `simulation.write` the envelope's `api_key_id`, for `lifecycle.*` the `api_key_id` of the subject's submission event, read from the journal — within the tail's subtree minus its global denials, and only while the subject is not a simulation row or sim-derived version outside the key's audience, with no reader grant needed on the event's own workarea: the own-work rule |
 | `review.*`, `claim_edge.*`, `crew.*`, `key.*`, `grant.*`, `connection.*`, `tenant.*`, `system.*` | no key on this tail; they belong to the [evidence export](#evidence-export) |
@@ -1345,7 +1341,7 @@ key what happened to what it may read, never which reviewer or admin did it. The
 positions, and so is `permission_epoch` on the [workarea read](#workareas), so a key learns how
 many events it cannot see occurred between two it can, and when — a count, never content. It is
 a stated residual, tracked with the other counts a key cannot read as
-[FR-31](../product/roadmap.md).
+#129.
 
 One call scans at most `limit` raw events from `after_seq + 1`; the response carries
 `next_after_seq`, which the client passes back verbatim as its next `after_seq`, and `head_seq`,
@@ -1362,17 +1358,17 @@ the chain live ([cli/reference.md](../cli/reference.md)).
 
 ## Review
 
-*Available since v0.1.0; a verdict without `serve_id` since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; a verdict without `serve_id` since v0.4.0 · [releases](../changelog.md)*
 
 The review ceremony over HTTP — external crews holding dreamer keys are the designed review
 capacity; the CLI is the human exception path (D11, D14). Review throughput is unmeasured —
-[FR-2](../product/roadmap.md).
+#98.
 
 | Endpoint | Semantics |
 |---|---|
 | `GET /v2/review/queue?workarea=…` | Held-item counts and oldest ages per workarea in the reviewer's scope — the same numbers `oml status` reports as queue depth. |
 | `POST /v2/review/next` | Serve exactly one held item: body, **all** attachments (as fetch descriptors honored by `GET /v1/attachments/{digest}?serve_id=…`), and for a supersession the version it replaces. Returns a `serve_id` bound server-side to (reviewer key, artifact version, attachment digest set), expiring, consumed by its first verdict, invalidated by any change to the served content (D14). Serves only rows within the key's dreamer effective access on the row's workarea. `204` when nothing in scope waits. A `held_by: service` key is refused here, as on every review-class verb and on status-transition ratify, with `access.verb_ceiling` before any lookup ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). Refused per item with `review.author_in_lineage` when the reviewer's key or principal appears in the item's lineage closure, or authored a rival held successor of the same target ([rival successors](../architecture/roles-and-keys.md#the-dreamer-split)) — the server never serves what this key may not judge. The subtree filter `workarea` is a designed field, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml); sent, it answers its v0.3.0 `request.validation`, since the queue is served whole ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). |
-| `POST /v2/review/verdicts` | `{serve_id, verdict: "approve" \| "reject", reason}` (`reason` required to reject). Accepted only against a valid, unexpired, unconsumed serve bound to this key (`review.serve_invalid` names which condition failed). `serve_id` is optional: omitted, the verdict applies to the one item this key has claimed through `review next`, and while the key holds none or several it is refused with `request.validation`, `details.field` `/serve_id`, and nothing is journalled. The default rests on the claimed queue row, not on a serve record, as the explicit `serve_id` does today (FR-66; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10). `Idempotency-Key` is required and honoured, scoped to the key with a nil workarea and digested over the body as sent, `serve_id` `null` when omitted; the record is looked up after the verb ceiling and before the default resolves, so a retry of a committed verdict replays its stored response with `Idempotency-Replay: true` whatever the key has claimed since, and never applies to another item ([Idempotency](#idempotency)). The journalled verdict records the served digests. Response states the resulting state: `promoted` (policy satisfied, ratification journalled with its policy snapshot), `held` (more verdicts required by the policy's `k`), or `rejected`. Requires dreamer effective access on the row's workarea, resolved by the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) like every other verb: `access.grant_refused` with `needed_role: dreamer` where reader is effective there, `access.not_found` otherwise. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and `claim_key` is refused with `409 submission.tip_conflict` (`details.current_tip` when readable): nothing is journalled and the `serve_id` is not consumed, so the same serve can still carry a reject ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d10). |
+| `POST /v2/review/verdicts` | `{serve_id, verdict: "approve" \| "reject", reason}` (`reason` required to reject). Accepted only against a valid, unexpired, unconsumed serve bound to this key (`review.serve_invalid` names which condition failed). `serve_id` is optional: omitted, the verdict applies to the one item this key has claimed through `review next`, and while the key holds none or several it is refused with `request.validation`, `details.field` `/serve_id`, and nothing is journalled. The default rests on the claimed queue row, not on a serve record, as the explicit `serve_id` does today (#130; [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10). `Idempotency-Key` is required and honoured, scoped to the key with a nil workarea and digested over the body as sent, `serve_id` `null` when omitted; the record is looked up after the verb ceiling and before the default resolves, so a retry of a committed verdict replays its stored response with `Idempotency-Replay: true` whatever the key has claimed since, and never applies to another item ([Idempotency](#idempotency)). The journalled verdict records the served digests. Response states the resulting state: `promoted` (policy satisfied, ratification journalled with its policy snapshot), `held` (more verdicts required by the policy's `k`), or `rejected`. Requires dreamer effective access on the row's workarea, resolved by the [refusal order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order) like every other verb: `access.grant_refused` with `needed_role: dreamer` where reader is effective there, `access.not_found` otherwise. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and `claim_key` is refused with `409 submission.tip_conflict` (`details.current_tip` when readable): nothing is journalled and the `serve_id` is not consumed, so the same serve can still carry a reject ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d10). |
 | `GET /v2/review/held` | *Since v0.5.7 ([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) d1, d2).* The held items this key may judge, with their text, oldest first by `held_since` then `artifact_id`: exactly what `review next` would serve it — rows in its dreamer effective access, not claimed by another key, outside its lineage-closure and rival-successor exclusion. Filters `workarea` (that node's subtree, by id or name), `author_key` (by id or name) and `claim_key_prefix` (literal); `limit` 1 to 200, default 50; `next_cursor`. Each item is the `Memory` shape with `held_since` and `same_user`. Claims nothing, journals nothing. Only a dreamer key `held_by: human`: any other key, a crew's dreamer key held by an agent included, answers `access.verb_ceiling` with `details.reason: bulk_review_is_human_only` before any lookup. |
 | `POST /v2/review/verdicts/bulk` | *Since v0.5.7 (ADR-0055 d3–d8, d12).* `{verdict, artifact_ids, reason}`: 1 to 200 distinct ids the reviewer was listed, never a filter; `reason` required to reject. Each id runs the verdict of `POST /v2/review/verdicts` in the order named, in its own transaction, with its own signed `review.approve` or `review.reject` and, for an approval, its own `lifecycle.promote` or `lifecycle.supersede`. `200` with one outcome per id — `approved` or `rejected` with `state`, `journal_seq`, `same_user` and `replayed`, or `skipped` with the `code`, `message` and `details` the single verdict would have answered (`review.author_in_lineage`, `review.serve_invalid` for a row no longer held, `submission.tip_conflict`, `access.not_found`, `access.grant_refused`, `workarea.frozen`) — and a `summary` of the counts. Nothing already committed is undone. `Idempotency-Key` is required; each item records under it and its own id, so a retry replays decided items with `replayed: true` and judges the rest, and another verdict or reason for a decided item answers that item `idempotency.digest_mismatch`. The same person-only rule as `GET /v2/review/held`; an empty, oversized, repeated or non-id `artifact_ids` is `request.validation` naming `/artifact_ids`. |
 | `POST /v2/review/reopen` | `{artifact_id, version, reason}` — non-author reopen of a rejection, a journalled verb in its own right, not a resubmission. The original author is refused (`review.author_in_lineage`). A reopen that would put a second live version under one `claim_key` and ordinal is refused with `409 submission.claim_key_conflict` ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)). |
@@ -1384,7 +1380,7 @@ promotion time, plus the per-workarea independence axis — are owned by
 
 ## Keys, grants, denials
 
-*Available since v0.1.0 (issuance), v0.2.0 (grants, denials) and v0.3.0 (key read); `workarea`, `default_workarea` and `tenant` in place of the v0.3.0 spellings since v0.4.0; revocation, rotation and grant changes not scheduled · [releases](../product/releases.md)*
+*Available since v0.1.0 (issuance), v0.2.0 (grants, denials) and v0.3.0 (key read); `workarea`, `default_workarea` and `tenant` in place of the v0.3.0 spellings since v0.4.0; revocation, rotation and grant changes not scheduled · [releases](../changelog.md)*
 
 Admin key role throughout; a grant's role must be admissible under the key's role, and an issued
 key's role never exceeds the issuer's (`access.issuer_ceiling`; the
@@ -1400,7 +1396,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys` | Issue: `{role, name, grants: [{workarea, role, deny: [{workarea}]}], default_workarea?, held_by?, crew?, expiry?, label?, principal?, tenant?, guardrail_scope?}` → `201` with the key **value, shown once**, each stored grant echoed with its `grant_id` and `epoch` (its `grant.issued` journal seq), and the `default_workarea_id` and `held_by` the key was issued with, so the issuer sees the default the server chose and whether its attestation took effect. Unknown fields are refused, and a v0.3.0 spelling names its successor in `details.renamed_to` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7); the request is validated in the [issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), which also fixes the default workarea, when the value is disclosed and what a part-way failure leaves. `name` is the key's [name](#names-and-ids), distinct from its `principal` and `label` ([key names](../architecture/roles-and-keys.md#key-names-principals-and-labels)); `crew` names the key's [crew](#crews), fixed for the key's life. Every workarea and crew reference takes an id or a name. An operator key issues only operator keys, with no `tenant`, and a tenant's first admin key, with `tenant` naming the tenant; an admin key never sends `tenant` ([issuance order](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order), step 0). The server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is the [CLI's default](../cli/reference.md#oml-keys-issuance-revocation-rotation), sent in this body like any grant. `expiry` and `tenant` are designed fields, declared under `x-oml-designed-fields` in [openapi-designed.yaml](openapi-designed.yaml) and not in openapi.yaml; each sent answers its v0.3.0 `request.validation` until key expiry and the first-admin-key path are built ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9). `connect_code: true` issues a connector key with no value and its `connect_code` `{code_id, code, expires_at, connector_url}` in the value's place, refused with `422 oauth.connect_refused` for an admin or operator role, `held_by: service` or a deployment without `oauth.issuer` ([connections](../architecture/roles-and-keys.md#connections); [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2–d4):* The body gains `user`, the person the key acts for, by name: admitted on `reader`, `writer` and `dreamer` keys with `held_by` `agent` or `human`, else `request.validation` (`details.field: user`). The first key naming a user creates the user root `universe.<user>`; a name a shared workarea holds is `name.taken`. Every grant of such a key must lie inside that root (`access.issuer_ceiling`, details `{role, admissible, grant_index, user}`), and issuance adds a `reader` grant on `universe` with `covers: node`, echoed with the others. A grant gains `covers`, `subtree` (default) or `node`; a `node` grant with deny entries is `request.validation`. Workarea references in the body resolve in the user's namespace. `guardrail_scope`, `workarea` or `ancestors` (the default), bounds which guardrails the key loads ([Guardrails](#guardrails-get-v1guardrails)), is journalled in `key.issued` and echoed in the `201`; any other value, `off` included, is `request.validation` naming it (since v0.5.1, [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) d4). |
 | `GET /v2/keys` · `GET /v2/keys/{key}` | Listing and detail: name, role, principal, label, `default_workarea_id`, `held_by`, `crew_id`, `guardrail_scope`, grants, denials, epoch, issuance/revocation events; `credential` (`bearer` or `connection`) and the key's open and revoked `connections`, each `{connection_id, client_id, client_kind, redirect_uri, resource, state, revoked_cause}`, an `authorized` one not listed (whether a connection is live, its client's name and its opening and revocation times are designed). Never values, never a token. As built, `GET /v2/keys/{key}` serves the detail. A revoked or expired key's name still resolves here. |
 | `POST /v2/keys/{key}/revoke` | Journalled revocation; effective at the key's next request served by the lead, and after replication lag on a follower ([workareas](../architecture/workareas.md#grants-bind-to-node-ids-paths-are-derived)). |
-| `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: `422 oauth.connect_refused` (`details.reason: connector_key`); a fresh connection is a new code, a fresh identity a new connector key ([connections](../architecture/roles-and-keys.md#connections)). Bulk crew rotation is open — [FR-6](../product/roadmap.md). |
+| `POST /v2/keys/{key}/rotate` | Mint a successor key — new `key_id`, linked by `rotated_from`, grants and crew reproduced from the journalled records — with `{grace, name}`: `grace` bounds the old key's remaining life, and `name` is the successor's own name (`name.taken` if held), since both keys are live through the grace window. One journalled act (`key.rotated`) carries both key ids and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). A connector key is not rotated: `422 oauth.connect_refused` (`details.reason: connector_key`); a fresh connection is a new code, a fresh identity a new connector key ([connections](../architecture/roles-and-keys.md#connections)). Bulk crew rotation is open — #120. |
 | `POST /v2/keys/{key}/grants` | Add a grant bound to a workarea **node id**, optionally with per-grant deny masks → `201`, epoch bump. |
 | `POST /v2/keys/{key}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v2/keys/{key}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. `{workarea, reason?}`, `workarea_node_id` refused naming `workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A denial on an admin key is refused, `request.validation` with `details.field: key`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
@@ -1411,7 +1407,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 
 ### Whoami — `GET /v2/whoami`
 
-*Available since v0.4.0 · [releases](../product/releases.md)*
+*Available since v0.4.0 · [releases](../changelog.md)*
 
 Any live key reads its own record, whatever its role, so a client started from its URL and key
 alone derives everything else from this one read ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
@@ -1465,12 +1461,12 @@ connect-code and connection-revoke routes and a key's connections on `GET /v2/ke
 the CLI's `--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
 `oml keys show`; doctor's `oauth_discovery`; and the lead's operational removal, at its start and
 every hour after, of unused registrations, lapsed authorization requests and codes, and expired or
-revoked tokens ([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). The connect
+revoked tokens ([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). The connect
 flow runs end to end over HTTP against the lead in continuous integration
 (`crates/bins/oml-cli/tests/connect_flow.rs`). **Not built:** doctor's `connect_codes`,
 `connections` and `connect_code_failures`; the cluster lease's issuer, since a follower is not
 built; and the connection fields designed above. No live claude.ai connection has run
-([FR-34](../product/roadmap.md)).
+(#115).
 
 **The challenge.** A `401` from `/mcp` keeps its typed body (`auth.missing` with no header,
 `auth.invalid` for a credential that failed) and carries:
@@ -1506,7 +1502,7 @@ never from the request's `Host`:
 |---|---|
 | `GET /oauth/authorize` | Checks the parameter bounds first — `state` at most 512 bytes, `client_id` and `redirect_uri` at most 2 048 bytes each, a `code_challenge` that is present matching `^[A-Za-z0-9_-]{43}$`, and no parameter sent more than once (RFC 6749 §3.1) — then validates the client (a metadata document fetched under the bounds below, or a registered client), the redirect URI (the allowlist match below), `response_type=code`, PKCE, `resource` and `scope`, then renders the connect-code page for an authorization request alive 10 minutes. A parameter past its bound, a repeated one and a present `code_challenge` that does not match the pattern included (`request.validation`), and a refused client or redirect URI (`oauth.client_invalid`, `oauth.redirect_refused`) are a `400` page and are never redirected to (RFC 6749 §4.1.2.1). After the client and the redirect URI are accepted, an absent `code_challenge`, or a `code_challenge_method` that is absent (RFC 7636 §4.3 reads that as `plain`) or not `S256`, is `oauth.pkce_required`; it and every other later refusal — `oauth.resource_mismatch`, `request.validation` — redirect with `error`, `error_description`, `state` and `iss`. The authorization request writes no row: the page's form carries it as a handle sealed by an AEAD under a key the lead generates at its start and holds only in memory, and a restart or takeover ends every page in progress ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d9). |
 | `POST /oauth/authorize` | The page's own form, in two submissions and no others. Every submission first needs either `Sec-Fetch-Site: same-origin` or, when that header is absent, an `Origin` equal to the issuer origin; `Origin: null` and anything else answer `403 oauth.origin_refused` on the page, never redirected, and consume no attempt. Step 2: exactly `handle`, the sealed handle the first page carries, and `connect_code`. Step 3: exactly `handle` and `action` (`connect` \| `cancel`), where the handle names the request row a verified code wrote and whose code is not voided. Any other combination — both fields, an action before a verified code, a second code after one verified — is `request.validation` on the page. A correct code of a key that is neither revoked nor expired is spent, the authorization request's row is written with the code's id under a fresh 256-bit handle, and the confirmation page shows what the connection will act as (below); a wrong one — unknown, expired, voided, spent, or a revoked or expired key's — answers the form again, `400 oauth.connect_code_invalid`, with the attempts left and a new sealed handle carrying one attempt fewer, and the fifth ends the request with `access_denied` (`oauth.authorization_expired`, which also answers a handle past its 10 minutes, one that does not open under the lead's key, and a step-3 handle that names no row or whose code is voided, [connections](../architecture/roles-and-keys.md#connections)). `connect` creates the connection, `authorized`, and redirects (`303`) with a 60-second, single-use authorization code, `state` verbatim, percent-encoded as a query parameter, and `iss`; `cancel` with `access_denied`, `state` and `iss`. Connect and Cancel each delete the authorization request's row in their own commit, so a later step-3 `POST` with that handle names no row and answers `oauth.authorization_expired` on the page. |
-| `POST /oauth/token` | `application/x-www-form-urlencoded`. `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` and optional `resource`, or `grant_type=refresh_token` with `refresh_token`, `client_id` and optional `resource` → `200` `{access_token, token_type: "Bearer", expires_in, refresh_token, scope: "mcp"}` with `Cache-Control: no-store`. `redirect_uri` is required exactly when the authorize request carried it, and must then equal it byte for byte; when the authorize request omitted it, `redirect_uri` may be omitted or must equal the client's one registered URI; anything else is `oauth.authorization_code_invalid`. The first exchange opens the connection and each refresh rotates the refresh token; which tokens a refresh accepts, and when a reused refresh token or authorization code revokes the connection, are declared on [roles and keys — connections](../architecture/roles-and-keys.md#connections). The client is the one stored on the connection the code or the refresh token belongs to (`oauth_connections.client_id`), and the client tables are never read here, so a document client whose cached document lapsed still refreshes; a `client_id` that differs from the connection's is `invalid_grant` (`oauth.authorization_code_invalid` or `oauth.refresh_invalid`). An absent `code` or `refresh_token`, or any parameter sent more than once (RFC 6749 §3.2), is `request.validation` (`invalid_request`), and an unknown `code` or `refresh_token` `invalid_grant`, whatever its `client_id`. Rotation and redemption are conditional updates declared on the [Postgres schema](../data/postgres-schema.md#connections-adr-0031). A revoked or expired key, a voided code, or a connection whose resource is not the current `<issuer>/mcp` answers `invalid_grant` ([connections](../architecture/roles-and-keys.md#connections)). Refusals are RFC 6749 §5.2 bodies: `oauth.authorization_code_invalid` and `oauth.refresh_invalid` as `invalid_grant` — a code or refresh token issued to another client included (RFC 6749 §5.2) — and `oauth.resource_mismatch` as `invalid_target`. `oauth.client_invalid` is `invalid_client` and answers only a request that sends client authentication, since every client is public: one that sends an `Authorization` header gets `401` with `WWW-Authenticate` naming the scheme it used, for example `Basic realm="oml"` (RFC 6749 §5.2), and one that sends a `client_secret` in the body gets `400`. The path makes no outbound call. |
+| `POST /oauth/token` | `application/x-www-form-urlencoded`. `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` and optional `resource`, or `grant_type=refresh_token` with `refresh_token`, `client_id` and optional `resource` → `200` `{access_token, token_type: "Bearer", expires_in, refresh_token, scope: "mcp"}` with `Cache-Control: no-store`. `redirect_uri` is required exactly when the authorize request carried it, and must then equal it byte for byte; when the authorize request omitted it, `redirect_uri` may be omitted or must equal the client's one registered URI; anything else is `oauth.authorization_code_invalid`. The first exchange opens the connection and each refresh rotates the refresh token; which tokens a refresh accepts, and when a reused refresh token or authorization code revokes the connection, are declared on [roles and keys — connections](../architecture/roles-and-keys.md#connections). The client is the one stored on the connection the code or the refresh token belongs to (`oauth_connections.client_id`), and the client tables are never read here, so a document client whose cached document lapsed still refreshes; a `client_id` that differs from the connection's is `invalid_grant` (`oauth.authorization_code_invalid` or `oauth.refresh_invalid`). An absent `code` or `refresh_token`, or any parameter sent more than once (RFC 6749 §3.2), is `request.validation` (`invalid_request`), and an unknown `code` or `refresh_token` `invalid_grant`, whatever its `client_id`. Rotation and redemption are conditional updates declared on the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations). A revoked or expired key, a voided code, or a connection whose resource is not the current `<issuer>/mcp` answers `invalid_grant` ([connections](../architecture/roles-and-keys.md#connections)). Refusals are RFC 6749 §5.2 bodies: `oauth.authorization_code_invalid` and `oauth.refresh_invalid` as `invalid_grant` — a code or refresh token issued to another client included (RFC 6749 §5.2) — and `oauth.resource_mismatch` as `invalid_target`. `oauth.client_invalid` is `invalid_client` and answers only a request that sends client authentication, since every client is public: one that sends an `Authorization` header gets `401` with `WWW-Authenticate` naming the scheme it used, for example `Basic realm="oml"` (RFC 6749 §5.2), and one that sends a `client_secret` in the body gets `400`. The path makes no outbound call. |
 | `POST /oauth/register` | RFC 7591, `application/json`: `redirect_uris` (each inside the allowlist), `client_name`, `token_endpoint_auth_method: "none"`, `grant_types` within `authorization_code` and `refresh_token`, `response_types` `["code"]` → `201` with a server-minted `client_id`, no secret, no registration access token; a redirect URI outside the allowlist is `oauth.redirect_refused` as `invalid_redirect_uri`. `client_name` is required, because the page shows it, and its absence is `request.validation` as `invalid_client_metadata`. An absent `token_endpoint_auth_method`, which RFC 7591 §2 reads as `client_secret_basic`, is registered as `none` and echoed as `none`; any other value is `request.validation` as `invalid_client_metadata`. A client that has not connected within 24 hours of its registration is removed by the lead's hourly sweep, so at most 25 hours after it registered; past 10 000 unused registrations the endpoint answers `429 limit.rate`. |
 
 **Client identity.** A `client_id` that is an `https` URL with a path names a client ID metadata
@@ -1548,7 +1544,7 @@ kept at most 24 hours from its fetch; within those 24 hours a copy past its `Cac
 lifetime is served when a fresh fetch fails or a fetch cap is full. At most 10 000 documents are
 cached; a full cache never refuses: it evicts the least recently used document whose client has
 not connected — a client has connected once a Connect on the page names it, which stamps
-`oauth_clients.connected_at` ([Postgres schema](../data/postgres-schema.md#connections-adr-0031))
+`oauth_clients.connected_at` ([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations))
 — and when every cached document's client has connected, the fetched document serves its request
 uncached. Nothing after `GET /oauth/authorize` reads the cache — the sealed handle carries what
 the page needs, and the token endpoint identifies the client by the connection — so an eviction
@@ -1616,7 +1612,7 @@ and `/oauth/register`, while `/oauth/authorize` is reached by the person's own b
 mode a follower has no `oauth.issuer` of its own: it serves the challenge, the discovery documents
 and token validation from the value the lead records in the `lead_lease` row
 ([configuration](../operations/configuration.md),
-[Postgres schema](../data/postgres-schema.md#outbox-dead_letter-idempotency)), so a follower never
+[Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)), so a follower never
 honors tokens or serves documents for an issuer the lead does not, beyond replication lag. A
 lead-eligible node reads its own value only when it takes the lease, so a takeover by one
 configured with another value is an issuer change
@@ -1630,7 +1626,7 @@ This is the MCP request forwarded to the same endpoint, not a token passed to a 
 
 ## Web pages: the user page and the admin page
 
-*Since v0.5.0; demotion planned for v0.6.0 · [releases](../product/releases.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)*
+*Since v0.5.0; demotion since v0.6.0 · [releases](../changelog.md) · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)*
 
 Two server-rendered pages on the lead's own origin, for people, never for agents: the **user
 page**, where a person signed in with Google or GitHub sees and issues their own keys and connect
@@ -1742,7 +1738,7 @@ when any finding vetoes.
 
 ## Bans
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 - `POST /v2/bans` — `{subject_kind: "principal" | "source", subject, reason?, dry_run}`. With
   `dry_run: true` (the CLI's default) the response is the reach preview — keys affected, held
@@ -1753,9 +1749,9 @@ when any finding vetoes.
 
 ## Simulations
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
-The fenced provenance channel (D10; [simulations.md](../architecture/simulations.md)). Admin key
+The fenced provenance channel (D10; [simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). Admin key
 role for the channel objects; the writes inside a simulation are ordinary submissions carrying
 `simulation_id`, made by audience keys through `POST /v1/memories`.
 
@@ -1783,11 +1779,11 @@ simulation answer `simulation.ended`; promotion or reassignment that would put a
 sim-derived taint into a `validated` area answers `simulation.taint_refused`; a promotion,
 supersession ratification or tip-override that would make a tainted version the *default* served
 tip answers `simulation.tip_refused` — taint shadows the tip only for the audience, as an overlay
-([simulations.md](../architecture/simulations.md)).
+([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 
 ## Claim administration
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Admin verbs over claims — the CLI's `oml claims` and `oml erase` ride these
 ([cli/reference.md](../cli/reference.md)):
@@ -1796,12 +1792,12 @@ Admin verbs over claims — the CLI's `oml claims` and `oml erase` ride these
 |---|---|
 | `POST /v2/memories/{artifact_id}/reassign` | `{workarea_id, re_key?, dry_run}` — journalled move recording both policy snapshots; a claim moved to a stricter-policy destination re-enters `held`. Refused into `validated` (`workarea.frozen`); a `claim_key` collision at the destination is refused unless the move records a re-key (`submission.claim_key_conflict`). |
 | `POST /v2/memories/{artifact_id}/demote` | `{version, reason}` — journalled demotion; bytes kept (R4). |
-| `POST /v2/memories/{artifact_id}/erase` | `{dry_run}` — journalled crypto-shred: erase event plus DEK destruction, scoped to body and attachment bytes. The dry run returns the erasure inventory for this artifact — every copy class and its disposition ([audit-and-lineage.md](../architecture/audit-and-lineage.md)). Attribution metadata survives; closing that is [FR-1](../product/roadmap.md). → `202`. |
+| `POST /v2/memories/{artifact_id}/erase` | `{dry_run}` — journalled crypto-shred: erase event plus DEK destruction, scoped to body and attachment bytes. The dry run returns the erasure inventory for this artifact — every copy class and its disposition ([audit-and-lineage.md](../architecture/audit-and-lineage.md)). Attribution metadata survives; closing that is #146. → `202`. |
 | `POST /v2/claims/tip-override` | `{workarea_id, claim_key, to_version, reason}` — designate an earlier promoted version as the served tip without demoting the later one: explicit and journalled (`lifecycle.tip_override`), never a silent re-rank. |
 
 ## Evidence export
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 An export is an **async job** — bundles are large and chain verification is linear in journal
 length.
@@ -1821,7 +1817,7 @@ compliance claim (D17; [audit-and-lineage.md](../architecture/audit-and-lineage.
 
 ## Settings
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Configured-versus-effective, over the API so `oml settings` can show the divergence (D14):
 
@@ -1840,7 +1836,7 @@ show/validate/apply shape and the retired-key refusal.
 
 ## Health
 
-*Available since v0.1.0; the build object since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the build object since v0.2.0 · [releases](../changelog.md)*
 
 - `GET /healthz` — liveness: `200 {"status": "ok"}` while the process runs.
 - `GET /readyz` — readiness: `200` only when the replica can serve — Postgres reachable and the
@@ -1906,10 +1902,10 @@ Every value is a **shipped default, deployment-tunable** through the named setti
 (`oml settings apply`, journalled). None is tenant-tunable in v1: a tenant that needs a tighter
 budget gets one through quota grant attributes (`limit.quota`), not by moving these bounds. And
 none is a measured capacity — a default is a policy choice, and the performance consequence of
-raising one is unmeasured ([FR-25](../product/roadmap.md)).
+raising one is unmeasured (#150).
 
 Quota and rate-limit enforcement in v1 is per-replica
 token buckets at limit/N — a documented approximation whose error grows with replica churn
-([FR-8](../product/roadmap.md)) — and the refusal is typed: `429 limit.rate` or `429 limit.quota`
+(#133) — and the refusal is typed: `429 limit.rate` or `429 limit.quota`
 with `Retry-After` ([errors.md](errors.md)). Nothing here is measured; no latency or
 throughput number on this page describes OML.

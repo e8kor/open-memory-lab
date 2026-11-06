@@ -1,20 +1,16 @@
 <!--
 id: architecture/workareas
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one
 -->
 
 # Workareas: the algebra and the status ladder
 
-**Status:** design draft for review · decided, not built
-
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; the status ladder since v0.5.2; workarea edges not scheduled ([releases](../product/releases.md)).
-
 This page is the single declaration site for the workarea algebra (D7) and the
 workarea status ladder (D8). Every other page that mentions a workarea, a grant,
 a deny, an edge, or a status links here rather than restating the rules. The
-schema that realizes these objects is in [data/postgres-schema.md](../data/postgres-schema.md)
+schema that realizes these objects is in [data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)
 (`workareas`, `workarea_edges`, `grants`, `key_denials`); the roles that hold
 the authorities named below are declared in [roles-and-keys.md](roles-and-keys.md);
 the review policies that statuses select are declared in [admission.md](admission.md).
@@ -27,7 +23,7 @@ crews write — and that cost is accepted deliberately (see
 
 ## The tree: one universe per tenant
 
-*Available since v0.1.0; the root named `universe` since v0.3.0 · [releases](../product/releases.md)*
+*Available since v0.1.0; the root named `universe` since v0.3.0 · [releases](../changelog.md)*
 
 A workarea is a governed node in exactly one tree per tenant, rooted at that
 tenant's `universe`. Inclusion is single-parent: every workarea except the
@@ -56,7 +52,7 @@ propose to it ([user roots](#user-roots)).
 
 Cross-tenant mapping — relating workareas of different tenants into one "whole
 world" — does not exist in this design. It is an explicitly future federation
-item; see the federation RS row in [product/roadmap.md](../product/roadmap.md).
+item; see the federation issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 Nothing on this page extends across a tenant boundary.
 
 ### An example tenant
@@ -95,7 +91,7 @@ child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 
 ## User roots
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
+*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../changelog.md)*
 
 Every user — a person an admin attests a key acts for — has a **user root**: a
 direct child of `universe` named after the user, `universe.<user>`, marked
@@ -143,7 +139,7 @@ flowchart TD
 
 ## Grants bind to node ids; paths are derived
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 A grant names a workarea **node id**, never a path. The path (stored as
 Postgres `ltree`) is derived from the tree at check time — the names from
@@ -190,7 +186,7 @@ Effective access is computed on every request, and no resolution is cached:
 the epoch labels the journalled state an answer was computed against, and
 invalidates nothing. The cost is one grants read and one ancestry walk per
 request, unmeasured like every cost on the request path
-([FR-25](../product/roadmap.md)). A revocation, grant change or denial
+(#150). A revocation, grant change or denial
 therefore applies to the key's next request served by the lead. In cluster
 mode a follower resolves keys, grants and denials from its local replica, so
 on follower-served reads a revocation, grant change or denial takes effect
@@ -202,7 +198,7 @@ that states its own staleness window there.
 
 ## Effective access: union of attenuated grants, then deny-wins
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+*Available since v0.2.0 · [releases](../changelog.md)*
 
 <a id="node-grants"></a>*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 d4):* a grant gains `covers`, `subtree` (the default, every grant
@@ -268,7 +264,7 @@ refused are answered from status and policy snapshots alone.
 
 ## Edges
 
-*Workarea edges not scheduled; claim edges and the brief since v0.5.2, on the [HTTP API](../api/http-api.md#edges) · [releases](../product/releases.md)*
+*Workarea edges not scheduled; claim edges and the brief since v0.5.2, on the [HTTP API](../api/http-api.md#edges) · [releases](../changelog.md)*
 
 ### Edge kinds
 
@@ -302,7 +298,7 @@ appears as pending in graph reads.
 
 ## Crews: recorded, not operated
 
-*Available since v0.3.0 · [releases](../product/releases.md)*
+*Available since v0.3.0 · [releases](../changelog.md)*
 
 A crew is a named record of its own: `{crew_id, name, charter_uri,
 external_manager}`. This section is the single declaration site for the record
@@ -316,7 +312,7 @@ is the honest scope of the feature.
   may serve many workareas. The crew is named at workarea create, and pointing
   the workarea at another crew record is the workarea's journalled
   crew-metadata update (`workarea.crew_updated`). A vocabulary workarea must
-  name one, its curator crew ([ontologies](ontologies.md)).
+  name one, its curator crew ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)).
 - **A key may name one crew** at issuance; it is journalled in `key.issued`,
   fixed for the key's life and carried to a rotation's successor. A key holder
   who changes crews holds a new key ([roles and keys](roles-and-keys.md)).
@@ -344,7 +340,7 @@ which is why every change to them is a journalled act rather than a free edit.
 
 ## Re-parenting
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Re-parenting a workarea — giving the node a different parent — exists as a
 **journalled admin act**. It performs, in a single Postgres transaction:
@@ -372,16 +368,7 @@ refusal below covers acquiring new children in any form). Lake rows keep
 
 ## The status ladder (D8)
 
-*Available since v0.5.2 · [releases](../product/releases.md)*
-
-**Status:** built in v0.5.2, in `oml-domain`, `oml-app` and `oml-pg` with
-`migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
-second identity, the status read) and the freeze checks on submit, supersede, approval and child
-create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · served by `POST /v2/workareas/{workarea}/transitions` and its ratify route, the
-`oml workareas status` verbs and the workarea read's `policy` and `pending_transitions`, which
-`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3) · its Postgres checks run only where a superuser mints the suites' role
-pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
-fence are decided, not built.
+*Available since v0.5.2 · [releases](../changelog.md)*
 
 Statuses: `development` → `committed` → `validated` (frozen). Transitions are
 **forward only**; backward transitions do not exist in the design — there is no
@@ -418,7 +405,7 @@ stateDiagram-v2
 | Transition | Proposed by | Ratified by | Preconditions | Journalled with |
 |---|---|---|---|---|
 | `development` → `committed` | admin or dreamer with effective access on the node | a **second, non-proposing** dreamer or admin (R2 applies to transitions) | — | transition event + policy snapshot |
-| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area (the build's reading: the simulation clause holds vacuously while simulations are unbuilt, [below](#readings-the-build-takes)) | transition event + policy snapshot |
+| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) first, since taint can never enter a `validated` area (the build's reading: the simulation clause holds vacuously while simulations are unbuilt, [below](#readings-the-build-takes)) | transition event + policy snapshot |
 | `committed` → `development` | — | — | **does not exist** | — |
 | `validated` → anything | — | — | **does not exist** | — |
 
@@ -437,7 +424,7 @@ the rule it follows; none is a new decision about the ladder.
   (id, tenant, workarea, `from` and `to` status, state `pending` or `ratified`,
   proposer key and principal, ratifier key, and the journal seqs of the proposal
   and the ratification), the shape `workarea_edges` already gives a
-  propose-then-ratify object ([schema](../data/postgres-schema.md#workareas-and-edges)).
+  propose-then-ratify object ([schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
   It follows d3: a transition is two journalled acts by two identities, so
   something must hold the first act until the second.
 - **Several proposals may wait on one node; ratification re-checks.** The
@@ -448,7 +435,7 @@ the rule it follows; none is a new decision about the ladder.
   `validated` must still find every child `validated`. Both checks run inside
   the ratifying transaction, after it takes the tenant's chain lock (the
   `pg_advisory_xact_lock` every capture takes,
-  [schema](../data/postgres-schema.md)) and with the node row locked, before
+  [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)) and with the node row locked, before
   the status write and the `workarea.status_transition` capture in that same
   transaction; a child created, or a subtree reparented in, between proposal
   and ratification is therefore seen. A proposal whose `from` is no longer the
@@ -507,7 +494,7 @@ the rule it follows; none is a new decision about the ladder.
 - **No simulation is fenced, vacuously.** Simulations are not built, so "no
   simulation is fenced on the subtree" holds of every subtree today; the build
   says so in a comment where the check would sit, and the check lands with
-  simulations ([simulations](simulations.md)). It follows d4's purpose: taint
+  simulations ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). It follows d4's purpose: taint
   cannot enter a `validated` area, and while no simulation exists there is no
   taint.
 

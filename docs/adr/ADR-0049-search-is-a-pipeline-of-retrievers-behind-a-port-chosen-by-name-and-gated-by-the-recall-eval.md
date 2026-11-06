@@ -11,7 +11,7 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
 each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
-for v0.5.9; later increments not assigned ([releases](../product/releases.md#decisions))
+for v0.5.9; later increments not assigned ([releases](../changelog.md))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
@@ -192,13 +192,13 @@ reorders results, and steering rows, which precede hits, are never ranked"
     anew, so a run moves by about one query. `keyword-any` measured 0.81, above ADR-0048's 0.73
     for `simple` OR, which ranked by `ts_rank_cd`; this pipeline ranks by `ts_rank`. The eval's
     caveats hold: one model wrote the corpus, queries and labels; no held rows, one workarea, no
-    unanswerable query, so false positives from any-word matching are unmeasured (FR-83).
+    unanswerable query, so false positives from any-word matching are unmeasured (#105).
     Latency: ADR-0048 d11's budget, a p95 at most twice the every-word recall's, is met by
     `keyword-any` (1.6 times) and missed by `bm25` (2.8 times) and `bm25-trigram` (5.4 times).
     The trigram list is the larger cost: no function is `LEAKPROOF`, so under row security the
     `<%` operator scans the tenant's partition rather than using its index (ADR-0034 d13). The
     default is chosen by the gate, as directed, and the latency is a measured cost carried
-    openly: FR-84 measures both statements at 10,000 and 100,000 rows before the public server's
+    openly: #102 measures both statements at 10,000 and 100,000 rows before the public server's
     default changes, and a deployment that cannot pay it sets `search.default = "bm25"`.
 
 - **d10 — Increments, each an adapter or a pipeline.** *Increment 1 (this record's build):* the
@@ -209,10 +209,10 @@ reorders results, and steering rows, which precede hits, are never ranked"
   default set by the gate. *Next:* S4, filters inside the candidate scope (`kinds` as today;
   `since`/`until`; up to four `workareas`; ADR-0047's anchors), which extend `CandidateScope`,
   never an adapter's own predicate; the `explain` counts of ADR-0048 d9; eval version 2
-  (unanswerable, filter, held and supersession queries; FR-83). *Then:* S6, a `Reranker` port
+  (unanswerable, filter, held and supersession queries; #105). *Then:* S6, a `Reranker` port
   (`rerank(query, candidates) -> reordered candidates`, reading only candidates the core
   passes, storing nothing) with a `candle` cross-encoder adapter, run after fusion and before the
-  cut, opt-in per request (`rerank: true`) until its p95 fits d11 of ADR-0048 (FR-85). *Then:*
+  cut, opt-in per request (`rerank: true`) until its p95 fits d11 of ADR-0048 (#102). *Then:*
   S7, an `Embedder` port (`embed(texts) -> vectors`, in the deployment by default, a provider
   only by the owner's journalled choice) and a `pgvector` dense retriever adapter, and the
   `hybrid` pipeline fusing `bm25`, `trigram` and dense by reciprocal rank. Each new pipeline
@@ -337,7 +337,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
        (`bench/scale/REPORT-baseline.md`) puts an every-word match over a stored `simple` vector past 50 ms near
        70,000 readable rows; `bm25` reads more per row. Larger scopes need what item 13 names;
        this record does not claim them. Loading the 51,830 copies through `review next` took 37
-       minutes, a few rows a second while tens of thousands were held (FR-87).
+       minutes, a few rows a second while tens of thousands were held (#98).
     9. **Room for a learned sparse leg.** An inference-free learned sparse retriever (a
        `(memory, token, weight)` table written at promotion and scored by a token-weight sum) would
        sit beside these columns as a table and a retriever of its own, under the same
@@ -417,18 +417,18 @@ reorders results, and steering rows, which precede hits, are never ranked"
   `mcp-tools.json` (`search`, `match`, `matched`, `search` in the answer),
   `openapi.yaml`, [configuration](../operations/configuration.md) (`search.enabled`,
   `search.default`), the [CLI reference](../cli/reference.md) (`oml search`, `oml read --search
-  --match`), the [releases](../product/releases.md) page, the eval's README and REPORT, the
+  --match`), the [releases](../changelog.md) page, the eval's README and REPORT, the
   plugin's skill, librarian and README, and the server instructions.
-- **Roadmap rows**: FR-83 (false positives of any-word matching, measured by eval version 2),
-  FR-84 (the BM25 statement's and the trigram index's cost at 10,000 and 100,000 rows, and the
-  latency budget), FR-85 (a reranker's CPU cost in `candle`) are ADR-0048's and stay open; this
+- **Issues**: #105 (false positives of any-word matching, measured by eval version 2),
+  #102 (the BM25 statement's and the trigram index's cost at 10,000 and 100,000 rows, and the
+  latency budget), #102 (a reranker's CPU cost in `candle`) are ADR-0048's and stay open; this
   record adds none.
 - **Costs**: the BM25 statement reads every readable row's stored lexemes per query, so its cost
   grows with the scope (d12); the stored vector and the vocabulary cost write time and storage: loading SciFact wrote 62 rows a second and approved 77 a second with
   8 writers and 6 reviewers, where the first build loaded LoCoMo at 98 and 103, and the
   vocabulary held 88,127 words for 14,000 promoted abstracts (20 MB); `pg_trgm` stays a requirement of
   `did_you_mean` and of `bm25-trigram`, not of the default ranking.
-- **Roadmap rows**: FR-86 (chain-head contention under concurrent writes) and FR-87 (one row
+- **Issues**: #100 (chain-head contention under concurrent writes) and #98 (one row
   reviewed at a time per key), both found by the benchmark loader.
 - **Expected conflicts**: v0.5.1's guardrails touch recall (a `guardrail` kind refused in
   `kinds`): the refusal belongs in the transport's kind parsing and the core's `HIT_KINDS`, both

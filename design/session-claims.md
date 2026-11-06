@@ -9,11 +9,11 @@ answers: which claim kinds beyond guardrails could start, steer or close an agen
 
 **Status:** design draft for review · proposed, not decided
 
-[ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+[ADR-0037](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 proposes one kind, `guardrail`, and the two hooks that deliver and check it. This page catalogues
 the other shapes a reviewed claim could take once a harness hook can put it in front of an agent
 at the right moment. Nothing here is decided: every row is a proposal, and a row worth tracking
-has a roadmap row (FR-55 to FR-62). The guardrail, the tool rule and the change freeze are
+has an open issue (#135 to #137). The guardrail, the tool rule and the change freeze are
 ADR-0037's; they appear here only so the ranking is complete.
 
 ## What a shape can be
@@ -22,7 +22,7 @@ ADR-0037's; they appear here only so the ranking is complete.
   (ADR-0037 d1). The cost is a value in the `kind` enum and every page that lists kinds.
 - **A subtype** would be one value of an optional, author-declared field on an existing kind,
   called `facet` here: inside the signed submission, reviewed with the body, and kept by a
-  successor as `kind` is ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d11). No
+  successor as `kind` is ([ADR-0025](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0025-the-agent-only-memory-surface.md) d11). No
   record decides such a field. A subtype changes where and when a claim is shown; it changes no
   review rule and no rank, so R3 holds. It must not be an `oml:about` classification of proposed
   ADR-0027: a classifier adds that edge later under another key, which would let a classifier
@@ -58,60 +58,60 @@ deterministic test in a hook, harness-enforced where installed and bypassable by
 
 | Shape | Purpose | Hook point | Advisory or checked | R2 / R3 fit | Risk | Value | Row |
 |---|---|---|---|---|---|---|---|
-| **guardrail** (new kind) | standing rules for a subtree, with a severity | SessionStart, compact, SubagentStart | advisory text; its rule checked | ADR-0037 d3, d10 | highest: served first and never cut | high | FR-50 |
-| **tool rule** (guardrail's `rule`) | deny or ask on a matching tool call | PreToolUse, from a local cache | checked | promoted only; deny or ask, never allow | a poisoned rule stops work | high | FR-50 |
-| **change freeze** (guardrail with valid time) | rules for a stated period | SessionStart, PreToolUse | both | as guardrail | a wrong end date | high for operations | FR-50 |
-| **[workarea brief](#the-workarea-brief)** (a ratified brief edge from an existing claim to the workarea) | the few reviewed claims to know on entering: purpose, key decisions, conventions, where things are | SessionStart, compact | advisory, under the data line | promoted claims only; the edge ratified by neither its proposer nor a key in the claim's closure; ordered structurally, never ranked | read first at every start, a poisoned entry too; capped and framed as data | high | FR-60 |
-| **[workarea digest](#the-workarea-digest)** (derived_fact subtype `digest`) | one reviewed summary of the whole workarea, naming its sources | SessionStart when no brief entry applies; any recall | advisory, under the data line | reviewed by a key outside every source's closure (R2); loaded structurally | a summary can say what no source says; a small reviewer pool | medium to high, unmeasured | FR-61 |
-| **[session-start recall](#session-start-recall)** (not a claim) | the hits the work needs, from the session's own workarea, queried by repository, branch and changed files beside the directory name | SessionStart | advisory | ranked hits, R3 unchanged | branch and file names leave the machine | medium to high, unmeasured | FR-62 |
-| **session handoff** (memory subtype `handoff`) | what the last session did and left open | Stop asks; next SessionStart reads | advisory | held, read back by its author (R3) | carries injected tool output forward | high | FR-55 |
-| **definition of done** (steering subtype `checklist`) | the checks a turn must meet before it ends | Stop, honouring `stop_hook_active` | advisory, with a nudge | promoted only | loops until Claude Code's 8-continuation cap | high | FR-56 |
-| **pitfall / lesson** (memory `pitfall`; derived_fact `lesson`) | what went wrong before, with lineage | PostToolUse after a failure; UserPromptSubmit | advisory | ranked hits, R3 unchanged | error and prompt text leave the machine | medium to high | FR-57 |
-| **path convention** (steering subtype, `applies_to` glob) | rules for some files only | PostToolUse after a matching Read or Edit | advisory | promoted only | moderate | medium to high | FR-58 |
-| **playbook** (steering subtype, loaded on demand) | a procedure: title at start, body when used | SessionStart titles; `oml_get`; MCP prompt | advisory | promoted only | moderate | medium to high | FR-58 |
-| **review rubric** (steering subtype, audience reviewer) | how verdicts are reached here | the review serve; reviewer sessions | advisory to reviewers | never shown to writers, so it cannot be gamed | a biased rubric biases every verdict | high for review | FR-59 |
+| **guardrail** (new kind) | standing rules for a subtree, with a severity | SessionStart, compact, SubagentStart | advisory text; its rule checked | ADR-0037 d3, d10 | highest: served first and never cut | high | shipped in v0.5.1 |
+| **tool rule** (guardrail's `rule`) | deny or ask on a matching tool call | PreToolUse, from a local cache | checked | promoted only; deny or ask, never allow | a poisoned rule stops work | high | shipped in v0.5.1 |
+| **change freeze** (guardrail with valid time) | rules for a stated period | SessionStart, PreToolUse | both | as guardrail | a wrong end date | high for operations | shipped in v0.5.1 |
+| **[workarea brief](#the-workarea-brief)** (a ratified brief edge from an existing claim to the workarea) | the few reviewed claims to know on entering: purpose, key decisions, conventions, where things are | SessionStart, compact | advisory, under the data line | promoted claims only; the edge ratified by neither its proposer nor a key in the claim's closure; ordered structurally, never ranked | read first at every start, a poisoned entry too; capped and framed as data | high | #136 |
+| **[workarea digest](#the-workarea-digest)** (derived_fact subtype `digest`) | one reviewed summary of the whole workarea, naming its sources | SessionStart when no brief entry applies; any recall | advisory, under the data line | reviewed by a key outside every source's closure (R2); loaded structurally | a summary can say what no source says; a small reviewer pool | medium to high, unmeasured | #136 |
+| **[session-start recall](#session-start-recall)** (not a claim) | the hits the work needs, from the session's own workarea, queried by repository, branch and changed files beside the directory name | SessionStart | advisory | ranked hits, R3 unchanged | branch and file names leave the machine | medium to high, unmeasured | #135 |
+| **session handoff** (memory subtype `handoff`) | what the last session did and left open | Stop asks; next SessionStart reads | advisory | held, read back by its author (R3) | carries injected tool output forward | high | #136 |
+| **definition of done** (steering subtype `checklist`) | the checks a turn must meet before it ends | Stop, honouring `stop_hook_active` | advisory, with a nudge | promoted only | loops until Claude Code's 8-continuation cap | high | #136 |
+| **pitfall / lesson** (memory `pitfall`; derived_fact `lesson`) | what went wrong before, with lineage | PostToolUse after a failure; UserPromptSubmit | advisory | ranked hits, R3 unchanged | error and prompt text leave the machine | medium to high | #135 |
+| **path convention** (steering subtype, `applies_to` glob) | rules for some files only | PostToolUse after a matching Read or Edit | advisory | promoted only | moderate | medium to high | #137 |
+| **playbook** (steering subtype, loaded on demand) | a procedure: title at start, body when used | SessionStart titles; `oml_get`; MCP prompt | advisory | promoted only | moderate | medium to high | #137 |
+| **review rubric** (steering subtype, audience reviewer) | how verdicts are reached here | the review serve; reviewer sessions | advisory to reviewers | never shown to writers, so it cannot be gamed | a biased rubric biases every verdict | high for review | #136 |
 | **role guide** (steering subtype, audience a member profile) | what one crew member does | SessionStart, SubagentStart | advisory | selection by the key's profile is visibility, not rank | low | medium | — |
 | **charter** (steering subtype, one per workarea) | what the workarea is for and not for | SessionStart header | advisory | promoted only | low | medium | — |
 | **decision record** (memory subtype `decision`) | a settled choice, linked to what it replaces | SessionStart hits | advisory | ranked hits | low | medium | — |
 | **open question** (memory subtype) | work left open | SessionStart lists; Stop asks for new ones | advisory | closing one by retirement takes a non-author verdict (R2) | low | medium | — |
 | **environment fact** (memory subtype `env_fact`) | "the tests need `CHROME_PATH`" | SessionStart hits | advisory | ranked hits | secrets and hostnames, caught only by the scan | medium | — |
-| **glossary at the prompt** (existing kind `term`) | definitions for the terms a prompt names | UserPromptSubmit | advisory | reviewed vocabulary | the prompt leaves the machine | medium | FR-57 |
+| **glossary at the prompt** (existing kind `term`) | definitions for the terms a prompt names | UserPromptSubmit | advisory | reviewed vocabulary | the prompt leaves the machine | medium | #135 |
 | **escalation contact** (memory subtype `contact`) | whom to ask when blocked | SessionStart, Stop when blocked | advisory | ranked hits | personal data: erasure applies | medium | — |
 | **compaction summary** (held memory) | the summary Claude Code wrote | PostCompact `compact_summary` | advisory | held for its author | a hook that writes is no longer a read-only hook | low to medium | — |
 | **since-last-session changes** (not a claim) | rules and memories promoted, superseded or retired since the key's last session | SessionStart, from the events tail | advisory | only what the key reads | low | medium | — |
-| **export bridge** (not a claim) | promoted guardrails as files for harnesses without hooks | none: a CLI verb | advisory | promoted only | a copy outside erasure | high reach | FR-54 |
+| **export bridge** (not a claim) | promoted guardrails as files for harnesses without hooks | none: a CLI verb | advisory | promoted only | a copy outside erasure | high reach | #137 |
 | **harness deny settings** (not a claim) | rules rendered into Claude Code `permissions.deny` or managed settings | none: an admin act on the machine | checked by the harness, not bypassable by a mod under managed settings | promoted only | writes settings an agent key must not control (R1) | high where managed settings exist | — |
-| **server instructions at connect** (not a claim) | guardrails in the MCP `initialize` answer's `instructions` | MCP connect | advisory, if a client uses it | promoted only | unverified that any client puts it in context | medium for Claude's apps | FR-53 |
+| **server instructions at connect** (not a claim) | guardrails in the MCP `initialize` answer's `instructions` | MCP connect | advisory, if a client uses it | promoted only | unverified that any client puts it in context | medium for Claude's apps | #116 |
 
 ## Ranking by value against cost
 
-1. **Guardrail, its rule and the freeze** (FR-50): the user's scenario. Cost: a kind, a read, two
+1. **Guardrail, its rule and the freeze** (shipped in v0.5.1): the user's scenario. Cost: a kind, a read, two
    hooks and a scope attribute an admin sets on each key.
-2. **Session-start recall** (FR-62): every session gains, at the cost of two recall fields and a
-   `git` process in the hook, with no new claim; its quality is unmeasured under FR-4, and branch
+2. **Session-start recall** (#135): every session gains, at the cost of two recall fields and a
+   `git` process in the hook, with no new claim; its quality is unmeasured under #102, and branch
    and file names leave the machine ([below](#session-start-recall)).
-3. **Workarea brief** (FR-60): the reviewed orientation every session at a workarea needs, at the
+3. **Workarea brief** (#136): the reviewed orientation every session at a workarea needs, at the
    cost of an edge shape, a recall segment and a key attribute ([below](#the-workarea-brief)).
-4. **Session handoff** (FR-55): high value at low cost, no new read; its one open question is
+4. **Session handoff** (#136): high value at low cost, no new read; its one open question is
    review ([below](#session-handoff)).
-5. **Definition of done** (FR-56): high value at low cost through one Stop hook; the risk is a
+5. **Definition of done** (#136): high value at low cost through one Stop hook; the risk is a
    loop, capped by the harness.
-6. **Review rubric** (FR-59): verdicts that agree with each other, at the cost of an audience
+6. **Review rubric** (#136): verdicts that agree with each other, at the cost of an audience
    selector on the review serve.
-7. **Path conventions and playbooks** (FR-58): keep the always-on set small; the cost is a
+7. **Path conventions and playbooks** (#137): keep the always-on set small; the cost is a
    subtype field and a PostToolUse hook.
-8. **Pitfalls and the glossary at the prompt** (FR-57): the first per-turn recall, better than
+8. **Pitfalls and the glossary at the prompt** (#135): the first per-turn recall, better than
    ADR-0029 d3's directory-name query; the cost is that prompt and error text leave the machine
-   and enter the read log, so it is opt-in, and its quality is unmeasured under FR-4.
-9. **Workarea digest** (FR-61): the brief's fallback, at the cost of a crew that writes it and a
+   and enter the read log, so it is opt-in, and its quality is unmeasured under #102.
+9. **Workarea digest** (#136): the brief's fallback, at the cost of a crew that writes it and a
    reviewer outside every source's closure; its value is unmeasured ([below](#the-workarea-digest)).
 10. **Since-last-session changes**: low cost over the events tail; no row until 1 to 8 exist.
 11. **Charter, role guide, decision record, open question, environment fact, contact**: medium
     value each; each needs only a subtype and the existing SessionStart hits, so they follow
-    whichever subtype field FR-58 settles. A charter, decision record or environment fact that a
+    whichever subtype field #137 settles. A charter, decision record or environment fact that a
     brief edge joins reaches session start as a brief entry with no subtype.
 12. **Compaction summary**: the summary is model text the session already holds; storing it
-    from a hook would make a read-only hook a writer ([ADR-0029](../adr/ADR-0029-session-start-hook.md) d1).
+    from a hook would make a read-only hook a writer ([ADR-0029](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0029-session-start-hook.md) d1).
     ADR-0029 d6 already asks the model to record the summary's durable facts.
 
 ## Session handoff
@@ -130,7 +130,7 @@ review is needed for that. Two gaps remain. The own-work listing prints no body 
 the hook needs the newest handoff's body through a get or an own held recall. And every handoff
 is a held row in the review queue, where it expires into the dead-letter under the workarea's
 expiry if no one reviews it; whether handoffs are meant for promotion, are left to expire, or
-need a class that never enters the queue is FR-55's decision. Inside an in-progress workarea of
+need a class that never enters the queue is #136's decision. Inside an in-progress workarea of
 proposed ADR-0030, teammates would read handoffs marked held. A handoff carries what the session
 read from tool output into later sessions, a persistence path for injected text, so it stays
 under the data frame of the memory hook and never under the guardrail frame.
@@ -148,7 +148,7 @@ three reach the session through `oml hook session-start` under ADR-0029 d6's dat
 ### The workarea brief
 
 The few reviewed claims an agent should know on entering a workarea: its purpose, its key
-decisions, its conventions and where things are (FR-60).
+decisions, its conventions and where things are (#136).
 
 - **Marked by an edge, not a kind.** A brief entry is an existing promoted claim joined to the
   workarea by a ratified edge from the claim to the workarea node, labelled `brief`. The design's
@@ -159,7 +159,7 @@ decisions, its conventions and where things are (FR-60).
   are. A purpose no claim states yet is written as an ordinary memory and then joined. The costs:
   an edge takes a dreamer to propose it and another identity to ratify it, where a kind would take
   one writer, and an entry reads in its source claim's words, not in words written for the brief.
-- **Who proposes and ratifies.** The [edge-authority rule](../architecture/workareas.md#edge-authority)
+- **Who proposes and ratifies.** The [edge-authority rule](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md#edge-authority)
   with one claim endpoint, *this page's reading*: proposed under dreamer(propose) on the workarea,
   the endpoint whose sessions it changes, and reader on the claim's workarea; ratified under
   dreamer(review) on the workarea and reader on the claim's, never by the proposer's key or
@@ -178,7 +178,7 @@ decisions, its conventions and where things are (FR-60).
   claim: under the key's reader effective access on the claim's workarea, with no reach-down, as
   ADR-0037 d4 keeps for guardrails; served tips only; a `self_signed` claim only at its own
   workarea; a simulation row only to its audience
-  ([retrieval](../architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)).
+  ([retrieval](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)).
   The brief changes where a reviewed claim is shown, never who may read it and never its rank
   among hits (R3).
 - **When and how it loads.** At every SessionStart source, compaction included (ADR-0029 d1), as
@@ -190,7 +190,7 @@ decisions, its conventions and where things are (FR-60).
 - **A small budget.** Unlike steering, the brief is cut: a cap on its count and on its share of
   the hook's budget, both design constants of the deciding record, and the entries served are the
   longest prefix of the order that fits, as hits are
-  ([token budgets](../architecture/retrieval.md#token-budgets)), with one line naming how many the
+  ([token budgets](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md#token-budgets)), with one line naming how many the
   cap left out and that `oml_get` reads them. A claim served in the brief is not served again
   among the hits, *this page's reading*, so it is paid for once.
 - **Scoped to the session's own workarea by default, on a separate key attribute.** The brief at
@@ -207,15 +207,15 @@ decisions, its conventions and where things are (FR-60).
 ### The workarea digest
 
 One reviewed `derived_fact` that summarizes the whole workarea, loaded at session start where the
-workarea has no brief and read by any agent that asks (FR-61).
+workarea has no brief and read by any agent that asks (#136).
 
 - **Written by a crew, never by OML.** A dreamer crew's summarizing agent, under a key with writer
-  and reader on the workarea, writes it with [`oml_learn`](../api/mcp-plugin.md#oml_learn), so its
+  and reader on the workarea, writes it with [`oml_learn`](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/mcp-plugin.md#oml_learn), so its
   `derives_from` names the claims it summarizes. OML writes no summary: it extracts nothing,
   synthesizes no profile and answers no question
-  ([deliberate boundaries](../product/positioning.md#deliberate-boundaries)), and consolidation is
+  ([deliberate boundaries](https://github.com/e8kor/open-memory-lab/blob/main/docs/product/positioning.md#deliberate-boundaries)), and consolidation is
   the dreamer crews' client-side work. The digest is a `derived_fact` of subtype `digest`, the
-  author-declared field of [what a shape can be](#what-a-shape-can-be) that FR-58 settles, with
+  author-declared field of [what a shape can be](#what-a-shape-can-be) that #137 settles, with
   one live digest claim per workarea and its versions made by supersession.
 - **Its sources are its own workarea's promoted claims,** *this page's reading*: served tips of
   kind `memory` or `derived_fact` in the digest's workarea, not its descendants', and no held or
@@ -224,19 +224,19 @@ workarea has no brief and read by any agent that asks (FR-61).
   large workarea can be summarized in layers, as RAPTOR builds its tree: `derived_fact` claims for
   parts of the workarea, each deriving from its claims, and the digest deriving from them, so no
   one submission names every claim. `derives_from` has no bound in the contract
-  ([openapi.yaml](../api/openapi.yaml), `SubmitRequest`), and the lineage closure runs over every
+  ([openapi.yaml](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/openapi.yaml), `SubmitRequest`), and the lineage closure runs over every
   layer.
 - **Reviewed under R2, by a small pool.** A verdict is refused when the reviewing key or
   principal is anywhere in the lineage closure
-  ([lineage](../architecture/audit-and-lineage.md#the-derivation-graph)), and a digest's closure
+  ([lineage](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/audit-and-lineage.md#the-derivation-graph)), and a digest's closure
   holds every source's author, so only an identity that wrote none of what it summarizes may judge
   it: in a busy workarea, a person or a separate reviewing crew. The reviewer judges the summary
   against its sources, the one check against a summary that says what no source says.
 - **Refreshed by supersession, on the crew's schedule.** The crew supersedes the digest after N
   promotions in the workarea, counted from the `lifecycle.promote` events the
-  [events tail](../api/http-api.md#events-tail) serves since the digest's own, or on a schedule of
+  [events tail](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/http-api.md#events-tail) serves since the digest's own, or on a schedule of
   its own. N and the schedule are the crew's, since OML schedules no crew
-  ([crews](../architecture/workareas.md#crews-recorded-not-operated)). Until a refresh is
+  ([crews](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/workareas.md#crews-recorded-not-operated)). Until a refresh is
   promoted the previous digest stays the served tip, so a session reads a reviewed summary that
   may lag by the crew's cadence plus the review's latency, both unmeasured; its line names its
   version and its promotion date.
@@ -252,15 +252,15 @@ workarea has no brief and read by any agent that asks (FR-61).
   the bottom up" ([Sarthi et al., arXiv:2401.18059](https://arxiv.org/abs/2401.18059)). Both
   build their summaries with a model and use them at query time, neither abstract describes a
   review step, and their gains are measured on their own benchmarks, not on OML. The digest is
-  attributed, reviewed and loaded structurally, and its effect is unmeasured (FR-61).
+  attributed, reviewed and loaded structurally, and its effect is unmeasured (#136).
 
 ### Session-start recall
 
-ADR-0029's session-start recall, scoped and queried more sharply (FR-62); decided, it would amend
+ADR-0029's session-start recall, scoped and queried more sharply (#135); decided, it would amend
 ADR-0029 d2 and d3.
 
 - **The session's own workarea, not its subtree.** A recall's hits come from the scope node's
-  subtree ([openapi.yaml](../api/openapi.yaml), `RecallRequest`); at session start they would come
+  subtree ([openapi.yaml](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/openapi.yaml), `RecallRequest`); at session start they would come
   from the scope node alone, through a recall field the hook sends (`subtree: false`, a sketch),
   which joins the request digest's members (ADR-0025 d9) as every new recall field here does.
   Memories below N are the work of the workareas below it, as a descendant's steering belongs to
@@ -278,9 +278,9 @@ ADR-0029 d2 and d3.
 - **A match on any word.** The PoC matches every word of the query (ADR-0029 d3), so more words
   would match fewer memories; the signals need a match on any word, ranked by the store's score
   (a recall field, `match: "any"`, a sketch). Generic words such as `main`, `feat` or `src` then
-  match generic memories; how much better the query recalls is unmeasured, under FR-4.
+  match generic memories; how much better the query recalls is unmeasured, under #102.
 - **What leaves the machine.** Branch and file names reach the server in the request; the read
-  log keeps the request's digest, not its text ([read log](../architecture/retrieval.md#the-read-log),
+  log keeps the request's digest, not its text ([read log](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/retrieval.md#the-read-log),
   ADR-0025 d9). A file name can name a customer or an incident. The key value is redacted from
   every word as ADR-0029 d4 redacts it, and `OML_SESSION_CONTEXT=off` still turns the whole hook
   off.
@@ -297,11 +297,11 @@ What reaches a session, from the most binding to the least:
 
 | Layer | What it holds | Frame | Chosen by | Loaded | Budget |
 |---|---|---|---|---|---|
-| guardrails ([ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)) | rules with a severity | instructions, in their own section | structure: kind, applicability, guardrail scope | every session start, compaction and subagent | never cut; a cap and no partial set |
+| guardrails ([ADR-0037](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)) | rules with a severity | instructions, in their own section | structure: kind, applicability, guardrail scope | every session start, compaction and subagent | never cut; a cap and no partial set |
 | steering (ADR-0025 d8) | standing instructions | instructions by definition (ADR-0018 d4), though ADR-0029 d6 prints them under its data line, which this page leaves as it is | structure: kind, the scope node and its ancestors | every recall, the session-start recall included | never cut |
-| brief (FR-60) | existing claims a ratified brief edge joins | data | curation: the edge's proposer and ratifier | every session start | a small cap, cut as a prefix |
-| digest (FR-61) | one summary naming its sources | data | summary: a crew writes it, a key outside its closure reviews it | session start where no brief entry applies; any recall | the brief's |
-| corpus | every promoted `memory` and `derived_fact` the key reads | data, ranked | the query | on demand by `oml_recall`; at session start, ADR-0029's hits, sharpened by FR-62 | `k` and `max_tokens` |
+| brief (#136) | existing claims a ratified brief edge joins | data | curation: the edge's proposer and ratifier | every session start | a small cap, cut as a prefix |
+| digest (#136) | one summary naming its sources | data | summary: a crew writes it, a key outside its closure reviews it | session start where no brief entry applies; any recall | the brief's |
+| corpus | every promoted `memory` and `derived_fact` the key reads | data, ranked | the query | on demand by `oml_recall`; at session start, ADR-0029's hits, sharpened by #135 | `k` and `max_tokens` |
 
 Instructions are few and structural; data is curated, summarized or ranked, and only the corpus
 is ranked, by the query alone. No layer moves a claim's rank, and each layer above the corpus
@@ -317,9 +317,9 @@ promoted guardrails its key loads under the guardrail scope an admin set on that
 header naming the server, scope node, guardrail scope and set digest, and `--check` reports
 drift. It reaches every harness that reads AGENTS.md or a `.claude/rules/`
 file, which is all of those above but Gemini CLI. Its costs, stated there: a copy no erasure
-or demotion reaches (FR-54), readers widened from OML's grants to the repository's, and
+or demotion reaches (#137), readers widened from OML's grants to the repository's, and
 staleness until the next export. Conventions with an
-`applies_to` glob (FR-58) would map to Claude Code `paths`; other harnesses' path-scoped rule
+`applies_to` glob (#137) would map to Claude Code `paths`; other harnesses' path-scoped rule
 fields are *unverified*.
 
 ## What every hook here keeps

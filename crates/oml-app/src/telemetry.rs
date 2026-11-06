@@ -46,7 +46,7 @@ pub const INFERRED_LABELS_PER_DAY: u64 = 1_000;
 /// The windows inside which an act labels the acting key's recall: a get,
 /// a derivation, a supersession, a second recall in other words; and how
 /// long a recall waits before it is labelled `no_use` (ADR-0054 d5). Starting
-/// values, which FR-105 measures.
+/// values, which #110 measures.
 pub const GET_WINDOW_SECS: i64 = 10 * 60;
 pub const DERIVED_WINDOW_SECS: i64 = 24 * 3600;
 pub const SUPERSEDED_WINDOW_SECS: i64 = 24 * 3600;

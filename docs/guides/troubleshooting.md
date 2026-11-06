@@ -1,24 +1,17 @@
 <!--
 id: guides/troubleshooting
 tier: engineering
-status: draft for review · describes v0.4.0; the plugin's hooks and the connect flow not yet seen working inside Claude's own apps
+status: current
 answers: what to do when something does not work, by symptom: the plugin serving no tools, each oml doctor line, oml login refusals, the error codes a user meets, a memory that does not appear, the session-start and failure-recall hooks staying silent, installer refusals, connect-code failures, and on the server /readyz at 503, postgres.role_split boot refusals, migrations and the proxy's access log; then a short FAQ
 -->
 
-# Guide: troubleshooting
-
-**Status:** draft for review · describes v0.4.0; the plugin's hooks and the connect flow not yet
-seen working inside Claude's own apps
-
-**Release:** since v0.4.0 ([releases](../product/releases.md))
+# Troubleshooting by symptom
 
 Each entry is a symptom, its cause and the command that fixes it. The behaviour is declared on
-the pages linked from each entry; this page only orders it by what you see. Three things here
-have been tested against the server but not watched working in a real client: Claude Code
-running the plugin's hooks ([FR-33](../product/roadmap.md), [FR-63](../product/roadmap.md)),
-`oml setup claude-code` end to end against a real Claude Code
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md)), and a connection from
-claude.ai itself ([claude.ai and mobile](claude-ai-and-mobile.md)).
+the pages linked from each entry; this page only orders it by what you see. Common questions
+are in the [FAQ](../faq.md). Whether Claude Code runs the plugin's hooks, and a live connection
+from claude.ai, are open verifications ([#114](https://github.com/e8kor/open-memory-lab/issues/114),
+[#115](https://github.com/e8kor/open-memory-lab/issues/115)).
 
 ## Start with `oml doctor`
 
@@ -31,7 +24,7 @@ It exits `0` on `ok` or `warn` and `1` on `fail`. Line by line:
 |---|---|---|
 | `url`, `api key` | `unset` | No source sets the value. `next` names what to set: `--url` and `--api-key`, `OML_URL` and `OML_API_KEY`, or `oml login <url>`. |
 | `next` | `… sets url without api_key`, `OML_URL is set without OML_API_KEY` | The first source that sets either value sets only one. The pair always comes from one source, so a key is never sent to a URL from another: set both in that source, or unset the one there. |
-| `next` | `… is not read since v0.4.0: rename it OML_URL` | A v0.3 variable is set. Rename both v0.3 variables to `OML_URL` and `OML_API_KEY` ([upgrading](upgrading.md)). |
+| `next` | `… is not read since v0.4.0: rename it OML_URL` | A v0.3 variable is set. Rename both v0.3 variables to `OML_URL` and `OML_API_KEY` ([upgrading](../operations/upgrades.md)). |
 | `healthz` | `fail` | The process answered but is not healthy. |
 | `readyz` | `fail`, with `postgres`, `fork_check`, `names_assigned` below | The server is up and refuses traffic. See [`/readyz` answers 503](#server-readyz-answers-503). |
 | `whoami` | `fail (401 auth.invalid)` | The server does not know the key: a typo, a key from another server, or an expired or revoked key. Run `oml login <url>` again with the right key. |
@@ -88,7 +81,7 @@ Work down the list; each step assumes the ones above it hold.
 7. **Reloaded.** Run `/reload-plugins` or restart Claude Code after configuring.
 8. **The permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
    nothing. Allow `mcp__plugin_oml_oml__oml_read` and
-   `mcp__plugin_oml_oml__oml_workarea` ([upgrading](upgrading.md)).
+   `mcp__plugin_oml_oml__oml_workarea` ([upgrading](../operations/upgrades.md)).
 
 With no `claude` on `PATH`, or with `--print`, `oml setup claude-code` runs nothing after
 `whoami` and prints the commands to run yourself.

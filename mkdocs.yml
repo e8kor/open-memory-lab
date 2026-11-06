@@ -6,6 +6,8 @@ edit_uri: edit/main/docs/
 docs_dir: docs
 exclude_docs: |
   assets/brand/tokens.md
+  contributing/
+  NUMBERS.md
 copyright: >
   Code licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Apache-2.0</a> ·
   documentation licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE-docs">CC BY 4.0</a>
@@ -56,94 +58,74 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Get started:
-      - Three paths: start/index.md
-      - Install: start/install.md
-  - Guides:
+      - Choose a path: start/index.md
+      - Install the CLI: start/install.md
       - Claude Code: guides/claude-code.md
       - claude.ai and mobile: guides/claude-ai-and-mobile.md
       - Other agent tools: guides/other-harnesses.md
-      - Reviewing memories: guides/reviewing.md
-      - Administering a server: guides/administering.md
-      - Self-hosting: guides/self-hosting.md
-      - Kubernetes: guides/kubernetes.md
-      - Upgrading from v0.3: guides/upgrading.md
-      - Troubleshooting: guides/troubleshooting.md
-  - Concepts: concepts.md
-  - Review guide: review-guide.md
-  - Spec changelog: changelog.md
-  - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
-  - Product:
-      - Positioning: product/positioning.md
+      - Run your own server: start/run-your-own.md
+      - First workarea and keys: start/first-workarea.md
+      - Your first memory: start/first-memory.md
+  - Use:
+      - Remember and recall: use/remember-and-recall.md
+      - Review: guides/reviewing.md
+      - Workareas: use/workareas.md
+      - In-progress workareas: use/in-progress.md
+      - Chat memory: use/chat-memory.md
+      - Sync docs and code: use/sync.md
+      - Rules for agents: use/guardrails.md
       - Use cases: product/use-cases.md
-      - Quick scenarios: product/scenarios.md
-      - Releases: product/releases.md
-      - Roadmap: product/roadmap.md
-      - Commitments: product/commitments.md
-      - Critical path: product/critical-path.md
-      - Compliance: product/compliance.md
-  - Architecture:
-      - Overview: architecture/overview.md
-      - Admission: architecture/admission.md
-      - Workareas: architecture/workareas.md
-      - Roles and keys: architecture/roles-and-keys.md
-      - Simulations: architecture/simulations.md
-      - Ontologies: architecture/ontologies.md
-      - Storage: architecture/storage.md
-      - Retrieval: architecture/retrieval.md
-      - Reconciliation: architecture/reconciliation.md
-      - Audit and lineage: architecture/audit-and-lineage.md
+  - Integrate:
+      - MCP tools: api/mcp-plugin.md
+      - HTTP API: api/http-api.md
+      - Reviewer crews: api/reviewer-crews.md
+      - Client SDKs: engineering/sdks.md
+      - Error codes: api/errors.md
+  - Operate:
+      - Deploy: operations/deployment.md
+      - Kubernetes: guides/kubernetes.md
+      - Configure: operations/configuration.md
+      - Administer: guides/administering.md
+      - Operating OML: operations/operating.md
+      - Monitor: operations/observability.md
+      - Upgrade: operations/upgrades.md
+      - Back up and restore: operations/restore.md
+      - Runbooks: operations/runbooks.md
+      - Failure modes: operations/failure-modes.md
+      - The lake: operations/lake.md
       - Security: architecture/security.md
-  - Data:
-      - PostgreSQL schema: data/postgres-schema.md
-      - Delta tables: data/delta-tables.md
+  - FAQ and troubleshooting:
+      - FAQ: faq.md
+      - Troubleshooting by symptom: guides/troubleshooting.md
+  - Reference:
+      - CLI: cli/reference.md
       - Event catalog: data/event-catalog.md
       - Chain format: data/chain-format.md
-  - API:
-      - HTTP API: api/http-api.md
-      - MCP plugin: api/mcp-plugin.md
-      - Errors: api/errors.md
-      - Reviewer crews: api/reviewer-crews.md
+      - Lake tables: data/delta-tables.md
       - Benchmarks:
           - Overview: api/benchmarks/index.md
           - Synthetic recall set: api/benchmarks/recall-synthetic.md
           - BEIR SciFact: api/benchmarks/beir-scifact.md
           - BEIR NFCorpus: api/benchmarks/beir-nfcorpus.md
           - LoCoMo: api/benchmarks/locomo.md
-          - SciFact ×10: api/benchmarks/beir-scifact-x10.md
+          - SciFact x10: api/benchmarks/beir-scifact-x10.md
           - Latency at scale: api/benchmarks/scale.md
-  - CLI:
-      - Reference: cli/reference.md
-      - Sessions: cli/sessions.md
-  - Operations:
-      - Deployment: operations/deployment.md
-      - Configuration: operations/configuration.md
-      - Observability: operations/observability.md
-      - Runbooks: operations/runbooks.md
-      - Failure modes: operations/failure-modes.md
-      - Upgrades: operations/upgrades.md
-      - Restore: operations/restore.md
-      - Disaster recovery: operations/disaster-recovery.md
-      - Capacity: operations/capacity.md
-      - Releasing: operations/releasing.md
-      - The lake: operations/lake.md
-      - Production (memory.doublegate.io): operations/production.md
-  - Engineering:
-      - Workspace plan: engineering/workspace-plan.md
-      - Test strategy: engineering/test-strategy.md
-      - CI and toolchain: engineering/ci-and-toolchain.md
-      - Benchmark harness: engineering/benchmark-harness.md
-      - Pre-review checklist: contributing/review-checklist.md
-      - Number registry: NUMBERS.md
-      - M0 spikes:
-          - Harness and status: engineering/spikes/index.md
-          - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
-          - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
-      - Client SDKs: engineering/sdks.md
-      - Use-case call map: engineering/use-case-call-map.md
-      - Session claims: engineering/session-claims.md
-      - "Plan: documentation for v0.4.0": engineering/docs-upgrade-v0.4.0.md
-  - Decisions:
-      - Index: adr/index.md
+  - Concepts:
+      - Concepts: concepts.md
+      - What OML guarantees: product/commitments.md
+      - How a write is admitted: architecture/admission.md
+      - Architecture overview: architecture/overview.md
+      - Workareas: architecture/workareas.md
+      - Roles and keys: architecture/roles-and-keys.md
+      - Storage: architecture/storage.md
+      - Audit and lineage: architecture/audit-and-lineage.md
+      - Retrieval: architecture/retrieval.md
+      - Positioning: product/positioning.md
+      - Compliance: product/compliance.md
+      - Live atlas (mocked data): https://e8kor.github.io/open-memory-lab/atlas/
+  - Release notes: changelog.md
+  - Design records:
+      - Register: adr/index.md
       - ADR template: adr/TEMPLATE.md
       - ADR-0001: adr/ADR-0001-the-constitution.md
       - ADR-0002: adr/ADR-0002-postgresql-system-of-record.md
@@ -193,11 +175,12 @@ nav:
       - ADR-0050: adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md
       - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
       - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
-      - ADR-0057: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md
       - ADR-0054: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md
       - ADR-0055: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md
-      - ADR-0058: adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md
+      - ADR-0057: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md
+      - ADR-0058: adr/ADR-0058-a-public-server-runs-to-stated-slos-with-an-error-budget.md
       - ADR-0059: adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md
       - ADR-0060: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md
       - ADR-0063: adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md
       - ADR-0065: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md
+      - ADR-0066: adr/ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md

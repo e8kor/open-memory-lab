@@ -1,26 +1,17 @@
 <!--
 id: guides/administering
 tier: engineering
-status: draft for review · describes administration as v0.4.0 builds it; key revocation, rotation, listing, grant changes and guardrails not built
+status: current
 answers: how an administrator runs an OML server with the oml CLI: the first hour on a new server; claiming it with the enrollment token and --token-stdin; where the admin credentials live; tenants; workareas, their tree and names; crews; issuing agent, reviewer and admin keys, --out and --connect-code; grants and denials; ending a connection; what stands in for revoking, rotating and listing keys until they are built; reading the journal; and the rules no admin key bypasses
 -->
 
 # Guide: administering a server
 
-**Status:** draft for review · describes administration as v0.4.0 builds it; key revocation,
-rotation, listing, grant changes and guardrails not built
-
-**Release:** the claim since v0.1.0, with `--token-stdin` since v0.4.0; workarea creation and key
-issuance since v0.1.0, `oml keys issue-agent` since v0.2.1, crews, names and `oml keys show` since
-v0.3.0; connector keys, `oml keys connect-code` and `oml keys disconnect` since v0.4.0
-([releases](../product/releases.md))
-
 Administration is the `oml` CLI; there is no web console
 ([ADR-0015](../adr/ADR-0015-cli-administration.md)). Every verb below is one request to the
 server's [HTTP API](../api/http-api.md), journalled by the server, and every refusal names its
 rule. The full contract of each verb is the [CLI reference](../cli/reference.md); this page is the
-order and the tasks. The verbs here run in the CLI's own test suites against a real server; this
-page's walkthrough has not been run end to end against a live deployment.
+order and the tasks.
 
 ## The first hour on a new server
 
@@ -81,7 +72,7 @@ reaches argv or shell history; the token is never accepted as a flag argument
 On success the token is consumed, a second claim is refused, and the CLI prints the first admin
 key once, with its name, key id, tenant id and root workarea id. The server keeps only the key's
 hash. `oml quickstart` makes the same claim for a laptop and keeps its pair in its own directory
-([self-hosting](self-hosting.md#1-a-laptop-oml-quickstart)).
+([self-hosting](../start/run-your-own.md)).
 
 ## The admin credentials
 

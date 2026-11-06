@@ -21,7 +21,7 @@ rows stay held, as a person's chat workarea holds them before review, and
 are recalled by their author with `include_unreviewed` (ADR-0025 d4). Each
 LongMemEval question is its own workarea, `bench-chat-lme-<qid>`; each
 LoCoMo conversation its own, `bench-chat-locomo-<sample>`. Turn-level
-ingestion is the floor an agent's own extraction must beat (d12; FR-160).
+ingestion is the floor an agent's own extraction must beat (d12; #111).
 
 run: each question is asked once through `POST /v1/memories/recall` in its
 workarea with `match: any`, `include_unreviewed: true` and `origin_kinds:
@@ -419,7 +419,7 @@ def cmd_qa(a):
         name = "ANTHROPIC_API_KEY" if model.startswith("claude") else "OPENAI_API_KEY"
         if not os.environ.get(name):
             print(f"chat.py qa: {name} is not set, so no answer or grade was produced; "
-                  "run `chat.py run` for the retrieval proxy (FR-164)", file=sys.stderr)
+                  "run `chat.py run` for the retrieval proxy (#111)", file=sys.stderr)
             raise SystemExit(2)
     _, qs = dataset(a.dataset, a.cache, a.limit, a.seed)
     w = writer(a.state)

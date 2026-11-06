@@ -2,19 +2,19 @@
 id: engineering/benchmark-harness
 tier: engineering
 status: design draft for review · decided, not built
-answers: what FR-25's three harness tiers run, how recall is measured, how pass/fail is wired, why numbers are only comparable within one environment
+answers: what #150's three harness tiers run, how recall is measured, how pass/fail is wired, why numbers are only comparable within one environment
 -->
 
 # Benchmark harness
 
 **Status:** design draft for review · decided, not built
 
-This page concretizes [FR-25](../product/roadmap.md)'s three-tier harness as
+This page concretizes #150's three-tier harness as
 [ADR-0024](../adr/ADR-0024-performance-foundation.md) declares it: workload definitions for the
-load rig, the recall methodology for [FR-4](../product/roadmap.md), the pass/fail wiring, and the
+load rig, the recall methodology for #102, the pass/fail wiring, and the
 environment-pinning rule. Every quantity below is a **workload parameter** — an input the harness
 generates — never a performance claim: no measurement of OML exists, and no number for a measured
-quantity appears anywhere until FR-25's exit criterion publishes it with date, hardware and
+quantity appears anywhere until #150's exit criterion publishes it with date, hardware and
 settings.
 
 ## Tier 1 — criterion micro-benchmarks
@@ -27,7 +27,7 @@ OML's own pinned toolchain and hardware:
 - SHA-256 and AES-256-GCM at **1 KB, 64 KB, 1 MB and 16 MB** (ADR-0024's axes);
 - canonical envelope serialization — RFC 8785 (JCS) canonicalization of the signed envelope,
   the exact bytes [chain format](../data/chain-format.md) specifies;
-- scan-rule pass per KB of normalized text (feeds [FR-15](../product/roadmap.md)).
+- scan-rule pass per KB of normalized text (feeds #147).
 
 Tier 1 also resolves two entries in ADR-0024's unverified ledger by measurement rather than
 citation: per-core SHA-256 throughput (no clean SHA-NI figure was found) and the allocator A/B's
@@ -39,13 +39,13 @@ An instrumented single-path bench of the write transaction, measuring **lock-hel
 **end-to-end commit latency** across the matrix
 `synchronous_commit ∈ {on, remote_apply}` × injected standby round-trip time (netem-style delay
 injection — the EDB methodology ADR-0024 cites, re-run on OML's own transaction shape rather than
-trusted). This tier produces [FR-18](../product/roadmap.md)'s numbers. It also measures what has
+trusted). This tier produces #99's numbers. It also measures what has
 no published figure at all: the KMS `GenerateDataKey` / `Decrypt` latency distribution in the
 target region, per [ADR-0024](../adr/ADR-0024-performance-foundation.md) d3's cache rationale.
 
 ## Tier 3 — the load rig
 
-`oml-load-rig` ([workspace plan](workspace-plan.md)) is a Rust rig driving the real server over
+`oml-load-rig` (workspace plan) is a Rust rig driving the real server over
 HTTP, implementing ADR-0024's eleven scenarios. The scenarios are that record's; this page fixes
 the workloads they run against.
 
@@ -57,7 +57,7 @@ run is regenerable. Parameters:
 
 | Axis | Values | Why these |
 |---|---|---|
-| Corpus size per tenant | **S = 10 000, M = 100 000, L = 1 000 000** promoted memories | spans the shapes the pgvector ceiling probe (M0 spike 4, [critical path](../product/critical-path.md)) explores, so rig and spike corroborate each other |
+| Corpus size per tenant | **S = 10 000, M = 100 000, L = 1 000 000** promoted memories | spans the shapes the pgvector ceiling probe (M0 spike 4, critical path) explores, so rig and spike corroborate each other |
 | Tenant counts | **1, 10, 100** | ADR-0024 scenario 2's group-commit axis, unchanged |
 | Claim-size distribution | log-normal body sizes, **median 1 KiB**, distribution parameters committed in the recipe; attachment bodies at the fixed tier-1 sizes (1 KB–16 MB) | agent-written claims are short with a long tail; the fixed points keep tier 1 and tier 3 comparable on the same byte sizes |
 | Claim-kind mix | committed per recipe: plain memories, a stated fraction of supersessions (so `claim_key` lineages have depth), a stated fraction of steering rows | recall hydration cost depends on lineage and steering shape, not just row count |
@@ -65,10 +65,10 @@ run is regenerable. Parameters:
 | Mix | 90/10 recall/submit for scenario 6 | ADR-0024's stated mix |
 
 The embedding dimension is a generator parameter recorded per recipe; its real value waits on
-[RS-1](../product/roadmap.md)'s model decision, and until then rig runs use stated candidate
+#153's model decision, and until then rig runs use stated candidate
 dimensions and say so.
 
-### Recall methodology (FR-4)
+### Recall methodology (#102)
 
 Recall is measured, never estimated:
 
@@ -81,9 +81,9 @@ Recall is measured, never estimated:
    iterative-scan case) and unfiltered — with latency percentiles for the same runs, because
    recall without its latency cost is half a number.
 3. **The corpus is generated, and its recipe is committed** next to the rig: seed, text
-   generator, embedding model and version (post-RS-1), query-set construction. **No public
+   generator, embedding model and version (post-#153), query-set construction. **No public
    dataset is claimed as a dependency** — if a named public corpus is ever adopted for external
-   comparability, it enters by name with license and version, as a recipe change. Until RS-1
+   comparability, it enters by name with license and version, as a recipe change. Until #153
    lands, runs on synthetic vectors measure index behaviour, not semantic quality, and every
    report from such a run carries that sentence.
 
@@ -100,8 +100,8 @@ terminal is not a result.
   (committed next to the baselines). On shared CI hardware the verdict is advisory; on the
   pinned rig it gates.
 - **Target wiring:** pass/fail against latency targets compares the report to the target table
-  [FR-25](../product/roadmap.md) declares. Those targets are currently **undeclared — no number
-  for them exists anywhere in this set** — so until FR-25 states them, the harness runs in
+  #150 declares. Those targets are currently **undeclared — no number
+  for them exists anywhere in this set** — so until #150 states them, the harness runs in
   record-only mode: it publishes distributions and makes no pass/fail claim. This is deliberate:
   inventing a target here would put an unmeasured number on a page, which
   [ADR-0018](../adr/ADR-0018-the-documentation-set.md) d3 forbids.
@@ -119,8 +119,8 @@ pin. The rules:
 
 - baselines, diffs and trend lines are kept **per environment id**; the harness refuses to diff
   reports across environments;
-- publication under FR-25 includes the environment block verbatim — date, hardware, settings —
-  per the [roadmap](../product/roadmap.md)'s publication rule;
+- publication under #150 includes the environment block verbatim — date, hardware, settings —
+  per the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)'s publication rule;
 - a hardware or version change mints a new environment id and a new baseline; history is kept,
   never silently migrated.
 

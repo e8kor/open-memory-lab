@@ -10,7 +10,7 @@ answers: why source mapping's first slice is its own record beside ADR-0047; wha
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.8,
 with d18 to d22 added the same day from the competitor source studies (basic-memory, Hindsight)
 
-**Release:** introduced in v0.5.8 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.8 ([releases](../changelog.md))
 
 **Amends:** ADR-0047 (d3, d12, d15 a, d17, and its open questions, answered here and in its own
 answers table), ADR-0048 (d5: two of S4's filters built ahead of the stage), ADR-0039 (d3, d4:
@@ -63,7 +63,7 @@ not, each measured on `origin/main` at `ca61c9e` (45 ADRs) on 2026-11-05:
 agent key promotes, proposes or ratifies; R2, the reviewer is never the author, per key and
 principal; R3, a held row is read by its author and its reviewer; R4, nothing is deleted. The
 Occam rule ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d8 and the
-[use-case call map](../engineering/use-case-call-map.md)): every new call traces to a documented
+[use-case call map](../api/mcp-plugin.md)): every new call traces to a documented
 use case, and a capability is a parameter before it is a tool.
 
 Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
@@ -147,7 +147,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   any held row and R3 holds unread. It is the HTTP API and the CLI only; no MCP argument records
   one. Where held versions matter, `oml sync --check` reports `pending` from the key's own rows,
   which only that key lists (ADR-0025 d13). The mark is as fresh as the last check: between a
-  commit and the next sync or check nothing is marked, and FR-114 tracks that gap. A newer
+  commit and the next sync or check nothing is marked, and #138 tracks that gap. A newer
   check supersedes an older one's mark, so a source reverted to the anchored text reads `fresh`
   again.
 
@@ -217,7 +217,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     | `rollback` | the item's hash equals the anchor hash of a version of the claim older than its tip that was promoted (d20) | nothing, and the run exits 1; `--allow-rollback` writes it as `changed`, a revert the reviewer judges |
     | `unchanged` | anchor and text digest equal | a source check `fresh` (d5); a newer `rev` with the same hash is not a change |
     | `equivalent` | the hash differs, and the format's `diff` (ADR-0056 d11) finds the change equivalent and the extracted text equal | a source check `equivalent`: nothing is written and the anchor keeps its hash (d11) |
-    | `pending` | the claim has a held version | nothing: one held version per claim, so the run never needs the unbuilt revision of a held version (RS-17); the next run after review takes it |
+    | `pending` | the claim has a held version | nothing: one held version per claim, so the run never needs the unbuilt revision of a held version (#156); the next run after review takes it |
     | `diverged` | the tip has no anchor, or one in another repository | nothing, unless `--adopt`, which supersedes it as `changed`: a general capability for claims written before their source was synced, not used by d14's load |
     | `foreign` | the tip was written by another key | nothing; a writer may supersede only its own tip ([roles and keys](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)) |
     | `conflict` | the write answers `submission.claim_key_conflict` | nothing; another key holds the key |
@@ -264,7 +264,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   no longer serves, and the next `--edges` proposes the edge between the new tips: each changed
   endpoint costs one proposal and one ratification per edge. An edge whose statement leaves the
   documents is reported `unstated` by `--check` and is not withdrawn, since no route withdraws an
-  edge (FR-117).
+  edge (#138).
 
 - **d11 — Staleness is checked against a commit; a confirmation is a reviewed supersession, never
   a silent re-anchor; and an equivalent change refreshes nothing.** `oml sync <source> --workarea
@@ -313,7 +313,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     deterministically from documents already reviewed in their own pull requests, so the reviewer
     checks that an extraction is faithful, not that a claim is true, and ADR-0055's listing lets
     a person read 200 and judge them in one request. Both caps remain chosen, not measured
-    (FR-79, FR-116).
+    (#142, #138).
 
 - **d13 — v0.5.8 builds anchors, markdown sync, staleness and the ADR load; code waits.** Built:
   d1–d11, `oml anchor <path>[#fragment]` (prints the anchor of a committed file or fragment at
@@ -322,12 +322,12 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   and the CI key's re-derived approvals (d1, d2, d8, d9); symbol spans and `oml-span/1` (d4);
   branch workareas, pull requests as review batches and merges as commits (d5–d7); the release
   record (d10); the hooks that mark and ask (d11, d13); `oml code export` (d12's output half);
-  author revision of a held version (d15 c, RS-17); `anchor_symbol` and a `uri` adapter for wikis.
+  author revision of a held version (d15 c, #156); `anchor_symbol` and a `uri` adapter for wikis.
   **ADR-0047 d17's gate is narrowed** to those parts: its harness measures whether stored code
   knowledge helps an agent finish a task, and this slice stores no code knowledge, changes no
   default read (both filters are off unless sent, and recall unfiltered is byte-identical) and
   adds no session injection. Whether anchored hits are used is measured by ADR-0054's usage
-  telemetry (planned for v0.5.7) like any hit.
+  telemetry (since v0.5.7) like any hit.
 
 - **d14 — OML's own ADRs are loaded into `oml-design` under `oml-knowledge` in the operator's root,
   reviewed in bulk, and re-synced after every change on `main`.**
@@ -339,13 +339,13 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        records (item 3), also `adr`; `oml-docs` for `docs` with `--exclude 'docs/adr/**'` and the
        `headings` adapter; and `oml-code` for the Rust sources with the `rust` adapter, from
        v0.5.9 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
-       `oml workareas create e8kor oml-knowledge`, then `oml workareas create oml-knowledge
+       `oml workareas create acme oml-knowledge`, then `oml workareas create oml-knowledge
        oml-design` and the same for `oml-docs`; a draft's `oml-design-pr-<n>` is created under
        `oml-knowledge` when its pull request is first loaded. Recall at `oml-knowledge` reads all
        of them. Each workarea answers for one source with one adapter: a run diffs only its
        adapter's claim-key namespace, keeps the adapter its claims were written by unless
        `--change-adapter`, and treats `--exclude`d paths as out of the source, never retired.
-    2. **The keys.** The operator issues a writer key for the sync, `e8kor-design-sync`, with
+    2. **The keys.** The operator issues a writer key for the sync, `design-sync`, with
        writer and reader on `oml-knowledge` and its children, to an owner-only file (`--out`). It
        stays the sync key for good, since a writer supersedes only its own tips (d8 `foreign`).
        The 2026-11-05 script never ran, so nothing is adopted. Reviews and
@@ -370,7 +370,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        The documents follow: `oml sync docs --workarea oml-docs --adapter headings --exclude
        'docs/adr/**' --allow-public-server --dry-run`, then the runs.
     5. **Review.** After each run, `oml review list --workarea oml-design --author-key
-       e8kor-design-sync` to read the batch, then the same with `--ids-only`
+       design-sync` to read the batch, then the same with `--ids-only`
        piped to `oml review approve --ids -`; each verdict is marked `same_user` (ADR-0055 d7).
     6. **Edges.** Once the batches are promoted, `--edges` under the reviewer key and
        `--edges --ratify` under the second.
@@ -394,7 +394,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     | `oml sync --edges`, `--edges --ratify` | UC-SM-05, link the decisions documents say amend each other |
 
     The [use cases](../product/use-cases.md#sources) and the
-    [call map](../engineering/use-case-call-map.md#sources) declare them. `oml_write` gains one
+    [call map](../api/mcp-plugin.md) declare them. `oml_write` gains one
     argument and `oml_read` two; the catalog stays three tools (ADR-0039 d8).
 
 - **d16 — The build, each step closed by named tests.**
@@ -586,7 +586,7 @@ A dry run, as it would print at `ca61c9e` (lines elided):
 ```text
 $ oml sync docs/adr --workarea oml-design --adapter adr --allow-public-server --dry-run
 source    github.com/e8kor/open-memory-lab @ ca61c9edd258  docs/adr  adapter adr  hasher oml-md/1
-workarea  oml-design  key e8kor-design-sync
+workarea  oml-design  key design-sync
 new       adr-0001-summary     docs/adr/ADR-0001-the-constitution.md
 new       adr-0001-d1          docs/adr/ADR-0001-the-constitution.md#d1
 …
@@ -631,22 +631,21 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 
 - **Costs.** One migration and seven nullable columns on `memories`, with one index; the anchor's
   bytes in every anchored submission event; one route and one event, `source.checked`, a check
-  per anchored tip per sync; one lookup per served hit for its latest check; the filters' cost inside `bm25-postings`, unmeasured (FR-115). Review:
+  per anchored tip per sync; one lookup per served hit for its latest check; the filters' cost inside `bm25-postings`, unmeasured (#138). Review:
   523 items to load OML's ADRs, and at least two per edited record afterwards (the decision and
   the summary); every renamed file or moved heading costs a review per span; every superseded
   endpoint costs a proposal and a ratification per edge. Paths are kept for good (d2).
-- **Roadmap rows.** FR-114 (the stale mark's gap between a commit and the next sync), FR-115 (the
-  filters' latency and the recall eval's filtered queries), FR-116 (the review cost of a sync,
-  and its cap of 200), FR-117 (an edge whose statement leaves the documents cannot be withdrawn).
-  FR-79 continues for ADR-0047's caps. RS-17 stays open; this slice avoids it (d8 `pending`).
+- **Issues.** #138 (the stale mark's gap between a commit and the next sync), #138 (the
+  filters' latency and the recall eval's filtered queries), #138 (the review cost of a sync,
+  and its cap of 200), #138 (an edge whose statement leaves the documents cannot be withdrawn).
+  #142 continues for ADR-0047's caps. #156 stays open; this slice avoids it (d8 `pending`).
 - **Pages to change at the build.** The HTTP API and openapi.yaml; mcp-tools.json and the MCP
   plugin page; the CLI reference (`oml sync`, `oml anchor`, the new flags); the event catalog
   (`anchor` on the two submission events); the Postgres schema; retrieval (the filters and
   `stale`); admission (the scan over the anchor); the erasure inventory (the anchor as clear
   metadata, beside terms); the plugin's skill (when to send an anchor); and at acceptance the
   Status lines of ADR-0039, ADR-0047, ADR-0048 and ADR-0055.
-- **Concurrent branches.** ADR-0056 (claim formats, #63) holds FR-109 to FR-113, so this record's
-  rows are FR-114 to FR-117.
+- **Open follow-ups:** #138.
 
 ## Rejected alternatives
 

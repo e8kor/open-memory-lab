@@ -8,7 +8,7 @@ answers: how a release section of the changelog is assembled, and how the main b
 # Releasing
 
 **Status:** process page. The release pipeline itself (one tag building the binaries, the
-image and the chart) is in [CI and toolchain](../engineering/ci-and-toolchain.md).
+image and the chart) is in [CI and toolchain](ci-and-toolchain.md).
 
 ## The changelog
 
@@ -86,7 +86,7 @@ To turn it on, the operator transfers the repository to an organization, then:
 ```
 
 The merge method is a merge commit, as the repository uses. The two pull-request-only checks
-(`ADR, FR and migration numbers are reserved` and `change adds a changelog fragment`) are left
+(`ADR and migration numbers are reserved` and `change adds a changelog fragment`) are left
 out of the required list: they do not run for a queue entry, and a required check that never
 starts holds the queue. Require them in a second ruleset without the queue, or leave them
 advisory. `installer (windows-2025)` is left out because the run on main does not report it.

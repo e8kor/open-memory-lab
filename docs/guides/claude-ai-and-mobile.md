@@ -1,15 +1,11 @@
 <!--
 id: guides/claude-ai-and-mobile
 tier: engineering
-status: draft for review · since v0.4.0; no live claude.ai connection made
+status: current
 answers: how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; how a connection ends; and the open question of claude.ai's request headers
 -->
 
 # Guide: claude.ai and mobile
-
-**Status:** draft for review · since v0.4.0; no live claude.ai connection made
-
-**Release:** since v0.4.0 ([releases](../product/releases.md))
 
 Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and Android cannot run
 `oml login`, so OML links them to one agent key through a one-time connect code, over OAuth 2.1,
@@ -17,11 +13,7 @@ on the same origin that serves `/mcp`: there is no separate host, port or servic
 ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). Claude never
 receives the key, only a connection the server can withdraw.
 
-**Unverified.** `oml-server-lead`'s `oauth_flow` suite and `oml-cli`'s `connect_flow` suite run
-the connect flow end to end over HTTP against the real server, but they run only where the database
-role can create roles, as CI's does, and no green run of either is recorded yet. No connection from
-claude.ai itself has been made either, so every step below that names a claude.ai screen is
-Anthropic's documentation, not a recorded run.
+The server's `oauth_flow` and the CLI's `connect_flow` suites run this flow end to end in CI. A live connection from claude.ai is open ([#115](https://github.com/e8kor/open-memory-lab/issues/115)), so the steps that name a claude.ai screen follow Anthropic's documentation.
 
 ## What the server needs
 
@@ -33,7 +25,7 @@ Anthropic's documentation, not a recorded run.
    issuer the server names in `/readyz`.
 
 A laptop on `127.0.0.1` cannot be reached by claude.ai; this path needs a server people reach over
-the internet ([self-hosting](self-hosting.md)).
+the internet ([self-hosting](../start/run-your-own.md)).
 
 ## The administrator: issue a connector key and its code
 

@@ -178,7 +178,7 @@ impl Lake {
             .with_columns(spec.delta_columns())
             .with_table_name(spec.name)
             // No setTransactionRetentionDuration: an expired txn would reset
-            // recovery to "never applied" (ADR-0003 consequences, FR-16).
+            // recovery to "never applied" (ADR-0003 consequences, #101).
             .with_configuration_property(
                 TableProperty::CheckpointInterval,
                 Some(CHECKPOINT_INTERVAL),

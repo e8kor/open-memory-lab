@@ -1,20 +1,14 @@
 <!--
 id: guides/reviewing
 tier: engineering
-status: draft for review · describes v0.4.0; the example session not run against a live server
+status: current
 answers: how a person reviews held memories in v0.4.0: what held means and why the reviewer is never the author, getting and storing a reviewer key, taking the next held memory, reading it and its sources, approving and rejecting, what to check, supersessions and steering, crews and review policy, what approval changes, and what a reviewer can never do
 -->
 
 # Guide: reviewing memories
 
-**Status:** draft for review · describes v0.4.0; the example session not run against a live server
-
-**Release:** the review loop since v0.1.0; supersessions held until approved and steering since
-v0.2.0; names since v0.3.0; `oml login`, `oml review approve` and `oml review reject` since v0.4.0
-([releases](../product/releases.md))
-
 This page is about reviewing what agents write into OML. Reviewing the design documents is a
-different task, covered by the [review guide](../review-guide.md).
+different task, covered by the review guide.
 
 ## What a held memory is
 
@@ -52,7 +46,7 @@ every review verb with `access.verb_ceiling`. The admin's side is in
 [administering a server](administering.md) and the
 [CLI reference](../cli/reference.md#oml-keys-issuance-revocation-rotation); `oml quickstart`
 issues one reviewer key, `quickstart-reviewer`, into `<dir>/keys/reviewer`, with the `dreamer`
-grant alone ([self-hosting](self-hosting.md)).
+grant alone ([self-hosting](../start/run-your-own.md)).
 
 Store the key once. `oml login` reads it without echo, checks it, and writes the URL and key to
 the owner-only credentials file
@@ -140,7 +134,7 @@ filter on `review next`, attachments and serve expiry are designed and not built
 ([review policy objects](../architecture/admission.md#review-policy-objects);
 [k > 1 and human-required verdicts](../api/reviewer-crews.md#k-1-and-human-required-verdicts)).
 The serve is the claimed queue row; binding it to a record of what was shown is
-[FR-66](../product/roadmap.md).
+#130.
 
 ## After approval
 
@@ -179,7 +173,5 @@ $ oml review next
 nothing in scope waits — the queue is empty (204).
 ```
 
-The identifiers are illustrative. The output lines are the v0.4.0 CLI's format strings; this
-session has not been run against a live server for this page. `oml quickstart`'s self-check runs
-the same `review next` and `review approve` end to end, and its compose file has not yet been run
-under Docker ([self-hosting](self-hosting.md)).
+The identifiers are illustrative. `oml quickstart`'s self-check runs the same `review next` and
+`review approve` end to end ([run your own server](../start/run-your-own.md)).

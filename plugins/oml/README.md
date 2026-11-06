@@ -9,7 +9,7 @@ you store it.
 
 ## Install
 
-*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0; the default server since v0.4.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; the pinned marketplace and offline archive since v0.3.1; setup through Claude Code's plugin settings since v0.4.0; the default server since v0.4.1 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 The plugin takes two settings: `url`, the server without `/mcp`, and `api_key`, this agent's own
 key. Since v0.4.1 `url` defaults to the maintainer's public server, `https://memory.doublegate.io`,
@@ -100,7 +100,7 @@ way, extract it, and run `claude plugin marketplace add ./oml-claude-plugins-X.Y
 reads the plugins from that directory in place, so keep it where you extracted it. Every form
 names the marketplace `open-memory-lab`, so `claude plugin install oml@open-memory-lab` installs
 from whichever you added, and you hold one of them at a time. See
-[release artifacts](../../docs/engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance).
+[release artifacts](../../docs/contributing/ci-and-toolchain.md).
 
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
 it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
@@ -143,7 +143,7 @@ rows are never cut, the hits are the longest run from the top of the ranking tha
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews
 their own work, both depend on it. To run a server, see the
-[self-hosting guide](../../docs/guides/self-hosting.md).
+[self-hosting guide](../../docs/start/run-your-own.md).
 
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>` issues an
 agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
@@ -157,7 +157,7 @@ conversation. See the
 
 ## The `oml` CLI
 
-*Available since v0.1.0; per-platform archives since v0.3.1; the installer since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; per-platform archives since v0.3.1; the installer since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 `oml setup claude-code`, the session-start hook below and key issuance need the `oml` CLI on
 your `PATH`. One line installs it for you alone and checks the download:
@@ -173,7 +173,7 @@ runs only when Git for Windows, which provides Git Bash, is installed; see the
 
 ## Every session starts from memory
 
-*Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.2.2; the plugin settings first, the compaction prompt naming `oml_write` and the two read tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 When the `oml` CLI is on your `PATH`, the plugin's SessionStart hook runs `oml hook
 session-start` each time a session starts, resumes, is cleared, is compacted or is forked. It
@@ -215,7 +215,7 @@ still held until a different identity reviews it, so nothing it records is share
 
 ## Recall after a failed command (opt-in)
 
-*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 Set `OML_FAILURE_RECALL=1` and, when a Bash command fails, the plugin's PostToolUseFailure hook
 runs `oml hook tool-failure`: it searches with up to three distinctive words of the error, such
@@ -230,7 +230,7 @@ the SessionEnd hook deletes it. See the
 
 ## Chat memory (opt-in)
 
-*Planned for v0.6.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Since v0.6.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 Run `oml chat init` once with your own key, not an agent's: it opens `chat` under your user
 root, the one place your agents write what you tell them, and prints its id. Put that id in the
@@ -258,7 +258,7 @@ review it.
 
 ## Guardrails
 
-*Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Since v0.5.1 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 When the `oml` CLI is on your `PATH`, the plugin also runs `oml hook guardrails` at every session
 start, after a compaction and when Claude starts a subagent. It loads the reviewed rules in force
@@ -276,7 +276,7 @@ run. See the
 
 ## The librarian
 
-*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 The plugin adds one subagent, `oml:librarian`, for "what does OML hold about X". Claude delegates
 to it, or you ask for it with `@agent-oml:librarian`. One query that finds nothing proves
@@ -291,7 +291,7 @@ calls included; without it, each of its calls asks you in the main session.
 
 ## Other MCP clients
 
-*Available since v0.1.0; the agent kit since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.1.0; the agent kit since v0.3.1 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 The server speaks stateless streamable HTTP at `/mcp`. Any client that accepts this shape
 works:
@@ -317,7 +317,7 @@ that documentation does not settle as unverified.
 
 ## Upgrading from 0.3
 
-*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 Release 0.4.0 reads the server and the key from the plugin's two settings, not from `OML_URL` and
 `OML_API_KEY`: a 0.3 install that only exported the variables gets no tools after the update until
@@ -337,7 +337,7 @@ tool: an agent learns what became of its writes with `oml_read` and `state`, and
 
 ## What is served today
 
-*Eight tools since v0.2.0; three task-shaped tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Eight tools since v0.2.0; three task-shaped tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 [docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the three tools above,
 each with its MCP annotations: `oml_read` and `oml_workarea` are read-only, and `oml_write` is
@@ -346,4 +346,4 @@ neither read-only nor destructive, since every write is held and a retirement is
 and not served: `oml_relate_propose`, `oml_vocab`, `oml_read`'s lineage mode and `oml_write`'s
 `attachments`. A designed tool answers an error saying it is designed. No tool uploads files,
 since MCP carries no file bytes; files will go through the CLI and the SDKs. These arrive with
-the milestones in the [critical path](../../docs/product/critical-path.md).
+the milestones in the critical path.

@@ -1,5 +1,5 @@
 //! The connect flow end to end over HTTP against the real lead (ADR-0031 d1,
-//! d2, d7–d11, d14; FR-34's continuous-integration criterion). The lead is
+//! d2, d7–d11, d14; #115's continuous-integration criterion). The lead is
 //! `start_lead` over a migrated Postgres store, served on an ephemeral TCP
 //! port; every step is an HTTP request to it: the bootstrap claim, the
 //! `oml` binary's `keys issue-agent --connect-code`, `keys show`,

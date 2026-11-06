@@ -9,7 +9,7 @@ answers: how Claude's hosted apps reach the agent plugin through a claude.ai cus
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
-**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0010 (d3, d7), ADR-0014 (d1, d2, d3, d4), ADR-0015 (d1), ADR-0018 (d4), ADR-0025 (d2, d15), ADR-0028 (d1)
 
@@ -34,9 +34,7 @@ statistics key on one key per agent identity — so OML does not rely on it.
 
 **What OML offers today.** `/mcp` takes `Authorization: Bearer <key>` and nothing else, and a call
 without a key answers `401 auth.missing` with no challenge
-([agent plugin](../api/mcp-plugin.md), [errors](../api/errors.md)). Whether OML adopts OAuth is
-[RS-2](../product/roadmap.md), which [ADR-0018](ADR-0018-the-documentation-set.md) d3 lets close
-only in a fixed form: the spec revision with its fetch date, the client support verified with a
+([agent plugin](../api/mcp-plugin.md), [errors](../api/errors.md)). Whether OML adopts OAuth was an open question, closed only in a fixed form: the spec revision with its fetch date, the client support verified with a
 date, and the trigger recorded as a decision. [ADR-0014](ADR-0014-http-api-and-mcp-facade.md) d2
 and [ADR-0010](ADR-0010-roles-and-keys.md) d7 ship bearer keys until that trigger fires. ADR-0010
 rejected "OAuth-only identity, including for agents" because agents cannot hold an interactive
@@ -106,7 +104,7 @@ because a connection reaches only `/mcp`, and `/mcp` serves only the agent-safe 
 never more than its key (d11). Held-by-default admission (R3) is untouched: what Claude writes
 through a connection is held like any write. Every number below is a shipped default or a
 constant, a policy choice; nothing about OML is measured, and what would need measuring opens
-[FR-34](../product/roadmap.md). Decided, not built.
+#115. Decided, not built.
 
 ## Decision
 
@@ -137,7 +135,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     implementation — unauthenticated endpoints, an HTML page, an outbound fetch (d5) — inside the
     process that holds the signing key. This amends ADR-0014 d2's closing sentence and ADR-0010
     d7's "v1 ships bearer keys everywhere": the trigger fired, and `/mcp` also accepts a
-    connection's access token. [RS-2](../product/roadmap.md) is restated in ADR-0018 d3's form.
+    connection's access token.
 
 - **d2 — A call to `/mcp` that fails authentication keeps its typed `401` body and adds the RFC
   9728 challenge.** With no `Authorization` header the answer is `auth.missing` with
@@ -149,7 +147,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   read it on a `200`. With `oauth.issuer` unset, `/mcp` answers `WWW-Authenticate: Bearer
   realm="oml"`. The `/v1` and `/v2` routes are unchanged: their `401`s carry no challenge, which
   RFC 9110 §15.5.2 requires of every `401`; that nonconformance is
-  [FR-35](../product/roadmap.md), opened by this record, and correcting it is not decided here.
+  #126, opened by this record, and correcting it is not decided here.
   The cost: a
   bearer client whose key is refused at `/mcp` now sees a pointer to an authorization server and
   may offer the person a sign-in; that sign-in needs a connect code the person does not have, and
@@ -302,7 +300,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     request forgery surface bounded by the rules above and carried as a residual in
     [security](../architecture/security.md#connections-the-oauth-surface) — and that a deployment
     with no outbound HTTPS cannot verify a metadata-document client. What Claude does after a
-    failed document fetch is not in the cited sources (FR-34).
+    failed document fetch is not in the cited sources (#115).
 
 - **d6 — A redirect URI is admitted only when it is exactly
   `https://claude.ai/api/mcp/auth_callback`.** Matching is byte for byte, on the parameter's value
@@ -350,7 +348,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     without the code, and a replay returns that body with `Idempotency-Replay: true`,
     so no idempotency record holds a connect code and the first answer is the only one that
     carries it. A bearer key's replay stays as ADR-0014 d3 has it; that its stored response holds
-    the value is [FR-36](../product/roadmap.md), opened by this record. This amends ADR-0014 d3
+    the value is #127, opened by this record. This amends ADR-0014 d3
     for the two connect-code responses ("returns the stored response" returns it without the
     code) and ADR-0028 d1 (`issue-agent`'s output). On a replayed answer,
     `oml keys issue-agent --connect-code` and `oml keys connect-code` print no code, name the key
@@ -510,7 +508,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     page's own `POST` carries its real origin, and the cross-origin `303` to the redirect URI still
     carries no `Referer`. The page runs no script. `form-action` names the redirect origin because
     a browser may apply it to the redirect that follows a form submission; which browsers do is
-    unverified (FR-34). Client-supplied strings are HTML-escaped and shortened, and `logo_uri` is
+    unverified (#115). Client-supplied strings are HTML-escaped and shortened, and `logo_uri` is
     never loaded.
 
     **Not a web console.** The page is not the web console ADR-0015 declines: it administers
@@ -550,7 +548,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     a row; the exchange marks the code redeemed only where it is still unredeemed. A refresh whose
     update matches nothing while the token's row shows it rotated is reuse, and the revocation then
     takes the per-tenant chain lock to commit `connection.revoked`. The statements are declared on
-    the [Postgres schema](../data/postgres-schema.md#connections-adr-0031). A presented code whose
+    the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations). A presented code whose
     row is already redeemed is reuse only when the request's `client_id` is the connection's and
     the S256 of its `code_verifier` is the stored `code_challenge`: only the holder of the
     verifier can redeem first, which is the case reuse detection exists for. Any other
@@ -578,7 +576,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     (d11), and a JSON Web Token would carry the tenant and key id in the clear, where the key
     format rule says a credential encodes nothing. The cost: under strict rotation a refresh whose
     answer is lost, so that the client retries with the old token, ends the connection, and the
-    person reconnects with a new code. How often that happens with Claude is unmeasured (FR-34).
+    person reconnects with a new code. How often that happens with Claude is unmeasured (#115).
 
 - **d11 — A connection's token is exactly its key: every request re-resolves it to the key and
   applies every rule to that key, and nothing a token carries can widen it.** At `/mcp` an access
@@ -634,7 +632,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     a newer connection of its key opens (d12). Doctor counts live connections and reports the
     others apart (d14). The cost: one
     more lookup per call than a key, for the connection — unmeasured, counted against
-    [FR-25](../product/roadmap.md).
+    #150.
 
 - **d12 — The journal records a connect code's issuance, a connection's opening and its
   revocation, and nothing about refreshes.** Three events join the keys and grants family —
@@ -792,15 +790,13 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   (the doctor fields, the plaintext rule's list of what a log line never carries, and the
   stated, not checkable, line for a proxy's access log);
   [admission](../architecture/admission.md) (the `secret.api_token` row names the two token
-  formats); [event catalog](../data/event-catalog.md); [Postgres schema](../data/postgres-schema.md)
+  formats); [event catalog](../data/event-catalog.md); [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)
   (five tables, `api_keys.credential`, `api_keys.hash` nullable, `lead_lease.oauth_issuer`, the
   rotation and redemption statements); [CLI reference](../cli/reference.md)
   (`--connect-code`, `oml keys connect-code`, `oml keys disconnect`, connections in
   `oml keys show`, the refusal of `oml keys rotate` on a connector key, and what the connect-code
   verbs do with a replayed answer that carries no code).
-- The [roadmap](../product/roadmap.md): RS-2 restated in ADR-0018 d3's form, its exit criterion met
-  by this record on acceptance and the row leaving the register then; FR-34, FR-35 and FR-36
-  opened.
+- Open follow-ups: #115, #126 and #127.
 - `README.md`: how to add OML on claude.ai and use it from a phone, marked decided, not built.
 - The claim↔claim and workarea↔workarea sense written "connection edge" or "connection proposal"
   (d7's vocabulary row) on [roles and keys](../architecture/roles-and-keys.md) (the dreamer row,
@@ -813,16 +809,16 @@ constant, a policy choice; nothing about OML is measured, and what would need me
   gains an exception class for the `oauth` family, since the wrappers raise one class per family
   of [errors](../api/errors.md).
 
-**Opened.** [FR-34](../product/roadmap.md): the connection flow is designed, not built, and no live
+**Opened.** #115: the connection flow is designed, not built, and no live
 connection has run. It closes on the end-to-end test of the in-process lead passing in CI and a
 dated live connection from a claude.ai custom connector used from a Claude mobile app, with the
 token endpoint's latency measured against Claude's 10-second and 30-second limits; it also holds
 what the sources do not say — Claude's behavior after a failed document fetch, `form-action` on
 redirects across browsers, whether Claude checks the `iss` of an authorization response, and how
 often strict rotation ends a connection.
-[FR-35](../product/roadmap.md): the `/v1` and `/v2` `401` answers carry no `WWW-Authenticate`
+#126: the `/v1` and `/v2` `401` answers carry no `WWW-Authenticate`
 challenge, which RFC 9110 §15.5.2 requires (d2); it closes on a recorded decision and the header
-on every `401`. [FR-36](../product/roadmap.md): the idempotency record of a bearer key's issuance
+on every `401`. #127: the idempotency record of a bearer key's issuance
 or rotation stores the response as sent, key value included (d7); it closes on a recorded decision
 and no stored response holding a key value.
 
@@ -848,9 +844,8 @@ ratification"), ADR-0012's context ("connection-establishment") and ADR-0025's d
 alternative ("ratify connections") becomes "connection edge" or "connection proposal", ADR-0025's
 "needs one connection" in its agent-facing results becomes "needs one key", and the "token" that
 names a key in ADR-0022 (its context, d4, d5, d6 and rejected alternatives) and ADR-0025 (d13, d14
-and d13's rejected alternative) becomes "key"; RS-2 leaves the register;
-[commitments](../product/commitments.md) drops RS-2 from its open questions and lists FR-34,
-FR-35 and FR-36; the
+and d13's rejected alternative) becomes "key"; [commitments](../product/commitments.md) lists #115,
+#126 and #127; the
 `spec-vX.Y` tag of d15 is cut. With the proposal, the record registers at its three points, the
 D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 [changelog](../changelog.md) entry records it.
@@ -880,7 +875,7 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d6 — Loopback redirects for Claude Code** | Deferred: how Claude Code signs in is not in the cited sources, and it keeps its key in the header. A loopback entry would bring its own grammar, a second page warning and the residual that any local program can listen, for a client this record cannot source; admitting one is a later recorded decision. |
 | **d7 — The maintainer's rejected reading: paste the key value on OML's page** | The value would pass through the person's clipboard and browser. |
 | **d7 — Print the key value beside the code** | A second, unneeded credential for the same key, resting on a terminal. |
-| **d7 — Store every show-once response without its secret, bearer keys included** | It would change bearer-key issuance and rotation, which connections do not need and which stay unchanged; the stored value is FR-36. |
+| **d7 — Store every show-once response without its secret, bearer keys included** | It would change bearer-key issuance and rotation, which connections do not need and which stay unchanged; the stored value is #127. |
 | **d7 — Codes for bearer keys too** | One key would act through two credential paths, and the key id on a journal event could no longer say which acted without changing the signed envelope. |
 | **d7 — Rotate a connector key into a successor** | Rotation prints a successor's value, which would make it a bearer key with the connector key's grants; a successor without a value would need a new code anyway, which `oml keys connect-code` already mints. |
 | **d7 — Several open connections per key** | Several clients would share one identity, against one key per agent. |

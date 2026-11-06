@@ -1,15 +1,11 @@
 <!--
 id: architecture/audit-and-lineage
 tier: engineering
-status: design draft for review · decided, not built
+status: current
 answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired
 -->
 
 # Audit and lineage
-
-**Status:** design draft for review · decided, not built
-
-**Release:** the signed journal since v0.1.0; the evidence export and erasure not scheduled ([releases](../product/releases.md)).
 
 This page owns the evidence story and decision D4: what the journal records and what it never
 records, what an evidence export contains, how lineage is represented and queried, and what
@@ -17,12 +13,12 @@ erasure actually does — including the full inventory of every copy class a mem
 reach and what happens to each one when that memory is erased. The journal's commit protocol,
 per-tenant hash chain and signing are mechanics owned by [storage](storage.md); the read log's
 retention and anchoring are owned by [retrieval](retrieval.md); the simulation fence whose rows
-every export must separate is owned by [simulations](simulations.md); the CLI verb that produces
+every export must separate is owned by [simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md); the CLI verb that produces
 the export, `oml audit export`, is specified in the [CLI reference](../cli/reference.md). The
 decision record for erasure is ADR-0005 in the [decision register](../adr/index.md).
 
 Nothing below exists as code. Every mechanism is a design commitment whose exit criterion is
-tracked in the [roadmap](../product/roadmap.md). The claim this page makes for the system is the
+tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). The claim this page makes for the system is the
 sanctioned one and no stronger: it **produces the evidence an auditor asks for**. It does not
 claim compliance with any regulation, and the one place a regulation is named —
 [GDPR Article 17, below](#gdpr-article-17-a-named-tension) — names it as a tension with a
@@ -30,7 +26,7 @@ designed answer and an open edge, not as a box ticked.
 
 ## What the journal records
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+*Available since v0.1.0 · [releases](../changelog.md)*
 
 The journal is the system of record: a per-tenant, signed, hash-chained, append-only sequence of
 events in PostgreSQL ([storage](storage.md) owns the chain-head serialization, the synchronous
@@ -77,11 +73,11 @@ Two further exclusions, each with its reason:
   principal because attribution is a design requirement of this system — who wrote what, when, where.
   It carries no more than that, and the design is honest that what it does carry is not erased
   by crypto-shredding: see [the boundary](#the-honest-boundary), and the attribution-metadata
-  erasure FR in the [roadmap](../product/roadmap.md).
+  erasure issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## The evidence export
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 `oml audit export` produces a signed bundle ([CLI reference](../cli/reference.md) owns the verb
 and its flags). Each section of the bundle answers a question an auditor actually asks, and each
@@ -94,7 +90,7 @@ carries its own stated limit:
 | Grants history | "Who could do what, where, and when — and who gave it to them?" | Journalled key issuance (with the issuer ceiling check), revocations, grants, per-grant denies, global key denials and permission epochs. Every effective-access computation is reproducible from these records alone ([workareas](workareas.md), [roles and keys](roles-and-keys.md)). | History of authority, not of intent; a key's holder is whoever the tenant gave it to. |
 | Read log, retention-scoped | "Who read this memory, and when?" | The read-event log, exported only within the tenant's retention window, with the journal-anchored batch digests that let the window's contents be verified. | Answers nothing outside the window, and says so in the bundle rather than exporting an unverifiable tail ([retrieval](retrieval.md)). |
 | Reciprocal-approval statistics | "Could the writer and the reviewer be the same interest?" | Per key-pair approval counts across the export window, surfacing pairs that predominantly ratify each other. | Makes collusion **visible, not impossible** — the independence axis ([roles and keys](roles-and-keys.md)) is checked at promotion; this section is the standing check on what slipped past it. |
-| Simulations, separated | "Is any of this synthetic?" | Simulation rows, excluded from the main sections by default and listed separately per `simulation_id` when included; the tainted closure is listed in the simulations section of **every** export, even one that excludes simulation content ([simulations](simulations.md)). The simulations section appears in every export, even one that includes nothing, so absence is asserted rather than assumed. | Fencing is as good as declared derivation (§ above). |
+| Simulations, separated | "Is any of this synthetic?" | Simulation rows, excluded from the main sections by default and listed separately per `simulation_id` when included; the tainted closure is listed in the simulations section of **every** export, even one that excludes simulation content ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). The simulations section appears in every export, even one that includes nothing, so absence is asserted rather than assumed. | Fencing is as good as declared derivation (§ above). |
 
 The bundle is itself signed, so a recipient can verify it was produced by the deployment it
 claims. What the bundle is **not**: it is not a compliance certificate, it is not legal advice,
@@ -124,7 +120,7 @@ and is load-bearing twice:
   proposer cannot launder authorship through an unratified connection proposal
   ([admission](admission.md)).
 - **Simulation taint.** A closure that touches a simulation row makes the claim sim-derived,
-  with everything that follows ([simulations](simulations.md)).
+  with everything that follows ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 
 Closure over pending edges is deliberately the conservative choice: it refuses some reviews a
 ratified-only reading would allow, and the design accepts that cost because the alternative —
@@ -135,10 +131,10 @@ the constitution exists to prevent.
 
 A `claim_key` names which submissions are one claim in several versions; the served member of
 that chain is the **tip**.
-The rules, enforced as constraints in the [Postgres schema](../data/postgres-schema.md):
+The rules, enforced as constraints in the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations):
 
 - One served tip per `(tenant, workarea_id, claim_key)` — a partial unique index over served
-  rows; the [Postgres schema](../data/postgres-schema.md) records why the index is spelled with
+  rows; the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) records why the index is spelled with
   the workarea: `claim_key` is namespaced per workarea.
 - **Each version has its own `artifact_id`, and `version` is its ordinal within the
   `claim_key`.** A new claim's first version is 1. A successor's version is 1 + the greatest
@@ -155,14 +151,14 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   a stated residual: a successor's version ordinal, returned to its proposer and shown on every
   version, counts every earlier version of the `claim_key` in any state, so a key learns how many
   versions it cannot read (held, rejected or demoted, by any author) precede it — a count, never
-  content ([FR-31](../product/roadmap.md)).
+  content (#129).
 - **A `claim_key` names one live claim per `(tenant, workarea_id)`.** A new claim (version 1)
   collides with a held, promoted or demoted version of that `claim_key` in the workarea —
   held now, or promoted at some point and not erased (`submission.claim_key_conflict`). A
   version 1 rejected without ever being promoted releases the key for a fresh version 1, and so
   does a claim whose every version is rejected or erased, so a rejection never blocks
   resubmission. A demoted claim keeps its key, because a demoted version can return to service
-  ([simulations](simulations.md): a sim-derived row that survives re-review is un-demoted); a
+  ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md): a sim-derived row that survives re-review is un-demoted); a
   claim whose every version is demoted therefore holds its key until it is erased or returns to
   service, and its replacement starts under another `claim_key`. No
   two held, promoted or demoted versions of one `claim_key` therefore share an ordinal, and
@@ -175,7 +171,7 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   version of its `claim_key` already carries is refused with the same code. The collision is a
   stated residual: it tells any writer on the workarea that a held version, or a promoted or
   demoted one the writer cannot read, holds that `claim_key` — a name, never content
-  ([FR-31](../product/roadmap.md); [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
+  (#129; [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
   d18).
 - **Supersession targets the current served tip, and only ratification moves the tip.** A
   supersession is a held successor that names the version it replaces; the replaced version
@@ -197,7 +193,7 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   workarea's tip, and the one `workarea_id` of a `lifecycle.supersede` names both versions. The
   tip never changes except by a ratified promotion, so readers never see a version nobody
   reviewed ahead of a reviewed one. The compare-and-set runs inside the commit's data-modifying
-  statement, never before `BEGIN` ([postgres-schema](../data/postgres-schema.md#memories)). For a
+  statement, never before `BEGIN` ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). For a
   tainted successor (provenance `simulation` or sim-derived) the ratification compare-and-sets
   the same target under the same predicate and journals
   `lifecycle.supersede`, but it sets the audience overlay tip (`memories_overlay_tip`) and never
@@ -233,7 +229,7 @@ The rules, enforced as constraints in the [Postgres schema](../data/postgres-sch
   journalled move event records a re-key. A silent re-key would break the chain's identity;
   a recorded one is lineage.
 - **The default tip is never a simulation-tainted version.** Tip resolution is audience-scoped
-  ([simulations](simulations.md)): taint never captures the default tip. Tip computation for keys
+  ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)): taint never captures the default tip. Tip computation for keys
   outside a simulation's audience ignores `provenance: simulation` rows and sim-derived claims,
   a promoted tainted supersession is served only as that audience's overlay tip, and any act that
   would make a tainted version the default served tip is refused (`simulation.tip_refused`). The
@@ -244,11 +240,11 @@ its own decision trail, until demoted or erased by its own journalled act.
 
 ## Erasure: crypto-shredding
 
-*Not scheduled · [releases](../product/releases.md)*
+*Not scheduled · [releases](../changelog.md)*
 
 Bodies and attachments are encrypted under per-artifact data-encryption keys (DEKs) wrapped by a
 key-encryption key in KMS or a Secret ([security](security.md) owns key custody; the
-`artifact_keys` table is in the [Postgres schema](../data/postgres-schema.md)). Erasure is two
+`artifact_keys` table is in the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Erasure is two
 acts in one journalled operation:
 
 ```mermaid
@@ -286,12 +282,12 @@ here rather than restating it.
 | Postgres temporary and spill files; standby replicas' own disks | Transient plaintext-derived content (sorts, hash spills over index rows) on the primary's and every standby's volume | Bounded by volume encryption at rest plus the operating system's temp-file lifetime; a standby's disk holds the same WAL and table copies as the primary and inherits every bound above. Named here because the inventory's rule is completeness, not comfort |
 | OS/block-level volume snapshots of the Postgres volume | Everything the volume held at snapshot time — plaintext-derived index content **and** wrapped DEKs — outside the base-backup/WAL accounting above | Whether the deployment takes volume snapshots is an operational choice; if it does, their retention window joins the erasure SLO composition exactly as base backups do, and the [deployment](../operations/deployment.md) backup table must list them |
 | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | The **wrapped DEK itself** — a usable key copy, not content | The live row is nulled at erase; copies in base backups and WAL survive until the backup retention window expires, and **while the wrapping KEK lives, a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy**. The designed bound: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed — destroying it invalidates every wrapped-DEK copy in older backups. Erasure therefore completes against live stores immediately, and against backups no later than **backup retention window + KEK rotation period** ([security](security.md) owns key custody; the fenced-restore ceremony is [deployment](../operations/deployment.md)'s) |
-| The `kms-file` keyring file and its backups (standalone and docker profiles, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4) | The **KEK itself**, held as a host file behind the KMS port — not content, the key that unwraps every DEK it wrapped | The live file's retired-KEK destruction is file deletion, journalled. Any backup of the keyring file — host backup, volume snapshot, copied compose volume — is a usable key copy and extends the erasure SLO exactly as wrapped-DEK copies in Postgres backups do; its window is whatever backs up that path, which only the operator controls, and the bound is stated as exactly that strong ([RS-12](../product/roadmap.md); the backup table in [deployment](../operations/deployment.md) lists this class) |
+| The `kms-file` keyring file and its backups (standalone and docker profiles, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4) | The **KEK itself**, held as a host file behind the KMS port — not content, the key that unwraps every DEK it wrapped | The live file's retired-KEK destruction is file deletion, journalled. Any backup of the keyring file — host backup, volume snapshot, copied compose volume — is a usable key copy and extends the erasure SLO exactly as wrapped-DEK copies in Postgres backups do; its window is whatever backs up that path, which only the operator controls, and the bound is stated as exactly that strong (#154; the backup table in [deployment](../operations/deployment.md) lists this class) |
 | `held_fts` (decided, not built — [retrieval](retrieval.md#held-text-containment)) — `tsvector` entries, the class above, on a row of its own for its held transitions | **Plaintext-derived** `tsvector` rows of held versions, readable only by the authoring key | Inserted by every transition into `held` and removed by every transition out of it, each in the commit that makes the transition ([retrieval](retrieval.md#held-text-containment) owns the list), so a held row's index entry never outlives its held state; persists in Postgres base backups and WAL until the backup retention window expires, exactly as the `tsvector` row above |
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
-| Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked FR with an exit criterion in the [roadmap](../product/roadmap.md) — open, not solved |
-| `terms` CURIE annotations ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) | Clear vocabulary labels on claims — they semantically label even an erased claim ("this erased claim was tagged X") | **Not erased by crypto-shredding**, same class as attribution metadata above; inherited by the same FR |
+| Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked issue with an exit criterion in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) — open, not solved |
+| `terms` CURIE annotations ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) | Clear vocabulary labels on claims — they semantically label even an erased claim ("this erased claim was tagged X") | **Not erased by crypto-shredding**, same class as attribution metadata above; inherited by the same issue |
 
 ### The honest boundary
 
@@ -328,13 +324,13 @@ not pretend otherwise. The resolution rests on one foundational move and one del
   Postgres backups appear in it as a usable-key-copy class bounded by KEK retirement, and why attribution
   metadata is listed as not-erased rather than assumed non-personal because adjacent content is
   hashed — signed identifying metadata must be minimized or individually erasable, and OML's
-  answer is minimization now and an erasure FR for the rest.
+  answer is minimization now and an erasure issue for the rest.
 
 The design's answer to Article 17, then: bodies and attachments are erasable by crypto-shredding
 with a journalled, auditable erase event; the journal holds no plaintext, so the record survives;
 plaintext-derived copies are removed live and bounded in backups by a named retention window;
 wrapped-DEK copies in backups are bounded by scheduled KEK rotation and retired-KEK destruction;
-attribution metadata is the open edge, tracked as an FR with an exit criterion. The open edges
+attribution metadata is the open edge, tracked as an issue with an exit criterion. The open edges
 are stated because a second-line risk function is paid to find them, and finding them stated is
 the difference between a design review and a retraction. None of this is legal advice, and no
 sentence here or elsewhere in this documentation claims the design is GDPR-compliant; the claim
