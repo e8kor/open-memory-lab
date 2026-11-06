@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API, designed operations
-  version: 0.6.0-design
+  version: 0.6.1-design
   summary: >-
     The designed annex of the OML HTTP API: decided, not routed. Nothing is generated from it.
   description: >-
@@ -146,7 +146,7 @@ paths:
       tags: [claim-administration]
       operationId: eraseClaim
       summary: Journalled crypto-shred — erase event plus DEK destruction, scoped to body and attachment bytes.
-      description: 'Requires: admin key role. dry_run returns the erasure inventory per copy class. Attribution metadata survives — FR-1.'
+      description: 'Requires: admin key role. dry_run returns the erasure inventory per copy class. Attribution metadata survives — #146.'
       parameters:
         - { $ref: 'openapi.yaml#/components/parameters/ArtifactId' }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
@@ -649,7 +649,7 @@ paths:
       tags: [keys]
       operationId: rotateKey
       summary: Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
-      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor''s name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The successor takes its own name (409 name.taken when held), since both keys are live through the grace window, and carries the old key''s crew (ADR-0026 d9). A connector key is not rotated: 422 oauth.connect_refused with details.reason connector_key, because a successor''s value would make it a bearer key; a fresh connection is a new connect code, a fresh identity a new connector key (ADR-0031 d7). Per key in v1; bulk crew rotation is open — FR-6.'
+      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor''s name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The successor takes its own name (409 name.taken when held), since both keys are live through the grace window, and carries the old key''s crew (ADR-0026 d9). A connector key is not rotated: 422 oauth.connect_refused with details.reason connector_key, because a successor''s value would make it a bearer key; a fresh connection is a new connect code, a fresh identity a new connector key (ADR-0031 d7). Per key in v1; bulk crew rotation is open — #120.'
       parameters:
         - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }

@@ -2,19 +2,19 @@
 id: adr/ADR-0041-a-quick-start-in-one-command-per-role
 tier: engineering
 status: accepted design · 2026-11-04
-answers: how a person goes from nothing to a first memory in one command per role; what install.sh and install.ps1 download, check and write, and what they leave alone; how cosign and the checksum-only path differ and what each catches; the pinned default version and latest; where the scripts are served and what a piped install trusts; oml login and oml doctor as the onboarding step; oml setup claude-code; oml quickstart for a self-hoster; the install-smoke CI job and check_release.py's installer checks; the time-to-first-memory targets and their roadmap row
+answers: how a person goes from nothing to a first memory in one command per role; what install.sh and install.ps1 download, check and write, and what they leave alone; how cosign and the checksum-only path differ and what each catches; the pinned default version and latest; where the scripts are served and what a piped install trusts; oml login and oml doctor as the onboarding step; oml setup claude-code; oml quickstart for a self-hoster; the install-smoke CI job and check_release.py's installer checks; the time-to-first-memory targets and their issue
 -->
 
 # ADR-0041 — A quick start in one command per role: an installer that checks what it downloads, `oml login`, `oml setup claude-code` and `oml quickstart`
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
 
-**Release:** partly in v0.4.0; `install.sh --quickstart` and d4's short install address are not in it ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.4.0; `install.sh --quickstart` and d4's short install address are not in it ([releases](../changelog.md))
 
 ## Context
 
 The CLI ships per platform since v0.3.1 as `oml-cli-X.Y.Z-<target>`, signed with cosign and
-summed in a signed `SHA256SUMS` ([release artifacts](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)).
+summed in a signed `SHA256SUMS` ([release artifacts](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)).
 Installing it means seven lines that assume cosign ([CLI reference](../cli/reference.md#installing-oml-and-what-differs-on-windows)).
 A self-hoster needs a checkout, Docker, curl and jq, and `scripts/quickstart.sh` reads the
 enrollment token out of the server's log. On 2026-11-03 the maintainer asked for a minimal install
@@ -75,7 +75,7 @@ through them. Where each item stands is under [Consequences](#consequences).
   there.** The documented line for each release is
   `curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/vX.Y.Z/scripts/install/install.sh | sh`,
   and on Windows `irm https://raw.githubusercontent.com/e8kor/open-memory-lab/vX.Y.Z/scripts/install/install.ps1 | iex`.
-  This needs no new infrastructure. `https://oml.doublegate.io/install.sh` and `/install.ps1` may
+  This needs no new infrastructure. A host the project controls may serve `/install.sh` and `/install.ps1` and
   answer with a 308 redirect to the current release's URL. That is a line in the host's Caddy file,
   changed at each release, never a copy of the script. The host is the maintainer's and is set up
   at the v0.4.0 release, not in this change. The documentation never shows a `main` URL.
@@ -174,7 +174,7 @@ through them. Where each item stands is under [Consequences](#consequences).
       most of it the image pull.
     - **Administrator**, with a server running: under a minute per agent key.
 
-    These are targets and unmeasured, tracked as FR-68. A memory others can recall also waits for
+    These are targets and unmeasured, tracked as #107. A memory others can recall also waits for
     a reviewer, by design, and the guides say so in the same paragraph as the target.
 
 ## Consequences
@@ -186,22 +186,22 @@ through them. Where each item stands is under [Consequences](#consequences).
     | d1, d2 | Built. `install.sh` was run against v0.3.1 on Linux x86_64 with cosign, without it, and with `latest`. `install.ps1` runs only in `install-smoke` on Windows. |
     | d3 | Built. Both scripts default to 0.4.0, the release being cut, which is now the workspace version, so `oml setup claude-code` installs the plugin of the same release. Until the v0.4.0 tag exists, a run without `--version` fails naming the 404, as d3 says. |
     | d4 | Decided, not built: the redirect is set up at the v0.4.0 tag. |
-    | d5 | Decided, not built: the install page is in the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md). |
+    | d5 | Decided, not built: the install page is in the v0.4.0 documentation plan. |
     | d6 | Built with ADR-0039's `oml login` and `oml doctor`; nothing was added to them. |
-    | d7 | Built: `oml setup claude-code`, with `--key-file` and `--print`, its `setup.admin_key`, `setup.claude_code_version` and `setup.marketplace` refusals, and step 4's reading of the marketplace already held. `oml-cli`'s `setup_claude_code` suite runs it against a fake `claude` that records each call and, like Claude Code, refuses an add over a marketplace declared from another source. On 2026-11-04 the `claude` commands were run by hand on Claude Code 2.1.312 against a scratch configuration directory, with tags v0.3.1 and v0.3.0, since v0.4.0 is not tagged: a repeated add at the same tag and a repeated install exit 0; an add at another tag over a held one fails, naming the declared source; `marketplace remove` uninstalls the marketplace's plugins and deletes their options, after which the add and install at the other tag succeed. The verb itself has not run against a real Claude Code, and FR-67's recorded session is still open. |
+    | d7 | Built: `oml setup claude-code`, with `--key-file` and `--print`, its `setup.admin_key`, `setup.claude_code_version` and `setup.marketplace` refusals, and step 4's reading of the marketplace already held. `oml-cli`'s `setup_claude_code` suite runs it against a fake `claude` that records each call and, like Claude Code, refuses an add over a marketplace declared from another source. On 2026-11-04 the `claude` commands were run by hand on Claude Code 2.1.312 against a scratch configuration directory, with tags v0.3.1 and v0.3.0, since v0.4.0 is not tagged: a repeated add at the same tag and a repeated install exit 0; an add at another tag over a held one fails, naming the declared source; `marketplace remove` uninstalls the marketplace's plugins and deletes their options, after which the add and install at the other tag succeed. The verb itself has not run against a real Claude Code, and #118's recorded session is still open. |
     | d8 | Built. |
     | d9 | Built in part: `oml quickstart` with `--dir` and `--port` and steps 1 to 7, the token read from the lead's log, and `quickstart.exists`, with `quickstart.docker` for a machine without compose. Its compose file has not run under Docker yet: CI's `compose` job runs it once the branch is pushed, and this row is restated after a green run, citing it. `oml-cli`'s `quickstart` suite runs the verb against a fake `docker` and the real lead, and asserts the compose project named in the file and in every `docker compose` call. Not built: `install.sh --quickstart`. `scripts/quickstart.sh` stays, because the `e2e` and `chart` jobs run it where there is no compose stack, so the script is not deleted yet. |
-    | d10 | Unmeasured, tracked as FR-68. |
+    | d10 | Unmeasured, tracked as #107. |
 
 - **Build order for the rest:** `install.sh --quickstart` and moving the `e2e` and `chart` jobs
   off `scripts/quickstart.sh`; the `oml-bootstrap` service, from which the quickstart then reads
   the token; d5's install page with the documentation upgrade; d4's redirect at the v0.4.0 tag.
-- **Pages:** the [v0.4.0 documentation plan](../engineering/docs-upgrade-v0.4.0.md) names each
+- **Pages:** the v0.4.0 documentation plan names each
   page this record changes, its source of truth and what it waits for. The [CLI
   reference](../cli/reference.md#installing-oml-and-what-differs-on-windows) gains the installer
   now and the three verbs at build.
-- **Opened:** FR-68 (the time targets, unmeasured) and FR-69 (without cosign the installer cannot
-  tell a tampered release from a genuine one) on the [roadmap](../product/roadmap.md).
+- **Opened:** #107 (the time targets, unmeasured) and #132 (without cosign the installer cannot
+  tell a tampered release from a genuine one) on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 - **Unverified, and read before any guide relies on it:** a summarised fetch of claude.ai's
   custom connector help page, on 2026-11-03, listed per-user request headers. That would let
   claude.ai reach OML with a bearer key and no OAuth, which contradicts the premise of the
@@ -218,6 +218,6 @@ through them. Where each item stands is under [Consequences](#consequences).
 | **Run onboarding at the end when a TTY exists, as OpenClaw does** | The key comes from an administrator, not from the install. On a piped install `stdin` is the script, and an interactive step would also make the script harder to test in CI. |
 | **Install to `/usr/local/bin` with sudo, with a service, as Ollama does** | The CLI is a client. The server's quick path is compose (d9), and production on one host is its own guide. |
 | **`latest` by default** | The same pasted line would install different bytes on different days, and an error report could not name its version. |
-| **Require cosign** | Most users have no cosign, and refusing them sends them to a manual path that checks nothing. The checksum-only path says what it does not catch, and FR-69 tracks the gap. |
-| **Serve a copy of the script from `oml.doublegate.io`** | A second copy has to be kept in step with the tag. A redirect keeps the bytes at the tag. |
+| **Require cosign** | Most users have no cosign, and refusing them sends them to a manual path that checks nothing. The checksum-only path says what it does not catch, and #132 tracks the gap. |
+| **Serve a copy of the script from a project host** | A second copy has to be kept in step with the tag. A redirect keeps the bytes at the tag. |
 | **Keep the self-host quick start a shell script** | `scripts/quickstart.sh` needs a checkout and jq and reads the token by matching log text. The maintainer's rule is that a tool a person runs is an `oml` verb. |

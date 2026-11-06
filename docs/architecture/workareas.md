@@ -1,118 +1,56 @@
-<!--
-id: architecture/workareas
-tier: engineering
-status: design draft for review · decided, not built
-answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how workareas grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workareas"
+---
 
-# Workareas: the algebra and the status ladder
+# How workareas grant access
 
-**Status:** design draft for review · decided, not built
+A workarea is a node in one tree per tenant, rooted at `universe`. Keys read and write through grants on nodes. A grant covers its node and everything below it. A denial always wins. The status of a workarea changes how a write is reviewed, never who may write.
 
-**Release:** the tree since v0.1.0, grants and denials since v0.2.0, crews since v0.3.0; the status ladder since v0.5.2; workarea edges not scheduled ([releases](../product/releases.md)).
+OML mirrors an externally managed crew with a workarea. It records which governed space a crew's memories live in. It never runs the crew.
 
-This page is the single declaration site for the workarea algebra (D7) and the
-workarea status ladder (D8). Every other page that mentions a workarea, a grant,
-a deny, an edge, or a status links here rather than restating the rules. The
-schema that realizes these objects is in [data/postgres-schema.md](../data/postgres-schema.md)
-(`workareas`, `workarea_edges`, `grants`, `key_denials`); the roles that hold
-the authorities named below are declared in [roles-and-keys.md](roles-and-keys.md);
-the review policies that statuses select are declared in [admission.md](admission.md).
+## The tree
 
-A workarea exists to mirror an externally managed AI crew: the crew is operated
-elsewhere, and OML records which governed space its memories live in. The cost of
-that choice is that OML never orchestrates a crew — it only refuses or admits what
-crews write — and that cost is accepted deliberately (see
-[Crews](#crews-recorded-not-operated)).
+Every workarea except `universe` has exactly one parent, so the tree has no cycles and each node has one path from the root. A workarea's name is unique in its tenant and never changes. You can refer to a node by name or by id.
 
-## The tree: one universe per tenant
+The root, `universe`, has three fixed properties:
 
-*Available since v0.1.0; the root named `universe` since v0.3.0 · [releases](../product/releases.md)*
+- It stays `committed`. It never moves to `development` or `validated`.
+- It cannot be deleted.
+- It takes writes only from curators. See [user roots](#your-own-workarea).
 
-A workarea is a governed node in exactly one tree per tenant, rooted at that
-tenant's `universe`. Inclusion is single-parent: every workarea except the
-universe has exactly one parent, so cycles are impossible by construction, and
-every node has one derivable path from the root. Every workarea has a
-[name](../api/http-api.md#names-and-ids), unique in its tenant across the whole
-tree (since v0.5.0, within the shared namespace or one user's root:
-[user roots](#user-roots)) and never changed, and the root's is `universe` in every tenant: tenant
-creation creates the root under that name, so no other workarea can take it
-([ADR-0026](../adr/ADR-0026-names-are-keys.md) d6).
-
-The universe root is special in three ways, all of them refusals:
-
-- it is permanently `committed` — it cannot be moved to `development` or
-  `validated`;
-- it cannot be deleted or re-parented;
-- it refuses direct claim writes. Claims live in crew workareas beneath it. The
-  universe exists so that paths, subtree grants, and subtree denies have a
-  well-defined top, not so that anything is stored at the top.
-
-*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):* the third
-refusal becomes a curation rule. `universe` holds only the claims curators place
-there — tenant writer keys an admin granted writer on the `universe` node — each
-held and reviewed by a second identity like every write; no user key can write or
-propose to it ([user roots](#user-roots)).
-
-Cross-tenant mapping — relating workareas of different tenants into one "whole
-world" — does not exist in this design. It is an explicitly future federation
-item; see the federation RS row in [product/roadmap.md](../product/roadmap.md).
-Nothing on this page extends across a tenant boundary.
-
-### An example tenant
-
-The diagram shows one tenant's tree. Solid arrows are the containment tree
-(exactly one parent per node). Dashed arrows are `related` edges — a separate,
-labelled edge kind that confers **zero access** and is not part of the tree.
+The diagram shows one tenant. Solid arrows are the tree.
 
 ```mermaid
 flowchart TD
-    U["universe<br/>(committed, permanent)"]
+    U["universe<br/>(committed)"]
     RC["research-crew<br/>(committed)"]
     OC["ops-crew<br/>(development)"]
     LR["lit-review<br/>(validated)"]
     EX["experiments<br/>(committed)"]
     RG["run-grid<br/>(development)"]
-
     U --> RC
     U --> OC
     RC --> LR
     RC --> EX
     EX --> RG
-
-    EX -. "relates_to" .-> OC
-    RG -. "continues" .-> LR
-    OC -. "mirrors" .-> RC
-
-    classDef tree fill:#eef,stroke:#669,color:#113;
-    class U,RC,OC,LR,EX,RG tree;
 ```
 
-Note that `lit-review` is `validated` while its parent `research-crew` is
-`committed`: the child-status rule constrains a parent becoming validated, not a
-child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
-`experiments` is legal because `experiments` is not frozen.
+A tenant's tree never spans tenants. Nothing on this page reaches across a tenant boundary.
 
-## User roots
+## Your own workarea
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
-
-Every user — a person an admin attests a key acts for — has a **user root**: a
-direct child of `universe` named after the user, `universe.<user>`, marked
-`user_root` when it is created. The tree stays one tree. The first key issued with
-`user: <user>` creates the root, journalled as `workarea.create` with
-`user_root: true`; later keys naming that user join it (d1, d2). Everything strictly
-beneath a user root is that user's; every workarea outside every user root,
-`universe` included, is **shared**, crew workareas among them (d13).
+When a person's first key is issued, OML creates a workarea of their own under `universe`, named for them. Their keys write, read and create workareas there. With alice's key, `oml workareas create alice project` creates `universe.alice.project`. Two people can each have a `project`.
 
 ```mermaid
 flowchart TD
-    U["universe<br/>(committed; curated claims only)"]
+    U["universe<br/>(curated memories only)"]
     A["alice<br/>(user root)"]
     B["bob<br/>(user root)"]
-    AP["project<br/>(alice.project)"]
-    BP["project<br/>(bob.project)"]
     C["crew<br/>(shared)"]
+    AP["alice.project"]
+    BP["bob.project"]
     U --> A
     U --> B
     U --> C
@@ -120,458 +58,100 @@ flowchart TD
     B --> BP
 ```
 
-- **A user key reaches its own root and the `universe` node, nothing else.** Its
-  grants must lie inside its user's root, and issuance adds one reader grant on
-  `universe` with `covers: node` ([below](#node-grants)), so it reads
-  universe's own claims and never another user's root or a shared workarea beneath
-  `universe` ([roles and keys](roles-and-keys.md#user-keys)).
-- **Names.** `alice.project` and `bob.project` coexist: a name is unique within
-  one user's root, or within the shared namespace that holds `universe`, every
-  user root's name and every shared workarea's name. The qualified name
-  `<user>.<name>` is unique in the tenant and never changes, since nothing is
-  re-parented across a user root's boundary; a user key's bare names resolve in
-  its own root ([names](../api/http-api.md#names-and-ids)).
-- **Creating.** A writer user key creates workareas inside its own root, where its
-  writer grant covers the parent; the root is the default parent (d6).
-- **Recall.** A recall whose scope lies inside a user root also searches
-  `universe`'s own claims, and `universe`'s steering applies there as an ancestor's
-  ([retrieval](retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked)).
-  A universe claim is served with origin `universe` and nothing of its source
-  ([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)).
-- **Existing tenants.** Workareas created before the build are shared and keys
-  issued before it are tenant keys; nothing moves (d12).
+- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workarea.
+- **Recall.** A recall inside your root also searches `universe`. A memory shown from `universe` carries no author and no source.
+- **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
+- **Climbing the ladder.** A user root reaches `committed` and no further.
 
-## Grants bind to node ids; paths are derived
+Workareas and keys made before user roots existed stay where they are and belong to no person.
 
-*Available since v0.1.0 · [releases](../product/releases.md)*
+## Grants bind to node ids
 
-A grant names a workarea **node id**, never a path. The path (stored as
-Postgres `ltree`) is derived from the tree at check time — the names from
-`universe` down to the node, joined with `.` — and the subtree a grant covers is
-"every node whose derived path is prefixed by the granted node's derived path". A
-request may name the node by its id or its unique name; the server substitutes
-the id before any check that reads state, and only the id is stored
-([names](../api/http-api.md#names-and-ids)). A path is never accepted as a
-reference: with unique names its last segment already identifies the node. Three
-consequences:
+A grant names a node id, never a path. A name resolves to an id before any access check, so a name you may not see answers exactly as its id would.
 
-- **Moves never invalidate grants, and nothing renames a node.** A grant on the
-  node that is today at `universe.research-crew.experiments` still covers the
-  same node and its descendants after that node is re-parented elsewhere,
-  because the grant holds the id, and the path is recomputed; the node keeps its
-  name `experiments`, which no verb can change.
-- **A path string is never an authority.** Anything that compares paths
-  (subtree checks, scoped search filters in [retrieval.md](retrieval.md)) is a
-  derived view of the tree as of the current permission epoch, reproducible
-  from journalled state.
-- **A name is never an authority either.** It is resolved to the id before the
-  [effective-access](#effective-access-union-of-attenuated-grants-then-deny-wins)
-  formula runs, so a name the key may not see answers exactly what its id would.
+Effective access is computed on every request and cached nowhere. A revoked grant or a new denial applies to the key's next request.
 
-Every effective-access computation is reproducible from journalled grants: the
-grant, its denies, and the global per-key deny objects are all journalled
-records, and each carries the **permission epoch** it was written at.
+### Effective access
 
-The permission epoch of a key is the journal seq of the latest `key.issued`,
-`key.rotated` (for its `new_key_id`), `key.revoked`, `grant.issued`,
-`grant.revoked`, `key.denied` or `key.denial_lifted` event for that key; a
-grant row and a denial row each store their own event's seq as their epoch
-([event catalog](../data/event-catalog.md)). A successor minted by
-`key.rotated` has no `key.issued` and no `grant.issued`, so its
-`api_keys.issued_seq` and the epoch of each grant row reproduced for it are the
-`key.rotated` seq. A
-[re-parent](#re-parenting)'s `workarea.reparent` event joins that list for
-every key of the tenant (when re-parent is built, ADR-0025 d14), because it
-changes which nodes a node-id grant covers. A tenant's journal seq only increases, so the epoch is monotone and
-reproducible from the journal; no separate counter exists beside it
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d14).
+Effective access is the union of the key's grants, minus anything a global deny names. Each grant is first reduced by its own deny entries.
 
-Effective access is computed on every request, and no resolution is cached:
-the epoch labels the journalled state an answer was computed against, and
-invalidates nothing. The cost is one grants read and one ancestry walk per
-request, unmeasured like every cost on the request path
-([FR-25](../product/roadmap.md)). A revocation, grant change or denial
-therefore applies to the key's next request served by the lead. In cluster
-mode a follower resolves keys, grants and denials from its local replica, so
-on follower-served reads a revocation, grant change or denial takes effect
-after replication lag — the same follower metric
-[retrieval](retrieval.md#reads-in-cluster-mode) states for promoted reads, and
-the window [security](security.md) states as the EoP residual. A lead-only
-deployment, the default, has no such window. A cache would be a new decision
-that states its own staleness window there.
+1. **Per-grant deny.** A deny entry sits inside one grant and cuts a subtree out of that grant only.
+2. **Union.** The key's grants are combined. A subtree denied in grant A is still reachable if grant B covers it without a deny.
+3. **Global deny.** A key-wide deny names subtrees the key cannot reach, whatever the grants yield. Set one with `oml deny set <key> <workarea>`.
 
-## Effective access: union of attenuated grants, then deny-wins
+On the example tree, grant A is reader on `research-crew` with a deny on `experiments`. Grant B is reader on `experiments`. A global deny names `run-grid`.
 
-*Available since v0.2.0 · [releases](../product/releases.md)*
+| Node | Grant A | Grant B | Union | Effective |
+|---|---|---|---|---|
+| `research-crew` | yes | no | yes | **yes** |
+| `lit-review` | yes | no | yes | **yes** |
+| `experiments` | no (denied in A) | yes | yes | **yes** |
+| `run-grid` | no (denied in A) | yes | yes | **no** (global deny) |
 
-<a id="node-grants"></a>*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-d4):* a grant gains `covers`, `subtree` (the default, every grant
-today) or `node`. A `node` grant covers its own node and no descendant, carries no
-deny entries, and otherwise enters the formula below like every grant, so "covers"
-in step 1 means "N is the grant's node or, for a `subtree` grant, a descendant of
-it". Its first use is the reader grant on `universe` every user key carries.
+A `node` grant covers its node and no descendant. Every user key carries one as a reader on `universe`.
 
-One formula, applied everywhere a key touches a workarea:
+### Who may write
 
-> **Effective access = the union of the key's grants, each grant first
-> attenuated by its own deny entries, minus anything named by a global per-key
-> deny object.**
+Effective access decides. A key with writer access on a node may submit there. A status never recomputes or edits a grant. A `validated` workarea refuses new writes with a typed error that every writer receives alike.
 
-The three parts, in evaluation order:
+## Links and the brief
 
-1. **Per-grant attenuation.** A deny entry lives *inside* a grant and names a
-   subtree (by node id, like the grant itself). It masks that subtree **within
-   its own grant only**. A deny is not a tenant-wide prohibition; it is a hole
-   cut in one grant.
-2. **Union.** The key's grants are then unioned. Because attenuation happens
-   per grant before the union, a subtree denied in grant A is still reachable
-   if grant B covers it without a deny. This is deliberate: a grant is a
-   self-contained statement of scope, and composing grants never makes any one
-   grant mean less than it says.
-3. **Global per-key deny, deny-wins.** A global deny is a **distinct journalled
-   object** attached to the key, not an entry inside any grant. It names
-   subtrees that the key cannot reach **regardless of what any union of grants
-   yields**. When the operator intent is "this key must not touch that subtree,
-   full stop", this is the only object that expresses it.
+A claim link connects two memories with a label: `supports`, `contradicts` or `amends`. A **brief** is the few reviewed memories an agent most needs on entering a workarea. A link or a brief entry follows the propose-and-ratify rule: one key proposes, and a second key confirms. The ratifier is never the proposer.
 
-Worked on the example tree: suppose a key holds grant A = reader on
-`research-crew` with a deny on `experiments`, and grant B = reader on
-`experiments`.
+```sh
+oml edges propose --help
+oml edges ratify --help
+oml edges list --help
+```
 
-| Node | Grant A (attenuated) | Grant B | Union | Global deny on `run-grid` | Effective |
-|---|---|---|---|---|---|
-| `research-crew` | yes | — | yes | — | **yes** |
-| `lit-review` | yes | — | yes | — | **yes** |
-| `experiments` | no (denied in A) | yes | yes | — | **yes** |
-| `run-grid` | no (denied in A) | yes | yes | denied | **no** |
+A pending edge grants nothing and shows as pending. Links between two workareas are not available.
 
-The `experiments` row is the per-grant-masking rule made visible: grant A's
-deny does not defeat grant B. The `run-grid` row is deny-wins: the global deny
-defeats every grant.
+## Crews
 
-### The one write-eligibility rule
+A crew is a named record: a name, a charter URI and an external manager. A workarea names at most one crew, and a crew can serve many workareas. A key can name one crew when it is issued.
 
-Across **all** statuses there is exactly one rule for who may write into a
-workarea: **effective access decides**. A key with writer-role effective access
-on a node may submit there; a key without it may not. A workarea's status
-**changes only the review policy applied to what is submitted — it never
-changes grant resolution**. No status recomputes, suspends, or edits a grant.
+OML never contacts the external manager and never schedules the crew. It stores the charter URI without checking it. An admin creates and updates crew records with `oml crews`. Admins can correct a crew record whatever the status of the workareas that name it.
 
-The `validated` status refuses new writes — but it refuses them as the
-admission policy of that status (a refusal every holder of write access
-receives identically, as a typed error), not by altering anyone's effective
-access. The distinction matters operationally: grant state answers "who could
-write here if the status allowed it", and status answers "what happens to a
-write here", and the two are never mixed. Audit questions about access are
-answered from grants and epochs alone; audit questions about why a write was
-refused are answered from status and policy snapshots alone.
+## The status ladder
 
-## Edges
-
-*Workarea edges not scheduled; claim edges and the brief since v0.5.2, on the [HTTP API](../api/http-api.md#edges) · [releases](../product/releases.md)*
-
-### Edge kinds
-
-`related` is a separate labelled edge between two workarea nodes. The label set
-is closed: `relates_to`, `continues`, `derived_from`, `mirrors`. An edge
-confers **zero access** — it is pure recorded structure for lineage and
-navigation, never an input to effective-access computation. (Claim-level
-edges — claim↔claim connection proposals — follow the same
-propose-then-ratify shape but are part of the admission pipeline; see
-[admission.md](admission.md). This section governs workarea↔workarea edges.)
-
-Edges live in `workarea_edges` with a `pending`/`ratified` state and recorded
-proposer and ratifier.
-
-### Edge authority
-
-Edges are governed objects and follow the propose/ratify split, with R2 — the
-reviewer is never the author — extended to them:
-
-| Act | Requires | Refused when |
-|---|---|---|
-| Propose an edge | `dreamer(propose)` effective access on **at least one** endpoint, **and** reader effective access on **both** endpoints | either endpoint is outside the key's read scope |
-| Ratify an edge | `dreamer(review)` effective access on **both** endpoints | the ratifying key or principal is the proposer (**R2 extends to edges**) |
-
-The asymmetry is intentional. Proposing requires seeing both ends but holding
-proposal authority on only one, so a crew can propose a relation to a space it
-reads but does not govern. Ratifying requires review authority on both ends,
-because a ratified edge becomes shared recorded structure of both subtrees, and
-neither side's governance may be bypassed. A pending edge confers nothing and
-appears as pending in graph reads.
-
-## Crews: recorded, not operated
-
-*Available since v0.3.0 · [releases](../product/releases.md)*
-
-A crew is a named record of its own: `{crew_id, name, charter_uri,
-external_manager}`. This section is the single declaration site for the record
-and its relations ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8). The record
-answers "who runs this crew, under what charter" — it does not make OML a crew
-orchestrator. OML never contacts the external manager, never schedules the crew,
-and never validates the charter URI beyond storing it; "recorded, not operated"
-is the honest scope of the feature.
-
-- **A workarea names at most one crew**, the one whose memory space it is; a crew
-  may serve many workareas. The crew is named at workarea create, and pointing
-  the workarea at another crew record is the workarea's journalled
-  crew-metadata update (`workarea.crew_updated`). A vocabulary workarea must
-  name one, its curator crew ([ontologies](ontologies.md)).
-- **A key may name one crew** at issuance; it is journalled in `key.issued`,
-  fixed for the key's life and carried to a rotation's successor. A key holder
-  who changes crews holds a new key ([roles and keys](roles-and-keys.md)).
-- **The crew record itself** is created and updated by journalled admin acts
-  (`crew.created`, `crew.updated`, admin role;
-  [roles-and-keys.md](roles-and-keys.md), [HTTP API](../api/http-api.md#crews)).
-  Its name is a unique, immutable [name](../api/http-api.md#names-and-ids) — OML's
-  key for the crew, not its display title — so a crew that renames itself
-  outside OML keeps its record and its key; its charter URI and external manager
-  are what an update corrects. A crew record has no status, so it stays
-  correctable whatever the status of the workareas that name it.
-- **Reads.** Crew records are admin reads; a key that can read a workarea sees
-  that workarea's crew record in the workarea read, and no other.
-
-The crew-metadata update of a workarea is allowed **on `validated` areas**.
-Freezing covers claim content and promotions, not workarea metadata: a frozen
-area whose crew changes still gets its record corrected, and the journal shows
-who corrected it and when.
-
-The reviewer-independence axis in [admission.md](admission.md) resolves the
-authoring and reviewing keys' crews, and their crews' external managers, from
-these journalled records at promotion time
-([roles and keys](roles-and-keys.md#review-independence-and-the-evidence-of-collusion)),
-which is why every change to them is a journalled act rather than a free edit.
-
-## Re-parenting
-
-*Not scheduled · [releases](../product/releases.md)*
-
-Re-parenting a workarea — giving the node a different parent — exists as a
-**journalled admin act**. It performs, in a single Postgres transaction:
-
-1. the journalled move event (old parent, new parent, actor, timestamp);
-2. the parent-pointer change on the node;
-3. the **descendant path rewrite**: every derived `ltree` path under the moved
-   node is rewritten to its new prefix.
-
-Because grants bind to node ids, no grant is touched, and no name changes;
-because paths are derived, the rewrite is a cache-maintenance act on the derived
-column, not an authority change — but its event still joins every key's permission epoch
-(above), because an access answer computed against old paths no longer
-describes the tree. The cost of the
-single-transaction form is a lock proportional to the size of the moved
-subtree; that cost is accepted so that no read ever observes a tree in which a
-path and its parent pointer disagree. [Decided, not built: the locking
-granularity of the rewrite is an implementation choice inside this committed
-transactional envelope.]
-
-Re-parenting **into** a `validated` destination is refused (the child-creation
-refusal below covers acquiring new children in any form). Lake rows keep
-`workarea_id` as the stable key and retain path-at-write as history (see
-[storage.md](storage.md)), so re-parenting never rewrites the lake.
-
-## The status ladder (D8)
-
-*Available since v0.5.2 · [releases](../product/releases.md)*
-
-**Status:** built in v0.5.2, in `oml-domain`, `oml-app` and `oml-pg` with
-`migrations/0017_workarea_transitions.sql` for the ladder, the transitions (propose, ratify by a
-second identity, the status read) and the freeze checks on submit, supersede, approval and child
-create ([ADR-0009](../adr/ADR-0009-status-ladder.md) d1, d3, d4, d5) · served by `POST /v2/workareas/{workarea}/transitions` and its ratify route, the
-`oml workareas status` verbs and the workarea read's `policy` and `pending_transitions`, which
-`oml_workarea` serves; no MCP tool proposes or ratifies ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d3) · its Postgres checks run only where a superuser mints the suites' role
-pairs, CI's `cargo test (Postgres)` · reassignment, re-parent, demote, erasure and the simulation
-fence are decided, not built.
-
-Statuses: `development` → `committed` → `validated` (frozen). Transitions are
-**forward only**; backward transitions do not exist in the design — there is no
-"unfreeze" verb, journalled or otherwise. A space that must evolve after
-validation gets a new child elsewhere in the tree (and typically a `continues`
-edge), not a thaw.
+A workarea is in one of three statuses. Transitions go forward only. There is no unfreeze. To change a frozen space, create a new workarea elsewhere.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> development : create (refused under a frozen parent)
+    [*] --> development : create
     development --> committed : propose + ratify
     committed --> validated : propose + ratify<br/>(all children validated)
-    validated --> [*] : no further transitions
+    validated --> [*]
 ```
 
-### What each status means
+| Status | What it means |
+|---|---|
+| `development` | New workareas start here. Review runs as everywhere. |
+| `committed` | The working state of a governed space. Promotions are allowed. |
+| `validated` | Frozen. Reads continue. The workarea accepts a crew record update and a rejection of a held memory, and nothing else. |
 
-- **development** — review runs as everywhere; tenant policy MAY additionally
-  permit `self_signed` rows under the one bounded constitutional exception
-  (such rows are marked, readable only inside that workarea, never promote
-  beyond it, and never enter silver or gold — the full scope is declared in
-  the constitution, [ADR-0001](../adr/index.md)). How a `self_signed` version
-  may take a claim's tip is declared in
-  [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
-- **committed** — full non-author review required; promotions allowed. The
-  working state of a governed crew space, and the permanent state of the
-  universe root.
-- **validated (frozen)** — the area serves reads and admits exactly three
-  mutations, all journalled: **demote**, **erasure** (crypto-shred), and
-  **crew-metadata update**. Everything else is refused.
+One key proposes a step and a different key ratifies it:
 
-### Transition matrix
+```sh
+oml workareas status propose project --to committed
+oml workareas status ratify project <transition-id>
+```
 
-| Transition | Proposed by | Ratified by | Preconditions | Journalled with |
-|---|---|---|---|---|
-| `development` → `committed` | admin or dreamer with effective access on the node | a **second, non-proposing** dreamer or admin (R2 applies to transitions) | — | transition event + policy snapshot |
-| `committed` → `validated` | admin or dreamer with effective access on the node | a second, non-proposing dreamer or admin | **every child of the node is already `validated`, and no simulation is fenced on the subtree** — a live simulation must be [ended](simulations.md) first, since taint can never enter a `validated` area (the build's reading: the simulation clause holds vacuously while simulations are unbuilt, [below](#readings-the-build-takes)) | transition event + policy snapshot |
-| `committed` → `development` | — | — | **does not exist** | — |
-| `validated` → anything | — | — | **does not exist** | — |
+`oml workareas status pending` lists the live proposals. A step to `validated` needs every child already `validated`. A ratification checks the workarea as it is at that moment. A stale proposal is refused with `workarea.transition_refused`, with a reason such as `stale` or `children_not_validated`.
 
-The policy snapshot in the transition event records the review policy in force
-at the moment of transition, so later audit of any promotion can be answered
-against the policy that actually governed it, not the policy in force at read
-time.
-
-#### Readings the build takes
-
-[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave eight points open
-that code cannot leave open. Each line below is **the build's reading**, with
-the rule it follows; none is a new decision about the ladder.
-
-- **A pending proposal is a row.** A proposal is a row of `workarea_transitions`
-  (id, tenant, workarea, `from` and `to` status, state `pending` or `ratified`,
-  proposer key and principal, ratifier key, and the journal seqs of the proposal
-  and the ratification), the shape `workarea_edges` already gives a
-  propose-then-ratify object ([schema](../data/postgres-schema.md#workareas-and-edges)).
-  It follows d3: a transition is two journalled acts by two identities, so
-  something must hold the first act until the second.
-- **Several proposals may wait on one node; ratification re-checks.** The
-  status read lists "pending transitions", plural
-  ([HTTP API](../api/http-api.md)), so a proposal never blocks another.
-  Ratification re-checks the proposal against the node as it is at that
-  moment, on two counts: its `from` must be the node's status, and a step to
-  `validated` must still find every child `validated`. Both checks run inside
-  the ratifying transaction, after it takes the tenant's chain lock (the
-  `pg_advisory_xact_lock` every capture takes,
-  [schema](../data/postgres-schema.md)) and with the node row locked, before
-  the status write and the `workarea.status_transition` capture in that same
-  transaction; a child created, or a subtree reparented in, between proposal
-  and ratification is therefore seen. A proposal whose `from` is no longer the
-  node's status, one already ratified included, is refused with
-  `workarea.transition_refused`, reason `stale`; a step to `validated` that
-  finds a child not `validated` is refused with reason
-  `children_not_validated`. It follows d3's forward-only rule, a ratification
-  acts on the node as it is, never on the node as the proposer saw it, and
-  d4's "by construction": nothing can arrive between the test and the write.
-- **The status read lists only live proposals.** "Pending transitions" are the
-  rows with state `pending` whose `from` equals the node's current status. A
-  proposal made stale by another's ratification drops out of the read without
-  any row write and stays `pending` in the table, since the ladder is forward
-  only and nothing can ratify it; the row and its `workarea.status_proposed`
-  event remain as history. The read uses the index on
-  `(tenant_id, workarea_id, state)`. It follows d3: a proposal is something a
-  second identity can still act on, and a stale one is not. **Limit:** the
-  number of pending proposals on one node is unbounded and none can be
-  withdrawn; one key can add rows on a node without end, bounded only by the
-  key's write quota.
-- **The status read names the proposing key only to its own key set.** Each
-  live proposal is served with the fields of the `Transition` schema
-  ([OpenAPI](../api/openapi.yaml)) a pending row has, `transition_id`,
-  `workarea_id`, `to`, `state` and `proposed_by_key_id`, and the `from` rung
-  the live-proposal filter reads. The proposer's principal and the
-  tenant are never served, and `proposed_by_key_id` is null to every key
-  outside the proposer's own key set, an admin key reading structure
-  included, as it is on `workarea.status_proposed` in the
-  [events tail](../api/http-api.md#events-tail). It follows the tail's rule
-  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15): a reader
-  learns that a proposal waits on a node it reads, never which identity made
-  it, so the two reads of one proposal never disagree.
-- **The policy snapshot is the policy in force plus the precondition.**
-  `policy_snapshot` holds the review policy in force, which the PoC fixes as the
-  one constant `{k: 1, required_roles: ["dreamer"]}`, and the precondition the
-  ratification evaluated, `children_all_validated`
-  ([event catalog](../data/event-catalog.md#workareastatus_transition)). The
-  verdict path and the snapshot read that one constant, so the two cannot
-  disagree. It follows d3: the snapshot answers a later promotion audit against
-  the policy that governed it.
-- **A refusal names its reason.** `workarea.transition_refused` carries
-  `details: {workarea_id, from, to, reason}`, `reason` one of `backward`,
-  `skipped`, `same`, `universe`, `children_not_validated`, `stale`
-  ([errors](../api/errors.md#workarea-structure-and-status-refusals)). It
-  follows the taxonomy's rule that a refusal names the rule it enforces: d3's
-  forward-only ladder gives the first three, the root's permanence the fourth,
-  d4 the fifth, and the re-check above the sixth.
-- **A user root is a node like any other.** A user root and every workarea under it climb the
-  ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
-  being per key and principal; `universe` stays `committed`
-  ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, after ADR-0044 d1 and d8). Whether a user
-  root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
-  a ratification by another key of the same user is admitted and marked `same_user`
-  (ADR-0046 d1, d2, answered on 2026-11-04), read from the workarea row's `user_root` and
-  the keys' `user`.
-- **No simulation is fenced, vacuously.** Simulations are not built, so "no
-  simulation is fenced on the subtree" holds of every subtree today; the build
-  says so in a comment where the check would sit, and the check lands with
-  simulations ([simulations](simulations.md)). It follows d4's purpose: taint
-  cannot enter a `validated` area, and while no simulation exists there is no
-  taint.
-
-### Refusal matrix
-
-What each status refuses, per operation. "Effective access" is assumed
-throughout — a key without access is refused everywhere, before status is even
-consulted.
+### What each status refuses
 
 | Operation | `development` | `committed` | `validated` |
 |---|---|---|---|
-| New claim write | admitted (held) | admitted (held) | **refused** |
-| Promotion of a claim in the area | allowed (policy of the area; `self_signed` only under the constitution's bounded development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md) d5) | allowed (full non-author review) | **refused** (nothing new promotes into it) |
-| Demote | allowed (journalled) | allowed (journalled) | allowed (journalled) |
-| Erasure (crypto-shred) | allowed (journalled) | allowed (journalled) | allowed (journalled) |
-| Reassignment of a claim **into** the area | allowed (re-enters `held` if destination policy is stricter; see [roles-and-keys.md](roles-and-keys.md)) | allowed (same rule) | **refused** |
-| Reassignment of a claim **out of** the area | allowed | allowed | **refused** — not in the closed list of mutations a frozen area admits |
-| Create a child workarea under the node | allowed | allowed | **refused** |
-| Re-parent a subtree to put this node's subtree elsewhere | allowed (journalled act above) | allowed | **refused** (the node is frozen structure) |
-| Crew-metadata update | allowed (journalled) | allowed (journalled) | **allowed** (journalled; freeze covers claims, not metadata) |
-| Status transition forward | → `committed` | → `validated` if all children validated | none exist |
-| Reads | per effective access | per effective access | per effective access — a frozen area **serves reads**; freezing is not archival |
+| New memory write | held | held | **refused** |
+| Approve a memory | allowed | allowed | **refused** |
+| Reject a held memory | allowed | allowed | allowed |
+| Create a child workarea | allowed | allowed | **refused** |
+| Update the crew record | allowed | allowed | allowed |
+| Read | by effective access | by effective access | by effective access |
 
-Two composite rules fall out of the table and are restated here because they
-are the ones implementers get wrong:
+A frozen workarea keeps serving reads. Freezing is not archiving. A held memory left behind by a freeze can still be rejected.
 
-- **Child-status rule.** An area may become `validated` only when **all** of
-  its children are already `validated`, and no new child may be created under a
-  `validated` area. Together these make "frozen" mean the whole subtree below
-  the node: a validated node can never acquire an unfrozen descendant, by
-  construction rather than by patrol.
-- **Frozen is not read-only-dead.** `validated` keeps serving reads, keeps
-  admitting journalled demote and erasure (governance and legal reality do not
-  freeze), and keeps its crew record correctable. The refusals are exactly: new
-  writes, promotions into it, reassignment in or out, child creation,
-  re-parenting, and any further status change.
+## In-progress workareas
 
-**Decided on 2026-11-04: a reject verdict in a `validated` area is admitted.** d5's closed list
-of three mutations names no reject verdict, and a freeze can leave a held row
-behind. The proposed reading refuses approve and reject alike with
-`workarea.frozen`, and `review/next` serves no row whose workarea is
-`validated`, so a held row left by a freeze stays held, visible to its author.
-The alternative admits reject, because a rejection promotes nothing. The
-operator decides before the build refuses verdicts by status
-([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d10). The build
-refuses approve and admits reject, so a held row left by a freeze can still be drained.
-
-## Medallion words name lake zones only
-
-`bronze`, `silver`, `gold` are the names of physical Delta Lake zones —
-declared and specified in [storage.md](storage.md) and
-[data/delta-tables.md](../data/delta-tables.md) — and nothing else. The status
-ladder keeps its own words: `development`, `committed`, `validated`. No page,
-message, error, or CLI output may call a workarea "gold" or a lake zone
-"validated". The two vocabularies touch at exactly one point, stated where the
-lake is declared: unreviewed content never enters a consumer-readable zone.
-
-## Decision record
-
-The workarea algebra is registered as ADR-0008 and the status ladder as
-ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
-per-request effective access are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14); the
-root's name, names as references and crew records are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8). User roots, node grants, the
-qualified name and curation into `universe` are the proposed
-[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.
+A person can put a development workarea in progress with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`). Inside an in-progress workarea, readers recall unreviewed memories, labeled as such. Nothing leaves the workarea until its mode returns to standard. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.

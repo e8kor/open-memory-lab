@@ -19,7 +19,7 @@ use oml_domain::name::Name;
 use crate::types::{ClaimEdgeFilter, ClaimEdgePosition, ListingPosition};
 
 /// `api.cursor_ttl`, whose deployment default configuration.md leaves to
-/// FR-22: until settings are built, this code constant is the lifetime of
+/// #117: until settings are built, this code constant is the lifetime of
 /// every cursor this build issues, in seconds.
 pub const CURSOR_TTL_SECS: i64 = 3_600;
 

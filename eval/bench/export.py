@@ -113,7 +113,7 @@ def from_bench(r, a):
     if r.get("rows_in_scope") and r["rows_in_scope"] < r["docs"]:
         note += (f" {r['rows_in_scope']:,} of the {r['docs']:,} rows written were promoted when "
                  "it ran, so the scope held those: approval through review next slowed with the "
-                 "queue (FR-87).")
+                 "queue (#98).")
     if r.get("k", 100) != 100:
         note += (f" Asked with k {r['k']}, the size an agent asks, to measure latency at that k; "
                  "recall@100 reads the shorter list.")

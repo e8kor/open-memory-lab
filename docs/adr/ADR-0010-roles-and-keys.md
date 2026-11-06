@@ -9,7 +9,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
-**Release:** partly in v0.1.0 and v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -40,7 +40,7 @@ Everything here is decided, not built.
   caller. Bootstrap: on first start, a Helm job mints a show-once root operator key; the journal
   records the issuance as issued-without-value (the key value appears exactly once, on the
   operator's terminal, and is never stored or journalled). The ceremony transcript is mocked up
-  in [CLI sessions](../cli/sessions.md).
+  in [CLI sessions](../cli/reference.md).
 
 - **d3 — Issuer ceiling.** A key is issued with a role no higher than its issuer's. Operator
   issues operator keys (its own rotation path) and each tenant's first admin key; admin issues
@@ -80,7 +80,7 @@ Everything here is decided, not built.
   key is journalled with its tenant, role, grants and the key→crew→external-manager metadata
   that [ADR-0012](ADR-0012-admission-and-review.md)'s independence axis resolves at promotion
   time. Human sign-in (OAuth) for the CLI is a tracked research row on the
-  [roadmap](../product/roadmap.md), written to the honesty discipline of
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), written to the honesty discipline of
   [ADR-0018](ADR-0018-the-documentation-set.md) — spec revision and client support verified with
   a fetch date before any commitment; v1 ships bearer keys everywhere.
 
@@ -94,8 +94,8 @@ Everything here is decided, not built.
   is reconstructible from the journal, which is what the evidence export's grants history
   serves ([audit and lineage](../architecture/audit-and-lineage.md)).
 - d5's cost is paid at promotion time: every verdict computes a lineage closure. The closure
-  query's cost at scale is unmeasured — the [roadmap](../product/roadmap.md) carries Postgres
-  scale ceilings as an FR.
+  query's cost at scale is unmeasured — the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries Postgres
+  scale ceilings as an issue.
 - d6 forces an admin who also works as a crew member to hold two keys. That is the point: the
   journal then shows which capacity acted, and reciprocal-approval statistics
   ([ADR-0012](ADR-0012-admission-and-review.md)) can see key pairs, not blurred identities.
@@ -119,3 +119,19 @@ Everything here is decided, not built.
   share them, which destroys attribution. The separation that matters is not at the key, it is
   at promotion: the lineage-closure check (d5) refuses the one combination that violates R2,
   and lets every other combination stand.
+
+## Rationale moved from the roles-and-keys page (2026-11-06)
+
+The user-facing page [roles and keys](../architecture/roles-and-keys.md) keeps what a user or operator acts on. Its design rationale lives here.
+
+- **Plain SHA-256 for API keys.** A password hash needs a salt because people pick guessable passwords. A 256-bit random key has no dictionary to attack, and the plain hash lets every request find its key with one index lookup.
+- **Rejected: an admin who approves content.** The authority that issues keys would also decide what is true.
+- **Rejected: independence from a single principal check.** One person can hold many keys, so the check runs at approval against the author and the derivation lineage, not at issuance.
+- **Rejected: a salted, slow hash for keys.** The keys are random and the hash sits on every request path.
+- **Why admin verdicts are refused on the server.** Otherwise the authority that issued an author's key could act as reviewer by fiat. An admin who writes uses a separate writer key, so the journal holds no unreviewed admin write; an admin fixing a typo waits for a reviewer like everyone else.
+- **Why the independence metadata is read as journaled.** A later reshuffle of crews does not change what was independent at approval time. Every workarea has the same base review policy; a `committed` workarea can require a differing reviewer crew or external manager.
+- **Connect-code guess bound.** With L live codes and G wrong entries during their life, the chance that any wrong entry hits a live code is at most L·G / 2^60. The code is never in a log, URL or journal payload and the database holds a digest only; a newer code, a revoked connection or a revoked key voids it.
+- **Connection liveness.** A connection that stops being live (key unusable or newest refresh token expired) stays `open` in the table without a journal event, because no actor ended it. A revoked connection never reopens; the key needs a new code. OML accepts a token nowhere but `/mcp`, so a connection can do at most what its key can.
+- **Session keys.** `<user>-review` has its own principal, so the review check lets it approve the person's agents' writes and never a version it proposed itself. A user's separate dreamer key can review their own agents' writes; the journal shows both keys name the same user.
+- **Costs.** A person who administers and reviews carries two keys. Writes wait for a reviewer, an admin included. Lineage exclusion knows only what writers declare, and nothing stops two distinct principals approving each other's work; how often that happens has not been measured.
+

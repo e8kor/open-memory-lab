@@ -1,4 +1,4 @@
-/* The web pages' stylesheet (ADR-0068 d3): only var(--…) from tokens.css, which
+/* The web pages' stylesheet (ADR-0069 d3): only var(--…) from tokens.css, which
    scripts/gen_design_tokens.py writes from design/tokens.json. Literals are 0, 1px hairlines,
    percentages, ratios and the 600px header breakpoint. Classes follow the design system's
    components: BrandHeader (header.top), SectionHeader (.oml-section-head), StateChip

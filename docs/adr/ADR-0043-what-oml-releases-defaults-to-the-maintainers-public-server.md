@@ -9,7 +9,7 @@ answers: which server the plugins and harness configurations OML releases connec
 
 **Status:** accepted design · 2026-11-04
 
-**Release:** introduced in v0.4.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.1 ([releases](../changelog.md))
 
 **Amends:** ADR-0039 (d15), ADR-0040 (d1, d3), ADR-0041 (d7)
 
@@ -20,9 +20,7 @@ d15), and the plugin's `url` option is required and has no default
 ([ADR-0040](ADR-0040-plugin-setup-in-claude-code.md) d1). A user of the maintainer's own server
 still has to find and type its address before the first memory.
 
-On 2026-11-04 the maintainer's deployment moved from `oml.doublegate.io` to
-`https://memory.doublegate.io`, with no redirect from the old name. The same day the maintainer
-decided that **the plugins and harness integrations OML releases default to that server**: a user
+The maintainer's public server is `https://memory.doublegate.io`. The maintainer decided that **the plugins and harness integrations OML releases default to that server**: a user
 of the Claude Code plugin, or of any harness configuration a release ships, needs only an API
 key, and the URL stays overridable.
 
@@ -52,8 +50,7 @@ Every decision below is the maintainer's or follows from that one. Decided, not 
   `scripts/check_agent_kit.py` hold equal to the Rust constant. The URL stays overridable on
   every surface. The cost, carried openly: a release names one operator's server, so a
   self-hoster must override it on every surface; and the default changes only with a release,
-  so an install keeps sending to the name its release shipped, as one shipped with
-  `oml.doublegate.io` would now send to a name that no longer answers.
+  so an install keeps sending to the name its release shipped.
 
 - **d2 — The plugin's `url` option takes `https://memory.doublegate.io` as its default and is no
   longer required (amends ADR-0040 d1).**
@@ -152,7 +149,7 @@ Every decision below is the maintainer's or follows from that one. Decided, not 
   ([platform support](https://claude.com/docs/plugins/platform-support), fetched 2026-11-03);
   `url` now has one and `api_key` still has none, so this record does not change what Cowork
   loads.
-- **No roadmap row is opened.** The cost of d1 and d7 is a property of the default, not an
+- **No issue is opened.** The cost of d1 and d7 is a property of the default, not an
   unmeasured quantity.
 
 ## Rejected alternatives
@@ -165,4 +162,3 @@ Every decision below is the maintainer's or follows from that one. Decided, not 
 | **A default in the hooks' environment fallback** | That fallback serves callers that are not the plugin, whose tools carry no default; the hook could send the key to the public server while the tools send it elsewhere. |
 | **Keep `${OML_URL}` in the Cursor and Gemini CLI configurations** | With only the key set, the URL becomes `/mcp`, which names no server, so those two tools would still need a URL. |
 | **A default only in the dialog's description text, with `url` still required** | The user still types the address; the description is help text, not a value. |
-| **`oml.doublegate.io`, the address in the v0.4.0 documents** | It no longer answers since the move of 2026-11-04, and there is no redirect. |

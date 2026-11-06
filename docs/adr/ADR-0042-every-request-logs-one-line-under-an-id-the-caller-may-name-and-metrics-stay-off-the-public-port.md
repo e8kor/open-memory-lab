@@ -9,7 +9,7 @@ answers: what the lead logs for each HTTP request and each MCP call, in which fo
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 
-**Release:** introduced in v0.4.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.1 ([releases](../changelog.md))
 
 ## Context
 
@@ -159,7 +159,7 @@ Decided, not built.
   access log carries the same addresses and falls under the same 30 days. Doctor cannot read
   any of it and states the rule as not checkable, as it does the proxy rule of
   [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md). When
-  [FR-1](../product/roadmap.md)'s pseudonymization act closes, the log joins its inventory with a
+  #146's pseudonymization act closes, the log joins its inventory with a
   30-day bound.
 
 - **d9 — The client is named by its `User-Agent`, and OML's own clients send one.** The line's
@@ -229,9 +229,9 @@ Decided, not built.
     connect-code failure count, whose in-memory count doctor's `connect_code_failures` also
     waits for, and the client-metadata fetch counter. Every series of the four in v0.4.1 has
     labels from closed sets and no `tenant_id`: a tenant label waits for
-    [FR-7](../product/roadmap.md)'s cardinality work. The histograms' bucket bounds start at
+    #99's cardinality work. The histograms' bucket bounds start at
     1 ms and double sixteen times, to 32.768 s, plus `+Inf`. They are the instrument's
-    resolution, not a target, and are revisited when [FR-25](../product/roadmap.md) produces the
+    resolution, not a target, and are revisited when #150 produces the
     first measurements.
 
 - **d13 — OTLP trace export is in v0.4.1 and off unless `server.otlp_endpoint` names a
@@ -263,7 +263,7 @@ Decided, not built.
     d5's cost again. Spans leave through the SDK's batch processor with a bounded queue. A full
     queue drops spans, and a request never waits on export. An export failure is logged as
     `otlp_export_failed` with the reason. What export costs per request is unmeasured
-    ([FR-71](../product/roadmap.md)).
+    (#109).
 
 - **d14 — A log line records the time spent authenticating and in the store, and every other stage
   stays unmeasured.** `auth_ms` is the time from the request's arrival to the credential resolved
@@ -276,7 +276,7 @@ Decided, not built.
   from the query, response serialization, and the declared
   `oml_chain_append_duration_seconds` histogram. Each needs timing inside the domain or the
   adapter's transaction, and none of them is measured. They are tracked as
-  [FR-70](../product/roadmap.md). No page states a threshold for any of these fields
+  #109. No page states a threshold for any of these fields
   ([D17](index.md#the-d-register-which-page-owns-which-decision)).
 
 - **d15 — The headers enter openapi.yaml in the change that serves them.**
@@ -293,7 +293,7 @@ Decided, not built.
   fields, d8's retention and the amended attribution rule, and marks which metrics v0.4.1
   builds. [Configuration](../operations/configuration.md) declares `server.trusted_proxies`,
   `server.metrics_listen` and `server.otlp_endpoint`. The [HTTP API](../api/http-api.md)
-  declares the three inbound headers and the two it returns. [Releases](../product/releases.md)
+  declares the three inbound headers and the two it returns. [Releases](../changelog.md)
   carries v0.4.1 as planned.
 - **Build:** the layer, the request-id extension read by every handler, the response extension
   every handler attaches, `ConnectInfo` on the serve call, the JSON subscriber, the metrics
@@ -314,8 +314,8 @@ Decided, not built.
   metrics port, a scrape annotation or a ServiceMonitor, is decided in the change that wires it.
   Axum's `404` for an unrouted path is not the error envelope [errors](../api/errors.md)
   requires; d4 gives it the header, and the body is not decided here.
-- **Opened:** [FR-70](../product/roadmap.md) (the stages d14 does not time, and the chain append
-  histogram) and [FR-71](../product/roadmap.md) (what the request log, the metrics and trace
+- **Opened:** #109 (the stages d14 does not time, and the chain append
+  histogram) and #109 (what the request log, the metrics and trace
   export cost per request, and how many bytes the log writes per request, which is what 30 days
   of it occupies).
 
@@ -336,4 +336,4 @@ Decided, not built.
 | **Read the `OTEL_*` environment variables** | They would be a second configuration surface, which [configuration](../operations/configuration.md) refuses, and a stray variable in a container image could start exporting. |
 | **A cargo feature that leaves OpenTelemetry out of the default build** | The operator asked for export in the release. A binary built without it cannot turn it on, and a second binary doubles the release matrix. |
 | **A setting for the log format, text or JSON** | Two formats are two sets of tests and two parsers downstream. The process has one consumer shape: a pipe into journald, Docker or a collector. |
-| **Time every stage now: chain lock, signing, scan, serialization** | Each needs instrumentation inside the domain or inside the adapter's transaction, and none has a measured cost to justify it yet. FR-70 holds the work. |
+| **Time every stage now: chain lock, signing, scan, serialization** | Each needs instrumentation inside the domain or inside the adapter's transaction, and none has a measured cost to justify it yet. #109 holds the work. |

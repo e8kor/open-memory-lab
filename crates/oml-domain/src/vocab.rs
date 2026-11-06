@@ -240,9 +240,9 @@ impl PrefixRegistry {
 /// The register of the provider-published `oml:` upper vocabulary: the
 /// labels of term edges and of classifications, shipped product data
 /// versioned with the release, never journal content (ADR-0021 d2, d5;
-/// ADR-0027 d7; RS-10).
+/// ADR-0027 d7; #149).
 // reading: ADR-0021 d2 lists `is_a`, `part_of`, `replaced_by`, `consider`
-// and "…", and ADR-0027 d7 adds `about`; RS-10 owns the rest of the
+// and "…", and ADR-0027 d7 adds `about`; #149 owns the rest of the
 // content, so the register is these five and no other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum OmlLabel {

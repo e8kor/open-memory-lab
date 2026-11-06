@@ -1206,7 +1206,7 @@ pub trait JournalStore: Retriever + Send + Sync {
 
     /// Every brief edge into `workarea_id`, pending and ratified, newest
     /// first by `created_at`, then by edge id (ADR-0046 d7). Unpaged: the
-    /// count per workarea is unbounded, tracked as FR-77.
+    /// count per workarea is unbounded, tracked as #145.
     fn brief_edges(
         &self,
         tenant_id: Uuid,

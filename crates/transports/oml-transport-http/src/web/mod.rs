@@ -113,7 +113,7 @@ pub const SIGN_IN_COOKIE: &str = "__Host-oml_signin";
 
 /// How many exchanges with one provider run at once; past it a callback
 /// answers `limit.rate` (ADR-0045 d15). Stated by the build, unmeasured
-/// (FR-76).
+/// (#119).
 pub const PROVIDER_CALLS_MAX: usize = 8;
 
 /// The `details.reason` of an `Authorization` header on a web route.

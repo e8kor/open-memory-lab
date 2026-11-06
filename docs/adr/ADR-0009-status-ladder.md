@@ -9,7 +9,7 @@ answers: why a workarea's status is a forward-only ladder of development, commit
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** introduced in v0.5.2 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
 ## Context
 
@@ -74,7 +74,7 @@ of running software.
 
 ## Consequences
 
-- `status` is one column on `workareas` ([data/postgres-schema.md](../data/postgres-schema.md)),
+- `status` is one column on `workareas` ([data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)),
   and every refusal in d1 is a typed error naming the status rule it enforces
   ([api/errors.md](../api/errors.md)). Transition events with policy snapshots join the event
   catalog ([data/event-catalog.md](../data/event-catalog.md)).
@@ -94,7 +94,7 @@ of running software.
   retract operations ([architecture/storage.md](../architecture/storage.md)), so gold tables
   curated per validated workarea are not immutable snapshots — they are current state under
   journalled demotion and erasure, and the reconciler checks them as such
-  ([architecture/reconciliation.md](../architecture/reconciliation.md)).
+  ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
 - d6 is a standing documentation and review obligation under the fixed vocabulary of
   [ADR-0018](ADR-0018-the-documentation-set.md): a surface that leaks "gold" for a workarea or
   "validated" for a zone is a defect.

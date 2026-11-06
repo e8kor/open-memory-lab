@@ -9,12 +9,12 @@ answers: why reads are served from Postgres as the one serving tier; why every r
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** partly in v0.1.0 and v0.2.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.2.0; the rest not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. The mechanics of the serving tier
 (index layout, query shapes, the read-log schema) are owned by
 [architecture/retrieval.md](../architecture/retrieval.md); the simulation predicate's channel is
-owned by [architecture/simulations.md](../architecture/simulations.md); this record decides and
+owned by [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md); this record decides and
 gives the reasons.
 
 ## Context
@@ -72,10 +72,10 @@ composes answers.
   filter during the scan rather than after it. Embeddings are computed by `oml-indexer` under its
   own credentials per tenant — never the signing key; it reads promoted text on the serving side
   of decryption, and its exact decrypt-grant shape is bound to the embedding decision
-  ([RS-1](../product/roadmap.md), per [ADR-0007](ADR-0007-tenancy-first-class.md) d3) — and
+  (#153, per [ADR-0007](ADR-0007-tenancy-first-class.md) d3) — and
   embedding rows are erasable (they are plaintext-derived and appear in the ADR-0005 inventory). Recall quality, latency, and the exact-versus-approximate
-  trade are **unmeasured** — each is a tracked FR/RS row with an exit criterion on the
-  [roadmap](../product/roadmap.md).
+  trade are **unmeasured** — each is a tracked issue with an exit criterion on the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 - **d5 — Steering is a claim kind with an ordering contract.** A steering row is written by a
   writer key, held on arrival and non-author-reviewed like any claim (ADR-0010, ADR-0012), and
@@ -99,11 +99,11 @@ composes answers.
 - One store answers every client read, so read-time policy — RLS, grants, status, simulation
   audience — is enforced where the policy rows live, and a read that happened is a read that was
   logged. The cost is that Postgres carries the whole read load *and* the write load; the Postgres
-  scale ceiling and partition strategy FR on the [roadmap](../product/roadmap.md) carries that
-  risk with an exit criterion, and d1 is the decision that makes the FR worth measuring.
+  scale ceiling and partition strategy issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries that
+  risk with an exit criterion, and d1 is the decision that makes the issue worth measuring.
 - Read performance claims do not exist yet. Recall quality, read latency and index behaviour under
   per-tenant partitioning are unmeasured — stated here once and marked on every page that touches
-  them (decided, not built; unmeasured — see the roadmap rows).
+  them (decided, not built; unmeasured — see the issues).
 - The read log's honesty boundary is explicit: inside the retention window, anchored and
   verifiable; outside it, gone, and exports say so. A tenant choosing a short window is choosing a
   short answer to the auditor's question — the policy knob and its consequence are the same
@@ -112,14 +112,14 @@ composes answers.
   interleaving. Agents that ignore steering are visible in the read log (they were served it),
   which is the only enforcement a memory provider can honestly offer.
 - Anything that wants lake reads — per-audience decrypted exports, analytics surfaces — arrives as
-  a journalled export feature (tracked FR on the roadmap), never as a query endpoint.
+  a journalled export feature (a tracked issue), never as a query endpoint.
 
 ## Rejected alternatives
 
 | Alternative | Why not |
 |---|---|
 | **Serve reads from the lake (lake-direct reads)** | The audit hole. A read from parquet bypasses the one place reads are logged and policy is enforced: no read event, no RLS, no grant attenuation, no simulation predicate — every rule would need a faithful reimplementation in a second engine, and the two would drift. Lake bodies are also per-artifact ciphertext (ADR-0004), so a lake reader needs DEKs, widening key custody; and the lake is asynchronous behind the outbox frontier, so lake reads serve a stale tip without being able to say how stale. |
-| **A separate search service (OpenSearch/Elasticsearch)** | A third store with its own durability, its own ingest pipeline, and its own reconciliation story — a second ADR-0017 just for search, plus a second enforcement point for RLS/grants/simulation that Postgres already enforces natively. Deferred, not forbidden: the trigger is the named FR on the [roadmap](../product/roadmap.md) — pgvector/tsvector measurably failing recall or latency exit criteria at a real tenant scale. Until that measurement exists, a dedicated search tier is cost without evidence. |
+| **A separate search service (OpenSearch/Elasticsearch)** | A third store with its own durability, its own ingest pipeline, and its own reconciliation story — a second ADR-0017 just for search, plus a second enforcement point for RLS/grants/simulation that Postgres already enforces natively. Deferred, not forbidden: trigger is the named issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) — pgvector/tsvector measurably failing recall or latency exit criteria at a real tenant scale. Until that measurement exists, a dedicated search tier is cost without evidence. |
 | **Read events inside the hash chain** | Every read would contend on the per-tenant chain head (ADR-0002 d3), and retention-bounding chain rows contradicts an append-only chain. Anchored batch digests (d2) keep the verifiability and drop both costs. |
 | **Not logging reads at all** | Cheaper and simpler, and it forfeits the product sentence — "who read what, when an auditor asks" — that distinguishes a governed memory provider from a database with an API. |
 | **Grounded Q&A in v1** | d6. A model inside the provider, producing unjournalled prose from journalled claims, with its own cost, custody and review questions — for clients that are themselves reasoning agents. Declined. |

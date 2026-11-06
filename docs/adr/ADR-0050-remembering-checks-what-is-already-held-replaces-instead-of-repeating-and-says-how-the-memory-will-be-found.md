@@ -2,7 +2,7 @@
 id: adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found
 tier: engineering
 status: accepted design · 2026-11-06
-answers: what a write does about a memory OML already holds, and whether it refuses, warns or links; how a write to an existing subject replaces it instead of adding a second claim; how an author revises or withdraws its own held version (RS-17); how "the latest" of a changed fact is answered; what a writer may add so the memory is found (a title, keywords, validity dates, sources) and how the server tells the writer which terms it indexed; which quality problems the scan warns about without vetoing; how a memory says when it should be checked again without ever being deleted; how a session's findings are written as one bounded batch of held candidates; what the reviewer sees beside a held row; the oml_write field set, refusals and response in their cleanest form, and the skill's text; how each decision keeps R1 to R4; the doctor lines; the remember eval that gates each decision; the build order; and the questions left for the maintainer
+answers: what a write does about a memory OML already holds, and whether it refuses, warns or links; how a write to an existing subject replaces it instead of adding a second claim; how an author revises or withdraws its own held version (#156); how "the latest" of a changed fact is answered; what a writer may add so the memory is found (a title, keywords, validity dates, sources) and how the server tells the writer which terms it indexed; which quality problems the scan warns about without vetoing; how a memory says when it should be checked again without ever being deleted; how a session's findings are written as one bounded batch of held candidates; what the reviewer sees beside a held row; the oml_write field set, refusals and response in their cleanest form, and the skill's text; how each decision keeps R1 to R4; the doctor lines; the remember eval that gates each decision; the build order; and the questions left for the maintainer
 -->
 
 # ADR-0050 — Remembering checks what is already held, replaces instead of repeating, and says how the memory will be found
@@ -11,26 +11,25 @@ answers: what a write does about a memory OML already holds, and whether it refu
 near-copy match read from integer keys, with no recall and no model, specified in d17; its nine
 questions answered at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05))
 
-**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../changelog.md))
 W1, W2 and W3's reviewer side not assigned; W4–W7 not assigned, each gated on the remember eval
-([releases](../product/releases.md#decisions))
+([releases](../changelog.md))
 
 **Amends:** ADR-0012 (d5: what a serve carries beside the item, and the reject verdict), ADR-0025 (d10: a held
 version may be superseded by its author; d11: a retirement of one's own never-promoted version
 withdraws it; d12: the claim item; d18: a withdrawn first version releases its key), ADR-0038
 (d2: the skill's write guidance), ADR-0039 (d3: the `oml_write` field set and modes; d6: an
 explicit `claim_key` naming a live claim supersedes it); [admission](../architecture/admission.md)'s
-scan, which gains advisory findings; answers [RS-17](../product/roadmap.md)
+scan, which gains advisory findings; answers #156
 
 The design mockups for this record are on one page:
-[remember mockups](../design/remember/mockups.html) (an `oml_write` exchange in Claude Code with
+remember mockups (an `oml_write` exchange in Claude Code with
 a duplicate hint and a supersession, the response's indexed terms, the reviewer's view with
 near-duplicates beside a held row, the user page's memories with stale and review-by markers,
 and the remember eval's chart).
 
 This record takes the number after ADR-0049, which the search lane (`feat/search-port`) holds;
-ADR-0042 to ADR-0048 were taken when it was written. Its roadmap rows start at FR-90, leaving
-FR-86 to FR-89 to that lane.
+ADR-0042 to ADR-0048 were taken when it was written.
 
 ## Context
 
@@ -54,7 +53,7 @@ today nothing in it helps:
   `claim_key` out, so every changed fact the agent does not supersede by `artifact_id` becomes a
   second claim. A sent `claim_key` naming a live claim is refused, so an agent that knows the
   subject must look up the tip and send `replaces`: two calls.
-- **An author cannot revise its own held write** ([RS-17](../product/roadmap.md)), which
+- **An author cannot revise its own held write** (#156), which
   [ADR-0025](ADR-0025-the-agent-only-memory-surface.md)'s rejected alternatives left open for
   want of "a held→held chain and a stale-promotion rule". An agent that corrects itself before
   review adds a second held claim for the reviewer.
@@ -171,7 +170,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   tip's author, or a dreamer's proposal), the write is a supersession of the served tip, or a
   revision of the key's own held head (d3), answered `mode: "supersede"`, `upserted: true` and
   `replaces`. When the key may not, it answers `submission.claim_key_conflict` as today, with the
-  residual FR-31 already names. A self-signed upsert of a reviewed tip waits for a non-author
+  residual #129 already names. A self-signed upsert of a reviewed tip waits for a non-author
   verdict (ADR-0025 d17). This amends ADR-0039 d6, which refused it; the derived `auto-` key and
   its refusal stay.
 
@@ -186,7 +185,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     second identity approves.
 
 - **d3 — The author may revise or withdraw its own held version, which then never promotes
-  (answers RS-17).** A supersession, or an upsert, whose target is a held version the calling
+  (answers #156).** A supersession, or an upsert, whose target is a held version the calling
   key wrote and that no verdict has decided is a **revision**: the held version moves to state
   `withdrawn`, leaves the review queue and never promotes; a serve open on it answers
   `review.serve_invalid` at its verdict; the event carries `revises` with its id. The revision
@@ -225,7 +224,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       weight, part of the signed content and reviewed with it. A reviewer who wants others
       supersedes; no verdict adds a keyword, so review never changes a rank (R3). On version 1
       title and keywords together moved paraphrase success@5 from 0.67 to 0.88, written by the
-      same model as the queries (an upper bound; FR-90).
+      same model as the queries (an upper bound; #141).
     - **`valid_from`, `valid_until`**: dates the author states the fact holds between, reviewed
       with the text. A hit past its `valid_until` is served with `expired: true`, never hidden
       and never re-ranked; ADR-0048 S4's filters gain `valid_at` (a date, or `"now"`), which
@@ -256,7 +255,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   A workarea's review policy may name a class in `human_required_classes` as it may any scan
   class ([admission](../architecture/admission.md#review-policy-objects)). No warning changes
   visibility or rank. The thresholds are chosen, not measured beyond version 1, where the rules
-  were written by the model that wrote the data (FR-92). One checkable claim per memory is the
+  were written by the model that wrote the data (#141). One checkable claim per memory is the
   skill's rule (d12), and `quality.many_claims` is its check.
 
 - **d7 — A memory may say when it should be checked again; past that date it is served marked
@@ -275,7 +274,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 
 - **d8 — A batch of up to 20 writes is one request, and a session's findings are written as
   held candidates by the agent, never by a hook.** `oml_write` with `items`, an array of 1 to
-  `write.max_batch` (20, chosen; FR-94) argument sets, each a complete single write with its own
+  `write.max_batch` (20, chosen; #141) argument sets, each a complete single write with its own
   `idempotency_key`, answers `mode: "batch"` and `items`: per item, in order, its write answer
   or its error envelope. Items are independent: no atomicity, each item's idempotency record its
   own, so a retried batch replays the items already written and writes the rest. Each item's
@@ -283,7 +282,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   `POST /v1/memories/batch`, whose per-item keys stand in for the request's `Idempotency-Key`.
   Session capture is the skill's: when a task ends, or the user asks, the agent writes what it
   learned that the next session would need, at most `capture.max_per_session` items (5, shared
-  with ADR-0047 d13; FR-94), as one batch with `on_similar: "refuse"`, each one claim with its
+  with ADR-0047 d13; #141), as one batch with `on_similar: "refuse"`, each one claim with its
   title, keywords and `sources: ["session:<id>"]`. No hook writes and no hook prompts for capture:
   the session-start hook "performs no act" ([ADR-0029](ADR-0029-session-start-hook.md) d1) and the hooks added since keep that rule, a prompt at every stop
   fills review with noise (ADR-0047 d13), and a transcript summarised into memory unread is the
@@ -364,7 +363,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
   serve's bound digest, so a new similar row does not invalidate a serve. The reject verdict
   gains `duplicate_of`, an artifact id the reviewer may read, journalled with the verdict and
   served on the author's own listing beside `rejected`, so the author's agent learns which
-  memory it repeated, and real duplicate rates can be counted from verdicts (FR-93). Approval is
+  memory it repeated, and real duplicate rates can be counted from verdicts (#113). Approval is
   unchanged: one verdict, by another identity.
 
 - **d12 — The skill teaches one checkable claim per write, a subject key for what changes, the
@@ -467,7 +466,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
     7. **W7, links (after ADR-0046's claim edges):** d9. `links_are_ratified_with_the_claim_and_dropped_with_its_rejection`.
 
 - **d15 — Every new failure has a doctor line.** `oml doctor` (admin) names: the similar check's
-  p95 over the last hour above `similar.max_ms`, with the write latency it adds (FR-91); versions
+  p95 over the last hour above `similar.max_ms`, with the write latency it adds (#141); versions
   that should hold similar keys and hold none, or keys whose state differs from their version's
   (d17), which `oml_similar_keys_refill` repairs, read over 2,000 versions in id order from a
   random id on each call so the cost is the sample's and repeated calls cover every version; a share
@@ -547,7 +546,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       paraphrases, 8 paraphrased updates and 8 new facts, and 6 short pairs that differ by one
       value or by order. The pairs were derived by rule, not written by a model, and the
       paraphrases are those a model wrote for version 1: the set measures the check's
-      mechanics, not real writes, which remain FR-90's. Its numbers are in the README beside it
+      mechanics, not real writes, which remain #141's. Its numbers are in the README beside it
       and in the build's measured row in d16.
     - **The cost**, measured 2026-11-05 by `bench/scale/similar.py` as the serving role under row
       security on a busy host ([the scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)):
@@ -555,7 +554,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       versions, 0.90 / 1.82 at 100k and 2.95 / 15.7 at 1M, against 128 / 180 for r1's recall at
       1M; an index-only scan at every scale. The keys take about twice the memories heap; the
       trigger adds 0.4 ms p50 to a held insert at 10k and 6.2 at 1M; 0027's fill takes 19 minutes
-      at 1M with writes waiting, as 0021's does (FR-103). The scale lane's templated texts
+      at 1M with writes waiting, as 0021's does (#103). The scale lane's templated texts
       overstate the candidates.
     - **A generic plan visits more entries than the cost above shows** (review of 2026-11-05,
       `EXPLAIN ANALYZE` as the serving role under row security on 200,000 synthetic keys). The
@@ -571,7 +570,7 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
       through a tenant cost the number of its copies on every write containing it, with nothing
       bounding it but the tenant's size: the limit of 32 applies after the visit. Each probe leaves a held row and a
       journal entry, which bounds how many a writer can send unseen. Not closed: a cap on one key's
-      copies per tenant is decided once the scale lane or real writes (FR-90) show boilerplate
+      copies per tenant is decided once the scale lane or real writes (#141) show boilerplate
       at that size.
 
 ## Downsides: argument or opportunity
@@ -584,11 +583,11 @@ journalled crypto-shred ([ADR-0001](ADR-0001-the-constitution.md) d1–d4). Deci
 | A hint on an unrelated row costs the agent a read | argument, bounded | At most 3 rows without text; `refuse` only when the agent asks. |
 | `refuse` costs a second call | argument | Against a reviewer's verdict per duplicate; the skill's default waits on d16's precision gate. |
 | An upsert can replace the wrong claim | argument | `upserted` and `replaces` say so at once, and nothing changes before review (d2). |
-| Subject keys disclose that a name is taken | argument, existing | The residual FR-31 already names, unchanged. |
-| A withdrawn state is one more state | argument, small | The alternative is RS-17's second held claim per correction. |
-| Warnings can nag | argument | Advisory, never a veto, thresholds measured (FR-92). |
-| A stale flag adds review load | argument | Off unless an author or a workarea sets a date; FR-93 measures confirmations per stale row. |
-| Duplicates in the review queue | opportunity | `duplicate_of` gives the first real duplicate rate (FR-93). |
+| Subject keys disclose that a name is taken | argument, existing | The residual #129 already names, unchanged. |
+| A withdrawn state is one more state | argument, small | The alternative is #156's second held claim per correction. |
+| Warnings can nag | argument | Advisory, never a veto, thresholds measured (#141). |
+| A stale flag adds review load | argument | Off unless an author or a workarea sets a date; #113 measures confirmations per stale row. |
+| Duplicates in the review queue | opportunity | `duplicate_of` gives the first real duplicate rate (#113). |
 | Agents do not know how they will be found | opportunity | `indexed` tells them, from their own text. |
 | "Latest" fails under every search method | solved by structure | One claim per subject, its tip served (d2–d4). |
 | Poisoning by write | opportunity | Upsert never reaches another author's claim, and no write replaces a reviewed fact without review. |
@@ -600,10 +599,10 @@ stay three.
 
 ## Consequences
 
-- **Roadmap rows.** RS-17 is answered by d3 at acceptance. FR-90 opens (the near-copy check's
-  recall and precision on real writes, and the 0.9 threshold), FR-91 (the check's latency at
-  stated corpus sizes, measured in part by d17's bench), FR-92 (the warning thresholds on accepted memories), FR-93 (the duplicate
-  rate and the stale-confirmation load from verdicts) and FR-94 (`write.max_batch` and
+- **Issues.** #156 is answered by d3 at acceptance. #141 opens (the near-copy check's
+  recall and precision on real writes, and the 0.9 threshold), #141 (the check's latency at
+  stated corpus sizes, measured in part by d17's bench), #141 (the warning thresholds on accepted memories), #113 (the duplicate
+  rate and the stale-confirmation load from verdicts) and #141 (`write.max_batch` and
   `capture.max_per_session`).
 - **Pages to change at acceptance.** The MCP plugin page and `mcp-tools.json` (`oml_write`'s
   fields, modes and answer; `oml_read`'s `versions`, `valid_at`, `fresh`); the HTTP API (submit,
@@ -643,7 +642,7 @@ first slice, W3's write side, exercises.
 | **Only add, and let ranking pick the newer** (mem0, 2026) | Ranking by time lets review's timing reorder results (R3), and on version 1 the replaced value ranked first for 5 of 8 "latest" queries with both live. |
 | **Silently drop a duplicate write** | Nothing is deleted or dropped unseen (R4's spirit, ADR-0001 d4); the writer is told, and the reviewer decides. |
 | **Merge or link similar rows automatically** | A link is a claim about two memories and needs a proposer and a non-author ratifier (ADR-0046); `links` lets the writer propose one (d9). |
-| **Refuse every similar write** | The hint cannot tell a refinement from a repeat; refusing on a lexical rule would block correct writes, and its precision is unmeasured on real writes (FR-90). Opt-in `refuse` (d1). |
+| **Refuse every similar write** | The hint cannot tell a refinement from a repeat; refusing on a lexical rule would block correct writes, and its precision is unmeasured on real writes (#141). Opt-in `refuse` (d1). |
 | **Embeddings for duplicate detection now** | ADR-0048 stages meaning last behind its eval; a dense leg is not served, and a cosine threshold (Hindsight adjudicates at 0.97) needs labels this repository does not have. A meaning-level hint is a later leg beside d17's, not a replacement. |
 | **One recall per write, listing rows that share 0.4 of the new text's words** (r1's d1) | It cost 128 ms p50 and 180 ms p95 per write at 1M rows on the scale lane ([REPORT-baseline](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT-baseline.md), case g), ten times the write it guards at 100k, and its 0.94 precision was measured on texts the same model wrote as the labels. d17 reads integer keys instead. |
 | **Graphiti's constants: character 3-grams, 32 permutations in 8 bands of 4** ([dedup_helpers.py](https://github.com/getzep/graphiti/blob/main/graphiti_core/utils/maintenance/dedup_helpers.py)) | Built for entity names of a few words; on whole memories 8 bands of 4 make a pair at Jaccard 0.2 a candidate one time in 80, about 509 candidates per write at 1M on the labelled set's distribution, against 114 for 10 bands of 6. Its entropy gate (1.5 bits) is kept as an idea and set for sentences (3.0, under the labelled set's lowest, 3.52). |

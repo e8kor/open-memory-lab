@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The postings lane of the scale bench (ADR-0052, FR-100): `bm25` and
+"""The postings lane of the scale bench (ADR-0052, #103): `bm25` and
 `bm25-postings` at a given number of memories per tenant, through the adapter's
 own statements, as the serving role under row security.
 

@@ -61,9 +61,8 @@ def sync_detailed(
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
-    <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and
-    the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since
-    v0.5.0.
+    <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -97,9 +96,8 @@ def sync(
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
-    <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and
-    the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since
-    v0.5.0.
+    <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -128,9 +126,8 @@ async def asyncio_detailed(
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
-    <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and
-    the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since
-    v0.5.0.
+    <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -162,9 +159,8 @@ async def asyncio(
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
-    <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and
-    the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since
-    v0.5.0.
+    <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
