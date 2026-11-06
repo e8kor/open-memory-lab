@@ -18,11 +18,11 @@ opt-in `bm25-rerank`; the default since v0.5.6 is
 [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)'s
 `bm25-postings`. S4 (filters) and S5 (author keywords) are not built and not assigned; S7
 (meaning) is ADR-0052's learned sparse kind, introduced in v0.5.7 as the opt-in `sparse` and `bm25-sparse`. Open questions 1, 2, 4, 5 and 6 are
-answered by what shipped ([releases](../product/releases.md#decisions))
+answered by what shipped ([releases](../changelog.md))
 
 **Amends:** ADR-0013 (d4, at S7 only), ADR-0025 (d8: the score; d9: the read digest; d13),
 ADR-0038 (d3, d6), ADR-0039 (d4); [retrieval](../architecture/retrieval.md)'s text handling and
-the PoC score; answers RS-1 at S7's acceptance
+the PoC score; answers #153 at S7's acceptance
 
 The design mockups for this record are on one page, kept with the branch it was proposed on:
 [search mockups](https://github.com/e8kor/open-memory-lab/blob/archive/feat/code-map/docs/design/search/mockups.html) (today against S1–S3 on five eval queries, an
@@ -168,7 +168,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
       [retrieval](../architecture/retrieval.md#text-handling) gave for it holds: a non-English word
       still matches exactly, and English words also match their stems (the eval: 0.73 → 0.86;
       inflection 0.73 → 0.91; multihop 0.46 → 0.91). `unaccent` folds accents in both. A
-      per-workarea language stays RS-15.
+      per-workarea language stays #155.
     - **Rarity, over the readable rows only.** The score is BM25-class: for each query term, its
       inverse document frequency times a saturated, length-normalised term frequency, with k1 1.2
       and b 0.75, the textbook constants, unmeasured on OML. The document frequencies, the row
@@ -191,7 +191,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   has `CREATE` privilege on the current database"
   ([PostgreSQL, additional modules](https://www.postgresql.org/docs/current/contrib.html)), so the
   owner role creates them and the serving role still owns nothing. The eval's trigram number comes
-  from a sequential scan of 200 rows; its cost at scale is FR-84. A held row enters trigram rows
+  from a sequential scan of 200 rows; its cost at scale is #102. A held row enters trigram rows
   only inside held-text containment, as it enters full text today.
 
 - **d5 — S4: filters run inside the scan, before ranking, and time is structure, not search.**
@@ -225,9 +225,9 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   untouched and the budget cut runs after. The model reads only rows the key may read, already
   candidates, and stores nothing, so it adds no index, no erasure row and no held-embedding rule.
   It runs in pure Rust through `candle` ([ADR-0006](ADR-0006-pure-rust.md)); the scratch
-  measurement used ONNX Runtime, so `candle`'s CPU cost is FR-85. No fine-tuning. A request asks
+  measurement used ONNX Runtime, so `candle`'s CPU cost is #102. No fine-tuning. A request asks
   with `rerank: true`; the deployment setting `search.rerank` turns it on for every recall once
-  FR-85's p95 fits d11's budget. Measured in scratch: success@1 0.79 → 0.88, and the paraphrase gap
+  #102's p95 fits d11's budget. Measured in scratch: success@1 0.79 → 0.88, and the paraphrase gap
   S7 exists to close closed on this set (0.64 → 0.82) without embeddings. That is why S6 comes
   before S7: the same paraphrase number on version 1, at a fraction of S7's governance.
 
@@ -247,8 +247,8 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   logged. Its gate: the served S1–S6 measured on eval v2's paraphrase queries, at least 30, and S7
   taken only if hybrid beats them there by more than the bootstrap interval with no category
   falling. On version 1 the offline gap is 0.93 → 0.97 overall and 0.64 → 0.82 on paraphrase, and
-  S6 closed the paraphrase part in scratch. This answers RS-1 at S7's acceptance; the model is
-  chosen by FR-81.
+  S6 closed the paraphrase part in scratch. This answers #153 at S7's acceptance; the model is
+  chosen by #102.
 
 - **d9 — Every hit says why it matched, and an empty or thin result explains itself.** A hit gains
   `matched`: `words`, the query words it contains, and `of`, how many the query had; `via`, each
@@ -282,7 +282,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   reading at a hit with one word of five. Latency: the served recall measured 14.4 ms median and
   18.7 ms at p95 end to end on 200 rows. The proposed budget, chosen and not measured, is a `text`
   p95 at most twice `keyword`'s on the eval corpus, and a stated number at 10,000 and 100,000
-  promoted rows per tenant under FR-25's harness before `text` is the public server's default; S6
+  promoted rows per tenant under #150's harness before `text` is the public server's default; S6
   joins a default only inside it.
 
 - **d12 — The eval becomes a CI gate, then grows, and real queries come only by consent.** The eval
@@ -291,7 +291,7 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
   `search: "keyword"` does not reproduce `pg_simple_and` exactly, when a served stage falls below
   its gate in d1, or when a category falls by more than one query against the committed results.
   Version 2 of the data adds what version 1 lacks: unanswerable queries, to measure the false
-  positives an any-word recall brings (FR-83); filter, multi-workarea, held and supersession
+  positives an any-word recall brings (#105); filter, multi-workarea, held and supersession
   queries for S4; memories with keywords for S5; at least 30 paraphrase queries for S7's gate; S6
   as a committed method; and labels pooled from every method's top 10, graded by someone who did
   not write the memories. Real traffic: the request log keeps no query text (ADR-0042 d8's
@@ -344,16 +344,16 @@ are never ranked" ([ADR-0001](ADR-0001-the-constitution.md) d3). Decided, not bu
 | Downside | Verdict | Reasoning, and what it implies |
 |---|---|---|
 | Today 83% of the eval's queries return nothing | solved by S1 | 0.83 → 0.05 zero results, on the index that exists (d2). |
-| Any-word recall serves rows that share one common word | argument, bounded | S2's rarity weights push them down, `matched` shows "1 of 2", and eval v2's unanswerable queries measure it (FR-83). |
-| Stemming corrupts non-English text | argument, answered | `simple` stays beside `english`, so the exact form always matches (d3); a per-workarea language stays RS-15. |
-| Rarity statistics leak rows a key cannot read | solved by design | Computed per query over the readable rows only (d3), at a cost FR-84 measures. |
-| A trigram index costs writes and storage | argument | Unmeasured at scale (FR-84); +0.07 success@5 on the eval is the case for paying it. |
+| Any-word recall serves rows that share one common word | argument, bounded | S2's rarity weights push them down, `matched` shows "1 of 2", and eval v2's unanswerable queries measure it (#105). |
+| Stemming corrupts non-English text | argument, answered | `simple` stays beside `english`, so the exact form always matches (d3); a per-workarea language stays #155. |
+| Rarity statistics leak rows a key cannot read | solved by design | Computed per query over the readable rows only (d3), at a cost #102 measures. |
+| A trigram index costs writes and storage | argument | Unmeasured at scale (#102); +0.07 success@5 on the eval is the case for paying it. |
 | Hooks gated on AND would fire on loose matches | solved | They send `search: "keyword"` (d10). |
 | `keyword` must be kept | argument, small | One statement, already written: the comparison baseline and the hooks' gate. |
 | The test store and PostgreSQL disagree | opportunity | S1 makes them return the same rows and asserts it (d2). |
 | An empty result says nothing | opportunity | `explain` and `did_you_mean` (d9) turn it into a next step. |
 | Lexical search misses paraphrase | argument, staged | 0.64 at best lexically; S5, then S6 (0.82 in scratch), then S7 only if a gap remains. |
-| A reranker adds 33–176 ms median on CPU | argument | Opt-in until it fits d11's budget (d7); `candle`'s cost is FR-85. |
+| A reranker adds 33–176 ms median on CPU | argument | Opt-in until it fits d11's budget (d7); `candle`'s cost is #102. |
 | A hosted model is one more thing to run | argument | S6's model stores nothing and fails open to S1–S3's order; no fine-tuning, so no training pipeline. |
 | Embeddings move text off the machine | argument, scoped | Inside the deployment by default (d8); a provider is the owner's journalled choice. |
 | Semantic and reranked results are hard to explain | opportunity | `matched.via` names `semantic` and `reranked` (d9). |
@@ -368,10 +368,10 @@ three.
 
 ## Consequences
 
-- **Roadmap rows.** FR-81 is narrowed: version 1 of the eval exists; the model, the fusion
-  constant and eval v2 remain. FR-83 opens (false positives on unanswerable queries), FR-84 (S2's
-  per-query statistics and S3's trigram index at stated corpus sizes) and FR-85 (S6's latency and
-  CPU in `candle`). FR-82 stays, for S7. RS-1 is answered at S7's acceptance.
+- **Issues.** #102 is narrowed: version 1 of the eval exists; the model, the fusion
+  constant and eval v2 remain. #105 opens (false positives on unanswerable queries), #102 (S2's
+  per-query statistics and S3's trigram index at stated corpus sizes) and #102 (S6's latency and
+  CPU in `candle`). #102 stays, for S7. #153 is answered at S7's acceptance.
 - **Pages to change at acceptance.** Retrieval (text handling: `simple` beside a stemmed
   configuration; the score: BM25-class over the readable rows; the fusion; `matched` and
   `explain`), the schema (the vector and trigram expressions, the filter columns), the HTTP API
@@ -391,7 +391,7 @@ three.
 | 4 | Stemming? | a. `simple` and `english` both; b. `english` only; c. `simple` only | a: keeps the language-neutral match and gains 0.13 |
 | 5 | The field's name? | a. `search`; b. `mode`, as the first draft had it | a: `mode` already names get, recall and listing in every answer |
 | 6 | S6 before S7? | a. yes; b. S7 first; c. neither | a: the same paraphrase number on this set, no stored derived data |
-| 7 | When does `text` become the default? | a. when its served form passes the eval in CI; b. after FR-25's 100,000-row measurement too | a for self-hosted deployments, b for the public server |
+| 7 | When does `text` become the default? | a. when its served form passes the eval in CI; b. after #150's 100,000-row measurement too | a for self-hosted deployments, b for the public server |
 | 8 | Does `workareas` (several scopes) belong here? | a. yes, up to four; b. no | a: one budget across a branch and its repository (ADR-0047) |
 | 9 | Is a consented query sample worth a page feature? | a. the user page's "this missed" form; b. the maintainer's own transcripts only; c. neither | a and b |
 | 10 | Is a provider plugin allowed on the public server (S7)? | a. no; b. yes, disclosed | a: the public server's users chose no provider |
@@ -401,7 +401,7 @@ three.
 | Alternative | Why not |
 |---|---|
 | **A fourth MCP tool, `oml_search`** | ADR-0039 d8: fields on `oml_read` carry it (d10). |
-| **The ParadeDB `pg_search` extension for BM25** | Licensed "GNU Affero General Public License v3.0" ([ParadeDB](https://github.com/paradedb/paradedb)); not among the trusted extensions the owner role may create without a superuser ([PostgreSQL](https://www.postgresql.org/docs/current/contrib.html)); and an index's corpus statistics span the rows it holds, not the rows a key may read. Revisit if d3's SQL scoring misses FR-84's budget. |
+| **The ParadeDB `pg_search` extension for BM25** | Licensed "GNU Affero General Public License v3.0" ([ParadeDB](https://github.com/paradedb/paradedb)); not among the trusted extensions the owner role may create without a superuser ([PostgreSQL](https://www.postgresql.org/docs/current/contrib.html)); and an index's corpus statistics span the rows it holds, not the rows a key may read. Revisit if d3's SQL scoring misses #102's budget. |
 | **A tantivy index in the lead** | A second store outside PostgreSQL, where row security does not reach; ADR-0013 d1 serves every read from PostgreSQL for that reason. |
 | **A tenant-wide statistics table** | Lets rows a key cannot read move the ranks of rows it can, and needs upkeep at every promotion, supersession and erasure (d3). |
 | **All words, then any, as the default** | Measured equal at success@5 and lower at nDCG@10 on exact queries (d2); kept as `match: "all"`. |

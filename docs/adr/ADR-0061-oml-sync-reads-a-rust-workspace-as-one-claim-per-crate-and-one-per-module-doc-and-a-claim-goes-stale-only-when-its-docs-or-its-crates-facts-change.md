@@ -23,7 +23,7 @@ ADR-0056 (d11: a `.rs` file's module doc is `text/markdown`, never a code snippe
 [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 (bulk review).
 
-**Numbering.** This record takes 0061 and its roadmap rows FR-130 to FR-133, reserved in
+**Numbering.** This record takes 0061 and its open work, #160, reserved in
 [the number registry](../NUMBERS.md) for `feat/rust-adapter`, the branch that builds it; the
 proposal's branch, `design/rust-adapter` (#70), is archived.
 
@@ -237,7 +237,7 @@ build took a narrower reading than the proposal.
   holds one hash (ADR-0057 d3), and a second field would ask every surface to carry, show and
   compare it for one adapter. A workarea keeps one hasher: switching makes every claim `changed`,
   one review each, so it is chosen at the first load. It needs a lexer that walks item headers
-  with brace matching, or syn (d3); both wait for the operator to ask, tracked as FR-131.
+  with brace matching, or syn (d3); both wait for the operator to ask, tracked as #160.
 
 - **d9 — Dependencies are claim text in v0.6.1, not `depends_on` claim edges.** The text already
   answers "what does this crate depend on" for recall and for a reader with no checkout. An edge
@@ -245,7 +245,7 @@ build took a narrower reading than the proposal.
   each edge whenever either endpoint is superseded (ADR-0057 d10), and crate claims are
   superseded whenever a root doc changes. No documented use case traverses a dependency graph
   through OML; when one does, the adapter's edge statements carry `depends_on` and d10's
-  `--edges` proposes them unchanged, tracked as FR-132.
+  `--edges` proposes them unchanged, tracked as #160.
 
 - **d10 — The `rust` adapter retires only claims in its own namespace, and never a claim whose
   file it could not read.** *Amends ADR-0057 d8, and closes the PR #68 review's H3 and M1 for this
@@ -305,7 +305,7 @@ build took a narrower reading than the proposal.
       each have been one supersession to review, about one for every four commits; a change to
       internal dependencies supersedes two crate claims, the dependent's and the dependency's.
       Every `rust` sync also records one source check per anchored tip (ADR-0057 d5), 92 a run.
-    - **How long the review takes** is unmeasured; FR-116 records it for the ADR load, and FR-130
+    - **How long the review takes** is unmeasured; #138 records it for the ADR load, and #160
       adds the code load.
 
     The dry run at `ad2daa3`, as it would print (lines elided):
@@ -395,9 +395,9 @@ build took a narrower reading than the proposal.
   commits that touch `crates/` afterwards, two for an internal-dependency change and two for a
   renamed module. A doc that lists a module's entry points can go out of date without a mark
   (d8).
-- **Roadmap rows.** FR-130 (the code load's review time and rejections), FR-131 (staleness by
-  `pub` surface: the opt-in hasher and the lexer or syn it needs), FR-132 (dependency edges, on
-  the first use case that traverses them), FR-133 (the syn and lexer build costs, measured on the
+- **Open work.** #160 (the code load's review time and rejections, staleness by
+  `pub` surface: the opt-in hasher and the lexer or syn it needs, dependency edges, on
+  the first use case that traverses them, the syn and lexer build costs, measured on the
   three CLI targets if the opt-in hasher reopens the parser choice).
 - **Use cases.** UC-SM-06, load a code base's crate and module docs and keep them in step, added
   to the [use cases](../product/use-cases.md#sources) and the

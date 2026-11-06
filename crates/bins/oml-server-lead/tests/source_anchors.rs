@@ -1667,7 +1667,7 @@ async fn the_anchor_filter_is_an_index_range_for_the_serving_role_under_row_secu
     w.done().await;
 }
 
-/// FR-115's measurement, run by hand (`--ignored --nocapture`): 100,000
+/// #138's measurement, run by hand (`--ignored --nocapture`): 100,000
 /// promoted memories, the anchor filter matching 1%, 10% and 50% of them,
 /// each recall run 40 times warm, p95 printed for the old plan (the whole
 /// list read, filtered by id, then cut) and the served one (the filter in

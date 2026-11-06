@@ -907,13 +907,14 @@ where
         let scope = workarea
             .clone()
             .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
-        let mut regions = self.tree_regions(web, scope).await?;
+        let (mut regions, tree_cut) = self.tree_regions(web, scope).await?;
         // The page's own scope first; then each in-progress root on the
         // tree read as its own scope, where every author's held rows are
         // served (ADR-0030 d3), its subtree's counts replaced by that read.
         let mut partial = self
             .count_listing(web, workarea, &mut regions, &BTreeSet::new())
             .await?;
+        partial |= tree_cut;
         let roots: Vec<Uuid> = regions
             .iter()
             .filter(|r| r.workarea.in_progress)
@@ -1027,7 +1028,7 @@ where
         let tenant_id = admin.key.tenant_id;
         let scope = workarea
             .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
-        let mut regions = self.tree_regions(admin, scope).await?;
+        let (mut regions, tree_cut) = self.tree_regions(admin, scope).await?;
         let nodes: Vec<Uuid> = regions.iter().map(|r| r.workarea.workarea_id).collect();
         let mut after = None;
         let mut counted = 0;
@@ -1063,7 +1064,7 @@ where
         let ancestors = self.ancestors_of(tenant_id, &regions).await?;
         Ok(Regions {
             regions,
-            partial,
+            partial: partial || tree_cut,
             ancestors,
         })
     }
@@ -1073,8 +1074,9 @@ where
         &self,
         caller: &Caller,
         scope: Reference,
-    ) -> Result<Vec<Region>, AppError> {
+    ) -> Result<(Vec<Region>, bool), AppError> {
         let mut regions = Vec::new();
+        let mut truncated = false;
         let mut cursor: Option<String> = None;
         loop {
             let page = self
@@ -1095,10 +1097,14 @@ where
             }));
             match page.next_cursor {
                 Some(next) if regions.len() < REGION_COUNT_MAX => cursor = Some(next),
-                _ => break,
+                Some(_) => {
+                    truncated = true;
+                    break;
+                }
+                None => break,
             }
         }
-        Ok(regions)
+        Ok((regions, truncated))
     }
 
     /// The acts a workarea's dropdown offers (ADR-0045 d28): a status

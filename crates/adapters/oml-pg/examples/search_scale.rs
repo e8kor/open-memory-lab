@@ -1,5 +1,5 @@
 //! The scale lane's served-path driver for text search (`bench/scale/`;
-//! ADR-0052 FR-100): runs each query of a workload through
+//! ADR-0052 #103): runs each query of a workload through
 //! [`PgStore::retrieve`], as the lead's recall does, as the serving role
 //! under row security, and prints one JSON line per call with its wall
 //! time, how it read its list and what it pruned. The statements timed are

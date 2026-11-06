@@ -9,7 +9,7 @@ answers: why simulations are a fenced provenance channel with indelible marks, a
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 ## Context
 
@@ -21,7 +21,7 @@ not a review under an indelible label every later reader can discount. Simulatio
 that pattern from "a signature that is not a review" to "a row that is not a real
 memory": the mark travels with the row through every store, and the question "what did this
 simulation touch" has a mechanical answer. The containment predicate's placement in each read
-path is owned by [simulations](../architecture/simulations.md) and
+path is owned by [simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) and
 [retrieval](../architecture/retrieval.md); this record makes the decisions. Everything here is
 decided, not built.
 
@@ -87,7 +87,7 @@ decided, not built.
 
 - d2 and d4 are schema and index commitments: `provenance` and `simulation_id` columns in the
   journal payload envelope, `memories`, and every lake table
-  ([Postgres schema](../data/postgres-schema.md), [Delta tables](../data/delta-tables.md)), plus
+  ([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations), [Delta tables](../data/delta-tables.md)), plus
   per-simulation FTS/vector indexes instead of rows in the shared ones
   ([retrieval](../architecture/retrieval.md)). d4's tip rule is likewise a schema commitment:
   the served-tip index excludes `provenance: simulation` rows and sim-derived claims, and
@@ -105,7 +105,7 @@ decided, not built.
   outbox order ([storage](../architecture/storage.md)); simulation end introduces no new lake
   machinery.
 - Throughput and the practical size ceiling of a simulation are unmeasured; the
-  [roadmap](../product/roadmap.md) FR rows on review throughput and Postgres scale bound this
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) issues on review throughput and Postgres scale bound this
   channel too.
 
 ## Rejected alternatives

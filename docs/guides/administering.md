@@ -1,46 +1,26 @@
-<!--
-id: guides/administering
-tier: engineering
-status: draft for review · describes administration as v0.4.0 builds it; key revocation, rotation, listing, grant changes and guardrails not built
-answers: how an administrator runs an OML server with the oml CLI: the first hour on a new server; claiming it with the enrollment token and --token-stdin; where the admin credentials live; tenants; workareas, their tree and names; crews; issuing agent, reviewer and admin keys, --out and --connect-code; grants and denials; ending a connection; what stands in for revoking, rotating and listing keys until they are built; reading the journal; and the rules no admin key bypasses
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how an administrator runs an OML server with the oml CLI: the first hour (claim the server, create a workarea, issue an agent key and a reviewer key), where admin credentials live, workareas, crews, keys by role, denials, ending a connection, reading the journal, and the rules no admin key bypasses"
+---
 
-# Guide: administering a server
+# Administer an OML server
 
-**Status:** draft for review · describes administration as v0.4.0 builds it; key revocation,
-rotation, listing, grant changes and guardrails not built
+Administration is the `oml` CLI: each verb is one [HTTP API](../api/http-api.md) request, journaled, and each refusal names its rule. The [CLI reference](../cli/reference.md) holds the contracts; this page gives the order.
 
-**Release:** the claim since v0.1.0, with `--token-stdin` since v0.4.0; workarea creation and key
-issuance since v0.1.0, `oml keys issue-agent` since v0.2.1, crews, names and `oml keys show` since
-v0.3.0; connector keys, `oml keys connect-code` and `oml keys disconnect` since v0.4.0
-([releases](../product/releases.md))
+## The first hour
 
-Administration is the `oml` CLI ([ADR-0015](../adr/ADR-0015-cli-administration.md)); a signed-in
-administrator also has the admin page, below. Every verb below is one request to the
-server's [HTTP API](../api/http-api.md), journalled by the server, and every refusal names its
-rule. The full contract of each verb is the [CLI reference](../cli/reference.md); this page is the
-order and the tasks. The verbs here run in the CLI's own test suites against a real server; this
-page's walkthrough has not been run end to end against a live deployment.
+You need an unclaimed server only you can reach, and the `oml` CLI ([install](../start/install.md)).
 
-## The first hour on a new server
-
-You need the server running with nothing claimed, the `oml` CLI ([install](../start/install.md)),
-and the server reachable only by you until step 2 is done.
-
-1. **Read the enrollment token.** While no tenant exists, the server prints a single-use token,
-   `enr_` and 48 hex digits, on stdout at every start. A restart prints a new one and voids the
-   old. On the interim chart:
-   `TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"`.
-2. **Claim the server** before any proxy or Ingress exposes it: whoever presents the token first
-   receives the first admin key and the tenant
-   ([the bootstrap race](../operations/deployment.md#claiming-the-first-admin-key-the-bootstrap-race)).
+1. **Read the enrollment token**, `enr_` plus 48 hex digits, which the server prints at every start while no tenant exists; a restart voids the old one. On Kubernetes, read the pod log ([Kubernetes](kubernetes.md)).
+2. **Claim the server** before any proxy exposes it; the first to present the token gets the first admin key ([deploy](../operations/deployment.md#claim-the-first-admin-key)).
 
    ```sh
    printf '%s\n' "$TOKEN" | oml --url https://oml.example.com bootstrap claim ops-admin \
        --token-stdin --tenant-name acme --principal platform/you
    ```
 
-3. **Check it.** `oml doctor` prints each health signal with a verdict and exits `1` on any fail.
+3. **Check it** with `oml doctor`, which exits `1` on any failure.
 4. **Create a crew and a workarea for it.**
 
    ```sh
@@ -48,7 +28,7 @@ and the server reachable only by you until step 2 is done.
    oml workareas create universe metals --crew metals-crew
    ```
 
-5. **Issue the agent's key into a file**, never onto the screen:
+5. **Issue the agent's key into a file:**
 
    ```sh
    mkdir -p -m 700 ~/.config/oml/keys
@@ -56,170 +36,80 @@ and the server reachable only by you until step 2 is done.
        --crew metals-crew --out ~/.config/oml/keys/claude-laptop
    ```
 
-   Run the last line it prints, `oml setup claude-code --url … --key-file …`, where Claude Code
-   runs ([Claude Code](claude-code.md)), then delete the file.
-6. **Issue a reviewer's key** under another principal:
+   Run the last line it prints, `oml setup claude-code --url ... --key-file ...`, where Claude Code runs ([Claude Code](claude-code.md)); then delete the file.
+6. **Issue a reviewer key (role `dreamer`)** under a different principal:
 
    ```sh
    oml keys issue maya --role dreamer --held-by human --principal crew/maya \
-       --default-workarea metals --grant metals:dreamer
+       --default-workarea metals --grant metals:dreamer --grant metals:reader
    ```
 
-7. **Look at what you built:** `oml workareas tree` and `oml keys show claude-laptop`.
+Its writes wait as `held` until `maya` approves them with `oml review next` and `oml review approve` ([reviewing](reviewing.md)). Check the result with `oml workareas tree` and `oml keys show claude-laptop`.
 
-The agent's writes now wait as `held` until `maya` approves them with `oml review next` and
-`oml review approve` ([review](../cli/reference.md#oml-review-the-review-ceremony)).
+## Where the admin credentials live
 
-## Claiming a server
+The claim stores `url` and `api_key` in `~/.config/oml/credentials` (0600). `OML_CLI_CREDENTIALS` names another file.
 
-`oml bootstrap claim <key-name> --token-stdin [--tenant-name <name>] [--principal <text>]` sends
-`POST /v2/bootstrap/claim` with no key and takes the URL alone. `--token-stdin` is required: the
-token is read without echo from a terminal, or as the first line of piped stdin, so it never
-reaches argv or shell history; the token is never accepted as a flag argument
-([CLI reference](../cli/reference.md#oml-bootstrap-claiming-the-root-operator-key)).
+The CLI takes its pair from the first source that sets either value: `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then the file. An exported agent pair therefore wins over the stored admin pair, so run admin verbs with both unset. `oml login <url>` replaces the stored pair once `GET /v2/whoami` accepts the key.
 
-On success the token is consumed, a second claim is refused, and the CLI prints the first admin
-key once, with its name, key id, tenant id and root workarea id. The server keeps only the key's
-hash. `oml quickstart` makes the same claim for a laptop and keeps its pair in its own directory
-([self-hosting](self-hosting.md#1-a-laptop-oml-quickstart)).
-
-## The admin credentials
-
-The claim writes `url` and `api_key`, nothing else, to the credentials file, owner-only (mode
-0600 on Unix): `~/.config/oml/credentials`, or the file `OML_CLI_CREDENTIALS` names, so a second
-server is a second file. `oml quickstart` writes `oml/credentials` in its directory instead.
-
-The CLI takes its pair from the first source that sets either value: `--url` and `--api-key`, then
-`OML_URL` and `OML_API_KEY`, then the file; a source that sets one alone is refused
-([start settings](../cli/reference.md#start-settings)). A shell that exports an agent's pair
-therefore wins over the stored admin pair: run admin verbs with both variables unset. `oml login
-<url>` replaces the stored pair after `GET /v2/whoami` accepts the key.
-
-An admin key never goes into an agent: `oml setup claude-code` refuses an admin or operator key
-as `setup.admin_key`. To write or recall yourself, issue yourself a writer key.
-
-## Tenants
-
-The claim creates the one tenant a deployment hosts in v0.4.0, with its root workarea `universe`.
-`oml tenants create` exists and refuses locally: the operator tier that creates further tenants
-is not built ([CLI reference](../cli/reference.md#oml-tenants-the-operators-verbs)).
+Never put an admin key into an agent; issue yourself a writer key.
 
 ## Workareas and names
 
-A tenant's workareas form one tree under `universe`. A grant on a workarea covers its subtree.
+A tenant's workareas form one tree under `universe`; a grant covers its subtree.
 
-| Task | Command |
-|---|---|
-| Create a child | `oml workareas create <parent> <name> [--crew <crew>]` |
-| See the tree | `oml workareas tree [--root <workarea>]` |
-| See one node | `oml workareas show <workarea>` |
-| Point a workarea at another crew | `oml workareas crew set <workarea> --crew <crew>` |
+Verbs: `oml workareas create <parent> <name> [--crew <crew>]`, `tree`, `show`, `crew set`.
 
-A new workarea starts in `development`; since v0.5.2 it climbs to `committed` and `validated`,
-each step proposed by one key and ratified by another (`oml workareas status`). An admin key reads the structure of every workarea in its tenant and never a memory in it;
-the [admin read](../api/http-api.md#admin-read), since v0.5.0, adds two routes on which it
-reads every memory's text and attribution, each read journalled.
+A new workarea starts in `development` and climbs to `committed` and `validated` with `oml workareas status`; one key proposes each step and another ratifies it. An admin key reads every workarea's structure, never a memory, except through the journaled [admin read](../api/http-api.md) routes.
 
-Workareas, crews, keys and tenants each carry a **name**: unique in the tenant, given at creation,
-never changed and never released ([names](../concepts.md#names)). Every verb accepts a name where
-it accepts an id, and the server binds grants and events to the id. No verb renames anything; a
-row that needs another name is a new row. Choose names you can live with, because a retired key's
-name stays taken.
+Workareas, crews, keys and tenants carry a **name**: unique in the tenant, never changed or released ([names](../concepts.md)). Every verb accepts a name where it accepts an id.
 
 ## Crews
 
-A crew is a record, name, charter URI and external manager, that OML stores and does not operate.
-A workarea names at most one; a key names one at issuance, fixed for its life.
+A crew is a record (name, charter URI, external manager) OML stores and does not operate. A workarea names at most one; a key's is fixed at issuance. Verbs: `oml crews create | update | list | show`. `oml tenants create` refuses: a deployment hosts one tenant.
 
-| Task | Command |
-|---|---|
-| Create | `oml crews create <name> [--charter-uri <uri>] [--external-manager <text>]` |
-| Change the charter or manager | `oml crews update <crew> --charter-uri <uri>` and/or `--external-manager <text>` |
-| List | `oml crews list` |
-| Show one | `oml crews show <crew>` |
+## Issue keys by role
 
-## Issuing keys by role
+A key's role fixes its grants: `writer` takes `reader` and `writer`, `dreamer` takes `reader` and `dreamer`, `reader` takes `reader`, `admin` takes none ([roles and keys](../architecture/roles-and-keys.md)). The server shows each key value once.
 
-A key's role fixes which grants it may carry: `writer` takes `reader` and `writer` grants,
-`dreamer` takes `reader` and `dreamer`, `reader` takes `reader`, and `admin` takes none
-([admissibility](../architecture/roles-and-keys.md#grant-admissibility-and-refusal-order)). An
-admin issues keys up to its own role, other admin keys included
-([issuer ceiling](../architecture/roles-and-keys.md#issuer-ceiling)). Every value is shown once;
-a lost value is not recoverable.
+**An agent.** `oml keys issue-agent` issues a writer key with a writer grant on the workarea, a reader grant unless `--write-only`, and the workarea as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
 
-**An agent.** `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea>
-[--held-by agent|human] [--crew <crew>] [--write-only] [--out <path>] [--connect-code]` issues a
-writer key with a writer grant on the workarea, its reader grant beside it unless `--write-only`,
-and the workarea as its default. Give each agent its own principal: review independence keys on
-it. Without `--out` it prints `export OML_URL=…` and `export OML_API_KEY=…`. With `--out` the CLI
-creates the file owner-only before sending anything, refuses a path that exists, writes the value
-there and prints four lines that read the file, none carrying the value
-([output](../cli/reference.md#oml-keys-issuance-revocation-rotation)). The
-[`oml-admin` plugin](../cli/reference.md#the-oml-admin-plugin) runs the same verb from Claude Code
-with `--out`, so the value never enters the conversation.
+**A claude.ai or phone connection.** Add `--connect-code`: the key gets no value; the verb prints the connector URL and a single-use code. It needs `oauth.issuer`, else `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh code, voiding earlier ones; `--ttl 14d` makes it live up to 30 days, for a key confined to one workarea other than the universe ([claude.ai and mobile](claude-ai-and-mobile.md)).
 
-**A claude.ai or phone connection.** Add `--connect-code`: the key gets no value, and the verb
-prints the connector URL and a single-use code instead. It needs `oauth.issuer` set; without it
-the issuance is refused as `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh
-code and voids the earlier ones. The whole flow is
-[claude.ai and mobile](claude-ai-and-mobile.md); no live claude.ai connection has been made yet.
+**A reviewer.** `oml keys issue --role dreamer --grant <workarea>:dreamer` with a principal no writer there uses, plus `--grant <workarea>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 
-**A reviewer.** `oml keys issue <key-name> --role dreamer --grant <workarea>:dreamer
-[--held-by human] [--principal <text>] [--default-workarea <workarea>] [--crew <crew>]`. Use a
-principal no writer in that workarea uses. Add `--grant <workarea>:reader` too, or the reviewer is
-served a held memory without its sources; the reviewer's side is
-[reviewing memories](reviewing.md).
+**Another admin.** `--role admin --held-by human`, no `--grant`; a dreamer grant is refused as `access.role_exclusive`. **A reader or service:** `--role reader --held-by service --grant <workarea>:reader`.
 
-**Another admin.** `oml keys issue <key-name> --role admin --held-by human --principal <text>`,
-with no `--grant`. An admin key with a dreamer grant is refused as `access.role_exclusive`.
+## Deny, cut off, replace, disconnect
 
-**A reader or service.** `oml keys issue <key-name> --role reader --held-by service --grant
-<workarea>:reader`.
-
-`oml keys issue` also takes `--label <text>` and `--write-only`, and names on stderr each reader
-grant it adds beside a writer grant. Key expiry is not built: an issued key lives until you deny
-it.
-
-## Grants and denials
-
-Grants are fixed at issuance in v0.4.0: `oml grants add`, `remove`, `list` and `effective` are
-designed, not built. What you can change on a live key is a **denial**:
+Grants cannot change after issue, and there is no revoke, rotate or list verb for keys: issue a new key under a new name. A live key can take a permanent **denial**, which wins over every grant on that subtree from the key's next request:
 
 ```sh
 oml deny set <key> <workarea> [--reason <text>]
 ```
 
-It journals `key.denied` and wins over every grant the key holds on that subtree, at the key's
-next request. A denial on an admin key is refused: an admin key holds no grant to attenuate.
-Lifting a denial is not built, so a denial is permanent in v0.4.0; to restore access, issue a new
-key under a new name.
+It is journaled as `key.denied`; on an admin key it is refused.
 
-## Cutting a key off, replacing it, and finding it
+- **Cut off or end every connection:** `oml deny set <key> universe`.
+- **Rotate:** issue a successor under a new name, move the holder, deny the old key `universe`.
+- **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch and connections, never the value.
+- **End one connection:** `oml keys disconnect <key> <connection-id> [--reason <text>]`.
 
-| Task | In v0.4.0 |
-|---|---|
-| Cut a key off | `oml deny set <key> universe` keeps it from every workarea. `oml keys revoke` is designed, not built. |
-| Rotate a key | Issue a successor under a new name, move the holder to it, then deny the old key `universe`. `oml keys rotate` is designed, not built. |
-| List keys | Not built (`oml keys list`). `oml keys show <key>` reads one, by id or name, a revoked key's included: grants, denials, crew, epoch, and its revocation time or `no (live)`. |
-| End one connection | `oml keys show <key>` lists the connector key's connections; `oml keys disconnect <key> <connection-id> [--reason <text>]` ends one, journalled as `connection.revoked`. |
-| End every connection of a key | `oml deny set <key> universe`: a connection acts as exactly its key ([ending a connection](claude-ai-and-mobile.md#ending-a-connection)). |
+An admin key cannot be cut off today: keep the admin credentials file on one machine. Deny a key whose value you lost and replace it.
 
-No admin key can be cut off in v0.4.0: a denial on it is refused and revocation is not built.
-Keep the admin credentials file on one machine, and issue a second admin key only to a person who
-needs one.
+## Read the journal
 
-If an issuance answers nothing usable after reaching the server, the CLI cannot tell whether the
-key exists: `oml keys show <key-name>` answers, and a key whose value was lost is denied
-`universe` and replaced under a new name.
+`oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` prints one digest-only page of `GET /v2/events` within a reader key's access. `oml audit verify-chain` is refused while the server serves no chain export.
 
-## Reading the journal
+## The admin page
 
-`oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` prints one page of
-`GET /v2/events`: digest-only events within the key's reader access, with the `next_after_seq` to
-pass back. It needs reader access on the workarea, so run it with a reader key, not the admin key.
-Key, grant, crew, connection and review events appear on no key's tail; they belong to the
-evidence export ([events tail](../api/http-api.md#events-tail)), which is not built. `oml audit
-verify-chain` exists and is refused while the server serves no chain export.
+At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
+author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
+included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
+**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
+ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
+Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
 ## The admin page
 
@@ -233,19 +123,6 @@ Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-
 
 ## Rules no admin key bypasses
 
-- **The reviewer is never the author.** An admin verdict is refused, an admin key never carries a
-  dreamer grant, and a verdict from any key in a claim's lineage is refused as
-  `review.author_in_lineage`. A person who administers and reviews holds two keys.
-- **No promotion by fiat.** There is no `oml promote`; a claim promotes only by a non-author
-  verdict on a serve.
-- **Nothing is deleted silently.** There is no `oml delete`; a rejected or retired claim keeps its
-  bytes, and erasure is designed as a journalled act, not built
-  ([verbs that do not exist](../cli/reference.md#verbs-that-do-not-exist)).
-- **No name changes or returns.** Every name is permanent and never reused.
-- **No other tenant.** No verb reads another tenant, and the tenant is read off the key, never
-  the request.
+An admin verdict is refused, and a verdict from any key in a memory's lineage is refused as `review.author_in_lineage` ([roles and keys](../architecture/roles-and-keys.md#review-independence)). A person who administers and reviews holds two keys. There is no `oml promote` and no `oml delete`: only a different reviewer's verdict approves, and rejected and retired memories keep their bytes. Names are permanent, and the server reads the tenant off the key. `--guardrail-scope workarea|ancestors` sets a key's guardrail scope at issuance ([guardrails](../use/guardrails.md)).
 
-Guardrails, the reviewed rules every session loads and each tool call is checked against, arrived
-in v0.5.1 ([ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)). An admin sets a key's guardrail scope at issuance with
-`--guardrail-scope workarea|ancestors`, `ancestors` when omitted; a key's scope changes only by
-reissuing it.
+Design record: [ADR-0015](../adr/ADR-0015-cli-administration.md), [ADR-0010](../adr/ADR-0010-roles-and-keys.md), [ADR-0026](../adr/ADR-0026-names-are-keys.md).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The similar check's lane of the scale bench (ADR-0050 d17, FR-91): the
+"""The similar check's lane of the scale bench (ADR-0050 d17, #141): the
 write-time near-copy lookup at a given number of memories per tenant, through
 the adapter's own statement, as the serving role under row security.
 

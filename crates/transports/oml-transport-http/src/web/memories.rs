@@ -5,9 +5,9 @@
 //! lists what `<user>-web` may read and the held rows of the person's own
 //! keys (d23); the admin page lists through the admin read, one
 //! `memory.admin_read` per page (d24). The Atlas view of the same page is
-//! the one view that runs script: two vendored files named by path, and a
-//! JSON route under `/web` that answers exactly the list's rows with the
-//! fields the card shows (d25, d26).
+//! runs no script (d26): the server draws it as SVG with a table twin. The
+//! JSON routes under `/web` and `/web/admin` answer the list's page and the
+//! Atlas's workareas as data (d25, d32).
 
 use std::fmt::Write as _;
 
@@ -604,7 +604,15 @@ where
         q: &ListQuery,
         admin: bool,
     ) -> Result<Value, ApiError> {
-        let workarea = q.workarea.as_ref().map(|(_, r)| r.clone());
+        // The person's root unless a workarea is chosen, as the HTML Atlas
+        // does (d32); the admin page's scope is `universe`.
+        let workarea = q.workarea_reference().or_else(|| {
+            if admin {
+                None
+            } else {
+                reader.key().user.map(Reference::Id)
+            }
+        });
         let found = if admin {
             self.app.admin_regions(reader, workarea).await
         } else {
@@ -613,24 +621,33 @@ where
         .map_err(app_error)?;
         let transitions = if admin { reader } else { review };
         let mut out = Vec::with_capacity(found.regions.len());
-        for r in &found.regions {
+        for (i, r) in found.regions.iter().enumerate() {
             let w = &r.workarea;
-            let offers = self
-                .app
-                .workarea_offers(transitions, review, w.workarea_id)
-                .await
-                .map_err(app_error)?;
-            let offered: Vec<Value> = offers
-                .offers
-                .iter()
-                .map(|o| {
-                    json!({
-                        "value": super::workareas::offer_value(o),
-                        "text": super::workareas::offer_text(o),
+            // Each offer is several store reads, so only the page's scope
+            // node, the first region, carries them, as the HTML Atlas's
+            // panel does; a region is zoomed to for its own (d28, d30).
+            let offers = if i == 0 {
+                Some(
+                    self.app
+                        .workarea_offers(transitions, review, w.workarea_id)
+                        .await
+                        .map_err(app_error)?,
+                )
+            } else {
+                None
+            };
+            let offered: Option<Vec<Value>> = offers.as_ref().map(|o| {
+                o.offers
+                    .iter()
+                    .map(|o| {
+                        json!({
+                            "value": super::workareas::offer_value(o),
+                            "text": super::workareas::offer_text(o),
+                        })
                     })
-                })
-                .collect();
-            out.push(json!({
+                    .collect()
+            });
+            let mut region = json!({
                 "id": w.workarea_id,
                 "parent": w.parent_id,
                 "name": w.name.as_str(),
@@ -647,9 +664,12 @@ where
                     "other": r.other,
                     "total": r.approved + r.held + r.in_progress + r.other,
                 },
-                "offers": offered,
-                "commit_withheld": offers.commit_withheld,
-            }));
+            });
+            if let (Some(offered), Some(o)) = (offered, offers) {
+                region["offers"] = json!(offered);
+                region["commit_withheld"] = json!(o.commit_withheld);
+            }
+            out.push(region);
         }
         Ok(json!({ "items": out, "partial": found.partial }))
     }

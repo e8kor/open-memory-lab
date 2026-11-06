@@ -3,7 +3,9 @@ name: Docs checks
 # PR gate for the documentation set: the site must build clean under --strict,
 # the generated benchmark pages must match the committed results, the three
 # API contract surfaces (errors.md, openapi.yaml, http-api.md) must agree, and
-# openapi.yaml must be a valid OpenAPI document. Deploy stays in
+# openapi.yaml must be a valid OpenAPI document, and the reference pages generated from
+# the code and the contracts (CLI, HTTP API, MCP tools, settings, design records) must match
+# their sources. Deploy stays in
 # pages.yml; this workflow never publishes anything.
 
 on:
@@ -77,3 +79,31 @@ jobs:
           python-version: "3.12"
       - run: python -I eval/remember/run.py --check
       - run: python -I eval/remember/run.py
+
+  generated-references:
+    name: generated reference pages match their sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      # openapi.yaml, mcp-tools.json, the KEY_* constants and the design records.
+      - run: python scripts/gen_http_api_reference.py --check
+      - run: python scripts/gen_mcp_reference.py --check
+      - run: python scripts/gen_settings_reference.py --check
+      - run: python scripts/gen_design_records.py --check
+
+  cli-reference:
+    name: CLI reference matches the oml binary's help
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads rust-toolchain.toml: the one pinned toolchain.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build -p oml-cli --locked
+      - run: python scripts/gen_cli_reference.py --oml target/debug/oml --check

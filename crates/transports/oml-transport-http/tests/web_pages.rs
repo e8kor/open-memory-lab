@@ -3546,9 +3546,24 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     );
     assert_eq!(proj["parent"], root["id"], "nested in its parent");
     assert!(!value.to_string().contains("bob held secret"));
-    // The region's dropdown is the Workareas view's: the commit waits on
-    // the held row and says so.
-    assert_eq!(proj["commit_withheld"], 1);
+    // Offers cost several store reads each, so only the scope node carries
+    // them: no other region does, however many the tree holds.
+    assert!(
+        root.get("offers").is_some(),
+        "the scope node's offers: {root}"
+    );
+    assert!(
+        value["items"].is_array()
+            && value["workareas"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r.get("offers").is_some())
+                .count()
+                == 1,
+        "exactly one region carries offers: {value}"
+    );
+    assert!(proj.get("offers").is_none() && proj.get("commit_withheld").is_none());
     // Zooming to a region narrows the drawing and the page alike.
     let proj_id = proj["id"].as_str().unwrap().to_owned();
     let (_, _, zoomed) = json_of(
@@ -3564,6 +3579,9 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
         .map(|r| r["path"].as_str().unwrap())
         .collect();
     assert_eq!(paths, ["universe.alice.proj"]);
+    // The zoomed node's dropdown is the Workareas view's: the commit waits
+    // on the held row and says so.
+    assert_eq!(zoomed["workareas"]["items"][0]["commit_withheld"], 1);
     assert!(
         zoomed["items"]
             .as_array()

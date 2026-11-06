@@ -8,7 +8,7 @@ answers: which defects a change is checked for before a reviewer sees it, and wh
 # Pre-review checklist
 
 **Status:** process page. Reviewers found the same classes of defect in change after change;
-this list is what the author checks first. The build lane pastes it into the pull request body
+this list is what the author checks first. Paste it into the pull request body
 with each box ticked or struck through with a reason.
 
 ```markdown
@@ -21,7 +21,8 @@ with each box ticked or struck through with a reason.
 - [ ] No `LIKE`, `ILIKE` or other non-leakproof operator in candidate SQL under row security (`scripts/lint_practices.py like`).
 - [ ] No new MCP tool without a use case in `docs/product/use-cases.md` or `docs/engineering/use-case-call-map.md`.
 - [ ] The SDKs are regenerated (`python scripts/generate_sdks.py`) and the contract surfaces agree (`python scripts/check_contract_sync.py`).
-- [ ] Every ADR, FR and migration number is reserved in `docs/NUMBERS.md` (`python scripts/check_numbers.py`).
+- [ ] Every ADR and migration number is reserved in `docs/NUMBERS.md` (`python scripts/check_numbers.py`).
+- [ ] Reader-facing prose names each action once: headings use the command's verb (write, read), a memory is `held` or approved (state `promoted`), and "approve", "promote" and "ratify" are never swapped. Sentences stay under 25 words.
 - [ ] A change fragment is in `changes/`, or the pull request carries the `no-changelog` label.
 ```
 

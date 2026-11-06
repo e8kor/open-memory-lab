@@ -1,7 +1,8 @@
 """Shared scan and registry code for docs/NUMBERS.md (reserve_number.py, check_numbers.py).
 
-Three number spaces are kept: ADR files (docs/adr/ADR-nnnn-*.md), FR rows of
-docs/product/roadmap.md, and migrations (migrations/nnnn_*.sql). Standard library only.
+Two number spaces are kept: ADR files (docs/adr/ADR-nnnn-*.md) and migrations
+(migrations/nnnn_*.sql). Open work is tracked as GitHub issues, which GitHub numbers.
+Standard library only.
 """
 from __future__ import annotations
 
@@ -10,13 +11,11 @@ import re
 import subprocess
 from pathlib import Path
 
-KINDS = ("adr", "fr", "migration")
-ROADMAP = "docs/product/roadmap.md"
+KINDS = ("adr", "migration")
 REGISTRY = "docs/NUMBERS.md"
-ROW = re.compile(r"^\|\s*(adr|fr|migration)\s*\|\s*(\d+)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|\s*$")
+ROW = re.compile(r"^\|\s*(adr|migration)\s*\|\s*(\d+)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|\s*$")
 ADR_FILE = re.compile(r"^docs/adr/ADR-(\d+)-(.*)\.md$")
 MIG_FILE = re.compile(r"^migrations/(\d+)_(.*)\.sql$")
-FR_ROW = re.compile(r"^\| FR-(\d+) \|\s*([^|]*)")
 
 
 def git(root: Path, *args: str, check: bool = True) -> str:
@@ -41,10 +40,6 @@ def numbers_on(root: Path, ref: str) -> dict[tuple[str, int], str]:
         hit = _from_path(p)
         if hit:
             out[(hit[0], hit[1])] = hit[2]
-    for line in git(root, "show", f"{ref}:{ROADMAP}", check=False).splitlines():
-        m = FR_ROW.match(line)
-        if m:
-            out[("fr", int(m.group(1)))] = plain(m.group(2).strip())[:70]
     return out
 
 
@@ -59,11 +54,6 @@ def numbers_added(root: Path, base: str, ref: str) -> dict[tuple[str, int], str]
         hit = _from_path(p)
         if hit:
             out[(hit[0], hit[1])] = hit[2]
-    for line in git(root, "diff", "-U0", mb, ref, "--", ROADMAP).splitlines():
-        if line.startswith("+|"):
-            m = FR_ROW.match(line[1:])
-            if m:
-                out[("fr", int(m.group(1)))] = plain(m.group(2).strip())[:70]
     return out
 
 
@@ -108,14 +98,14 @@ def plain(title: str) -> str:
 
 
 def fmt(kind: str, n: int) -> str:
-    return {"adr": f"ADR-{n:04d}", "fr": f"FR-{n}", "migration": f"migration {n:04d}"}[kind]
+    return {"adr": f"ADR-{n:04d}", "migration": f"migration {n:04d}"}[kind]
 
 
 def render_rows(rows: list[dict]) -> str:
     order = {k: i for i, k in enumerate(KINDS)}
     lines = ["| kind | number | branch | PR | title | state |", "|---|---|---|---|---|---|"]
     for r in sorted(rows, key=lambda r: (order[r["kind"]], r["number"], r["branch"])):
-        num = f"{r['number']:04d}" if r["kind"] != "fr" else str(r["number"])
+        num = f"{r['number']:04d}"
         lines.append(f"| {r['kind']} | {num} | `{r['branch']}` | {r['pr']} | {plain(r['title'])} | {r['state']} |")
     return "\n".join(lines) + "\n"
 

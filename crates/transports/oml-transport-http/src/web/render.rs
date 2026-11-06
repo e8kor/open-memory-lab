@@ -47,7 +47,7 @@ pub const RENDER_TTL_SECS: u64 = 300;
 
 /// How many sources the lead holds for frames at once; the oldest expiry
 /// goes first. 256 sources of at most 64 KiB is 16 MiB, chosen, not
-/// measured (FR-109).
+/// measured (#159).
 pub const RENDER_SOURCES_MAX: usize = 256;
 
 /// A held source's key (session, memory) and its value (expiry, source).

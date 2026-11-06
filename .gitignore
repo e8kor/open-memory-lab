@@ -6,4 +6,6 @@ _site/
 __pycache__/
 /target
 sbom.json
+.tmp-target/
+.tmp/
 /testing/lake/target

@@ -1056,12 +1056,12 @@ fn collapse(text: &str) -> String {
 }
 
 #[tokio::test]
-async fn the_pages_sentences_match_http_api_md_word_for_word() {
+async fn the_pages_sentences_match_connect_page_md_word_for_word() {
     let doc = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../docs/api/http-api.md"
+        "/../../../docs/reference/connect-page.md"
     ))
-    .expect("docs/api/http-api.md");
+    .expect("docs/reference/connect-page.md");
     let start = doc
         .find("**The authorization page.**")
         .expect("the page's paragraph");
@@ -1074,7 +1074,7 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
         .step_by(2)
         .map(|s| s.replace('`', ""))
         .collect();
-    assert_eq!(sentences.len(), 10, "{sentences:?}");
+    assert_eq!(sentences.len(), 12, "{sentences:?}");
 
     // The code form and the wrong-code form, over the real routes.
     let rig = rig(Some(ISSUER));
@@ -1091,6 +1091,10 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
     )
     .await;
     let wrong = collapse(&html(&body));
+    // The page links the account page; the doc quotes the words, so compare without the link tags.
+    let code_form_text = code_form
+        .replace("<a href=\"/web\">", "")
+        .replace("</a>", "");
 
     // The confirmation, with every sentence kind present.
     let name = |n: &str| Name::parse(n).expect("a name");
@@ -1117,18 +1121,20 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
         (&code_form, "verified by".to_owned()),
         (&code_form, "name not verified".to_owned()),
         (&code_form, sentences[2].clone()),
+        (&code_form_text, sentences[3].clone()),
+        (&code_form_text, sentences[4].clone()),
         (&wrong, sentences[2].clone()),
-        (&wrong, sentences[3].clone()),
+        (&wrong, sentences[5].clone()),
         (
             &confirmation,
-            sentences[4].replace("<workareas>", "alpha, gamma"),
+            sentences[6].replace("<workareas>", "alpha, gamma"),
         ),
-        (&confirmation, sentences[5].replace("<workareas>", "beta")),
-        (&confirmation, sentences[6].replace("<workareas>", "delta")),
-        (&confirmation, sentences[7].clone()),
-        (&confirmation, sentences[8].replace("<workarea>", "alpha")),
-        (&confirmation, sentences[8].replace("<workarea>", "gamma")),
+        (&confirmation, sentences[7].replace("<workareas>", "beta")),
+        (&confirmation, sentences[8].replace("<workareas>", "delta")),
         (&confirmation, sentences[9].clone()),
+        (&confirmation, sentences[10].replace("<workarea>", "alpha")),
+        (&confirmation, sentences[10].replace("<workarea>", "gamma")),
+        (&confirmation, sentences[11].clone()),
     ];
     // "verified by" is a document client's; the form names a registered one.
     for (page, sentence) in &expected[1..] {
@@ -1136,10 +1142,12 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
     }
     assert_eq!(expected[0].1, sentences[0]);
     assert_eq!(expected[1].1, sentences[1]);
-    assert!(!code_form.contains(&sentences[3]), "{code_form}");
+    assert!(!code_form.contains(&sentences[5]), "{code_form}");
     // The last sentence closes the list.
-    let last = confirmation.find(&sentences[9]).expect("the last sentence");
-    for (page, sentence) in &expected[5..11] {
+    let last = confirmation
+        .find(&sentences[11])
+        .expect("the last sentence");
+    for (page, sentence) in &expected[7..13] {
         let at = page.find(sentence.as_str()).expect("a sentence");
         assert!(at < last, "{sentence:?} before the last sentence");
     }

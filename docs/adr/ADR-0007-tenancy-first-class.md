@@ -9,7 +9,7 @@ answers: why tenancy is a first-class design object rather than an operator conv
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0034](ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
 
-**Release:** partly in v0.1.0 and v0.3.1; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.3.1; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -43,7 +43,7 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   clause bug stops at the policy, which Postgres evaluates, not our code. The
   cost is carried openly — RLS predicates ride every query plan, and their
   performance under per-tenant partitioned indexes is unmeasured
-  ([FR-4](../product/roadmap.md) and [FR-7](../product/roadmap.md) carry the
+  (#102 and #99 carry the
   measurements).
 
 - **d3 — Privileged services are designed, not waved through.** Three workloads
@@ -58,7 +58,7 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   repair through the outbox via `oml-server` as a journalled act; the
   **indexer** runs under its own per-tenant credentials, never the signing key,
   with its decrypt-grant shape bound to the embedding decision
-  ([RS-1](../product/roadmap.md)). None of the three loads the signing key.
+  (#153). None of the three loads the signing key.
 
 - **d4 — Tenant isolation extends through every storage layer.** Per-tenant
   journal chains (declared in [storage](../architecture/storage.md)), per-tenant
@@ -79,7 +79,7 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   replica churn. That approximation is documented wherever quotas are, not
   hidden; exceeding a limit returns a typed 429 naming its rule in the
   [error taxonomy](../api/errors.md). Exact distributed limiting is
-  [FR-8](../product/roadmap.md).
+  #133.
 
 - **d6 — The threat model names the hostile co-tenant first.** The STRIDE
   analysis in [security](../architecture/security.md) is written against the
@@ -99,7 +99,7 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   channel at the same stroke ([storage](../architecture/storage.md)).
 - The per-replica quota approximation (d5) is a known, bounded dishonesty in
   enforcement, stated so an operator sizing limits knows the error term;
-  [FR-8](../product/roadmap.md) is its exit.
+  #133 is its exit.
 - Shared CPU and IO contention on replicas remains even with chains, RLS and
   buckets in place — the residual is named in
   [security](../architecture/security.md) rather than claimed away.
@@ -120,3 +120,14 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   every endpoint becomes a place where validation can be forgotten, and every
   proxy a place where the header can be injected. Deriving tenant from the key
   costs one join on a row the server already reads for authentication.
+
+## Tenancy rationale moved from the security page (2026-11-06)
+
+- Deriving the tenant on the server removes the class of bugs where a valid key is combined with someone else's tenant id: a request that tries to name a tenant has no vocabulary to do it in.
+- RLS is the second fence behind application scoping: a query that escapes a `WHERE` clause still cannot cross a tenant boundary, because Postgres evaluates the policy.
+- `FORCE` binds the owner's table reads but not its `pg_stats` view, which can show another tenant's indexed words, or its DDL, which can lift `FORCE`. That is why the owner role only migrates and the serving role owns nothing.
+- Per-tenant journal chains mean one tenant's write rate never serializes against another's chain lock. No embedding or full-text index spans tenants, so a correctly pruned query never ranks foreign rows; pruning is planner behavior and not a security boundary.
+- The signature attests the deployment: one signer process at a time, each takeover journaled.
+- Steering rows get no stricter global default because a human-verdict default would impose review effort that machine-written steering often does not need.
+- The lake writer copies ciphertext the lead already produced; the journal's ciphertext digests expose any corruption.
+- The cost: RLS predicates sit on every query plan, and a full-text read scans its tenant's partition under RLS.

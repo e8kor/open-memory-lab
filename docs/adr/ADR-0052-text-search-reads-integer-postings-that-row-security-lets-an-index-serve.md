@@ -9,7 +9,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; since v0.5.8 each list `bm25-sparse` fuses is capped at its depth before fusion (ADR-0049 d13); d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; since v0.5.8 each list `bm25-sparse` fuses is capped at its depth before fusion (ADR-0049 d13); d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../changelog.md))
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's
@@ -141,7 +141,7 @@ d11). Decided, not built.
 
 - **d5 — The statistics are the readable rows', kept per workarea and summed at query time.** Two
   tables, maintained by the same trigger in the write's transaction and fenced like
-  `search_vocabulary` (row security, `SET STATISTICS 0` per FR-45's rule): `search_term_rows
+  `search_vocabulary` (row security, `SET STATISTICS 0` per #134's rule): `search_term_rows
   (tenant_id, workarea_id, kind, memory_kind, token_id, rows)`, the served versions in that workarea
   holding the token, and `search_workarea_rows (tenant_id, workarea_id, kind, memory_kind, rows,
   total_len)`; a recall sums them over the memory kinds of its scope as well as its nodes. A recall sums them
@@ -156,8 +156,8 @@ d11). Decided, not built.
   workareas, built in 26 s) and about 1 ms more per promotion (0.5 → 1.1 ms at 10,000 rows, 0.9 → 2.0
   ms at 100,000, one client). Concurrent promotions in one workarea update the same rows of its common
   tokens; within one tenant every commit already serialises on the chain head
-  ([ADR-0002](ADR-0002-postgresql-system-of-record.md); FR-86), so the counts lengthen that section
-  rather than add a new one. That length is unmeasured, tracked as FR-102.
+  ([ADR-0002](ADR-0002-postgresql-system-of-record.md); #100), so the counts lengthen that section
+  rather than add a new one. That length is unmeasured, tracked as #100.
 
 - **d6 — A word is pruned by its readable count, the postings read are bounded, and the scan answers
   when nothing is left.** While the query forms' summed readable frequencies fit `POSTING_BUDGET`,
@@ -188,7 +188,7 @@ d11). Decided, not built.
   d12's `bm25` statement over the stored lexemes instead, which ranks identically (d12), and says so:
   the answer's `search.access` is `scan`. This fallback costs what the scan costs (1.4 s p95 at
   1,000,000 readable rows for the cheapest form), so its rate is counted
-  (`oml_recalls_total{pipeline, access}`) and doctor warns when it exceeds the share FR-100 sets. A
+  (`oml_recalls_total{pipeline, access}`) and doctor warns when it exceeds the share #103 sets. A
   frequency fixed in advance (a shipped stop list or the most frequent ids of the corpus) was weighed
   and is not the rule: a tenant's own common words ("deploy" in an operations team) are on no shipped
   list, and the corpus's are tenant-wide (rejected alternatives).
@@ -219,12 +219,12 @@ d11). Decided, not built.
   encodes each committed version from a bounded queue, keeps the weights above a floor, at most
   `SPARSE_MAX_TOKENS` per version, and inserts them in a transaction that reads the version's current
   state `FOR SHARE`, so a flip cannot interleave. A version not yet encoded is absent from the `sparse`
-  list only; `readyz` and doctor name the backlog. The encoder's CPU per write is unmeasured, FR-101.
+  list only; `readyz` and doctor name the backlog. The encoder's CPU per write is unmeasured, #104.
   **Migration and backfill:** 0021 creates the function, the table and its partitions, the two count
   tables and the trigger, then fills kind 1 postings and counts for every existing version under each
   tenant's context, as 0020 fills `search_vocabulary`, reading the stored vectors and no text. It holds
   the trigger's lock on `memories` for its fill, so writes wait for it; the fill time at 100,000 and
-  1,000,000 rows is measured before the release that carries 0021 (FR-100); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, FR-103). Kind
+  1,000,000 rows is measured before the release that carries 0021 (#103); a batched, resumable fill is required before any tenant reaches 1,000,000 rows (open question 4, #103). Kind
   2 is filled by the encoder after start, oldest first. `bm25-postings` enters the build disabled
   (ADR-0049 d10) and becomes the default when d9's evidence holds, as it did on 2026-11-05; ~~`sparse` and `bm25-sparse` are refused at start while the backlog is above zero.~~ *Replaced by d15 (2026-11-05):* they are served while the backlog drains.
 
@@ -266,14 +266,14 @@ d11). Decided, not built.
   the 100 most frequent tokens pruned, universe scope, extrapolated from 200,000; leaf scopes cost
   less, since the scope filter drops their postings after the fetch. That misses 50 ms at 1,000,000;
   `POSTING_BUDGET` can hold the bound at the price of more pruning, and what that price is in nDCG is
-  FR-100's measurement. Past it, the next step is an engine's (block-max or impact-ordered postings),
+  #103's measurement. Past it, the next step is an engine's (block-max or impact-ordered postings),
   not a `GROUP BY` (open question 5). *Space:* the measured case's row was about 76 bytes
   (4,369 MiB / 60,000,000); this shape adds 8 bytes for a `uuid` memory id, 4 for the `bigint` token and
   6 for `kind`, `doc_len` and `state`, about 94 bytes, so 60 postings per version come to about
   5.3 GiB of heap per kind, plus the `(kind, token_id)` index (0.35 GiB measured for an `int4` key,
   more for this one) and the `(memory_id)` index, both unmeasured at this size. Kind 1 writes
   `search_len` postings per version, not 60; OML's claims are one to a few sentences, so kind 1 is
-  expected below the measured case, and the figure is FR-100's. Off versions add their postings.
+  expected below the measured case, and the figure is #103's. Off versions add their postings.
   Against that, `memories` itself was 0.46 GiB at 1,000,000 rows, 1.18 GiB with two stored vectors.
   *Counts:* about 190 MiB for kind 1 (measured, maintained table). *Writes:* d8.
 
@@ -301,7 +301,7 @@ d11). Decided, not built.
   `oml_token_id_in_sql_equals_the_adapters`; and, for 0021,
   `a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it`. Doctor: postings or counts
   missing for a tenant whose partition exists; a sampled count that disagrees with its postings (the
-  repair is a re-fill, the cause a defect); the encoder's backlog; the `scan` share above FR-100's
+  repair is a re-fill, the cause a defect); the encoder's backlog; the `scan` share above #103's
   bound. *Built 2026-11-05 (`feat/token-postings`), but for the encoder's backlog, which waits for
   kind 2:* doctor reads `oml_recalls_total{pipeline, access}` from the metrics listener
   `OML_METRICS_URL` names (ADR-0042 d11), never from `/readyz`, which answers anyone and so may
@@ -317,7 +317,7 @@ d11). Decided, not built.
   built before 0021 leaves a tenant it creates, makes every write of that tenant fail; every start
   creates and fills it after migrating, and doctor says so meanwhile. The health check samples its
   200 word counts from a random token each read. A recall's statements share one `REPEATABLE READ,
-  READ ONLY` snapshot. The parent table keeps no statistics of its own (FR-45); each partition
+  READ ONLY` snapshot. The parent table keeps no statistics of its own (#134); each partition
   keeps its tenant's. Lock order: every count write locks its word rows in token order, then its
   workarea row, and a take-back locks before it changes anything, so writes that skip the chain
   lock neither deadlock nor drive a count below zero. Laws:
@@ -525,7 +525,7 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
     default unchanged a lead with default settings reads no model file (law
     `a_sparse_pipeline_without_its_model_stops_the_start_and_the_default_needs_none`). What
     moves it: a bound on the kind 2 postings a query reads (query tokens by the shipped idf, or
-    impact-ordered postings), measured for its nDCG cost, FR-118. **Encode cost** (FR-101): 12.7
+    impact-ordered postings), measured for its nDCG cost, #104. **Encode cost** (#104): 12.7
     claims a second at 2 threads and 17.4 at 8 on 200 recall-eval claims (121 characters on
     average; load average 1.4 to 2.5), one claim at a time; served, the lead's encoder at 4
     threads drained LoCoMo's 5,882 turns 544 s after their load ended and SciFact's 5,183 abstracts
@@ -540,13 +540,12 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   names), the HTTP API, MCP plugin and `openapi.yaml` (`search.access`, `search.pruned`,
   `matched.expanded`), ADR-0005's inventory table, ADR-0034 d11's partition step, ADR-0049's pipeline
   table, and the benchmark pages.
-- **Roadmap rows** opened: FR-100 (the postings at 100,000 and 1,000,000 rows measured, not
+- **Issues** opened: #103 (the postings at 100,000 and 1,000,000 rows measured, not
   extrapolated: latency by scope, the prune constants, the `scan` share, space per kind, the fill
-  time), FR-101 (the encoder's CPU per write and the kind 2 backfill rate), FR-102 (the count rows
-  under concurrent promotions in one workarea), FR-103 (a batched, resumable fill before any tenant
-  reaches 1,000,000 rows; added 2026-11-05), FR-118 (a bound on the kind 2 postings a query reads,
-  so `bm25-sparse` meets d9's latency bar; added 2026-11-05 with d13–d17). Numbered after FR-99, which `feat/ontology-metadata`
-  holds.
+  time), #104 (the encoder's CPU per write and the kind 2 backfill rate), #100 (the count rows
+  under concurrent promotions in one workarea), #103 (a batched, resumable fill before any tenant
+  reaches 1,000,000 rows; added 2026-11-05), #104 (a bound on the kind 2 postings a query reads,
+  so `bm25-sparse` meets d9's latency bar; added 2026-11-05 with d13–d17).
 - **Costs**: a second copy of every version's words, larger than the table it indexes (d10); a
   trigger and counts on every write and state change (d5, d8); a migration whose fill holds writes
   (d8); a fallback that costs what the scan costs (d6); an encoder in the lead for kind 2 (d8).
@@ -591,16 +590,16 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
    universe scope, the budget decides the p95: 46.7 ms at 20,000, 29.9 ms at 10,000, 14.1 ms at
    5,000, with 98.7%, 97.5% and 94.5% of `bm25`'s top 10 kept. The scan answered 0 of 330
    queries at 100,000 and 165,000, 2 of 330 at 10,000, and at most 0.4% on the external sets;
-   doctor's bound on the `scan` share is 5%, a line not yet built (FR-100).
+   doctor's bound on the `scan` share is 5%, a line not yet built (#103).
 3. **Off postings** — deferred. Superseded, demoted and retired versions keep their postings
-   (d7); no compaction is built. Reopen on FR-100's space figures.
+   (d7); no compaction is built. Reopen on #103's space figures.
 4. **A fill too long for one migration** — 0021's fill, which holds writes while it runs, is
    enough for now; its time at 10,000 and 100,000 rows is measured in the build lane. A batched, resumable fill that the
    lead runs after migrating, with `bm25-postings` refused until it completes, is required before
-   any tenant reaches 1,000,000 rows: FR-103.
+   any tenant reaches 1,000,000 rows: #103.
 5. **Past about 300,000 readable rows** — deferred until a tenant nears 300,000 readable rows;
    then impact-ordered postings, block-max evaluation, or the OpenSearch road under the conditions in
-   the rejected alternatives, decided on FR-100's numbers at that size.
+   the rejected alternatives, decided on #103's numbers at that size.
 6. **Kind 2's model** — deferred to the learned-sparse offline experiment, a separate lane, which
    reports where the model comes from, the weight floor, `SPARSE_MAX_TOKENS` and its reach beyond
    English before any kind 2 code is built.
@@ -608,7 +607,7 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
    rows adds about 30 ms to a universe recall with `include_unreviewed` (59.2 against 29.9 ms p95
    at 165,000 memories); 10,000 put it at 266 ms, still below `bm25`'s 654 ms there. The rows are
    counted at query time (d5), so the cost follows how many the key holds in scope. Left as
-   measured: the case is a bulk import awaiting review (FR-87), and a count kept per key would
+   measured: the case is a bulk import awaiting review (#98), and a count kept per key would
    need a counter per author beside the per-workarea ones.
 
 ## Test plan
@@ -628,13 +627,13 @@ The operator settled each question on 2026-11-05. Where the answer is a measurem
   (the disk the 1,000,000 point needs is provisioned, not extrapolated), leaf / project / universe
   scopes, warm and cold p95, the share answered by `scan`, postings touched, heap and both indexes'
   size, the write (insert, promotion, supersession) p50 and p95, the 0021 fill time; and the counts'
-  equality with the policy's count, as the lane's case d) checked. The gate of d9 (3) and FR-100.
-- **Contention** (FR-102): the benchmark loader's 8 writers and 6 reviewers into one workarea, with and
+  equality with the policy's count, as the lane's case d) checked. The gate of d9 (3) and #103.
+- **Contention** (#100): the benchmark loader's 8 writers and 6 reviewers into one workarea, with and
   without the trigger, the chain-head retries and promotion p95 compared.
 - **Kind 2, later**: `doc-v3-distill` encoded offline in Python over SciFact and NFCorpus first,
   checked against the model card's 0.708 and 0.345; then the `candle` encoder's output held equal to
   the Python encoder's on a fixture; then the served `sparse` and `bm25-sparse` through the same three
-  harnesses, with the encoder's CPU per write recorded (FR-101).
+  harnesses, with the encoder's CPU per write recorded (#104).
 
 ## Mockup: the answer
 

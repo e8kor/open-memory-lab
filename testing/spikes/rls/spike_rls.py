@@ -101,7 +101,7 @@ WORKAREA_COLUMNS = "id, tenant_id, parent_id, name, crew"
 # another tenant's partition one row whatever the word: the owner's check passed on 18.6 on
 # 2026-11-03 and the service role's is read to (spike-3-rls.md#s34; ADR-0034 d10 step 4, d11).
 # A listed check that passes fails the run, so they are no longer listed; the per-partition
-# catalog channels stay observations (FR-45).
+# catalog channels stay observations (#134).
 RECORDED_FAILURES: dict[str, str] = {}
 
 # The tables the seeders below wrote rows into, filled by seed_insert as they run. A table a

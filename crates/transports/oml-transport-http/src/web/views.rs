@@ -444,7 +444,7 @@ where
             return Ok(body);
         }
         let list = super::memories::ListQuery::parse(query)?;
-        let lede = "Newest first. A held memory is held until someone else reviews it; only its author reads it before then.";
+        let lede = "Newest first. A held memory is held until someone else reviews it; only its author reads it before then, except inside an in-progress workarea.";
         if list.atlas {
             // The Atlas reads no memory: the person's workareas and their
             // counts, from the root unless a workarea is chosen (d32).
@@ -833,7 +833,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             format!("&amp;cursor={}", attr(&percent_encode(c)))
         });
         let mut body = format!(
-            r#"<h1>Bulk review</h1><p class="desc">Oldest first, {HELD_PAGE_DEFAULT} a page. Each pick gets its own verdict; you confirm first.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="held">{}{}{}<button type="submit">Filter</button></form><p><a href="/web/admin?view=held{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="/web/admin?view=held{kept}{cursor}">Clear</a></p>"#,
+            r#"<h1>Bulk review</h1><p class="desc">Oldest first, {HELD_PAGE_DEFAULT} a page. Each pick gets its own verdict; you confirm first. A memory your reviewer key wrote, or that derives from one, is never listed.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="held">{}{}{}<button type="submit">Filter</button></form><p><a href="/web/admin?view=held{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="/web/admin?view=held{kept}{cursor}">Clear</a></p>"#,
             input("workarea", "workarea", filters[0].1, false),
             input("author_key", "author key", filters[1].1, false),
             input("claim_key_prefix", "claim key prefix", filters[2].1, false),
@@ -1326,7 +1326,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             prefill = read.memory.body;
         }
         let mut body = String::from(
-            r#"<h1>Curate</h1><p class="desc">The copy is held until someone else reviews it, then served without its author.</p><details class="help"><summary>?</summary>Curate only an approved memory. Reword it: a copy repeating its source's text or name can be linked to it.</details>"#,
+            r#"<h1>Curate</h1><p class="desc">The copy is held until someone outside its lineage reviews it, then served without its author.</p><details class="help"><summary>?</summary>Curate only an approved memory. Reword it: a copy repeating its source's text or name can be linked to it.</details>"#,
         );
         body.push_str(&form(
             "/web/admin",

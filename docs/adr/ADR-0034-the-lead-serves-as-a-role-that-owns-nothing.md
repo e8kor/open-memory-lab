@@ -9,18 +9,18 @@ answers: what FORCE ROW LEVEL SECURITY fences and what the owner/serving role sp
 
 **Status:** accepted design · 2026-11-03 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
 
-**Release:** partly in v0.3.1; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.3.1; the rest not built ([releases](../changelog.md))
 
 **Amends:** ADR-0007 (d2), naming `_sqlx_migrations` as the one table without row-level security
 (d6); no other decision here amends a record
 
 ## Context
 
-[M0 spike 3](../engineering/spikes/spike-3-rls.md) tested the three
+[M0 spike 3](https://github.com/e8kor/open-memory-lab/blob/main/design/research/spike-3-rls.md) tested the three
 commitments on which [security](../architecture/security.md) rests C6's tenant isolation
 ([commitments](../product/commitments.md)): `FORCE ROW LEVEL SECURITY` on every table, an
-owner/migration-role split and `SET LOCAL`. It ran the [critical
-path](../product/critical-path.md#spike-3-rls-hardening)'s S3.1–S3.4 on 2026-10-31, as the table
+owner/migration-role split and `SET LOCAL`. It ran the critical
+path's S3.1–S3.4 on 2026-10-31, as the table
 owner on the host's PostgreSQL 18.6 (`a7a5d08`), then as an owner and a service role in CI's
 `rls-spike` on the pinned 17.11 (`bb20087` and its CI log). `FORCE` filtered the owner's table reads
 in every shape probed, but not its `pg_stats` view: set to tenant A, the owner read tenant B's
@@ -35,7 +35,7 @@ pg17 run that the FTS index becomes per tenant (d11) and keys into tenant tables
 (d12), as ADR-0007 d4 and security.md's STRIDE row already promise ("no cross-tenant index to leak
 through"): implementation fixes, not amendments. On 2026-11-03 the maintainer decided that v0.3.1
 ships d11's per-tenant partitions with no superuser `LEAKPROOF` wrapper: search latency per tenant
-size is measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers (d13).
+size is measured first (#150), and the `LEAKPROOF` step is decided later on those numbers (d13).
 Decided, not built.
 
 ## Decision
@@ -43,7 +43,7 @@ Decided, not built.
 - **d1 — `FORCE` fences table reads; the split fences `pg_stats` and DDL.** `FORCE` stays on every
   table but `_sqlx_migrations` (d6), held to what S3.1 showed: it filters the owner's table reads.
   d2–d5 keep the owner's `pg_stats` view and DDL from workloads. No split closes EXPLAIN's row
-  estimate, which reached both roles on 17.11; FR-45 holds it, with `reltuples`.
+  estimate, which reached both roles on 17.11; #134 holds it, with `reltuples`.
 
 - **d2 — Two roles: an owner that owns what the migrations create, a serving role that owns
   nothing.** The operator names them. Only the payloads that own their cluster, `docker-compose.yml`,
@@ -226,11 +226,11 @@ Decided, not built.
       `S3.4/owner/estimate` passed so on 18.6 on 2026-11-03; `S3.4/service/estimate` runs under
       the same policy, is read to pass, and is measured by CI's pinned pg17 run, so `rls-spike`
       records neither (d9) and a failure of either fails the run and is recorded then. What stays
-      is FR-45's: each other tenant's partition still adds its floor row to the estimate, and each
+      is #134's: each other tenant's partition still adds its floor row to the estimate, and each
       partition's `reltuples` and bound give every role one tenant's row count and id; by this
       record's reading of the planner
       (`REL_17_STABLE` at `f1ba2b8`, fetched 2026-10-31), a partition's GIN index serves no
-      RLS-bound query, `@@` not being leakproof (S3.4), so FTS reads scan (FR-4, FR-7).
+      RLS-bound query, `@@` not being leakproof (S3.4), so FTS reads scan (#102, #99).
 
 - **d12 — A foreign key into a tenant table carries `tenant_id`.** The migration rewrites the three
   keys the pg17 run caught taking another tenant's ids (`workareas.parent_id`,
@@ -251,29 +251,29 @@ Decided, not built.
   every migration, is not one, so a wrapper over `@@` that let each partition's GIN index serve
   RLS-bound reads would add a superuser step outside the migrations to every install.
   v0.3.1 adds no such step and creates no function marked `LEAKPROOF`: an FTS read scans its
-  tenant's partition under RLS, as d11 states. FR-25's harness measures search latency at stated
+  tenant's partition under RLS, as d11 states. #150's harness measures search latency at stated
   tenant sizes over those partitions, published with date, hardware and settings, and a later
   record decides the `LEAKPROOF` step on those numbers. The cost, until then: an FTS read's latency
-  as its tenant grows is unmeasured — FR-25.
+  as its tenant grows is unmeasured — #150.
 
 ## Consequences
 
-- **FR-44 and FR-45 open** on the [roadmap](../product/roadmap.md), marked proposed: FR-44 for the
-  split and the read log's partition DDL, FR-45 for the estimate and catalog channels d11 leaves.
+- **#134 is open** for the account split's rollout, the read log's partition DDL and the
+  estimate and catalog channels d11 leaves.
 - **On acceptance, and not before:** ADR-0007's Status line gains `amended by ADR-0034`, its d2 text
   kept as history ([status lifecycle](index.md#status-lifecycle)). security.md's tenancy paragraph
   says that `FORCE` binds the owner's table reads, not its `pg_stats` view or DDL, which the split
   keeps from every workload, that the owner only migrates and creates partitions, and that
   `_sqlx_migrations` is the one exemption, fenced by privilege; its STRIDE information-disclosure
-  row adds FR-45's channels. configuration.md, deployment.md's lead row, upgrades.md,
+  row adds #134's channels. configuration.md, deployment.md's lead row, upgrades.md,
   postgres-schema.md, retrieval.md's FTS paragraph, the critical path's S3.1 row and the register's
-  D6 cell follow. FR-25's exit criterion names search latency at stated tenant sizes, the numbers
+  D6 cell follow. #150's exit criterion names search latency at stated tenant sizes, the numbers
   d13's later record waits on. errors.md's `system.unavailable` row names d11's
   `partition_lock_timeout` reason.
 - **Costs** beyond those the decisions state: a superuser for the test suites and the demo, so the
   Postgres suites run fully only in CI on a host whose role cannot create roles (d8);
   planning that grows with tenants where a statement is not pruned at planning (d11). `read_events`
-  partition creation and `DROP`, its retention act ([postgres-schema](../data/postgres-schema.md)),
+  partition creation and `DROP`, its retention act ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)),
   wait for the bootstrap workload or a record of their own.
 - **No surface change:** no HTTP operation, error code or event type, so `info.version` stays
   `0.3.0-design`; `postgres.role_split` is a startup error outside the [error
@@ -287,9 +287,9 @@ Decided, not built.
 | **A development mode accepting one URL, with a warning on `/readyz` or in `oml doctor`** | ADR-0023 binds C6's split in all three profiles and keeps the binaries profile-blind, with no `--profile` flag (d8); a mode relaxing C6 is that flag. A warning leaves the leak on where installs start, to save one role in an init script. |
 | **Fixed role names in the migrations** | Roles are cluster-wide: the maintainer's host runs the live database beside throwaway test databases on one cluster, and fixed names would give them all one serving role. |
 | **Row-level security on `_sqlx_migrations`** | No `tenant_id` to key a policy on; a policy keyed on the role restates the privilege fence, and under `FORCE` binds the migrator's own reads. |
-| **A migrate-only invocation, so the serving process never holds the owner URL** | That is the bootstrap workload [deployment](../operations/deployment.md) designs, with the standalone migrate verb of FR-28; it changes every payload's upgrade step and is its own change, which removes d4's cost. |
+| **A migrate-only invocation, so the serving process never holds the owner URL** | That is the bootstrap workload [deployment](../operations/deployment.md) designs, with the standalone migrate verb of #124; it changes every payload's upgrade step and is its own change, which removes d4's cost. |
 | **Keeping the old role as owner and adding a new serving role** | No ownership moves, but the credential that has sat in the serving process all along keeps ownership, and `postgres.url` changes; d7 hands ownership to a fresh credential. |
-| **Statistics target 0 on the one FTS index, instead of partitions** | Target 0 "disables collection of statistics for that column" ([ANALYZE](https://www.postgresql.org/docs/17/sql-analyze.html), fetched 2026-10-31), which would leave every role FTS's default selectivity, unmeasured, but one index would still span tenants, which ADR-0007 d4 and the STRIDE row rule out; it stays FR-45's candidate beside the partitions. |
+| **Statistics target 0 on the one FTS index, instead of partitions** | Target 0 "disables collection of statistics for that column" ([ANALYZE](https://www.postgresql.org/docs/17/sql-analyze.html), fetched 2026-10-31), which would leave every role FTS's default selectivity, unmeasured, but one index would still span tenants, which ADR-0007 d4 and the STRIDE row rule out; it stays #134's candidate beside the partitions. |
 | **A `DEFAULT` partition for tenants without one of their own** | The tenants in it share one index again, and a later partition for one of them must first move its rows out. |
 | **A `SECURITY DEFINER` function the serving role calls to create a partition** | Any serving connection could call it, an injection included; d5 refuses definer functions for that reason. d11's owner connection is reachable from the tenant-creating act alone. |
-| **A leakproof `@@` wrapper, so the GIN index serves RLS-bound queries** — deferred, not rejected (d13) | Only a superuser can mark a function `LEAKPROOF` (S3.4), PostgreSQL does not mark `ts_match_vq` so, and d2's roles hold no superuser, so the wrapper adds a superuser step to every install. The maintainer deferred it on 2026-11-03: v0.3.1 ships d11's partitions without it, search latency per tenant size is measured first (FR-25), and the `LEAKPROOF` step is decided later on those numbers, beside FR-4's and FR-7's. |
+| **A leakproof `@@` wrapper, so the GIN index serves RLS-bound queries** — deferred, not rejected (d13) | Only a superuser can mark a function `LEAKPROOF` (S3.4), PostgreSQL does not mark `ts_match_vq` so, and d2's roles hold no superuser, so the wrapper adds a superuser step to every install. The maintainer deferred it on 2026-11-03: v0.3.1 ships d11's partitions without it, search latency per tenant size is measured first (#150), and the `LEAKPROOF` step is decided later on those numbers, beside #102's and #99's. |

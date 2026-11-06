@@ -64,15 +64,11 @@ fn parse_op(op: &str, pending: &[WorkareaOffer]) -> Result<WorkareaOffer, ApiErr
             .ok_or_else(refused),
         ("ratify", id) => {
             let id = Uuid::parse_str(id).map_err(|_| refused())?;
-            Ok(pending
+            pending
                 .iter()
                 .find(|o| matches!(o, WorkareaOffer::Ratify { transition_id, .. } if *transition_id == id))
                 .copied()
-                .unwrap_or(WorkareaOffer::Ratify {
-                    transition_id: id,
-                    from: WorkareaStatus::Development,
-                    to: WorkareaStatus::Committed,
-                }))
+                .ok_or_else(ApiError::not_found)
         }
         ("mode", "in_progress") => Ok(WorkareaOffer::InProgress),
         ("mode", "standard") => Ok(WorkareaOffer::Commit),
@@ -193,9 +189,27 @@ where
                 Reference::Id(id) => Some(id),
                 _ => None,
             };
-            let node = nodes
+            let listed = nodes
                 .iter()
-                .find(|n| id == Some(n.id) || named == n.name || named == n.path)
+                .find(|n| id == Some(n.id) || named == n.name || named == n.path);
+            // A workarea the table does not list, zoomed to from the Atlas,
+            // is read through the app, which checks the key may read it.
+            let outside = match (listed, id) {
+                (None, Some(id)) => self
+                    .app
+                    .workarea_tree(Bearer::Session(transitions), Reference::Id(id), None, 1)
+                    .await
+                    .ok()
+                    .and_then(|t| t.items.into_iter().next())
+                    .map(|n| Node {
+                        id,
+                        name: n.workarea.name.as_str().to_owned(),
+                        path: n.path,
+                    }),
+                _ => None,
+            };
+            let node = listed
+                .or(outside.as_ref())
                 .ok_or_else(ApiError::not_found)?;
             let offers = self
                 .app
