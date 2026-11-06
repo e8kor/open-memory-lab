@@ -103,7 +103,11 @@ fn golden_claims_over_the_fixture_orders_table() {
             "total_amount",
             "Order total in the sale currency, tax included",
         ),
-        col("col-5a90", "customer.email", "Customer contact address"),
+        col(
+            "col-4e21.col-5a90",
+            "customer.email",
+            "Customer contact address",
+        ),
         col(
             "col-7d3e",
             "channel",
@@ -492,7 +496,7 @@ fn a_first_run_writes_every_claim_with_a_uri_anchor_at_the_delta_version() {
     );
     let (_, col) = writes
         .iter()
-        .find(|(_, b)| b["claim_key"] == "delta/sales/orders/col/col-5a90")
+        .find(|(_, b)| b["claim_key"] == "delta/sales/orders/col/col-4e21.col-5a90")
         .unwrap();
     assert_eq!(col["anchor"]["fragment"], "col=customer.email");
     assert_eq!(

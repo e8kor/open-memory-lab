@@ -564,9 +564,16 @@ Decided, not built: this lane wrote no code and ran no build.
   design and the code agree:
     - **A local lake only.** `<lake uri>` is a directory or a `file://` URL, found by delimiter
       listing of the disk; `s3://`, `gs://` and `abfss://` locations are refused by name until v0.6.2.
-      The anchor never carries the directory: a lake read from a copy passes `--uri-base`, and
-      without it the root's own `file://` location is the `uri`, which the operator admitted for a
-      test lake, so the server's grammar accepts `file:///<path>` beside d5's three schemes.
+      The anchor never carries the directory: a lake on a disk is always read with `--uri-base`,
+      and a run without it is refused by name, so no machine's home path is stored. The operator
+      admitted `file:///<path>` for a test lake, so the server's grammar accepts it beside d5's
+      three schemes, and it reaches the server only when the operator writes it in `--uri-base`.
+    - **The reader is bounded.** A log file name sizes no allocation, a version uses checked
+      arithmetic, a panic inside the parquet crate makes that table `unreadable`, a symlink is never
+      followed, and the commit, line, footer, projected-column, column and file counts have named
+      caps (`Limits`), each refused as `unreadable` naming the cap. A column under column mapping
+      is keyed by the physical names of its whole path, so two nested leaves called `city` keep
+      both claims and turning mapping on re-keys none.
     - **`https` keeps its trailing slash.** d5's "no trailing `/`" is enforced for `s3`, `gs` and
       `file`; an `https` page anchor ending in `/` was valid under ADR-0057 d3 and stays valid.
     - **A column's key without column mapping** is its dotted logical path, mapped and fitted as the
@@ -625,7 +632,7 @@ about        = ["biz:revenue"]
 **CLI** (lake build):
 
 ```text
-oml sync <lake uri> --workarea <w> --adapter delta [--config oml-lake.toml] [--uri-base <uri>]
+oml sync <lake uri> --workarea <w> --adapter delta [--config oml-lake.toml] --uri-base <uri>
          [--dry-run | --check [--record]] [--json] [--max-writes <n>] [--recheck-after <dur>]
          [--accept-recreated] [--allow-public-server]
 oml lake fetch datahub|openmetadata|glue [--endpoint <url>] --out <snapshot.json>

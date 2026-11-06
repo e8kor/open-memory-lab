@@ -400,7 +400,11 @@ pub fn read_table_with(
             })?;
         }
     }
-    for v in first_commit.map_or(1..=0, |first| first..=target) {
+    for v in first_commit
+        .map(|first| first..=target)
+        .into_iter()
+        .flatten()
+    {
         let Some(name) = commits.get(&v) else {
             return Err(unreadable(format!(
                 "the log has no commit {v:020}.json between {} and {target}",

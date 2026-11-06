@@ -75,13 +75,25 @@ fn segment(text: &str, keep_slash: bool) -> String {
 
 /// Every field of the schema, parents before their children, with its
 /// logical path from the top.
-fn walk(fields: &[Field], parent: &[String], out: &mut Vec<Walked>) {
+fn walk(fields: &[Field], parent: &[String], parent_physical: &[String], out: &mut Vec<Walked>) {
     for f in fields {
         let mut logical = parent.to_vec();
         logical.push(f.name.clone());
         let nested = nested_fields(&f.data_type);
+        let mut physical_path = parent_physical.to_vec();
+        physical_path.push(
+            f.metadata
+                .get(PHYSICAL)
+                .and_then(Value::as_str)
+                .map_or_else(|| f.name.clone(), str::to_owned),
+        );
         out.push(Walked {
             logical: logical.clone(),
+            physical_path: physical_path.clone(),
+            id: f
+                .metadata
+                .get("delta.columnMapping.id")
+                .and_then(Value::as_i64),
             physical: f
                 .metadata
                 .get(PHYSICAL)
@@ -98,7 +110,7 @@ fn walk(fields: &[Field], parent: &[String], out: &mut Vec<Walked>) {
             leaf: nested.is_none(),
         });
         if let Some(inner) = nested {
-            walk(&inner, &logical, out);
+            walk(&inner, &logical, &physical_path, out);
         }
     }
 }
@@ -107,6 +119,12 @@ fn walk(fields: &[Field], parent: &[String], out: &mut Vec<Walked>) {
 /// schema claim lists leaves.
 struct Walked {
     logical: Vec<String>,
+    /// Each ancestor's physical name (its logical one when the table maps
+    /// none) and the field's own: a physical name is unique among siblings
+    /// only, so a column is keyed by the whole path.
+    physical_path: Vec<String>,
+    /// `delta.columnMapping.id`.
+    id: Option<i64>,
     physical: Option<String>,
     name: String,
     data_type: Value,
@@ -252,7 +270,7 @@ pub fn items(rel: &str, table_uri: &str, snapshot: &Snapshot) -> Vec<LakeItem> {
         rev: rev.clone(),
     };
     let mut walked = Vec::new();
-    walk(&snapshot.schema, &[], &mut walked);
+    walk(&snapshot.schema, &[], &[], &mut walked);
     let name = snapshot
         .name
         .clone()
@@ -367,13 +385,23 @@ pub fn items(rel: &str, table_uri: &str, snapshot: &Snapshot) -> Vec<LakeItem> {
             continue;
         };
         let path = w.logical.join(".");
-        let physical = match (&w.physical, mapping) {
-            (Some(p), m) if m != "none" => segment(p, false),
+        let base = match (&w.physical, mapping) {
+            (Some(_), m) if m != "none" => segment(&w.physical_path.join("."), false),
             _ => segment(&path, false),
         };
-        let key = fit_key(&format!("{stem}/col/{physical}"));
-        if by_key.insert(key, ()).is_some() {
-            continue;
+        // Two columns whose paths collide (a writer's bug) are both kept, the
+        // later told apart by its mapping id, else by its order.
+        let mut physical = base.clone();
+        let mut n = 1_u32;
+        while by_key
+            .insert(fit_key(&format!("{stem}/col/{physical}")), ())
+            .is_some()
+        {
+            physical = match (w.id, n) {
+                (Some(id), 1) => format!("{base}-id{id}"),
+                _ => format!("{base}-dup{n}"),
+            };
+            n += 1;
         }
         let text = format!("Column {path} of table {name}: {comment}");
         out.push(item(

@@ -28,12 +28,16 @@ allow = [
     # webpki-roots: the Mozilla root-certificate data rustls verifies against.
     # A permissive data licence, no copyleft term (the policy's line).
     "CDLA-Permissive-2.0",
-    # tiny-keccak, through parquet's ahash and const-random, which only the CLI's
-    # optional lake-sync feature links (ADR-0062 d3): a public-domain dedication
-    # with no copyleft term (the policy's line), build-time only.
-    "CC0-1.0",
 ]
 confidence-threshold = 0.9
+
+# tiny-keccak, through parquet's ahash and const-random, which only the CLI's
+# optional lake-sync feature links (ADR-0062 d3): a public-domain dedication
+# with no copyleft term (the policy's line), build-time only. An exception for
+# this crate, so another CC0 crate, the server's included, still fails.
+[[licenses.exceptions]]
+crate = "tiny-keccak"
+allow = ["CC0-1.0"]
 
 [bans]
 # One adapter crate per infrastructure dependency (ADR-0019 d2): a duplicate

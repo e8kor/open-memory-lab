@@ -28,8 +28,8 @@ pub const DEPTH: usize = 3;
 pub struct Options {
     /// The lake root on a disk.
     pub root: PathBuf,
-    /// The canonical location the root stands for, when it is a mirror or a
-    /// copy; omitted, the root's own `file://` location.
+    /// The canonical location the root stands for; required, since the root's
+    /// own path is a local one and no anchor carries it.
     pub uri_base: Option<String>,
     pub workarea: String,
     pub dry_run: bool,
@@ -48,21 +48,11 @@ pub struct Options {
 fn base_uri(opts: &Options) -> Result<String, CliError> {
     match &opts.uri_base {
         Some(b) => canonical(b).map_err(|e| CliError::local(format!("--uri-base: {e}"))),
-        None => {
-            let root = opts
-                .root
-                .canonicalize()
-                .map_err(|e| CliError::local(format!("{}: {e}", opts.root.display())))?;
-            let path = root.to_str().ok_or_else(|| {
-                CliError::local("the lake root's path is not UTF-8: pass --uri-base")
-            })?;
-            canonical(&format!("file://{path}")).map_err(|e| {
-                CliError::local(format!(
-                    "the lake root {path} has no canonical file:// location ({e}); \
-                     pass --uri-base <its location>"
-                ))
-            })
-        }
+        None => Err(CliError::local(
+            "a lake on a disk is read with --uri-base <its location> (s3://, gs://, https:// \
+             or file://): without it the anchor would carry this machine's local path, which \
+             the server stores for good (ADR-0062 d5)",
+        )),
     }
 }
 
