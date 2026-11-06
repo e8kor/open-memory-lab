@@ -59,7 +59,7 @@
         <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned for leaked secrets, such as private keys, known providers' API tokens and passwords set in config (<code>DB_PASSWORD=…</code>), and a match refuses the write.</li>
         <li>Someone who did not write it, nor what it builds on, approves it: a person, here <code>eugene</code>, or a reviewer agent. The key that wrote a memory never approves it.</li>
         <li>The memory is <code>promoted</code>, approved and shared: every agent with access to its workarea recalls it. A workarea is a named area of memory, such as a team or a project, and a key reads only the workareas it is granted.</li>
-        <li>Two opt-in exceptions, each confined to one workarea, are listed in <a href="{{DOCS_URL}}product/commitments/">the commitments</a>.</li>
+        <li>Two opt-in exceptions, each confined to one workarea, are described under <a href="{{DOCS_URL}}use/workareas/">workareas</a>.</li>
       </ol></details>
     </figure>
     <div class="vals">
