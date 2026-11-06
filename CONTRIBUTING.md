@@ -82,19 +82,23 @@ reviews every pull request; [CODEOWNERS](.github/CODEOWNERS) lists who owns whic
 
 ### Before you open the pull request
 
-- **Reserve numbers first.** Every ADR, FR and migration number is reserved in
-  [docs/NUMBERS.md](docs/NUMBERS.md) before the file or row exists:
-  `python scripts/reserve_number.py adr|fr|migration --branch <branch> --title "<title>"`, then
+- **Reserve numbers first.** Every ADR and migration number is reserved in
+  [docs/NUMBERS.md](docs/NUMBERS.md) before the file exists:
+  `python scripts/reserve_number.py adr|migration --branch <branch> --title "<title>"`, then
   commit and push the reservation. CI (`scripts/check_numbers.py`) fails a pull request that
   introduces a number reserved by another branch, or not reserved at all.
+- **Open work is an issue.** A limitation, an unmeasured claim or an open question is a GitHub
+  issue labelled `roadmap` and one of `measure`, `verify`, `feature` or `decision`, not a row in
+  a page ([ADR-0066](docs/adr/ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md);
+  [former roadmap rows](docs/contributing/fr-to-issues.md)). Cite it as `#n`.
 - **Self-check.** Work through the [pre-review checklist](docs/contributing/review-checklist.md).
-  A build lane pastes the checked list into the pull request body.
+  Paste the checked list into the pull request body.
 - **Lints.** `python scripts/lint_practices.py migrations|ports|like` runs the three lints CI runs;
   `python -m unittest discover -s scripts/tests` runs their tests.
 - **Changelog fragment.** A change under `crates/` or `docs/adr/` adds `changes/<pr-or-branch>.md`
   (see [changes/README.md](changes/README.md)); the `no-changelog` label skips the check. Do not
   edit `docs/changelog.md` in a change: the release assembles it
-  ([releasing](docs/operations/releasing.md)).
+  ([releasing](docs/contributing/releasing.md)).
 
 ### Recalling the design from OML (dogfooding)
 

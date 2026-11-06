@@ -65,7 +65,7 @@ Parsing rules (kept deliberately dumb and documented):
   * An error code is a backticked token shaped family.name (lowercase + underscores).
   * An endpoint is a backticked span "METHOD /path" anywhere in http-api.md.
     Query strings are stripped. A span whose path contains ":" (e.g. the reserved
-    POST /v1/memories:batch, FR-12) is a future reservation, not current contract,
+    POST /v1/memories:batch, #122) is a future reservation, not current contract,
     and is skipped.
   * http-api.md groups endpoints as `GET /a/{id}` · `/tree` · `/edges`: a bare
     "/suffix" span joined by the "·" separator continues the previous span —
