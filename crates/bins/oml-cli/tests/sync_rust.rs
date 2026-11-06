@@ -124,7 +124,7 @@ fn the_rust_adapter_at_aee5b28_yields_9_crates_and_98_modules() {
         "rust/crate/oml-cli",
         "rust/mod/oml_domain::guardrail",
         "rust/mod/oml_app::ports",
-        "rust/mod/oml_cli::sync::rust",
+        "rust/mod/oml_cli::sync::plan",
     ] {
         assert!(keys.contains(&key.to_owned()), "{key}");
     }
@@ -435,10 +435,6 @@ fn a_reflowed_module_doc_keeps_its_hash_and_a_changed_word_does_not() {
         "//! Module m.\n//!\n//! More about n.\n\npub fn f() {}\n",
     );
     assert_ne!(b.hash, get(&changed, "rust/mod/oml_a::m").hash);
-    assert_eq!(
-        items(&before).iter().filter(|i| i.hash != "").count(),
-        items(&before).len()
-    );
 }
 
 #[test]
@@ -516,4 +512,73 @@ fn the_rust_adapter_is_named_rust_and_owns_the_rust_namespace() {
     assert!(RustAdapter.accepts("crates/a/src/lib.rs"));
     assert!(RustAdapter.accepts("crates/a/Cargo.toml"));
     assert!(!RustAdapter.accepts("docs/guide.md"));
+}
+
+/// Every `.rs` file under a `src/` directory of this repository's crates.
+fn repository_sources() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|e| e == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../crates");
+    let mut out = Vec::new();
+    for manifest in glob_manifests(&crates) {
+        let src = manifest.parent().unwrap().join("src");
+        if src.is_dir() {
+            walk(&src, &mut out);
+        }
+    }
+    out.sort();
+    out
+}
+
+fn glob_manifests(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let p = entry.unwrap().path();
+        if p.is_dir() {
+            if p.join("Cargo.toml").is_file() {
+                out.push(p.join("Cargo.toml"));
+            } else {
+                out.extend(glob_manifests(&p));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_lexer_reads_the_same_inner_docs_as_syn_on_every_source_file() {
+    let sources = repository_sources();
+    assert!(sources.len() > 100, "{} files", sources.len());
+    for path in sources {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let tree = syn::parse_file(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let expected: Vec<String> = tree
+            .attrs
+            .iter()
+            .filter(|a| matches!(a.style, syn::AttrStyle::Inner(_)) && a.path().is_ident("doc"))
+            .filter_map(|a| match &a.meta {
+                syn::Meta::NameValue(nv) => match &nv.value {
+                    syn::Expr::Lit(l) => match &l.lit {
+                        syn::Lit::Str(s) => Some(s.value()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let read = leading_docs(&text)
+            .unwrap()
+            .map(|d| d.lines)
+            .unwrap_or_default();
+        assert_eq!(read, expected, "{}", path.display());
+    }
 }

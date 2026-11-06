@@ -739,8 +739,9 @@ struct SyncArgs {
     /// the draft's `<workarea>-pr-<n>`.
     #[arg(long)]
     workarea: String,
-    /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
-    /// headings otherwise (ADR-0057 d7, d21).
+    /// adr, headings, lines or rust; omitted, adr for ADR-NNNN-*.md files and
+    /// headings otherwise; rust (one claim per crate and per module doc of a
+    /// Cargo workspace) is never chosen unnamed (ADR-0057 d7, d21; ADR-0061).
     #[arg(long)]
     adapter: Option<String>,
     /// The commit read; never the working tree.
@@ -4882,6 +4883,9 @@ fn sources_doctor(
             "warn sources_unsupported: the server is {version}, before 0.5.8: it accepts no anchor, so --anchor, the anchor filters and oml sync are refused; upgrade the server"
         ));
     }
+    if let Some(line) = rust_hashers_line(server, env!("CARGO_PKG_VERSION")) {
+        lines.push(line);
+    }
     if let Some(node) = default_node
         && let Some(stale) = node["stale_versions"].as_u64()
     {
@@ -4904,12 +4908,29 @@ fn sources_doctor(
     lines
 }
 
+/// A server before 0.6.1 refuses the hashers `oml-rustdoc/1` and
+/// `oml-crate/1`, so `oml sync --adapter rust` is refused by it
+/// (ADR-0061 d7, d15). Said only to a client that could send them.
+fn rust_hashers_line(server: Option<&str>, client: &str) -> Option<String> {
+    let version = server?;
+    (before_version(version, (0, 6, 1)) && !before_version(client, (0, 6, 1))).then(|| {
+        format!(
+            "warn sources_rust_unsupported: the server is {version}, before 0.6.1: it refuses the hashers oml-rustdoc/1 and oml-crate/1, so oml sync --adapter rust is refused; upgrade the server"
+        )
+    })
+}
+
 /// Whether a server version is before 0.5.8, the first to accept anchors.
 fn before_anchors(version: &str) -> bool {
+    before_version(version, (0, 5, 8))
+}
+
+/// Whether `version` is before `first`; an unparsable version is not.
+fn before_version(version: &str, first: (u64, u64, u64)) -> bool {
     let core = version.split(['-', '+']).next().unwrap_or(version);
     let parts: Vec<u64> = core.split('.').filter_map(|p| p.parse().ok()).collect();
     match parts.as_slice() {
-        [major, minor, patch, ..] => (*major, *minor, *patch) < (0, 5, 8),
+        [major, minor, patch, ..] => (*major, *minor, *patch) < first,
         _ => false,
     }
 }
@@ -4938,6 +4959,18 @@ fn verdict(ok: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_doctor_warns_a_client_that_could_send_rust_hashers_when_the_server_refuses_them() {
+        let line = rust_hashers_line(Some("0.6.0"), "0.6.1").unwrap();
+        assert!(
+            line.starts_with("warn sources_rust_unsupported: the server is 0.6.0"),
+            "{line}"
+        );
+        assert_eq!(rust_hashers_line(Some("0.6.1"), "0.6.1"), None);
+        assert_eq!(rust_hashers_line(Some("0.6.0"), "0.6.0"), None);
+        assert_eq!(rust_hashers_line(None, "0.6.1"), None);
+    }
 
     #[test]
     fn the_search_doctor_names_the_reranker_and_warns_on_skips_read_from_the_metrics_listener() {

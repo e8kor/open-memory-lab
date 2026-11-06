@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::adapter::{EdgeStatement, Item, Kind};
 use super::api::{EdgeRow, Listed};
-use super::hash::{HASHER, short, text_digest};
+use super::hash::{short, text_digest};
 
 /// What the diff decides for one item or listed claim (ADR-0057 d8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -613,7 +613,7 @@ fn anchor_of(ctx: &Context, si: &SourceItem) -> Anchor {
         path: si.path.clone(),
         fragment: si.item.fragment.clone(),
         hash: Some(si.item.hash.clone()),
-        hasher: Some(HASHER.to_owned()),
+        hasher: Some(si.item.hasher.to_owned()),
     }
 }
 

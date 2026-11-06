@@ -24,9 +24,14 @@ pub fn sha256(bytes: &[u8]) -> String {
 /// to one space, trimmed, SHA-256 (ADR-0057 d7).
 #[must_use]
 pub fn md_hash(span: &str) -> String {
+    sha256(md_normal(span).as_bytes())
+}
+
+/// The text `oml-md/1` hashes: NFC, whitespace runs to one space, trimmed.
+#[must_use]
+pub fn md_normal(span: &str) -> String {
     let normal = nfc(&span.replace("\r\n", "\n").replace('\r', "\n"));
-    let collapsed = normal.split_whitespace().collect::<Vec<_>>().join(" ");
-    sha256(collapsed.as_bytes())
+    normal.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The digest the server answers as `plaintext_digest` for `text`: the
@@ -48,14 +53,31 @@ pub const HASHER_RUSTDOC: &str = "oml-rustdoc/1";
 /// The hasher of a crate's facts (ADR-0061 d7).
 pub const HASHER_CRATE: &str = "oml-crate/1";
 
-/// `oml-rustdoc/1` of a doc block's lines as written after their `//!`.
+/// `oml-rustdoc/1` of a doc block's lines as written after their `//!`: the
+/// lines without one space after the marker, then `oml-md/1` (ADR-0061 d7).
 #[must_use]
-pub fn rustdoc_hash(_lines: &[String]) -> String {
-    String::new()
+pub fn rustdoc_hash(lines: &[String]) -> String {
+    md_hash(&rustdoc_text(lines))
 }
 
-/// `oml-crate/1` of a crate's facts (ADR-0061 d7).
+/// The lines of a doc block without one space after their marker, joined.
 #[must_use]
-pub fn crate_hash(_facts: &[String]) -> String {
-    String::new()
+pub fn rustdoc_text(lines: &[String]) -> String {
+    lines
+        .iter()
+        .map(|l| l.strip_prefix(' ').unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `oml-crate/1`: the SHA-256 of one line per fact, each ended by a line
+/// feed, in the order the caller gives them (ADR-0061 d7).
+#[must_use]
+pub fn crate_hash(facts: &[String]) -> String {
+    let mut bytes = Vec::new();
+    for fact in facts {
+        bytes.extend_from_slice(nfc(fact).as_bytes());
+        bytes.push(b'\n');
+    }
+    sha256(&bytes)
 }

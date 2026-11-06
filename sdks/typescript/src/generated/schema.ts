@@ -1535,10 +1535,10 @@ export interface components {
             /** @description Digest of the fragment's text, or the file's, under hasher. */
             hash?: string;
             /**
-             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).
+             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-rustdoc/1: a module doc block without its //! markers, then oml-md/1 (ADR-0061 d7). oml-crate/1: SHA-256 of one line per fact of a crate: name, description, root doc, binaries, internal dependencies and dependents (ADR-0061 d7). The server computes none of them.
              * @enum {string}
              */
-            hasher?: "oml-md/1";
+            hasher?: "oml-md/1" | "oml-rustdoc/1" | "oml-crate/1";
         };
         /** @description A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out (d4). */
         AnchorRepo: string;

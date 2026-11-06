@@ -87,7 +87,9 @@
               "hasher": {
                 "type": "string",
                 "enum": [
-                  "oml-md/1"
+                  "oml-md/1",
+                  "oml-rustdoc/1",
+                  "oml-crate/1"
                 ]
               }
             }

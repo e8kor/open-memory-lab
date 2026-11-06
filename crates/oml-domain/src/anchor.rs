@@ -9,8 +9,10 @@
 use serde_json::{Map, Value};
 use unicode_normalization::UnicodeNormalization;
 
-/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1` in v0.5.8.
-pub const HASHERS: [&str; 1] = ["oml-md/1"];
+/// The hashers the server admits (ADR-0057 d3, d7; ADR-0061 d7): `oml-md/1`,
+/// and the two of the `rust` adapter, `oml-rustdoc/1` for a module's doc and
+/// `oml-crate/1` for a crate's facts. The server computes none of them.
+pub const HASHERS: [&str; 3] = ["oml-md/1", "oml-rustdoc/1", "oml-crate/1"];
 
 /// The longest `repo`, in characters (ADR-0057 d3).
 pub const REPO_MAX: usize = 200;
@@ -158,7 +160,10 @@ impl Anchor {
                     ));
                 }
                 if !HASHERS.contains(&hasher) {
-                    return Err(refuse(&field("hasher"), "one of oml-md/1"));
+                    return Err(refuse(
+                        &field("hasher"),
+                        "one of oml-md/1, oml-rustdoc/1, oml-crate/1",
+                    ));
                 }
                 Some((hash.to_owned(), hasher.to_owned()))
             }
