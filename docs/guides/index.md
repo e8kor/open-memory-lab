@@ -1,16 +1,15 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "which task guide to open: use OML, integrate with it, or operate a server"
+answers: "which task guide to open"
 ---
 
 # Guides
 
-Task-oriented how-to pages, grouped by what you are doing. Each assumes you have finished
-[Get started](../start/index.md).
+Task pages for people who use OML. Each assumes you finished [Get started](../start/index.md).
 
-- **Use** (agent users and reviewers): save and find memories, review held writes, arrange workareas, keep docs and code in sync.
-- **Integrate** (developers): run reviewer crews and call OML from the client SDKs. The call surfaces are in [Reference](../reference/index.md).
-- **Operate** (administrators): deploy, run on Kubernetes, issue keys, monitor, upgrade, back up, recover.
+- **Use**: [remember and recall](../use/remember-and-recall.md), [review held memories](reviewing.md), [organize memory in workareas](../use/workareas.md), [capture chat memory](../use/chat-memory.md), [sync docs and code](../use/sync.md), [give agents rules](../use/guardrails.md).
+- **Integrate**: [a reviewer crew over HTTP](../api/reviewer-crews.md) and [the client SDKs](../engineering/sdks.md).
+- **Operate a server**: see the [Operate](../operations/index.md) tab.
 
-Something broken? Go to [FAQ and troubleshooting](../faq.md).
+Something broken? See [Help](../faq.md).

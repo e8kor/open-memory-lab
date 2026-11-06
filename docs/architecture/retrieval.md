@@ -1,720 +1,136 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "where reads are served from and in what order; how recall ranks, through which pipelines, and how a deployment, a tenant or a request picks one; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut"
+answers: "how recall finds and orders memories: who can see a hit, what you can ask, which search pipelines exist and how one is chosen, how steering and your own held memories join the answer, how a token budget cuts it, and what was measured"
 ---
 
-# Retrieval: reads are served from Postgres, journalled
+# How recall finds and orders memories
 
-This page is the single declaration site for the read path (D12): where reads
-are served from, how the serving indexes are laid out, what order results come
-back in, how bodies are decrypted, how reads are logged, and which read-shaped
-features are out of scope. The storage decisions it builds on — the commit
-point, the outbox, the lake — are declared in [storage.md](storage.md); the
-schema of the tables named here is in
-[data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations); the simulation fence
-whose read predicate this page applies is declared in
-[simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md); the reader role whose reads are logged is
-declared in [roles-and-keys.md](roles-and-keys.md).
+A recall returns promoted memories that your key can read, ranked by the search pipeline you chose. Standing instructions (steering) come first and are never ranked. PostgreSQL serves every read. The Delta lake serves none, because a derived copy must not become an authority.
 
-## The rule: Postgres serves, the lake never does
+## Who sees a hit
 
-*Available since v0.1.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../changelog.md)*
+A recall returns promoted memories inside the key's effective access ([workareas](workareas.md)). It hides two kinds of row:
 
-Every client read — recall, fetch, FTS, vector search, graph and lineage
-reads — is served from PostgreSQL. **Delta Lake serves no client read.** The
-lake is a derived body store for reconciliation, lineage, metadata analytics
-and future journalled exports ([storage.md](storage.md)); putting it on the
-read path would make a derived copy an authority, and the design refuses that.
-The cost is accepted plainly: Postgres must hold everything serving needs —
-promoted bodies reachable for decryption, `tsvector` entries, embeddings — and
-the Postgres scale ceiling that follows is a tracked issue in
-[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) (Postgres scale ceiling and
-partition strategy), not a solved problem.
+- **Held memories** are visible to their author only, through `oml read` and recall with `--include-unreviewed`.
+- **Demoted and erased memories** are not served.
 
-Reads return **promoted rows only**, within the key's effective access
-([workareas.md](workareas.md)). Held rows are visible solely to their author —
-the calling key ([own](roles-and-keys.md#own)) — through own-work status, get,
-and recall with `include_unreviewed` ([own held rows in
-recall](#own-held-rows-in-recall)); demoted and erased rows are not served. This
-is R3 made operational: the gate changed visibility, and the read path is where
-that visibility is enforced.
+Superseded versions stay readable by id as history. They are never hits.
 
-`self_signed` rows — the constitution's bounded development exception
-([workareas.md](workareas.md)) — are served only to reads whose scope node is
-their own workarea: a recall, its steering segment or a listing scoped
-anywhere else, at an ancestor or at a descendant, never returns them, and an
-events tail shows their events only when its `workarea` is that workarea
-([events tail](../api/http-api.md#events-tail)). Get resolves no workarea and
-takes a row's own workarea as its implicit scope, so a non-own `self_signed`
-version is readable by id by a key with reader effective access on its own
-workarea, and by no other key.
+## What you can ask
 
-## The serving tier
+Each flag below belongs to `oml read`. The same fields exist on the `oml_read` MCP tool and the [HTTP API](../api/http-api.md).
 
-Two indexes over promoted rows, both in Postgres, both under tenant RLS:
+| You want | Flag | Default |
+|---|---|---|
+| Ranked hits for a query | `--query "<words>"` | none |
+| More or fewer hits | `--k` | 8; range 1 to 100 |
+| Only some kinds | `--kinds memory` or `--kinds derived_fact`, repeatable | all hits |
+| A different subtree | `--workarea <id or name>` | the key's default workarea |
+| A different search pipeline | `--search <name>` | the tenant's default |
+| Every word to match | `--match all` | `any` |
+| Your own held memories too | `--include-unreviewed` | off |
+| Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
+| Memories from one origin | `--origin-kind`, repeatable | no filter |
 
-- **Full-text search**: `memories_fts`, a `tsvector` index over promoted claim
-  text, per tenant: its table is list-partitioned by `tenant_id`, each
-  partition with its own index, which the owner role creates before the
-  tenant's first commit, so no index spans tenants. Every statement binds its
-  tenant, so a read reaches its tenant's partition alone, and row-level
-  security stays the fence. No function is marked `LEAKPROOF`, so an FTS read
-  scans its tenant's partition rather than using its index; its latency per
-  tenant size is unmeasured. The built form
-  today is the PoC's `memories_claim_fts` over `memories`
-  ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
-- **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
+The API also takes `max_tokens` and `include_text` ([token budgets](#token-budgets)). Without `--query`, `oml read` lists instead of searching. Run `oml read --help` for the listing flags.
 
-Of the rows they admit, the indexes hold every promoted version, superseded
-ones included. Which of them recall serves is the served-tip predicate of the
-[hits rule](#the-recall-ordering-contract-steering-rows-first-unranked), not
-index membership: it keeps superseded versions, retirement versions and every
-version of a retired claim
-([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip))
-out of the hits, so a ratified retirement, or a later supersession of one,
-changes no index row. Superseded versions are readable history under the same
-access, so the predicate hides nothing a reader may not see. Held rows never
-enter either index: a held row is matched only through the author-fenced read
-of [held text containment](#held-text-containment).
+## How a recall runs
 
-Two kinds are excluded from both shared indexes by default: vocabulary rows
-(`term`, `term_mapping`, `vocab_release` — a 50k-term vocabulary must not
-drown a tenant's organic memories in every hybrid recall; a vocabulary
-workarea's journalled policy may opt in, and its vocabulary rows are then
-[hits](#the-recall-ordering-contract-steering-rows-first-unranked),)
-and, when lands, imported rows under its `index_policy` default. The
-exclusions mirror each other deliberately: reference data is fetch- and
-filter-served unless a journalled policy prices it into the shared indexes.
+```mermaid
+flowchart LR
+    Q["Query + key + workarea"] --> S["Scope: readable nodes"]
+    S --> ST["Steering in force<br/>first, unranked, never cut"]
+    S --> P["Search pipeline<br/>ranked hits"]
+    P --> C["k cut, then token budget cut"]
+    ST --> A["Answer"]
+    C --> A
+```
 
-Recall accepts a `terms` filter (CURIE annotations,) and
-`expand_terms: descendants`, which widens that filter through the
-**materialized per-release `is_a` closure** before retrieval — a lookup, never
-a graph walk at query time. Expansion resolves per CURIE against the release
-pinned by the vocabulary that owns the expanded prefix; steering order, `k`
-and the [token budget](#token-budgets) are untouched by expansion. A server
-that does not yet serve `terms` or `expand_terms` refuses them by name with
-`request.validation`, never ignores them.
-
-### Text handling
-
-*Since v0.5.5 the `bm25` pipelines index `simple` and `english` lexemes together over identifier
-parts ([search pipelines](#search-pipelines)); this section describes the `simple` index the
-keyword pipelines read.*
-
-`memories_fts` rows are built with the Postgres text-search configuration named
-by the deployment setting `search.fts_config`
-([configuration](../operations/configuration.md)), **default `simple`**. The
-default is chosen for honesty, not quality: `simple` stems nothing and
-language-detects nothing, so it never silently corrupts tokens of a language
-the configuration did not expect — a multilingual corpus under an
-English-stemming configuration degrades non-English recall without any signal
-that it has. The cost is stated plainly: with no stemming, morphological
-variants do not match — a query for "deploy" does not find "deployments" — and
-FTS recall for morphology-rich languages is lower than a language-specific
-configuration would give. How much lower is unmeasured, like every retrieval
-number.
-
-Two consequences of the setting's scope:
-
-- **Changing it implies a full FTS reindex**: every `tsvector` row was built
-  with one configuration, and rows built under different configurations do not
-  compare. The setting is deployment-level in v1 for exactly this reason; a
-  per-tenant (or per-workarea) FTS configuration is a tracked deferral in
-  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) (per-tenant FTS configuration),
-  not a quiet gap.
-- **Input is already canonical**: claim text is NFC-normalized at admission,
-  before digesting and scanning ([admission](admission.md) owns the mechanics),
-  so the index never holds two byte spellings of one string.
-
-### pgvector layout
-
-*Not scheduled · [releases](../changelog.md)*
-
-`memory_embeddings` is **list-partitioned by `tenant_id`**, with a
-**per-partition HNSW index** and RLS on top of the partitioning. The
-partitioning is a performance and blast-radius choice layered under the
-security boundary, not a substitute for it: RLS is the isolation authority
-(declared in [security.md](security.md)); the per-tenant partition means one
-tenant's index build, vacuum or bloat never degrades another's graph, and an
-HNSW graph never spans tenants.
-
-Two query-shape decisions:
-
-- **Iterative scan is enabled.** HNSW with a post-filter (RLS plus any
-  workarea predicate) can return fewer than `k` rows when filtered candidates
-  are discarded; iterative scan keeps pulling candidates from the graph until
-  the limit is satisfied or the configured scan ceiling is reached
-  (`hnsw.max_scan_tuples` and the scan-memory bound), trading extra index
-  traversal for far less silent under-returning. The ceiling and its tuning are
-  part of 's measurement — under-return is reduced, not eliminated. The
-  trade is still the point: a filtered search that quietly returns 3 of 10
-  requested hits is a correctness bug wearing a latency costume.
-- **Subtree filtering is a filter column, not a join.** Each embedding row
-  carries a workarea-path filter column (the derived `ltree` path of its
-  workarea — paths are derived, node ids are the authority; see
-  [workareas.md](workareas.md)). A subtree-scoped query filters on path prefix
-  directly against the index scan rather than joining through `workareas` per
-  candidate. The cost is that the column must be maintained when a subtree is
-  re-parented; how that maintenance is scheduled is an implementation choice
-  inside the journalled re-parent act declared in
-  [workareas.md](workareas.md).
-
-### What is unmeasured, said plainly
-
-Nothing has run. **Recall quality, query latency, and the exact-vs-approximate
-behavior of filtered HNSW at our data shapes are unmeasured** — tracked as
-pgvector recall/latency issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap),
-with measurement as the exit criterion. The choice of embedding model and
-where it runs is an open RS on the same page. No vector-search number is
-asserted anywhere in this design until that measurement runs (D17).
-
-### Indexing
-
-Embeddings are computed by `oml-indexer`, a separate workload running under
-its own **key-less** credentials per tenant — it holds no signing key and no
-verdict authority; it reads promoted text on the serving side of decryption
-and writes embedding rows. Everything it produces is plaintext-derived and
-therefore in the erasure inventory: on erase, embedding and `tsvector` rows
-are removed from live tables, and their persistence in base backups and WAL
-until the named backup retention window expires is stated honestly where the
-inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
+The server decides what you may read before any ranking runs. A pipeline ranks the rows in that scope and nothing else. It never reads a verdict or a reviewer. Statistics such as document frequency come from the rows you can read. A memory you cannot read never moves the rank of one you can.
 
 ## Search pipelines
 
-*Since v0.5.5 ·; the stages are 's*
-
-**How recall ranks.** A recall's hits come from a **pipeline**: one or more retrievers, each
-producing a ranked list, merged by a fusion the core runs. The core computes what may be ranked
-before any retriever runs, and does everything after: steering, the `k` cut, the budget cut,
-the re-check of every served row.
-
-```text
-request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held keys when asked)
-              │
-              ├── steering_in_force(ancestors)            first, unranked, never cut
-              │
-              └── pipeline (search, else tenant default, else search.default)
-                     ├── Retriever.retrieve(kind, scope, query)   one ranked list per kind
-                     ├── fuse: single | reciprocal rank (60) | convex combination   pure, in the core
-                     ├── match all → every word; none → any word, fallback: any_term
-                     └── rerank (bm25-rerank): hydrate the head, admit it (R3), Reranker.score,
-                         reorder; busy, late or failed → first stage's order, rerank: skipped
-              │
-          k cut → floor (when reranked and set) → budget cut → hydrate → re-check each (R3) → answer
-```
-
-| Pipeline | What ranks | Fusion |
+| Pipeline | What it ranks | Offered by default |
 |---|---|---|
-| `keyword-all` | every query word, exactly, under `simple`, by `ts_rank`: the recall served up to v0.5.0 | one list |
-| `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
-| `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normalizer, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
-| `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalized text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
-| `bm25-postings` | *Since v0.5.6.* `bm25`'s score, read from integer postings an index serves under row security: the readable rows' counts, kept per workarea, decide which words are frequent; those are left out of the postings read and still scored for every row the other words reach; a query of only frequent words is answered by `bm25`'s scan | one list |
-| `sparse` (since v0.5.7, opt-in,) | learned sparse weights of `opensearch-neural-sparse-encoding-doc-v3-distill` (Apache-2.0), written by a local model after each version commits, read from postings an index serves under row security: a row scores the sum over the query's tokens of the weight the model ships for the token times the row's own weight. No corpus statistic is read and no model runs for a query. It matches related words a memory does not say (the model's expansions), English only | one list |
-| `bm25-sparse` (since v0.5.7, opt-in,) | `bm25-postings` and `sparse`, each read 100 deep | convex combination: each list's scores min-max normalized over its own candidates for the query, then 0.3 × `bm25-postings` + 0.7 × `sparse` |
-| `bm25-rerank` (since v0.5.6, opt-in,) | `bm25`'s list, read `search.rerank.depth` deep (10), its head reordered by a local cross-encoder (`ms-marco-MiniLM-L6-v2` on the CPU, pure Rust) over the text of rows the core has admitted; the relevance is between 0 and 1 and reads the query and the text alone | one list, then the reranker |
+| `keyword-any` | A hit holds any of your words, exactly | yes |
+| `keyword-all` | A hit holds every word, exactly | no |
+| `bm25` | BM25 over each word's stored forms: the word, the parts of identifiers such as `useInvoiceFilters.ts`, and English stems | yes |
+| `bm25-postings` | The same score as `bm25`, read from an index that works under row security | yes, and the default |
+| `bm25-trigram` | `bm25` plus word similarity for misspellings and fragments | no |
+| `sparse` | Weights from a local learned model | no |
+| `bm25-sparse` | `bm25-postings` and `sparse`, combined | no |
+| `bm25-rerank` | `bm25`, with the top hits reordered by a local cross-encoder | no |
 
-**Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
-`search.default` the default ([configuration](../operations/configuration.md)); a tenant's admin
-sets the tenant's own default among them, journalled, with no restart (`oml search
-set-default`); a request names one with `search`. A name the deployment does not serve is
-refused naming `/search`, never replaced. `match: "all"` keeps only rows holding every word and,
-when none does, serves the any-word hits with `search.fallback: "any_term"`.
+The server lists the offered pipelines in `search.enabled` ([configuration](../operations/configuration.md)). A name the server does not offer is refused with `search.unavailable`.
 
-**What the answer says.** `search.pipeline`, `search.terms` (the query's words as read),
-`search.fallback`, `search.access` and `search.pruned` (*since v0.5.6*,: `postings` or
-`scan`, and the words pruned), and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
-than its `k`), spellings for the words no hit holds, under every pipeline but `keyword-all`. They
-come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
-same transaction that promotes, replaces or retires a version; a recall reads the readable
-nodes' vocabulary and never a row, so no spelling names a word only an unreadable row says. Each hit carries `matched`: the
-words it holds, `of` how many the query had, and `via` the retrievers that found it; *since
-v0.5.7*, `tokens`, the learned sparse word pieces that scored it with each contribution and
-whether the model added it (`expanded`), and `expanded`, the pieces it matched only through the
-model's expansion, so a match by expansion never reads as a word the memory says.
-Scores compare within one answer only.
+### Choosing one
 
-**Learned sparse postings** *(since v0.5.7,)*. A version that gets postings is
-queued for the encoder in its own write's transaction; the lead's encoder task takes the queue
-oldest first, runs the model on the CPU in its own pool, and writes the version's kind 2 postings
-(its 128 largest weights at or above 0.1) with the version's current state, so promotion,
-supersession, demotion and retirement move them as they move kind 1's. A version not yet encoded
-is absent from `sparse` lists and still found by `bm25-postings`; `oml doctor` names the backlog
-and any failed encode, which is retried after at most an hour. A deployment that names a sparse
-pipeline and lacks the model's files does not start, and names the file; one that names none
-reads no model file.
+1. A request names a pipeline with `--search`.
+2. Otherwise the tenant's default applies. An admin sets it with `oml search set-default`, and it takes effect on the next request without a restart.
+3. Otherwise the server's `search.default` applies.
 
-**Postings, pruning and the scan** *(since v0.5.6,)*. Under row security no text operator
-reaches an index, but integer equality does, so `bm25-postings` reads each version's lexemes as
-integer postings (`search_postings`, one partition per tenant under the same policy; [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
-Before it reads a posting it sums the served versions' counts over the readable workareas, adding
-the caller's own held rows when it asked for them: the row count, the mean length and each query
-form's document frequency are the readable rows', never the tenant's. While the query forms'
-readable postings together fit `POSTING_BUDGET`, every form is read and the list is `bm25`'s.
-Past it, a word with a form held by more than `FREQUENT_SHARE` of the readable rows is
-**frequent** and left out of the postings read, every form of it; then, while the kept words'
-postings sum above the budget, the kept word with the most is left out too. A word is pruned
-whole, so `search.pruned` names every word whose rows may be missing, and `pruned: []` means the
-list is `bm25`'s. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
-returned row's score is its full BM25 score. Candidates come only from the forms read, so what
-pruning loses is a row that holds only frequent words, a loss in the long tail of the list: it is
-why the budget, not the share, decides when to prune (amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
-`bm25` statement answers over the stored lexemes, ranked as `bm25` ranks, and the answer says
-`search.access: "scan"`; otherwise `"postings"`. Under `match: "all"` it reads only the rarest
-word's postings, which every answer must hold, and prunes nothing. Which words are pruned depends
-on the rows the key may read alone; a word only unreadable rows hold reads as a word no row holds.
-`FREQUENT_SHARE` is 0.1 and `POSTING_BUDGET` 10,000, set by the runs open question 2
-records. A key holding many own held rows pays for them: at 10,000 such rows a universe recall
-with `include_unreviewed` measured 266 ms p95 (open question 7).
+`oml search show` lists what the server offers and which one a recall will run.
 
-**What a retriever may not do.** It ranks the scope it is handed and nothing else: it never
-widens it, never reads a verdict, a reviewer or `promoted_at`, and computes any statistic over
-the scope alone, so a row the key cannot read never moves another row's rank. Steering never
-enters a retriever. The laws every adapter passes, the in-memory test store and PostgreSQL
-alike, are in `oml-port-contracts`. A reranker is held to the same rule from the
-other side: the core hands it the query and the text of rows it would serve, and nothing else,
-and its laws (one relevance per passage, in `[0, 1]`, the same alone as among others) run against
-the test double and the real model alike.
+### Any word or every word
 
-**Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
-default; the public benchmarks run the same served path over BEIR SciFact and
-NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
-with the date, commit and host of each run: [benchmarks](../benchmarks/index.md). `bm25` was
-v0.5.5's default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
-misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
-enables it. Under row security no text or trigram index can serve the serving
-role's reads, so 0020 builds none and `bm25`'s cost grows with the rows in its
-scope; the scale page shows by how much. *Since v0.5.6:* `bm25-postings` is the default, as
-'s evidence held on the build that ships it: `bm25`'s gate passed (success@1 0.826,
-success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
-a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
-([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
-`bm25` stays served as its fallback and comparison. *Since v0.5.7:* `bm25-sparse` passes the same gate (success@1 0.860,
-success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685 nDCG@10), NFCorpus
-(0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
-two lists took 272 ms at p95, universe scope, against the 50 ms bar ().
+The default is `--match any`: a hit holds any of your words. `--match all` keeps only memories that hold every word. When none does, the answer returns the any-word hits and marks `search.fallback: "any_term"`.
 
-**Capped before fusion.** *Since v0.5.8:*
-the depth the core reads each list to (`k` alone, at least 50 for reciprocal rank, at least 100
-for a convex combination, at least the rerank depth) is a cap the core enforces before fusion,
-whatever an adapter returns, so no retriever contributes more candidates than another.
+### What the answer says
 
-**Filtered by origin, marked by the source.** *Since v0.5.8:*
-`anchor_repo` and `anchor_path_prefix` are a predicate of each retriever's candidate statement,
-combined by AND with every other filter; either leaves out unanchored rows. The PostgreSQL store
-first reads the readable anchored ids by the anchor index, up to `ANCHOR_FIRST_MAX` (2,000): within
-it, a list scores only those ids' postings or rows (anchor-first); above it, the statement joins
-the filter on the indexed columns (postings-first). The repository is an equality and the prefix
-the range `[prefix, upper)` on `text_pattern_ops`' leakproof `~>=~` and `~<~`, so the index
-serves the serving role under row security. Corpus statistics and document frequencies stay the
-unfiltered ones, so a filtered list is the unfiltered list filtered then cut; records the
-latency. Every served item carries its
-`anchor`, and `stale` (`changed` or `removed`) from its latest source check: checks are recorded
-only on promoted served tips, so a mark never derives from a held version and tells no reader
-that one exists (R3).
+The answer reports the pipeline that ran (`search.pipeline`) and the words it read (`search.terms`). Each hit carries `matched`, the words it holds, and `of`, how many words the query had.
 
-## The recall-ordering contract: steering rows first, unranked
+When a recall finds fewer than three hits, `search.did_you_mean` suggests spellings. They come from words in memories you can read, so a suggestion never reveals a word that only an unreadable memory holds. Scores compare within one answer only.
 
-*Available since v0.2.0 · [releases](../changelog.md)*
+Under `bm25-postings`, a very common word can be left out of the index read. `search.pruned` names every such word, and `pruned: []` means the list is the same as `bm25`'s.
 
-A recall result has two segments, in this order:
+## Order of the answer
 
-1. **Steering rows** of the queried scope — every applicable steering row,
-   **unranked**. Steering rows are not hits; they are standing instructions
-   the workarea's governance promoted (a steering row is held and
-   non-author-reviewed like any claim; see [admission.md](admission.md)). They
-   precede hits precisely because they must not compete with hits for rank: a
-   steering row that relevance-scoring could bury is a steering row that
-   fails exactly when an agent most needs the instruction.
-2. **Hits**, ranked by the query (FTS rank, vector distance, or the fused
-   order of a combined query — fusion weighting is an implementation choice
-   inside this contract and is unmeasured like the rest of the tier).
+A recall returns two segments in a fixed order.
 
-Membership and order of both segments are fixed:
+1. **Steering.** Every promoted steering memory of the workarea and its ancestors, in order of depth from `universe`, then promotion time. The query does not rank steering, and the `k` cut and the token budget never remove it. A descendant's steering does not apply at an ancestor.
+2. **Hits.** Promoted memories of kind `memory` or `derived_fact`, by score, highest first. Ties break by artifact id.
 
-- **Applicable steering** for scope node N is every promoted, served-tip row
-  of kind `steering` that is not part of a retired claim, whose workarea is N
-  or an ancestor of N, within the key's reader effective access. A
-  descendant's steering belongs to another crew and does not apply at N. A
-  `self_signed` steering row applies only when N is its own workarea; it never
-  applies at a descendant scope.
-  Segment 1 is ordered structurally, never by the query: depth from the
-  `universe` root ascending, then `promoted_at` ascending, then `artifact_id`
-  ascending. Steering never appears among the hits, and the `kinds` filter
-  applies to hits only.
-- **Hits** are served tips (tip, state `promoted`) of kind `memory` or
-  `derived_fact` — plus, in a workarea whose journalled policy opts the
-  vocabulary kinds into the shared indexes, served tips of kind
-  `term`, `term_mapping` or `vocab_release` — never retirement versions, never
-  versions of retired claims, plus the caller's own held rows when it asks for
-  them ([below](#own-held-rows-in-recall)). A `self_signed` version is a hit
-  only when the scope node is its own workarea. The `kinds` filter names only
-  `memory` and `derived_fact`, as keeps it: a recall that sends it
-  narrows the hits to those kinds, and one that omits it also receives
-  opted-in vocabulary hits. The order is total: score descending,
-  then `artifact_id` ascending in byte order. The score is the
-  [pipeline](#search-pipelines)'s: one retriever's score, or the fused
-  reciprocal-rank score, compared as `float4`. Under `keyword-all` it is
-  `ts_rank(to_tsvector('simple', claim), plainto_tsquery('simple', query))`
-  with normalization 0, v0.5.0's; in the in-memory test store, which serves
-  the two keyword pipelines with PostgreSQL's semantics on plain words, it
-  is the count of distinct query terms matched. The two stores agree on the
-  set of hits and on the tie order, not on every rank. A superseded version is never a hit; it stays fetchable by id
-  as history.
-- **Served tip**, in both bullets above: for a key in a simulation's
-  audience, a claim's served tip is its overlay tip for that simulation where
-  one exists and shadows the default tip
-  ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)),
-  and the default tip it shadows is then neither a hit nor applicable steering
-  for that key; for every other key the served tip is the default tip
-  (`memories_served_tip`), and overlay tips are never served
-  ([the simulation read predicate](#the-simulation-read-predicate)).
-- **Determinism** holds over a fixed candidate list: the same candidates
-  always come back in the same order. Whether approximate vector search fixes
-  the candidate list for a given query is part of 's measurement, not a
-  property this page claims.
+Steering comes first because a standing instruction that relevance could bury fails when an agent needs it most. Nothing a client sends changes that order.
 
-*Since v0.5.0:*
-when the scope node lies inside a [user root](workareas.md#user-roots),
-the hits also include the served tips of the `universe` node itself where the key's
-reader access covers it — every user key's node grant does — ranked with the
-scope's own hits in the one total order above. Applicable steering needs no change:
-`universe` is an ancestor of every scope. A universe claim is served with no
-principal, no `derives_from` and no path below `universe`
-([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)). Whether universe
-hits crowd out a project's own is unmeasured, tracked as.
+A recall inside your user root also searches `universe`. Its memories rank with your own, and its steering applies as an ancestor's. See [workareas](workareas.md#your-own-workarea).
 
-The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
-and the MCP `recall` tool): clients may rely on segment order, and nothing a
-client sends re-ranks segment 1.
+### Your own held memories
 
-How the result is assembled is a hot-path rule, not an implementation accident: steering rows, hits
-and bodies hydrate in **one or two prepared statements, fetched set-wise, never
-one query per hit**; fusion of the FTS and vector candidate lists is computed
-in one pass, never a third query round; and the server-side
-[token budget](#token-budgets) is a performance feature as well as an
-ergonomics one — rows the budget cuts are never decrypted and never cross the
-wire.
+With `--include-unreviewed`, your key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
-## Own held rows in recall
-
-*Available since v0.2.0; the name `include_unreviewed` since v0.4.0 · [releases](../changelog.md)*
-
-A recall with `include_unreviewed: true`, v0.3.0's `include_own_held` also takes
-as hit candidates the calling key's [own](roles-and-keys.md#own) rows that
-are:
-
-- in state `held`;
-- of kind `memory` or `derived_fact`, and not retirement versions;
-- in a workarea within subtree(scope) ∩ the key's reader effective access,
-  minus its global denials;
-- when a simulation row or sim-derived, only while the key is in that
-  simulation's audience ([own](roles-and-keys.md#own));
-- matched by the query;
-- admitted by the request's `kinds` filter when one is sent, as promoted hits
-  are.
-
-They are ranked by the same total order as promoted hits and interleaved in
-`hits`, each with `state: held` and `tip: false`, and they count against `k`
-and the [token budget](#token-budgets) exactly like promoted hits. A held
-successor carries `replaces`; the promoted tip it would replace stays among
-the hits until ratification, and the two are never deduplicated. Own held
-steering and own held retirement versions never enter recall — neither is in
-force — and own-work status and get reach them. `include_unreviewed` defaults to
-`false`, which is exactly the prior behavior; no other key's result changes,
-and the recall ceiling stays reader on the scope, so a writer-only key reads
-its held rows through own-work status and get.
-
-Held rows have no embedding, so a held row's score is the fusion function
-evaluated with its full-text rank and no vector term: the vector component
-contributes exactly what an absent candidate list contributes under the fusion
-in use. Held and promoted candidates are then merged under the one total order
-— score descending, then `artifact_id` ascending in byte order — before the
-`k` cut, so, given the same scored candidates, the interleaving, the `k` cut,
-the budget cut and the read-log ids are a pure function of them: on one
-server, over a fixed candidate list, the same request always serves the same
-rows. Across servers they agree only where the scores agree, since fusion is
-an implementation choice. In the PoC both scores are to be
-`ts_rank` under the same `simple` configuration and `plainto_tsquery`, so they
-compare directly. Because a held row has no vector term, under any fusion in
-which an absent list contributes nothing and a vector match never lowers a
-score, it scores no higher than it would once promoted, so own held rows rank
-at or below their promoted rank; this affects only the author's own result,
-and how far below is unmeasured. In cluster
-mode the request is an own-held read
-([reads in cluster mode](#reads-in-cluster-mode)).
-
-## Held text containment
-
-Held text is matched only through a read fenced to its author, never through
-the shared serving indexes — the same
-containment-by-construction stance as the
-[simulation read predicate](#the-simulation-read-predicate): a forgotten
-predicate fails toward invisibility.
-
-- **Designed form (decided, not built).** A `held_fts` table holds one
-  `tsvector` row per held version, keyed by author key and workarea
-  ([data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
-  Every transition into held inserts the row, in the commit that makes the
-  transition: the capture commit, with the `tsvector` computed from the NFC
-  plaintext before `BEGIN`; a [reopen](admission.md#reopening-a-rejection), and
-  a reassignment that re-enters held, with the `tsvector` computed on the
-  serving path under the same decrypt rule as get. Every transition out of held
-  — promotion, rejection and erasure among them — removes it in the commit
-  that makes the transition. A reassignment updates the row's `workarea_id` in
-  its own commit, so the read-access filter of
-  [own held rows in recall](#own-held-rows-in-recall) never reads a stale node,
-  and a reassignment that re-enters held removes the version from
-  `memories_fts` and `memory_embeddings` in that same commit. Besides tenant
-  RLS the table carries an author policy over the caller's own key set,
-  `author_key_id = ANY (string_to_array(current_setting('oml.own_key_ids'), ',')::uuid[])`:
-  `oml-server` sets `oml.own_key_ids` from the authenticated key and its
-  journalled `rotated_from` chain at the start of every transaction, never
-  from the client, so a session reads only the held rows of its
-  [own](roles-and-keys.md#own) keys and a rotated key still matches its
-  predecessor's. Under that policy a row the setting does not match is
-  skipped silently, so a forgotten predicate fails toward invisibility on
-  reads but toward retention on removals. Every commit that moves a version
-  out of held, or reassigns a held version, therefore checks that its
-  `held_fts` DELETE or UPDATE affected exactly one row, and the capture insert
-  checks that it inserted one; any other count aborts the commit with
-  `system.internal`, so the transition fails rather than leaving held text
-  behind its held state. Its rows are `tsvector` entries, and the
-  [erasure inventory](audit-and-lineage.md#the-erasure-inventory) lists the
-  table on its own row.
-  `memories_fts` and `memory_embeddings` stay promoted-only.
-- **PoC form (decided, not built).** The PoC, which stores bodies inline, is
-  to match held text through one port method whose SQL hard-codes the state
-  `held` and the author key set; a port-contract test run against both stores
-  is to assert that it never returns another key's row, whatever the query,
-  and the code and README are to state the gap to the designed form.
+Inside an in-progress workarea, every author's held memories join, labeled unreviewed. See [workareas](workareas.md#in-progress-workareas).
 
 ## Token budgets
 
-*Available since v0.2.0; the name `include_text` since v0.4.0 · [releases](../changelog.md)*
+Pass `max_tokens` to cap an answer. A memory costs its body size in bytes divided by 4, rounded up. The divisor is a convention, not a model's tokenizer count. Every served memory carries its `tokens`.
 
-This section is the single declaration site for recall budgets.
+The cut works in four steps:
 
-**The budget token.** The recall budget unit is the **budget token** under
-counter `oml-tc/1`: tokens(row) = ⌈`body_bytes` ÷ 4⌉, where `body_bytes` is the
-UTF-8 octet length of the row's NFC-normalized body — the clear integer the
-submission event journals: `submission.remember`, `submission.learn`, or
-`simulation.write` for a simulation row
-([event catalog](../data/event-catalog.md#submission-family)).
-Only the body text is counted, never ids, paths or metadata. The divisor 4 is a
-convention, not a measured ratio, and the count is not any model's tokenizer
-count; how far the two differ for real text is unmeasured —. Clients convert with their own ratio from the
-per-row counts. Changing the function mints a new counter id; `oml-tc/1` never
-changes meaning.
+1. Steering is served whole, whatever it costs.
+2. What remains of the budget is `max_tokens` minus the steering tokens, never below zero.
+3. Hits are served in order while they fit.
+4. The first hit that does not fit ends the list. The server skips ahead to no smaller hit and serves no partial body.
 
-**Per-row counts.** Every served row carries `tokens`, whether or not a budget
-was sent: steering items, hits, get results and own-work listing items.
+For example, take steering of 120 tokens, hits of 300, 250 and 90, and `max_tokens` of 500. The answer serves the first hit. It reports `used_tokens` 420, `truncated: true`, `hits_omitted: 2` and `next_hit_tokens: 250`. When steering alone exceeds the budget, the answer still serves it.
 
-**The parameter.** `max_tokens` is an integer from 1 to 2⁵³ − 1. The upper
-bound is the [read log](#the-read-log)'s: the request digest canonicalizes
-`max_tokens` under [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785), which
-serializes an integer exactly only below 2⁵³
-([chain format](../data/chain-format.md#the-signed-fields)), so a larger value
-is refused with `request.validation` rather than digested lossily. Absent,
-there is no budget and the response carries no `budget` object. `max_tokens`
-together with `include_text: false` is refused with `request.validation`:
-counting text that is not sent gives the caller a meaningless budget.
+`max_tokens` with `include_text: false` is refused with `request.validation`, because it would budget text you did not ask to receive.
 
-**The cut.** Over the steering counts S, the `k`-capped ranked hit counts H
-(own held rows included when asked) and the budget M:
+## What was measured
 
-1. s = ΣS. Steering is never cut.
-2. remaining = max(M − s, 0).
-3. The hits served are the longest prefix H[0..j) whose sum is at most
-   remaining. The first hit that does not fit ends the list: no skip-ahead to a
-   smaller later hit, and no partial body.
-4. truncated = (j < |H|).
+The benchmarks run every pipeline through the same served path as an agent. The table shows BEIR SciFact, 5,183 memories and 300 queries, run on 2026-11-05. The [benchmarks page](../benchmarks/index.md) holds every suite with the commit and host of each run.
 
-**The budget object.** `{max_tokens, counter: "oml-tc/1", steering_tokens: s,
-used_tokens: s + ΣH[0..j), truncated, hits_omitted: |H| − j, next_hit_tokens}`,
-where `next_hit_tokens` is tokens(H[j]), or null when nothing was cut.
-`used_tokens` exceeds `max_tokens` only when steering alone exceeds it, and the
-object shows that; steering past the budget is served whole, never refused,
-and only hits of 0 budget tokens — empty bodies — can follow it.
+| Pipeline | nDCG@10 | p95 latency |
+|---|---:|---:|
+| `keyword-any` | 0.515 | 1,075 ms |
+| `bm25` | 0.685 | 116 ms |
+| `bm25-postings` (default) | 0.685 | 65.6 ms |
+| `bm25-sparse` | 0.730 | 83.7 ms |
 
-**Worked example.** Steering [120], hits [300, 250, 90], M = 500: s = 120,
-remaining = 380; the first hit (300) fits, the second (250) does not, so the
-list ends there and the 90-token hit is not served. The answer serves one hit,
-with `used_tokens` 420, `truncated` true, `hits_omitted` 2, `next_hit_tokens`
-250.
+`bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher but stays opt-in, because its latency at larger scope misses the 50 ms bar. See [benchmarks](../benchmarks/index.md) for the scale runs.
 
-**What the cut costs.** `k` caps the candidates before the budget applies;
-counts come from `body_bytes` without decryption; rows the budget cuts are
-never hydrated, decrypted or sent, and the served rows hydrate in one set-wise
-statement. A strict
-prefix can serve zero hits when the top hit exceeds what remains of the
-budget; the budget object says so.
+## What search does not do
 
-## Decrypt on serve
-
-*Not scheduled · [releases](../changelog.md)*
-
-Bodies are stored as per-artifact-DEK ciphertext everywhere at rest —
-Postgres, lake, object store ([storage.md](storage.md)). **Plaintext exists
-only on the serving path**: `oml-server` unwraps the artifact's DEK and
-decrypts per request, after access and the simulation predicate have passed.
-No other workload decrypts — the lake-writer is keyless, moving
-admission-produced ciphertext verbatim, and the reconciler verifies
-ciphertext digests keylessly
-([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) — so crypto-shredding (D4, declared
-in [audit-and-lineage.md](audit-and-lineage.md)) has exactly one decryption
-locus to reason about. The cost is per-read decryption work on the server;
-caching decrypted bodies anywhere outside that path is refused by design, and
-any serving-path cache is itself a copy class in the erasure inventory.
-
-One serving-path cache is named rather than left generic: the **DEK serving
-cache**. Without
-it, a recall with k hits pays k per-artifact key unwraps against the KMS —
-a network call each — on every request; with it, the serving path holds
-**plaintext keys of erase-eligible artifacts**, which is why it is a declared
-design object and not an optimization detail. Its rules: it is a named copy
-class in the erasure inventory
-([audit-and-lineage.md](audit-and-lineage.md)); erase purges it
-**synchronously**; it is TTL-bounded, and that TTL composes into
-'s end-to-end erasure bound. Whether it caches
-per-artifact DEKs or an unwrapped per-tenant KEK — different KMS-call
-profiles, blast radii and erasure reasoning — is the open decision recorded
-as.
-
-## Reads in cluster mode
-
-*Not scheduled · [releases](../changelog.md)*
-
-In cluster mode
-a follower's hot path is recall and get, only — writes forward to the lead —
-and its reads follow one routing policy:
-
-- **Own-held reads route to the lead and the primary.** A read of the caller's
-  own held rows — a recall with `include_unreviewed: true` among them — and any
-  submit-then-get sequence, is served from the primary:
-  read-your-writes on an agent's own work is the one place staleness visibly
-  breaks an agent's loop, and held rows are author-only anyway, so one routing
-  rule buys the guarantee with no extra machinery.
-- **Promoted-row recall and get serve from the follower's local replica**, with
-  staleness stated honestly: the bound is **replication lag, exposed as a
-  follower metric** — never hidden, never assumed zero. One consequence said
-  plainly: a supersession ratified on the lead may briefly serve the old tip
-  from a lagging follower; the stated staleness bound covers exactly that
-  window.
-- **The escape hatch is named, not built:** an LSN fence — the submit response
-  carries the commit LSN, and a follower read can wait for replay to pass it —
-  exists in the design vocabulary if read-your-writes recall is ever demanded,
-  and is not part of v1.
-
-## The read log
-
-*Not scheduled · [releases](../changelog.md)*
-
-*Not the recall telemetry.* Since v0.5.7 each recall is also recorded in `recall_events`, with
-the labels of what its reader did next, for 30 days, to a tenant admin alone: that table answers whether a recall helped, and is never offered as
-an audit record. The read log below answers who read what, for an auditor, under a retention the
-tenant sets, and is not built.
-
-Every read is logged: key, role, workarea, the memory ids served, timestamp,
-and for a recall the request digest. A recall logs exactly the artifact ids
-served after the `k` and [budget](#token-budgets) cuts — own held ids included,
-since an author reading its own rows is still a read — never the candidate list
-before the cuts. `query_digest` is SHA-256 over the RFC 8785 JSON of an object
-whose members, listed below, are always present, with defaults applied before
-digesting. Two members keep their v0.3.0 names when the request fields they digest are renamed,
-so a digest logged before v0.4.0 and one logged after compare:
-
-| Member | Value digested |
-|---|---|
-| `query` | the NFC-normalized string |
-| `k` | the integer, default 8 applied |
-| `kinds` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
-| `include_bodies` | the request's `include_text`, default `true` applied |
-| `include_own_held` | the request's `include_unreviewed`, default `false` applied |
-| `max_tokens` | the integer, `null` when absent |
-| `terms` | sorted ascending by Unicode code point (equivalently UTF-8 byte order), duplicates removed; `[]` when absent — a sent empty array is refused, so `[]` stands only for absence |
-| `expand_terms` | the string, default `"none"` applied |
-| `scope` | the resolved node id |
-
-So two requests share a digest only when they differ solely in the order or
-repetition of `kinds` or `terms` entries, and one request gets one digest on
-every server; the served ids, logged beside it, record what each read
-returned.
-Design commitments:
-
-- **Outside the hash chain.** Read events go to `read_events`, a partitioned,
-  retention-bounded log — not to the journal. Reads are orders of magnitude
-  more frequent than writes, and a chain serialized per tenant (D1,
-  [storage.md](storage.md)) must not be throttled by read volume.
-- **Anchored by batch digests.** Per-batch digests of the read log are written
-  into the journal as ordinary signed events. Tampering with a logged read
-  therefore breaks an anchored digest: the log sits outside the chain but is
-  not outside its protection. What anchoring does **not** give is
-  per-read-event chain membership; that boundary is stated here, once, rather
-  than implied away.
-- **Follower reads log asynchronously.** `read_events` lives on the primary, so
-  a follower serving recall writes its read events upstream as an
-  **asynchronous batched insert**, never a synchronous write inside its read
-  path. The honest
-  cost: follower buffering enlarges the unanchored tail — a crashed follower
-  loses its unflushed read-event buffer — which is stated where
-  [commitments](../product/commitments.md) states the read-log bound; who
-  batches and anchors the follower-written rows is the open decision.
-- **Retention is tenant policy.** The retention window of `read_events` is a
-  journalled per-tenant policy, not a constant. Evidence exports scope their
-  read-log section to that window, and `read_events` appears in the
-  retention/erasure inventory ([audit-and-lineage.md](audit-and-lineage.md)).
-
-The formulation this design commits to, everywhere the read log is described:
-**a read log that answers who read what, when an auditor asks** — within the
-tenant's retention window, with batch digests anchored in the journal. No OML
-page, message or export names a regulator's requirement unless it cites the
-regulation and article; there is no such citation today, so there is no such
-claim (D17).
-
-## The simulation read predicate
-
-*Not scheduled · [releases](../changelog.md)*
-
-Every read path — FTS, vector, fetch, graph — applies one predicate:
-
-> `provenance ≠ simulation` **OR** `key ∈ simulation audience`
-
-Simulation rows ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)) are never in the shared
-FTS and vector indexes; they are indexed per simulation, so the shared indexes
-are structurally incapable of leaking a simulation row to a key outside the
-audience — the predicate on the shared path is a second fence, not the only
-one. The cost is an index per live simulation and a split query plan for
-audience members; the design accepts it because containment by construction
-beats containment by filter discipline.
-
-Tip resolution follows the same fence: **taint never captures the default
-tip.** Tip computation for a key outside a simulation's audience ignores
-simulation-tainted versions — `provenance: simulation` rows and sim-derived
-claims alike — so the default tip of every claim is bit-for-bit what it would
-be if the simulation did not exist. A promoted tainted supersession of a real
-claim is served to audience keys as an **audience-scoped overlay tip** that
-shadows the default tip inside the fence; the shared tip index
-([audit-and-lineage.md](audit-and-lineage.md) owns tip semantics) never
-records it, and any act that would make a tainted version the default served
-tip is refused (`simulation.tip_refused`, [errors](../api/errors.md)). When a
-simulation ends, its overlay tips demote with its closure; the default tip
-never moved.
-
-## Out of scope: grounded Q&A
-
-OML answers no questions. Clients are agents that recall and reason
-themselves; the provider serves memories, never synthesized answers. The
-decision is in the decision register, which
-declines the feature for v1 rather than deferring it silently. If a
-grounded-answer surface ever returns, it enters as a new decision with its own
-review, not as a quiet extension of recall.
-
-## Decision record
-
-This page's decisions are registered as 
-(decision register); own held rows in recall, held text
-containment, token budgets, the segment membership and order, and the read-log
-content are the proposed 's,
-which would amend and d5.
+- **It does not answer questions.** OML returns memories. The agent that recalls them reasons over them.
+- **It does not match word forms in the keyword pipelines.** With `keyword-any`, a query for "deploy" does not find "deployments". `bm25` pipelines add English stems and identifier parts.
+- **It has no measured latency beyond the scale benchmarks.** Not measured yet. Without a text index under row security, every pipeline but `bm25-postings` costs more as the readable rows grow.

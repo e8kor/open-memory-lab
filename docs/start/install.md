@@ -6,8 +6,12 @@ answers: "what install.sh and install.ps1 check and their two outcomes word for 
 
 # Install the `oml` command
 
-Two scripts install the `oml` CLI for the current user, write one file and print the next command. The lines
-below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on every change.
+Two scripts install the `oml` CLI for the current user, write one file and print the next command.
+The lines below fetch them at the tag `v0.6.0`.
+
+!!! info "The public server"
+    The default server is `https://memory.doublegate.io`. The plugin and the agent kit use it
+    unless you name another. A key from that server needs no other setting.
 
 | Platform | Build |
 |---|---|
@@ -18,9 +22,9 @@ below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on ever
 !!! tip "Install not working?"
     See [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
 
-## The line
+## Run the installer
 
-**macOS.** Releases after v0.5.2 carry no macOS build while GitHub's macOS runners are unreliable ([paused targets](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)); on a Mac the installer stops with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
+**macOS.** Releases after v0.5.2 carry no macOS build. On a Mac the installer stops with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
 
 Linux:
 
@@ -49,7 +53,7 @@ irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/insta
 
 - The script never asks for sudo, writes one file and edits no shell profile.
 
-## What it checks, and its two outcomes
+## Check what the installer verified
 
 The script picks the archive for this OS and architecture (Apple silicon is detected under
 Rosetta; Windows on ARM64 gets the x86_64 build, which it runs under emulation), downloads it and
@@ -68,12 +72,12 @@ the release's `SHA256SUMS` over HTTPS, and compares the archive's SHA-256 with i
     oml install: checked: the archive matches SHA256SUMS; its signature was NOT checked, because cosign is not on PATH. That catches a damaged download, not a tampered release: install cosign and rerun with --require-signature for that
     ```
 
-    The PowerShell script names `-RequireSignature` instead. Issue tracks verifying the signature without cosign.
+    The PowerShell script names `-RequireSignature` instead.
 
 Every refusal names its reason and installs nothing: a cosign failure, a checksum mismatch, a
 missing line in `SHA256SUMS`, or `--require-signature` without cosign. After the copy the script
 requires that `oml --version` prints the requested version. The shell script's body is one
-function called on its last line, so a download cut short runs nothing, and the PowerShell script
+function called on its last line, so a download cut short runs nothing. The PowerShell script
 throws rather than exits, so `| iex` never closes your shell.
 
 ## Flags and variables
@@ -84,16 +88,15 @@ throws rather than exits, so `| iex` never closes your shell.
 | `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
 | `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 
-`latest` reads `tag_name` from GitHub's latest-release API, which skips drafts and prereleases. A
+`latest` reads GitHub's latest-release API, which skips drafts and prereleases. A
 piped install takes its flags after `sh -s --`, as in `… | sh -s -- --version latest`. `irm … |
 iex` takes none, so set `$env:OML_VERSION`, `$env:OML_INSTALL_DIR` or
 `$env:OML_REQUIRE_SIGNATURE = '1'` first.
 
-## Where it writes, and `PATH`
+## Put `oml` on your `PATH`
 
-The one file is `oml` (`oml.exe`) in the install directory, copied beside its destination and
-renamed into place, so a running `oml` is never left half written. When the directory is not on
-`PATH`, the script prints the one line that would add it and changes nothing. Then it prints the
+The one file is `oml` (`oml.exe`) in the install directory, renamed into place, so a running `oml` is never left half written. When the directory is not on
+`PATH`, the script prints the one line that would add it and changes nothing. It then prints the
 next command:
 
 ```text
@@ -104,13 +107,12 @@ Next, connect to your server with your agent key:
 
 **Uninstalling** is deleting that one file. `oml login` writes one more, the owner-only
 credentials file, `$HOME/.config/oml/credentials` ([CLI
-reference](../cli/reference.md#start-settings)); delete it too to forget the server and the key.
+reference](../cli/reference.md)); delete it too to forget the server and the key.
 
-## By hand, with cosign
+## Install by hand with cosign
 
-Each release carries the CLI as `oml-cli-X.Y.Z-<target>.tar.gz`, `.zip` on Windows, for the
-targets under [release artifacts](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md),
-each with a cosign signature bundle.
+Each release carries the CLI as `oml-cli-X.Y.Z-<target>.tar.gz` (`.zip` on Windows) for Linux
+x86_64 and arm64 and Windows x86_64, each with a cosign signature bundle.
 
 Linux, on x86_64 (on arm64, `t=aarch64-unknown-linux-musl`); the binary is static:
 
@@ -126,7 +128,7 @@ cosign verify-blob \
   && install -D -m 0755 "oml-cli-$v-$t/oml" ~/.local/bin/oml
 ```
 
-macOS: no archive while macOS targets are paused; v0.5.2 and earlier ship `t=aarch64-apple-darwin` (Apple
+macOS: releases after v0.5.2 have no archive. v0.5.2 and earlier ship `t=aarch64-apple-darwin` (Apple
 silicon) and `t=x86_64-apple-darwin` (Intel), installed with `install -m 0755 "oml-cli-$v-$t/oml" /usr/local/bin/oml`.
 
 Windows, in PowerShell:
@@ -146,11 +148,11 @@ if ($LASTEXITCODE -eq 0) { Expand-Archive "$n.zip" -DestinationPath . }
 Then put `$n\oml.exe` in a directory on your `PATH`. Extract only after `cosign verify-blob`
 exits 0: an archive that does not verify is not a release. What else differs on Windows, the
 owner-only files and the plugin's hook under Git Bash, is in the [CLI
-reference](../cli/reference.md#installing-oml-and-what-differs-on-windows).
+reference](../cli/reference.md).
 
-## Not offered
+## Package managers
 
-Homebrew, Scoop and winget are not offered. Since Homebrew 6.0.0 a third-party tap needs `brew
-trust` before it installs, and winget publishes through a reviewed pull request per release; each
-can follow the script, and none is one command on every OS today (rejected
-alternatives). An npm or `npx` wrapper would make Node a dependency of a static binary.
+OML offers no Homebrew, Scoop or winget package and no npm wrapper. A third-party Homebrew tap needs
+`brew trust` before it installs, and winget publishes through a reviewed pull request per release.
+Neither is one command on every OS. An npm or `npx` wrapper would make Node a dependency of a
+static binary.

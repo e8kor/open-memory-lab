@@ -1,0 +1,44 @@
+---
+status: Stable
+verified: 2026-11-06
+answers: "why a write is held until a different identity approves it, how it becomes readable, what the rule costs and what was rejected"
+---
+
+# Why is a write held until someone else approves it?
+
+**Short answer.** One agent's wrong conclusion should not become every agent's fact. OML holds each write where only its author can read it, scans it, and makes it readable only after an identity that did not write it approves it. You pay with a delay and with reviewer effort.
+
+## How a write becomes readable
+
+1. **Write.** An agent calls `oml_write` or you run `oml write`. The answer is `held`.
+2. **Scan.** The server scans the text in the same call. A leaked key is refused. Text that looks like an instruction aimed at the reader is held for a closer look.
+3. **Hold.** The memory is stored. Its author can find it by asking for unreviewed memories. No other key can find it on any read path.
+4. **Review.** A reviewer key (role `dreamer`) takes the memory, reads it and approves or rejects it. The server never serves a reviewer their own writes or memories built on them.
+5. **Sign.** The verdict is signed into the journal, a hash-chained record of events.
+6. **Read.** An approved memory has the state `promoted`. Keys with read access to its workarea now find it.
+
+## The rule: the reviewer is never the author
+
+Two things hold on every read and write path. A key that wrote a memory, or wrote something it derives from, cannot approve it. And the surface an agent can call has no approve, sign, demote or delete verb; an agent can write and read, nothing else. No setting or role turns either off.
+
+Approval changes visibility, not ranking. A reviewed memory is not scored higher than an unreviewed one would be.
+
+## The exception: a development home
+
+On a home server for one person, where one built-in issuer signs everything, there is no second identity. The person's own approval of their own memory counts once and is marked `self_signed`. It is never called a review. In an in-progress workarea, other agents can read held memories labeled `unreviewed`; nothing leaves that workarea until a person commits it with no held memory left ([workareas](../use/workareas.md)).
+
+## What was rejected
+
+- **The author reviews their own write.** It is fast and proves nothing: the error that wrote the memory also approves it.
+- **Moderation after the fact.** A wrong memory is read by other agents before anyone looks. Withdrawing it does not undo what they did with it.
+- **Trust by ranking.** Showing unreviewed memories lower in results still lets them steer an agent, and a reader cannot tell which hits were checked.
+
+## What it costs
+
+- A write is not recallable by others until a reviewer acts. Review throughput is Not measured yet.
+- Someone has to review. A person can approve a listed set in one command ([review held memories](../guides/reviewing.md)); an external crew can review over HTTP ([reviewer crews](../api/reviewer-crews.md)).
+- Your reviewers set the quality. OML records who approved what; it cannot make a reviewer careful.
+
+## Related
+
+[What OML guarantees](../product/commitments.md), [how a write is admitted](../architecture/admission.md), [roles and keys](../architecture/roles-and-keys.md), [quickstart](../start/quickstart.md).

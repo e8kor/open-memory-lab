@@ -1,58 +1,18 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "which of three paths to take (use a server, run a server, administer a server) and what each needs"
+answers: "which page to open first: connect an agent, run a server or administer one"
 ---
 
 # Get started
 
-Pick the row that matches you. Every client needs two settings, the server's address and a key;
-the server derives everything else from the key. The Claude Code plugin and the other tools'
-configurations default the address to the public server, `https://memory.doublegate.io`, so with
-a key from that server the key is the only setting.
+Every client needs two settings: the server's address and a key. The server derives everything else from the key.
 
-| You are | You have | Do this |
+| You are | You have | Open |
 |---|---|---|
-| A user | an agent key from your administrator | [Install the CLI](install.md), then [connect Claude Code](../guides/claude-code.md), [claude.ai or a phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md) |
-| Running a server | a machine with Docker | [Run your own server](run-your-own.md) |
-| An administrator | an admin key | [First workarea and keys](../guides/administering.md) |
+| Trying OML | Docker | [Quickstart](quickstart.md) |
+| An agent user | a key from your administrator | [Install the CLI](install.md), then [Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md) |
+| Running a server | a machine with Docker, or a Postgres host | [Run your own server](run-your-own.md) |
+| An administrator | an admin key | [Administer a server](../guides/administering.md) |
 
-!!! tip "Something failed?"
-    Installer refuses or prints "NOT checked": [installer problems](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
-    `oml login` fails: [login problems](../help/troubleshooting-client.md#oml-login-fails).
-    Plugin shows no tools: [plugin problems](../help/troubleshooting-client.md#the-claude-code-plugin-shows-no-tools-or-does-not-connect).
-
-## Use a server (about two minutes with a key)
-
-1. Install `oml` (Linux, Windows) with the line on the [install page](install.md).
-2. Run `oml login <server url>`; it asks for the key without echo and stores it only after the
-   server accepts it. With a key from the public server, skip this step.
-3. Run `oml setup claude-code` and reload plugins in Claude Code.
-4. Ask your agent to remember something: [your first memory](quickstart.md).
-
-## Run a server (about five minutes with Docker)
-
-1. Install `oml`.
-2. Run `oml quickstart`. It starts the database and server on `127.0.0.1:8080`, claims the
-   server, creates the workarea `crew`, issues an agent key and a reviewer key, and checks one
-   save, approval and read end to end.
-3. Run the `oml setup claude-code` line it prints.
-4. Go on to [Run your own server](run-your-own.md) for a server a team can reach.
-
-## Administer a server (under a minute per key)
-
-1. Store your admin pair with `oml login`.
-2. Run `oml keys issue-agent <name> --principal <p> --workarea <w> --out <file>`; the key goes
-   into a private file, never onto the screen.
-3. Send the person the `oml setup claude-code --url … --key-file …` line the command prints, and
-   the file over a channel you trust.
-4. Delete the file once the line has run. Give each agent its own key: attribution and the rule
-   that nobody reviews their own work both depend on it.
-
-## What every path has in common
-
-- **Two settings.** The address and the key. The CLI reads flags, then `OML_URL` and
-  `OML_API_KEY`, then the file `oml login` wrote. Apart from `oml setup claude-code`, no command
-  has a default address, so an administrator's command never reaches the public server unasked.
-- **Held first.** What an agent saves reaches nobody else until a different identity approves it.
-  A fact your agent just stored does not show up for a teammate yet.
+Something failed? Run `oml doctor`, then see [troubleshoot the client](../help/troubleshooting-client.md) or the [FAQ](../faq.md).

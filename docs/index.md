@@ -1,67 +1,58 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "what Open Memory Lab is, what it guarantees, and where to start"
+answers: "what Open Memory Lab is, which door to take, and the commands that reach a first recall"
 ---
 
 # Open Memory Lab
 
-Shared memory for AI agents, with a review gate. What an agent writes is held until someone who
-did not write it approves it; only then do other agents and people find it.
+Agents write memories. A different identity reviews them before anyone else can recall them.
 
 <div class="grid cards" markdown>
 
-- **Get started**
+- **Wire an agent**
 
-    Install the CLI, connect Claude Code, save a first memory. About two minutes with a key.
+    Connect Claude Code, claude.ai or another tool to a server.
 
-    [Get started](start/index.md)
+    [Connect Claude Code](guides/claude-code.md)
 
-- **Use with your agent**
+- **Run your own server**
 
-    Remember, recall and review; arrange workareas; keep docs and code in sync.
-
-    [Guides](guides/index.md)
-
-- **Self-host**
-
-    One command starts the database and server; then deploy, monitor and upgrade.
+    One command starts the database and server on your machine; then deploy for a team.
 
     [Run your own server](start/run-your-own.md)
 
+- **Decide whether to adopt it**
+
+    Who OML is for, what it costs and when not to use it.
+
+    [Is OML for you?](product/is-oml-for-you.md)
+
 </div>
 
-Install problem? [Install troubleshooting](help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](faq.md).
+## See the held state in six commands
 
-## What OML is
+```sh
+oml quickstart                       # a local server, a workarea, an agent key and a reviewer key
+OML_API_KEY=$A oml write "We deploy on Tuesdays."
+OML_API_KEY=$A oml read --query "deploy"                       # no hit: the memory is held
+OML_API_KEY=$A oml read --query "deploy" --include-unreviewed  # your own held memory
+OML_API_KEY=$R oml review approve --ids <artifact_id>          # a different key approves
+OML_API_KEY=$A oml read --query "deploy"                       # found
+```
 
-An external memory provider. An agent has three tools, `oml_write`, `oml_read` and `oml_workarea`,
-and may never promote, sign, demote or delete. Memory sits in a tree of workareas; a key reads
-and writes only where it holds a grant, and a denial always wins. Recall reads an index: about
-25 ms at the 95th percentile with about 100,000 memories readable ([benchmarks](benchmarks/scale.md)).
-It works where your agents run: Claude Code, claude.ai and the Claude apps, Codex CLI, Cursor,
-Gemini CLI, VS Code and Claude Desktop.
-
-## Why the review gate
-
-One agent's wrong conclusion should not become every agent's fact. A write is scanned and readable
-by its author alone; a different identity approves it before anyone else reads it. Approval
-changes visibility, never ranking. Every write, verdict and key issuance is chained and signed, so
-`oml audit` answers "who approved this, and on what basis". The price is review effort and a
-write that waits. [What OML guarantees](product/commitments.md) has the full list.
+The [quickstart](start/quickstart.md) sets `A` and `R` and explains each step.
 
 ## Where things are
 
 | Tab | What it holds |
 |---|---|
-| [Get started](start/index.md) | install, connect, first memory |
-| [Guides](guides/index.md) | tasks: use, integrate, operate |
-| [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors |
-| [Concepts](concepts.md) | the trust model, workareas, review, search |
-| [Benchmarks](benchmarks/index.md) | recall quality and latency, with methodology |
-| [FAQ and troubleshooting](faq.md) | when something does not work |
-| Design records | every decision, numbered |
+| [Get started](start/index.md) | install, quickstart, connect an agent |
+| [Guides](guides/index.md) | tasks: remember, review, organize, sync |
+| [Operate](operations/index.md) | run a server: deploy, monitor, upgrade, back up |
+| [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors, limits, glossary |
+| [Concepts](concepts.md) | why a write is held, roles, workareas, search, security |
+| [Benchmarks](benchmarks/index.md) | recall quality and latency, with method |
+| [Help](faq.md) | FAQ, troubleshooting, release notes |
 
-The current release is v0.6.0 ([release notes](changelog.md)). Open work is tracked as
-[GitHub issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). The code is
-Apache-2.0 and this documentation CC BY 4.0.
+The current release is v0.6.0 ([release notes](changelog.md)). Open issues are on [GitHub](https://github.com/e8kor/open-memory-lab/issues). Code is Apache-2.0; this documentation is CC BY 4.0.

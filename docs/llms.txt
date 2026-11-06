@@ -1,89 +1,91 @@
 # Open Memory Lab
 
-> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only
-> its author can read it, scanned, and made visible only when an identity that did not write it
-> approves it. Every write, verdict and key issuance is signed into a per-organisation hash chain.
-> The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read,
-> oml_workarea) and the `oml` CLI. The current release is v0.6.0. Open work is tracked as GitHub
-> issues labelled `roadmap`. Each page opens with an HTML-comment frontmatter block (id, tier,
-> status, answers).
+> Open Memory Lab (OML) is shared memory for AI agents. What an agent writes is held where only its author can read it, scanned, and made readable only when an identity that did not write it approves it. Every write, verdict and key issuance is signed into a hash chain. The surface is one JSON HTTP API, an MCP server with three tools (oml_write, oml_read, oml_workarea) and the `oml` CLI. The current release is v0.6.0. Each page opens with YAML front matter (status, verified, answers).
+
+- [Home](https://e8kor.github.io/open-memory-lab/): what Open Memory Lab is, which door to take, and the commands that reach a first recall
 
 ## Get started
 
-- [Choose a path](https://e8kor.github.io/open-memory-lab/start/): use a server, run a server or administer one, each in numbered steps
-- [Install the CLI](https://e8kor.github.io/open-memory-lab/start/install/): install.sh and install.ps1, what they check, their two outcomes, flags and variables, by-hand cosign steps
-- [Claude Code](https://e8kor.github.io/open-memory-lab/guides/claude-code/): install, `oml login`, `oml setup claude-code`, the first held write, hooks and removal
-- [claude.ai and mobile](https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/): a connector key and its one-time connect code
-- [Other agent tools](https://e8kor.github.io/open-memory-lab/guides/other-harnesses/): Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop
-- [Run your own server](https://e8kor.github.io/open-memory-lab/start/run-your-own/): `oml quickstart` on a laptop, one host with TLS, Kubernetes
-- [First workarea and keys](https://e8kor.github.io/open-memory-lab/start/first-workarea/): claim a server, create a workarea, issue agent and reviewer keys
-- [Your first memory](https://e8kor.github.io/open-memory-lab/start/first-memory/): save, find, review and correct a memory
+- [Get started](https://e8kor.github.io/open-memory-lab/start/): which page to open first: connect an agent, run a server or administer one
+- [Quickstart, six commands](https://e8kor.github.io/open-memory-lab/start/quickstart/): six commands that start a server, write a memory, show it held, approve it as a second identity and recall it
+- [Install the CLI](https://e8kor.github.io/open-memory-lab/start/install/): what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered
+- [Connect Claude Code](https://e8kor.github.io/open-memory-lab/guides/claude-code/): how to connect Claude Code to an OML server from nothing: install the CLI, oml login, oml setup claude-code, reload, the first write and read and why the write is held, the session-start hook and the permission rule it needs, the librarian and failure recall, the manual path without the CLI, and removal
+- [Connect claude.ai and your phone](https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/): how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; and how a connection ends
+- [Connect other agent tools](https://e8kor.github.io/open-memory-lab/guides/other-harnesses/): how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_API_KEY, the public server by default; the one URL edit for another server; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link
+- [Run your own server](https://e8kor.github.io/open-memory-lab/start/run-your-own/): how to run an OML server: oml quickstart on a laptop, one host with TLS for a team, and Kubernetes; what each gives and what it needs
 
-## Use
+## Guides
 
-- [Remember and recall](https://e8kor.github.io/open-memory-lab/use/remember-and-recall/): what an agent saves and finds with oml_write and oml_read
-- [Review](https://e8kor.github.io/open-memory-lab/guides/reviewing/): held memories, reviewer keys, approving and rejecting, bulk review
-- [Workareas](https://e8kor.github.io/open-memory-lab/use/workareas/): your own workarea, the shared universe, development to validated, links and the brief
-- [In-progress workareas](https://e8kor.github.io/open-memory-lab/use/in-progress/): serve unreviewed memories inside a development workarea
-- [Chat memory](https://e8kor.github.io/open-memory-lab/use/chat-memory/): facts an agent writes from a conversation
-- [Sync docs and code](https://e8kor.github.io/open-memory-lab/use/sync/): `oml sync` keeps a workarea in step with a repository
-- [Rules for agents](https://e8kor.github.io/open-memory-lab/use/guardrails/): reviewed rules loaded at session start and checked at the tool call
-- [Use cases](https://e8kor.github.io/open-memory-lab/product/use-cases/): scenarios for agents, administrators and teams
-
-## Integrate
-
-- [MCP tools](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): oml_write, oml_read and oml_workarea: arguments, results, errors
-- [HTTP API](https://e8kor.github.io/open-memory-lab/api/http-api/): the two-ring JSON surface, authentication, idempotency, pagination
-- [OpenAPI document](https://e8kor.github.io/open-memory-lab/api/openapi.yaml): the machine-readable served contract
-- [Reviewer crews](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how an external review crew integrates over HTTP
-- [Client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): the Python and TypeScript clients
-- [Error codes](https://e8kor.github.io/open-memory-lab/api/errors/): the closed set of typed error codes with status and retryability
+- [Guides](https://e8kor.github.io/open-memory-lab/guides/): which task guide to open
+- [Remember and recall](https://e8kor.github.io/open-memory-lab/use/remember-and-recall/): what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held
+- [Review held memories](https://e8kor.github.io/open-memory-lab/guides/reviewing/): how a person reviews held memories: getting and storing a reviewer key, taking the next held memory, reading it and its sources, what to check, approving and rejecting, supersessions and steering, and a worked session
+- [Organize memory in workareas](https://e8kor.github.io/open-memory-lab/use/workareas/): how memory is organized in workareas, what a person's own workarea and the shared universe are, how a workarea matures from development to validated, how an in-progress workarea serves unreviewed memories inside it, and what links and briefs do
+- [Capture chat memory](https://e8kor.github.io/open-memory-lab/use/chat-memory/): what chat memory captures, what it does not, how to switch it on and off, the three hooks it uses, and where captured facts go
+- [Sync docs and code](https://e8kor.github.io/open-memory-lab/use/sync/): how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk
+- [Give agents rules](https://e8kor.github.io/open-memory-lab/use/guardrails/): what a guardrail is, how a team gives its agents reviewed standing rules, how they load and are checked, and the limits of a rule an agent only reads
+- [Integrate a reviewer crew over HTTP](https://e8kor.github.io/open-memory-lab/api/reviewer-crews/): how a reviewer crew integrates over plain HTTP: the next, verdict loop for approve and reject, the refusals on a verdict, polling cadence, and the errors the loop meets
+- [Use the client SDKs](https://e8kor.github.io/open-memory-lab/engineering/sdks/): how to install and use the Python and TypeScript clients: package names, what the hand-written wrapper does for you (URL and key, idempotency, retries, pagination, errors), the seven verbs, and an example
 
 ## Operate
 
-- [Deploy](https://e8kor.github.io/open-memory-lab/operations/deployment/): the three install profiles, workloads, backups, capacity
-- [Kubernetes](https://e8kor.github.io/open-memory-lab/guides/kubernetes/): the release chart verified and installed
-- [Configure](https://e8kor.github.io/open-memory-lab/operations/configuration/): settings and the reference of every key
-- [Administer](https://e8kor.github.io/open-memory-lab/guides/administering/): claiming, workareas, crews, keys, grants, the journal
-- [Operating OML](https://e8kor.github.io/open-memory-lab/operations/operating/): SLOs, error budget, measured capacity, data protection, upgrade, security posture
-- [Monitor](https://e8kor.github.io/open-memory-lab/operations/observability/): metrics, logs, SLI formulas and doctor fields
-- [Upgrade](https://e8kor.github.io/open-memory-lab/operations/upgrades/): forward-only migrations, version skew, per-release steps
-- [Back up and restore](https://e8kor.github.io/open-memory-lab/operations/restore/): the restore ceremony and disaster recovery
-- [Runbooks](https://e8kor.github.io/open-memory-lab/operations/runbooks/): one section per operational condition
-- [Failure modes](https://e8kor.github.io/open-memory-lab/operations/failure-modes/): what each dependency outage does
-- [The lake](https://e8kor.github.io/open-memory-lab/operations/lake/): the Delta lake writer and its key
-- [Security](https://e8kor.github.io/open-memory-lab/architecture/security/): tenancy, key custody and the threat model
-
-## FAQ and troubleshooting
-
-- [FAQ](https://e8kor.github.io/open-memory-lab/faq/): install, connect, write, review, recall and server questions
-- [Troubleshooting by symptom](https://e8kor.github.io/open-memory-lab/guides/troubleshooting/): symptom, cause and fix for the plugin, doctor, login and errors
+- [Operate](https://e8kor.github.io/open-memory-lab/operations/): where an operator starts: administer, deploy, monitor, upgrade, back up, respond to alerts
+- [Administer a server](https://e8kor.github.io/open-memory-lab/guides/administering/): how an administrator runs an OML server with the oml CLI: the first hour (claim the server, create a workarea, issue an agent key and a reviewer key), where admin credentials live, workareas, crews, keys by role, denials, ending a connection, reading the journal, and the rules no admin key bypasses
+- [Deploy](https://e8kor.github.io/open-memory-lab/operations/deployment/): how to deploy an OML server: the three ways to run it, what runs, how to claim the first admin key, how to put it behind a reverse proxy, and what to back up
+- [Install on Kubernetes](https://e8kor.github.io/open-memory-lab/guides/kubernetes/): how to install OML on Kubernetes with the release's Helm chart: prerequisites, the PostgreSQL role pair and its Secret, verifying the chart, a minimal values file, claiming the first admin key before any Ingress, oauth.issuer, upgrades, uninstall, and what the chart does not deploy
+- [Monitor](https://e8kor.github.io/open-memory-lab/operations/observability/): how to turn on, scrape and read an OML server's metrics, request log and traces, what oml doctor checks, and which alerts to set
+- [Upgrade](https://e8kor.github.io/open-memory-lab/operations/upgrades/): how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, and how to move from v0.3
+- [Back up and restore](https://e8kor.github.io/open-memory-lab/operations/restore/): how to back up an OML server and restore it: what to copy, the restore steps in order, why a restore rewinds the chain and can bring back erased content, and what each kind of loss costs
+- [Operational alerts](https://e8kor.github.io/open-memory-lab/operations/runbooks/): the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, rate limits and key compromise
+- [Failure modes](https://e8kor.github.io/open-memory-lab/operations/failure-modes/): what the server does, what you see and what to do when each dependency or role fails
+- [Run the lake writer](https://e8kor.github.io/open-memory-lab/operations/lake/): how to run the lake writer, rotate its key, read the lake with the named queries or DuckDB, check its health, and what happens on erase
+- [Capacity and SLOs](https://e8kor.github.io/open-memory-lab/operations/operating/): which SLOs an operator can run an OML server to, how the error budget governs releases, what capacity has been measured, and how an alert becomes an action
 
 ## Reference
 
-- [CLI reference](https://e8kor.github.io/open-memory-lab/cli/reference/): every verb of the oml command
-- [Journal event catalog](https://e8kor.github.io/open-memory-lab/data/event-catalog/): every event type and payload shape
-- [Journal chain format](https://e8kor.github.io/open-memory-lab/data/chain-format/): the byte-level spec of the signed chain
-- [Lake tables](https://e8kor.github.io/open-memory-lab/data/delta-tables/): every lake table column by column
-- [Benchmarks](https://e8kor.github.io/open-memory-lab/benchmarks/): recall quality and latency at scale, generated from committed results
+- [Reference](https://e8kor.github.io/open-memory-lab/reference/): where each exact fact lives: commands, routes, tools, settings, errors, limits, formats and terms
+- [CLI](https://e8kor.github.io/open-memory-lab/cli/reference/): every oml command, subcommand, argument and option, as the build prints them
+- [HTTP API](https://e8kor.github.io/open-memory-lab/api/http-api/): every route the server serves, with its parameters, request fields and responses
+- [MCP tools](https://e8kor.github.io/open-memory-lab/api/mcp-plugin/): the MCP tools an agent receives, with every argument
+- [Settings](https://e8kor.github.io/open-memory-lab/operations/configuration/): every server setting and environment variable the build reads, with its default
+- [Error codes](https://e8kor.github.io/open-memory-lab/api/errors/): which typed error codes exist, their family, HTTP status and retryability, and how an error response is shaped
+- [Limits](https://e8kor.github.io/open-memory-lab/reference/limits/): the size, rate, page and capacity bounds OML enforces or has measured, with units, who sets them and what error you get
+- [Metrics](https://e8kor.github.io/open-memory-lab/reference/metrics/): which Prometheus metrics the OML server and the lake writer emit, their types, labels and what each counts
+- [Event catalog](https://e8kor.github.io/open-memory-lab/data/event-catalog/): every journal event type OML writes, its payload fields, and the digest-only rule
+- [Chain format](https://e8kor.github.io/open-memory-lab/data/chain-format/): the byte-level chain spec: the signed envelope fields, canonical JSON, SHA-256 hash, Ed25519 signature, the genesis rule and the verification procedure an auditor can implement from this page alone
+- [Lake tables](https://e8kor.github.io/open-memory-lab/data/delta-tables/): every lake table column by column: Delta types, partitioning, merge keys, what each table holds and never holds, the commit protocol, and the maintenance that keeps the lake compact and erasable
+- [Glossary](https://e8kor.github.io/open-memory-lab/reference/glossary/): the terms the OML docs use and what each means
+- [Design records](https://e8kor.github.io/open-memory-lab/reference/design-records/): every design record, its status and the decision it records
 
 ## Concepts
 
-- [Concepts](https://e8kor.github.io/open-memory-lab/concepts/): the vocabulary in reading order
-- [What OML guarantees](https://e8kor.github.io/open-memory-lab/product/commitments/): each guarantee and what enforces it
-- [How a write is admitted](https://e8kor.github.io/open-memory-lab/architecture/admission/): capture, scan, hold, review, release
-- [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): the system end to end and the invariant map
-- [Workareas, roles and keys](https://e8kor.github.io/open-memory-lab/architecture/workareas/): the tree, grants, denials, status ladder, user roots; roles and keys at architecture/roles-and-keys/
-- [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): the commit point, signed chains, outbox and lake
-- [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): what the journal records and what an evidence export holds
-- [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): how reads are served, ranked and budgeted
-- [Positioning](https://e8kor.github.io/open-memory-lab/product/positioning/): who OML is for and the scoped claim
-- [Compliance](https://e8kor.github.io/open-memory-lab/product/compliance/): the evidence OML produces for compliance questions
+- [Concepts](https://e8kor.github.io/open-memory-lab/concepts/): the five ideas OML is built on, in two or three sentences each, and the page that owns each one
+- [Why a write is held](https://e8kor.github.io/open-memory-lab/concepts/why-a-write-is-held/): why a write is held until a different identity approves it, how it becomes readable, what the rule costs and what was rejected
+- [Is OML for you](https://e8kor.github.io/open-memory-lab/product/is-oml-for-you/): who OML is for, what it gives and costs, when not to use it, and five scenarios that use only built verbs
+- [What OML guarantees](https://e8kor.github.io/open-memory-lab/product/commitments/): every guarantee OML makes, what enforces it, the bounds on it, and what OML does not claim
+- [How a write is admitted](https://e8kor.github.io/open-memory-lab/architecture/admission/): how a write moves from capture through the scan, the hold and the review to a readable memory; what the scan vetoes and holds; who reviews; and what happens when no reviewer is available
+- [Architecture overview](https://e8kor.github.io/open-memory-lab/architecture/overview/): how OML fits together: the clients and what each starts from, the actors, the processes and stores, the code layout, how a write, a review, a read and a freeze move through them, and where each of the four rules is enforced
+- [How workareas grant access](https://e8kor.github.io/open-memory-lab/architecture/workareas/): how workareas grant access: the tree and its universe root, user roots, node-id grants, how effective access is computed, claim links and the brief, crew records, the status ladder, and in-progress workareas
+- [Roles and keys](https://e8kor.github.io/open-memory-lab/architecture/roles-and-keys/): which verbs each of the five roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key
+- [Security](https://e8kor.github.io/open-memory-lab/architecture/security/): what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection and web surfaces add to the threat model and what they leave
+- [Storage](https://e8kor.github.io/open-memory-lab/architecture/storage/): where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live
+- [Audit and lineage](https://e8kor.github.io/open-memory-lab/architecture/audit-and-lineage/): who approved this memory, what the journal records and never records, how lineage and supersession chains work, and what the signature does and does not prove
+- [Retrieval](https://e8kor.github.io/open-memory-lab/architecture/retrieval/): how recall finds and orders memories: who can see a hit, what you can ask, which search pipelines exist and how one is chosen, how steering and your own held memories join the answer, how a token budget cuts it, and what was measured
+- [Compliance](https://e8kor.github.io/open-memory-lab/product/compliance/): what evidence OML produces, which data classes it holds and who controls their retention
 
-## Release notes
+## Benchmarks
 
-- [Release notes](https://e8kor.github.io/open-memory-lab/changelog/): what each release changed, newest first
+- [Benchmarks](https://e8kor.github.io/open-memory-lab/benchmarks/): which search pipeline is the default and what each pipeline measured on every benchmark suite: quality, latency, the date, commit and environment of each run
+- [Synthetic recall set](https://e8kor.github.io/open-memory-lab/benchmarks/recall-synthetic/): what each search pipeline measured on Synthetic recall set: quality, per-category results, latency, the reference numbers and the limits of the run
+- [BEIR SciFact](https://e8kor.github.io/open-memory-lab/benchmarks/beir-scifact/): what each search pipeline measured on BEIR SciFact: quality, per-category results, latency, the reference numbers and the limits of the run
+- [BEIR NFCorpus](https://e8kor.github.io/open-memory-lab/benchmarks/beir-nfcorpus/): what each search pipeline measured on BEIR NFCorpus: quality, per-category results, latency, the reference numbers and the limits of the run
+- [LoCoMo](https://e8kor.github.io/open-memory-lab/benchmarks/locomo/): what each search pipeline measured on LoCoMo: quality, per-category results, latency, the reference numbers and the limits of the run
+- [Latency at scale](https://e8kor.github.io/open-memory-lab/benchmarks/scale/): how recall latency grows with the rows in a recall's scope, per search pipeline, against the 50 ms line
 
-## Design records
+## Help
 
-- [Register](https://e8kor.github.io/open-memory-lab/adr/): every decision record, grouped in eight categories with status and the release that built it
+- [FAQ](https://e8kor.github.io/open-memory-lab/faq/): the questions users and operators ask most, with a short answer and the page that holds the detail
+- [Troubleshoot the client](https://e8kor.github.io/open-memory-lab/help/troubleshooting-client/): what to do when the CLI, installer, login, Claude Code plugin, claude.ai connection, hooks, recall or review does not work, by symptom
+- [Troubleshoot a server](https://e8kor.github.io/open-memory-lab/help/troubleshooting-server/): what to do when a server's readiness check fails, the database role split refuses boot, migrations stop, a proxy logs credentials, search model files are missing or the lake writer stalls
+- [Release notes](https://e8kor.github.io/open-memory-lab/changelog/): what each OML release changed for users and operators, newest first
+
+The design records are in the repository under docs/adr/ and are not part of this site: [register](https://e8kor.github.io/open-memory-lab/reference/design-records/).

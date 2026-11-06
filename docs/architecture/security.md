@@ -1,478 +1,150 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves"
+answers: "what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection and web surfaces add to the threat model and what they leave"
 ---
 
 # Security and tenancy
 
-This page owns decision **D6**: the tenancy model, the controls on privileged services, the key
-custody map, and the threat model — written against hostile co-tenants from the start, not
-retrofitted onto a single-operator assumption. The signing chain and commit protocol this page
-leans on are declared in [storage.md](storage.md); roles, the issuer ceiling and ban verbs in
-[roles-and-keys.md](roles-and-keys.md); grants, denies and the permission epoch in
-[workareas.md](workareas.md); the admission pipeline in [admission.md](admission.md); the erasure
-inventory and read log in [audit-and-lineage.md](audit-and-lineage.md).
+This page explains the tenancy model, the key custody map and the threat model. The signing chain is in [storage](storage.md). Roles and the issuer ceiling are in [roles and keys](roles-and-keys.md). Grants and denials are in [workareas](workareas.md), and the admission pipeline is in [admission](admission.md).
 
-The attacker this page is written against is not an outsider. It is a **hostile co-tenant**: a
-party with valid API keys on the same deployment, sharing the same Postgres cluster, the same
-object store, the same oml-server replicas, who wants to read, corrupt, impersonate or starve
-another tenant. Every control below is judged against that attacker first.
+The attacker in this model is not an outsider. It is a **hostile co-tenant**: a party with valid API keys on the same deployment. That party shares the same Postgres cluster, the same object store and the same `oml-server`. It wants to read, corrupt, impersonate or starve another tenant. Every control below is judged against that attacker first.
+
+Nobody has penetration-tested, load-tested or measured these controls. Treat each one as stated by the code and its tests, not as an audit result.
 
 ## Tenancy model
 
-*Available since v0.1.0; the owner and serving split and per-tenant FTS partitions since v0.3.1 · [releases](../changelog.md)*
+OML derives the tenant from the API key on the server and never from the request. No parameter, header, path segment or MCP tool argument names a tenant. `oml-server` resolves the bearer key to its row and takes the tenant from there. A request that tries to name a tenant has no vocabulary to do it in. This removes the class of bugs where a valid key is combined with someone else's tenant id.
 
-Tenancy is first-class, not a column added later.
+**Row-level security (RLS) covers every table.** Every Postgres table carries an RLS policy keyed by tenant and sets `FORCE ROW LEVEL SECURITY`. The one exception is `_sqlx_migrations`, which holds no tenant data. Its fence is privilege, and only the owner role reaches it. No role that an OML workload uses holds `BYPASSRLS`. RLS is the second fence behind application scoping. A query that escapes a `WHERE` clause still cannot cross a tenant boundary, because Postgres evaluates the policy.
 
-**Tenant is derived server-side from the API key, never from the request.** No request parameter,
-header, path segment or MCP tool argument names a tenant. oml-server resolves the bearer key to its
-`api_keys` row and takes `tenant_id` from there; a request that tries to name a tenant has no
-vocabulary to do it in. This removes the entire class of confused-deputy bugs in which a valid key
-is combined with someone else's tenant identifier.
+**Two database roles split the work.** `FORCE` binds the owner's table reads. It does not bind the owner's `pg_stats` view, which can show another tenant's indexed words, or its DDL, which can lift `FORCE`. The owner role therefore only migrates and creates each new tenant's partitions. Every request runs under a serving role that owns nothing. The lead refuses to start if you give it one URL for both roles.
 
-**Row-level security on every table, keyed by `tenant_id`, with one named exemption.** Every
-Postgres table in the [PostgreSQL schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) carries an RLS policy and
-sets `FORCE ROW LEVEL SECURITY`, except `_sqlx_migrations`, sqlx's record of which migrations ran,
-which holds no tenant data and no `tenant_id` to key a policy on; its fence is privilege, and only
-the owner reaches it. No role used by any OML workload holds `BYPASSRLS` (see privileged services below). `FORCE`
-binds the owner's table reads; it does not bind the owner's `pg_stats` view, which showed another
-tenant's indexed words, or its DDL, which can lift `FORCE`
-([spike 3](https://github.com/e8kor/open-memory-lab/blob/main/design/research/spike-3-rls.md)). The owner/serving role split keeps both from
-every workload: the owner owns what the migrations create and only migrates and creates each new
-tenant's partitions; every request runs under the serving role, which owns nothing and holds only
-the DML its statements use; and a lead given one URL for both refuses to start.
-Workloads that set a tenant for the session (the
-lake-writer) do it with `SET LOCAL` inside the transaction, never session-level `SET`, so pooled
-connections cannot leak tenant context between batches. RLS
-is the second fence behind application-level scoping: a query that escapes a `WHERE` clause bug
-still cannot cross a tenant boundary, because the policy is evaluated by Postgres, not by our code.
-The cost is stated plainly: RLS predicates sit on every query plan; an FTS read scans its
-tenant's partition under RLS, since no function is marked `LEAKPROOF`, and its latency per tenant
-size is unmeasured (#150,); and the performance of per-tenant
-partitioned vector indexes under RLS is unmeasured — tracked with the pgvector issue in the
-[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
+**Isolation continues through the storage layers.**
 
-**Per-tenant isolation extends through every storage layer:**
+- **Journal chains are per tenant.** One tenant's write rate never serializes against another's chain lock.
+- **Lake tables sit under per-tenant prefixes.** Bodies in the lake are sealed ciphertext ([the lake](../operations/lake.md)).
+- **Embeddings and full-text indexes are partitioned by tenant.** No index spans tenants, so a correctly pruned query never ranks foreign rows. RLS stays the isolation authority if pruning fails, because pruning is planner behavior and not a security boundary.
+- **Quarantine and body objects sit under per-tenant paths.**
 
-- **Journal chains are per tenant** — one chain-head row per `tenant_id`, per-tenant `seq`, so one
-  tenant's write rate never serializes against another's chain lock, and a tenant's evidence export
-  verifies its own chain without touching anyone else's ([storage.md](storage.md)).
-- **Lake table prefixes are per tenant**, and when the object store is externalized, **storage
-  credentials are per tenant** — a credential leak for one tenant's prefix does not open another's.
-- **Embeddings and FTS are partitioned**: `memory_embeddings` is list-partitioned by `tenant_id`
-  with per-partition HNSW indexes and RLS on top ([retrieval.md](retrieval.md)). There is no
-  shared vector space across tenants: no HNSW graph spans tenants, so a correctly pruned query
-  never ranks foreign rows — and RLS remains the isolation authority if pruning fails, since
-  partition pruning is planner behavior, not a security boundary.
-- **Quarantine and body objects are keyed under per-tenant paths**
-  (`oml-quarantine/<tenant>/<digest>`, `oml-bodies/<tenant>/<digest>`).
+The cost: RLS predicates sit on every query plan, and a full-text read scans its tenant's partition under RLS. Not measured yet: read latency by tenant size.
 
-What is shared is the deployment: the Postgres cluster, the oml-server replicas and their signing
-key, the KMS, the lake-writer. The controls on those shared components are the next two sections.
+Tenants share the deployment: the Postgres cluster, the lead process and its signing key, and the key store.
 
-## Privileged services are designed, not waved through
+## Key custody
 
-Three workloads touch many tenants' data by nature. Each runs under its own credentials, with the
-narrowest grant that lets it do its one job, and none holds the signing key.
+| Material | Held by |
+|---|---|
+| Ed25519 deployment signing key | The lead only. No other process loads it. |
+| Memory encryption keys (DEKs) | Wrapped by the key store (`kms.adapter`: the keyring file, or AWS KMS). The lead unwraps them to encrypt at admission and to decrypt when it serves a read. |
+| Lake sealing key (KEK file) | The lake writer. It holds no signing key. |
+| API keys | The lead stores hashes only. Clients hold the values. |
+| Connect codes and connection tokens | The lead mints them and stores digests only. |
+| Postgres access | The lead serves under an RLS-scoped role. The lake writer uses its own role, which must not be the owner, the serving role, a superuser or a role that bypasses RLS. It refuses to start on one that is. |
 
-**oml-lakewriter** drains the outbox and materializes lake rows. It iterates **per tenant**: for
-each tenant's batch it opens a Postgres session under a `SET`-tenant, RLS-scoped session role — it
-sees one tenant at a time, under the same RLS policies as everyone else, with **no `BYPASSRLS`**.
-It holds **no KMS grant at all**: body ciphertext is produced exactly once, at admission by
-oml-server under the artifact's DEK, and the journalled ciphertext digest is computed over those
-bytes — the lake-writer moves them verbatim and never re-encrypts, so a compromised lake-writer
-cannot decrypt a single body nor substitute bytes without tripping the keyless digest check. It
-writes to the lake under the per-tenant storage credential for the tenant it is currently serving.
+**The signing key lives only in the lead.** The signature attests the deployment: one signer process at a time, with each takeover journaled. Compromise of the lead is compromise of the signing key. A compromised lead can also unwrap any tenant's DEKs, so it can sign arbitrary events and read any promoted body.
 
-**oml-reconciler** compares the lake against the journal fold ([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)).
-It runs **read-only**: a read-only Postgres role, read access to the lake, and **no KMS grant at
-all** — digest comparison is over ciphertext digests, keylessly, by design (D3 records the
-ciphertext digest in object metadata precisely so the reconciler never needs a key). When it finds
-a discrepancy, it does not repair in place: repairs are **emitted through the outbox via
-oml-server**, as journalled acts under the reconciler's own identity. A compromised reconciler can
-therefore lie in its findings but cannot silently alter data — every repair it causes is a signed
-journal event someone can audit.
+Three controls bound the damage. The per-tenant chain makes forged history detectable by anyone holding an earlier chain head. The startup fork check refuses to extend a chain that does not verify against the last signed head. The journal shows what the lead did before the compromise. Nothing detects quiet reads by a compromised lead.
 
-**oml-indexer** computes embeddings and FTS entries over promoted rows. It runs under its own
-per-tenant credentials and never the signing key. It necessarily handles plaintext (you cannot
-embed ciphertext); it holds no KMS decrypt grant: promoted plaintext reaches it on the serving
-side of decryption ([retrieval.md](retrieval.md)), keeping oml-server the single decryption locus.
-Where the embedding model runs is the embedding issue in the
-[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap); an answer that required an indexer decrypt grant would revise
-this custody map as its own journalled decision.
+**With AWS KMS, the key encryption key never leaves the key store.** With the `file` adapter, the keyring is a file on the lead's host. Whoever reads that file can unwrap every DEK. Back it up with the database. A database restored without it cannot be read.
 
-The common pattern: **the authority to make something true (sign a journal event) lives only in
-oml-server; privileged services hold the authority to copy, compare and derive, each scoped so its
-compromise is bounded and its actions leave journal evidence.**
+**The lake writer holds no signing key.** It copies ciphertext the lead already produced. A compromised lake writer cannot sign an event or alter the journal. It can corrupt the lake, and the journal's ciphertext digests expose the change. The lake serves no client read.
 
-## Key custody map
+## If the signing key is compromised
 
-Who loads what. "Never" entries are the point of the table.
+OML has no command to rotate the signing key. Rotation is a deployment step: stop writes, replace the key at its custody point, and start the lead. The server then journals `system.signing_key_rotated`. Verify each tenant's chain against the chain heads you kept outside the deployment. The [runbooks](../operations/runbooks.md) give the steps.
 
-| Material | oml-server **lead** | oml-server **follower** | oml-lakewriter | oml-reconciler | oml-indexer | `oml` CLI |
-|---|---|---|---|---|---|---|
-| ed25519 deployment signing key | **loads it — the only process in the deployment that does** | **never** | never | never | never | never |
-| KMS: decrypt (unwrap DEKs) | serving + admission paths | **serving path only** | **never** | **never** | **never** — reads promoted plaintext on the serving side of decryption ([retrieval.md](retrieval.md)) | never |
-| KMS: generate-data-key / encrypt | yes (admission — the single encryption locus; lake copies are these same bytes) | **never** — followers admit nothing | **never** — moves admission-produced ciphertext verbatim | never | never | never |
-| Write verbs | executes | **forwards to the lead, executes none** | — | — | — | — |
-| Postgres role | RLS-scoped service role (write) | RLS-scoped **read** role + read-log append | per-tenant `SET`-tenant RLS role, no `BYPASSRLS` | read-only RLS role | per-tenant RLS role | none (talks HTTP) |
-| Object-store credentials | quarantine + bodies | read (promoted bodies) | per-tenant lake prefixes | read-only | read (promoted bodies) | none |
-| API keys | verifies hashes; never stores values | verifies hashes | holds none | holds none | holds none | bearer of operator/admin/dreamer keys |
-| Connect codes and connection tokens | mints them; stores digests only; rotates refresh tokens | verifies access-token digests; mints none | holds none | holds none | holds none | prints a connect code once; holds no token |
+Rotation bounds the future, not the past. Events the old key signed during the compromise window still verify. Separating real events from attacker events in that window is an audit against heads you kept elsewhere. It is not a cryptographic operation.
 
-Two statements in this map deserve their own sentences.
+## Transport
 
-**The signing key lives only in the lead — at most one process, lease-guarded, takeover
-journalled.** The lead loads the deployment signing key from a Kubernetes Secret or KMS; followers
-never do (— enforced as a
-composition fact: the follower binary composes no signer port). The signature attests *the
-deployment* — one signer process at a time plus its journalled failovers — and the threat model
-says the rest without flinching: **compromise of the lead is compromise of the signing key**;
-compromise of a follower is serving-path decryption and misserving, never forgery — a follower
-cannot sign a journal event, promote, or erase. One more plaintext locus follows from the
-topology: a write forwarded by a follower transits that follower's memory in plaintext (TLS
-terminates there) — nothing new relative to decrypt-on-serve, listed for completeness. An attacker
-on the lead can sign arbitrary events for as long as the compromise lasts. The mitigations are
-recovery-shaped, not prevention-shaped: the per-tenant chain makes forged history detectable by any
-holder of a prior chain head, the startup fork check refuses to extend a chain that does not verify
-against the last signed head, and key rotation after a suspected compromise is a journalled act
-(the ceremony is [Signing-key rotation](#signing-key-rotation) below).
-What the design does *not* claim: per-replica keys, HSM-resident signing, or threshold signatures.
-Those are possible hardenings with real operational cost, and none is committed — if one becomes a
-requirement it is opened as an issue.
+The floor is TLS 1.2, with 1.3 preferred. Plaintext HTTP is acceptable only on a loopback bind or a private compose network. The bearer key is the whole capability, and it travels in the clear wherever TLS is absent. [Deployment](../operations/deployment.md) describes where TLS terminates for each install path.
 
-**The KEK never leaves KMS — and it rotates on a schedule.** Per-artifact DEKs are wrapped and
-unwrapped by KMS calls; no OML process ever holds the KEK. Crypto-shredding
-([audit-and-lineage.md](audit-and-lineage.md)) destroys the wrapped DEK, and the custody map above
-means that destruction cannot be undone by any service that merely writes data. One copy class
-outlives the live row: wrapped-DEK copies in Postgres backups and WAL. The commitment that bounds
-it: KEK rotation re-wraps **live** DEKs only; a retired KEK is destroyed once no retained backup
-predates its retirement, and that destruction is a journalled act. From then on the wrapped-DEK
-copies in older backups are noise — there is no KEK left that can unwrap them.
-
-## Custody by profile
-
-The "never" columns above are backed by different mechanisms per install profile, and the backing is part of
-the claim:
-
-| Backing | kubernetes | docker (compose) | standalone |
-|---|---|---|---|
-| What enforces a "never" | Composition (no port) **+** external KMS IAM grants **+** pod/Secret separation | Composition **+** container mount boundaries (the keyring is simply not mounted); no external IAM | Composition **+** OS process boundary and file permissions; under one uid, "keyless" is code structure, not custody |
-| KEK custody | Never leaves KMS | A file in a compose secret on the host — **host admin ≡ KMS admin** | A file on the same disk as the data it protects; encrypt-only grants do not exist |
-| The host admin | Outside the pod trust domain, inside the platform trust (residual 5) | **Is a key-holding attacker by default** — reads every volume, secret and keyring | Strongest form: one host holds signing key, KEK, database, lake and backups — tamper-evidence against the host admin rests entirely on exported chain heads |
-
-The collapse is stated, not apologized for: standalone and docker trade custody separation for
-installability, every weakened row is named in [commitments](../product/commitments.md), and the
-keyring mechanism itself is.
-
-## Signing-key rotation
-
-*Not scheduled · [releases](../changelog.md)*
-
-The custody map gives the signing key to exactly one process; this section says how the
-deployment changes that key. There are two paths — scheduled and under suspicion — and the
-difference between them is the whole point.
-
-**Planned rotation is one journalled act with cross-signing.** The rotation event,
-`system.signing_key_rotated` ([event catalog](../data/event-catalog.md)), is the **first event
-the new key signs**; the outgoing key's endorsement rides inside it as the payload's
-`cross_sig` — pure Ed25519 by the **old** key over the ASCII bytes
-`oml-signing-key-rotation:<new_key_id>:<new_public_key_hex>`
-([chain-format](../data/chain-format.md) owns the byte rule). The succession is therefore
-provable from the journal alone: a verifier whose trust rests on the old key reads the new
-public key out of the rotation payload, checks `cross_sig` under the old key, and continues
-verifying under the new — old attests new, so trust extends across the pivot with no
-out-of-band key distribution, and the evidence export carries the succession record. Rotation
-never re-signs history: events signed by a retired key verify against that key forever, which
-is why the pivot must live in the chain rather than in configuration.
-
-**Unplanned rotation — suspected lead compromise — is a ceremony, not a verb**, because a
-compromised lead can sign anything until the key changes, including a plausible "rotation" of
-its own. The committed sequence, stepped through operationally in the
-[signing-key-compromise runbook](../operations/runbooks.md#signing-key-compromise):
-
-1. **Stop writes.** Revoke the lead lease (or scale the lead to zero). Followers keep serving
-   reads; the write path refuses — the same availability-for-integrity trade the design makes
-   everywhere else.
-2. **Rotate.** Mint a new signing key outside the compromised process's reach and journal
-   `system.signing_key_rotated` with `rotation: unplanned` — `cross_sig` null by definition (a
-   suspect key must not vouch for its successor), `ceremony_ref` **required**. The honesty
-   limit is stated with the step: the rotation event is signed by the new key, so the journal
-   alone cannot prove which pivot is the legitimate one — an attacker holding the lead could
-   journal a plausible pivot of its own. What distinguishes the legitimate pivot is the
-   out-of-band ceremony `ceremony_ref` names — the record in which the new key's fingerprint
-   was established — plus evidence retained outside the deployment, not cryptography.
-3. **Fork-check.** Verify every tenant chain against the last chain heads retained outside the
-   deployment — the evidence exports tenants kept; a standing anchoring mechanism is. Events signed inside the suspected window are flagged for
-   audit, never silently trusted.
-4. **Re-attest.** The new lead starts under the startup fork check
-   ([storage.md](storage.md)), its first act is journalled, and a fresh evidence export of the
-   post-rotation chain heads is produced for tenants to retain — the new baseline the next
-   ceremony would verify against.
-
-What rotation does not do: it bounds the future, never the past. Everything the old key signed
-during the compromise window verifies and will verify forever; separating legitimate events from
-attacker events in that window is an audit over outside-retained heads, not a cryptographic
-operation — the same limit residual risk 4 states below.
-
-## Transport and internal authentication
-
-Who terminates TLS, what the floor is, and what the non-client workloads present to whom.
-
-**Client-facing TLS, per profile.** The termination point follows the profile's supervisor, and
-each row names its shipped default rather than leaving it to discovery:
-
-| Profile | Termination point | Shipped default |
-|---|---|---|
-| standalone | `oml-server` terminates TLS itself (certificate and key paths in `oml-standalone.toml`), or sits behind a local reverse proxy the operator brings | **Direct termination by `oml-server`.** A plaintext listener is permitted only on a loopback bind — which is what the quickstart transcripts show ([deployment](../operations/deployment.md)) |
-| docker | A compose-level reverse proxy service in front of `oml-server` | The proxy terminates TLS; `oml-server` listens in plaintext on the compose-internal network only |
-| kubernetes | Ingress — the cluster's TLS stack | Deferred to the cluster stack: [deployment](../operations/deployment.md) names ingress and TLS termination as deployment-site choices the chart parameterizes but does not fix |
-
-The floor in every profile: TLS 1.2 minimum, 1.3 preferred. Plaintext HTTP across any boundary
-that is not a loopback bind or a compose-internal network is a misconfiguration, not an option —
-the bearer key is the whole capability, and it transits in the clear wherever TLS is absent.
-
-**Postgres transport.** The requirement follows where Postgres sits, not the profile name:
-a Unix socket or loopback connection (standalone's bring-your-own host service, docker's
-in-compose container) may run without TLS; the moment Postgres is on another host —
-standalone pointing at a remote database, the kubernetes `scaled` value set's managed service —
-`sslmode=verify-full` is required, certificate verification included, because a bearer of the
-service role's credential plus an unverified channel is a tenant-data read path. The kubernetes
-`local` value set's in-cluster CloudNativePG speaks TLS under the operator's own issued
-certificates. These are deployment requirements the profile payloads carry, in the same class as
-C6's three RLS commitments ([deployment](../operations/deployment.md)).
-
-**The service-credential class.** The privileged workloads authenticate with two kinds of
-credentials, and the distinction is deliberate:
-
-- **To Postgres**: each workload's own database role, per the custody map above and the workload
-  table in [deployment](../operations/deployment.md). Database roles are deployment
-  configuration — minted by the profile payloads, recorded by the journalled settings digest
-  (`system.settings_applied`) — not individually journalled keys.
-- **To `oml-server`**: a **service key** — an ordinary API key, issued by the tenant's admin at
-  deployment setup under the ordinary issuer ceiling (the operator issues none,
-  [roles-and-keys.md](roles-and-keys.md#issuer-ceiling)), journalled `key.issued` with
-  `held_by: service`, hashed at rest, expiring, and rotated
-  by the same `key.rotated` act as every other key ([roles-and-keys.md](roles-and-keys.md)).
-  There is no new role: the role vocabulary is fixed, so a service key carries the narrowest
-  existing role its one job needs, and `held_by: service` is what the evidence export shows.
-    - **oml-reconciler** holds a dreamer-role service key with a dreamer grant on the nodes it
-      repairs — dreamer is the lowest role holding the journalled repair re-enqueue in the
-      permission matrix ([roles-and-keys.md](roles-and-keys.md)). Every repair it causes is
-      therefore a journal event attributed to the reconciler's own key, which is the property the
-      privileged-services section above leans on. A grant carries a role, not a verb list, so
-      nothing narrows that grant to the re-enqueue: it also confers every other dreamer verb
-      ([effective verbs](roles-and-keys.md#effective-verbs)). A `held_by: service` key is refused
-      every review-class verb and every ratification, before any lookup
-      ([the role each verb needs](roles-and-keys.md#grant-admissibility-and-refusal-order)), so a
-      stolen reconciler key can still propose within its grants, which only returns work to
-      non-author review under other keys. That is a stated residual; residual risk 8 below.
-    - **A forwarding follower** holds a reader-role service key with no grants: it authenticates
-      the forwarding hop to the lead and authorizes nothing. The client's own credential — its
-      bearer key, or at `/mcp` its connection's access token — travels with the forwarded request,
-      the lead resolves authorization against the *client's* key, and the journalled act is
-      attributed to the client — the follower never becomes the actor; how a follower forwards
-      an `/mcp` request that carries an access token is declared on the
-      [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). The
-      lead accepts forwarded write traffic only over hops authenticated by an enrolled
-      follower's service key, so a process that merely reaches the lead's port cannot inject
-      forwarded writes.
-    - **oml-lakewriter** presents nothing to `oml-server` — it never calls it. Its credentials
-      are the `SET`-tenant Postgres session role and the per-tenant object-store credentials in
-      the custody map, and that absence is part of the design: the lake-writer has no API-side
-      identity to steal.
-
-Service keys obey every rule of the [key format section](roles-and-keys.md#key-format): show-once
-issuance, hash at rest, key ids — never values — in logs and journal payloads.
-
-## STRIDE, redone for hostile co-tenants
-
-Each row names the threat as a co-tenant would mount it, the controls that answer it, and what
-remains. Nothing in this table is built or measured; every control is a design commitment.
-
-| Threat | Co-tenant attack | Controls | Residual |
-|---|---|---|---|
-| **S**poofing | Steal or phish another tenant's bearer key; present it as that tenant. | Keys are stored as hashes, shown once at issuance and journalled as issued-without-value ([roles-and-keys.md](roles-and-keys.md)); expiry on every key; revocation is a journalled act effective at the key's next request on the lead, and after replication lag on a follower (EoP row below); tenant is derived from the key, so a stolen key spoofs *one tenant's one role*, never a chosen tenant. | A bearer key is full capability of that key until expiry or revocation. Key theft on the client side is outside OML's reach; short expiry and scoped grants bound the blast radius, they do not remove it. |
-| **T**ampering | Use leaked lake/storage credentials to rewrite another tenant's lake rows or objects; or corrupt Postgres rows. | Per-tenant lake prefixes and per-tenant storage credentials bound a leak to one tenant. The lake is derived, never authoritative, and serves no client read ([storage.md](storage.md)) — tampered lake rows mislead analytics, not serving. The reconciler's digest-mismatch finding class detects divergence keylessly ([reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)). In Postgres: journal tables are append-only (REVOKE UPDATE/DELETE plus guard trigger); the per-tenant hash chain and signatures make any rewrite by a party without the deployment signing key fail verification; a key-holding attacker's rewrite is detectable only against chain heads retained outside the deployment — evidence exports today, an anchoring mechanism if adopts one ([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)). | Tampering between reconciler runs is live until detected; detection latency is the reconciler's cadence. A Postgres superuser is outside the model — the deployment's DBA is trusted. |
-| **R**epudiation | A writer denies having written a claim; a reviewer denies a verdict; a tenant disputes what was served. | Every mutation is a signed, hash-chained, attributed journal event (key id, principal, timestamp). Verdicts are bound to a serve record of exactly what was reviewed (serve_id, below). Reads are logged with per-batch digests anchored into the journal ([retrieval.md](retrieval.md)). The evidence export replays the decision trail per memory ([audit-and-lineage.md](audit-and-lineage.md)). | Attribution says which *key* acted. Binding a key to a human or crew member is the tenant's key-hygiene problem; shared keys dilute repudiation evidence and the docs say so rather than pretending otherwise. |
-| **I**nformation disclosure | Read another tenant's memories across the shared database or the shared search machinery; or exfiltrate via the lake. | RLS keyed by `tenant_id` on every table, with no service role holding `BYPASSRLS`. Tenant never taken from the request. Embeddings and FTS are physically partitioned per tenant — there is no cross-tenant index to leak through, and ranking never sees foreign rows. Within a tenant, simulation rows are additionally excluded from the shared indexes and served only to the simulation's audience ([simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)). Lake bodies are per-artifact-DEK ciphertext; lake access without KMS decrypt yields digests and attribution, not content. | Attribution metadata (writer, principal, timestamps, workarea path) is in the clear in the lake by design requirement — who wrote what, when, where is what the lake is for; its erasure is a tracked issue ([audit-and-lineage.md](audit-and-lineage.md)). Two catalog channels stay open: EXPLAIN's row estimate still adds each other tenant's partition's floor row, and each partition's `reltuples` and bound give every role one tenant's row count and id. Side channels (timing, resource contention on shared replicas) are not addressed in v1. |
-| **D**enial of service | Flood writes, uploads or queries to starve co-tenants on shared replicas, Postgres, or review capacity. | Quotas and rate limits are journalled grant attributes; exceeding one returns a typed 429 naming the rule ([errors.md](../api/errors.md)). Upload sessions are bounded and digest-checked. Admission fails closed rather than queueing unboundedly ([admission.md](admission.md)). Bans cut a hostile author or source off at admission (below). | **v1 enforcement is per-replica token buckets at limit/N — a documented approximation.** With N replicas and uneven load balancing, a tenant can transiently exceed or be unfairly denied its global limit; there is no shared counter in v1. Resolving the approximation — shared enforcement, or a recorded decision keeping it with a stated error bound — is. Per-tenant chain locks mean one tenant cannot serialize another's writes, but shared CPU/IO contention on replicas remains. |
-| **E**levation of privilege | Mint a stronger key; keep using a revoked or widened-then-narrowed grant; act as reviewer on one's own work. | **Issuer ceiling**: a key is issued with a role no higher than its issuer's — no chain of issuance ever ascends ([roles-and-keys.md](roles-and-keys.md)). **Per-request access**: effective access is recomputed from journalled grants and denials on every request, so a revocation or deny applies to the key's next request served by the lead; the permission epoch labels the state an answer was computed against ([workareas.md](workareas.md)), reproducibly from journalled grants. Verb ceiling R1: no agent-callable surface promotes, signs, demotes or deletes, whatever the key. Admin ≠ reviewer; reviewer ≠ author enforced against the lineage closure at promotion time ([roles-and-keys.md](roles-and-keys.md)). Operator never reads or writes content. | **Follower-served reads lag revocation.** A follower resolves keys, grants and denials from its local replica, so a revoked key, a withdrawn grant or a new deny keeps reading there until replication catches up: the window is replication lag, exposed as a follower metric ([retrieval.md](retrieval.md#reads-in-cluster-mode)), and a lead-only deployment, the default, has none. No effective-access cache adds to it; a cache would be a new decision that states its own window here. Collusion between distinct keys is not an elevation the ceiling can stop — see residual risks. |
-
-## serve_id binding as anti-replay
-
-*Available since v0.1.0 · [releases](../changelog.md)*
-
-The review ceremony's serve record is a security mechanism, not an ergonomic one, so its properties
-are restated here (the ceremony itself is declared in [cli/reference.md](../cli/reference.md), the
-policy it executes in [admission.md](admission.md)).
-
-A verdict is accepted only under a `serve_id` that oml-server bound, server-side, to the tuple
-**(reviewer key, artifact version, attachment digest set)**. The serve expires, is **consumed by
-its first verdict**, and is **invalidated by any change to the served content**. The journalled
-verdict records the digests that were served. This closes four replay-shaped attacks at once:
-
-- **Verdict replay** — a captured approve cannot be submitted twice; the serve is single-use.
-- **Bait-and-switch** — content changed after serving (a new version, a swapped attachment)
-  invalidates the serve; the verdict that arrives references digests that no longer match and is
-  refused.
-- **Verdict transplant** — a verdict minted under one reviewer key cannot be submitted by another;
-  the binding names the key.
-- **Blind approval** — a reviewer cannot ratify what was never served to it; no valid serve, no
-  verdict, enforced server-side regardless of what the client claims.
-
-The residual is honest: serve binding proves what was *served*, not what was *read*. A negligent
-reviewer that approves without looking produces the same evidence as a diligent one; the
-independence axis and reciprocal-approval statistics ([roles-and-keys.md](roles-and-keys.md)) make
-that pattern visible over time, they do not prevent a single instance.
-
-## Bans are enforced at admission
-
-*Not scheduled · [releases](../changelog.md)*
-
-A ban is a journalled admin act against an author or source, and it is **checked at admission** —
-the first step of the pipeline, before quarantine, scanning or review spend a cycle
-([admission.md](admission.md)). A banned principal's write is refused with a typed error at the
-door; nothing from it is held, stored or queued for review. This makes bans a denial-of-service
-control as much as a content control: a hostile or compromised writer identity is cut off before it
-can consume quarantine storage or reviewer capacity. Lifting a ban is an equally journalled act,
-and the CLI previews a ban's reach with `--dry-run` before it lands
-([cli/reference.md](../cli/reference.md)). A ban names an author or source; it is not a tenant-wide
-switch, and it does not touch rows already promoted — demotion and erasure remain the journalled
-verbs for those.
+When Postgres runs on another host, require `sslmode=verify-full`. A service credential on an unverified channel is a tenant-data read path.
 
 ## Hostile content after the gate
 
-The gate changes visibility, not truth or safety. Ratification means a non-author looked at the
-content under a journalled policy — it never means the content is true
-([commitments](../product/commitments.md), never-claimed tier) and it never means the content is
-safe to obey. A promoted body can still carry a prompt injection, a malicious URL, or an
-instruction aimed at whatever agent recalls it; what review adds is an attributable decision
-trail, not neutralization. This section states what that implies for every consumer of recalled
-content, because a security reader must not infer a sanitization step that does not exist.
+The gate changes visibility, not truth or safety. Approval means a non-author looked at the content under a journaled policy. It does not mean the content is true, and it does not mean the content is safe to obey. An approved memory can still carry a prompt injection, a malicious URL or an instruction aimed at whichever agent recalls it.
 
-**Recalled content is data, never instructions.** An approved memory — and equally an approved
-steering row — recalled into an agent's context is tenant-authored content that passed a
-process gate. The recommended consuming-agent posture: delimit recalled bodies as untrusted data
-in the prompt, carry the served provenance (artifact ids, author, workarea) alongside them so
-the agent and its operator can attribute what influenced it, apply the same injection defenses
-the agent applies to any external input, and never auto-execute instructions found in a recalled
-body. OML serves provenance with every hit precisely so consumers can do this; it cannot do it
-for them, and no page claims otherwise.
+**Treat recalled content as data.** An approved memory, and an approved steering row, comes from a tenant author who passed a process gate. In your agent's prompt, delimit recalled bodies as untrusted data. Keep the provenance OML serves with each hit (artifact id, author, workarea) beside them. Apply the injection defenses you use for any external input. Never auto-execute instructions found in a recalled body.
 
-**Steering rows: the shipped default, stated honestly.** A steering row is the highest-leverage
-injection surface the design has — it precedes every hit, unranked, in every recall scoped to
-its workarea ([retrieval.md](retrieval.md)) — and v1 nonetheless ships **no stricter default
-review policy for `kind: steering`**: a steering row is held and reviewed under the same
-per-workarea policy as any claim ([admission.md](admission.md)). The hook for more exists and is
-the recommended posture for `committed` workareas: `human_required_classes` names classes by
-kind, so a tenant can require at least one human verdict on every steering row by policy. The
-default stays uniform because review policy is per-workarea by design and a global human-verdict
-default would impose review capacity many tenants' machine-written steering does not warrant —
-a deliberate choice, recorded here rather than implied.
-
-**Hostile attachments are served to reviewers by design.** The reviewer is the first audience
-for unreviewed bytes; serving them is the ceremony's purpose and also its exposure. The design
-commitments: attachment bytes served for review carry `Content-Disposition: attachment` with a
-server-chosen, sanitized filename, `X-Content-Type-Options: nosniff`, and the declared media
-type of the submission — never content sniffed, never rendered inline from the API origin. The
-CLI review ceremony (`oml review next`, [cli/reference.md](../cli/reference.md)) downloads
-attachments to a working directory and verifies them against the served digests; it never opens,
-renders or executes them. Past that point the reviewer's workstation is the tenant's attack
-surface: the stated guidance is to inspect attachments in a sandboxed viewer, and nothing here
-is a malware-scanning claim — the deterministic scan catches what its rules name, and for opaque
-binaries the reviewed claim is provenance + digest + scan result ([admission.md](admission.md)).
+**Steering rows get no stricter default review.** A steering row precedes every hit in every recall scoped to its workarea, so it is the highest-leverage injection surface. OML nonetheless holds and reviews it under the same per-workarea policy as any memory. A global human-verdict default would impose review effort that machine-written steering often does not need. Set a stricter review policy on workareas where steering matters.
 
 ## Connections: the OAuth surface
 
- lets Claude's hosted apps reach
-`/mcp` through a connection: an OAuth client bound, by a one-time connect code, to one connector
-key ([roles and keys](roles-and-keys.md#connections); the HTTP side in the
-[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). It adds three things an
-attacker can reach without a key — two discovery documents, three OAuth endpoints and an HTML page
-— and one thing the lead does that it did not do before: fetch a URL a client chose. The threats
-below are the delta; every control is a design commitment, none is built, penetration-tested or
-measured.
+A connection lets Claude's hosted apps reach `/mcp` through an OAuth client bound to one connector key by a one-time connect code. [Roles and keys](roles-and-keys.md#connections) explains the model, and the [HTTP API](../api/http-api.md) lists the endpoints.
 
-| Threat | Controls | Residual |
+The surface adds what an attacker can reach without a key: two discovery documents, three OAuth endpoints and one HTML page. It also adds one thing the lead does that it did not do before. The lead fetches a URL a client chose.
+
+| Threat | Control | What remains |
 |---|---|---|
-| **A connect code read or intercepted** (shoulder-surfed, a forwarded message, a shared screen) and entered first by someone else | Single use; alive `oauth.connect_code_ttl` (shipped 10 minutes); never in a URL, a log line or the journal; one live code per key. `connection.opened` records that a connection opened and when, and `oml keys show` lists the connection, so the admin sees an unexpected one and revokes it. | For its minutes, the code is a bearer secret: whoever enters it first connects as the key, within the key's grants and only at `/mcp`. For claude.ai every connection names the same client and redirect URI, so the admin learns that and when, but not whose claude.ai account connected. |
-| **Consent phishing**: an attacker starts an authorization from their own client, their own claude.ai account included, and sends the person the link | The page names the client — a document client by the whole host that served its document, in lower-case ASCII, a registered one marked "name not verified" — and the redirect URI's host, before the code is asked for, and above the code field tells the person to enter the code only on a page they opened themselves by adding the connector, and to close a link someone sent them; the redirect allowlist delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request, and `connection.opened` cannot tell the admin either; if claude.ai completes a callback by `state` alone, a person who enters a code on a forwarded link connects the sender's account. Whether claude.ai refuses a callback its own sign-in did not start is claude.ai's behavior and is not in the cited sources. The page's warning is the defense, and it holds only if the person reads it. |
-| **Connection injection**: a co-tenant gives a person a code for the co-tenant's own key, under names copied from the person's organization | The confirmation names the tenant the key belongs to by the name the operator gave it at `POST /v2/tenants`, which no tenant admin can set, beside the key's name, principal, role and workareas. | A person who does not read the tenant name connects into the other tenant: their Claude writes into it and recalls what it holds. |
-| **Mix-up**: a malicious connector the same person added steers OML's authorization code to its own token endpoint, since claude.ai uses one callback for every server | Every authorization response, success or error, carries `iss`, and the RFC 8414 document advertises `authorization_response_iss_parameter_supported` (RFC 9207; RFC 9700 §4.4.2). | The defense works only if the client checks `iss`; whether claude.ai does is not in the cited sources. |
-| **Cross-site request forgery** on the page | No cookie is set, so a cross-site form has no ambient credential to ride; each `POST` must carry the authorization request's handle and either `Sec-Fetch-Site: same-origin` or, without that header, an `Origin` equal to the issuer's, and `Origin: null` is refused as `oauth.origin_refused`; the page is served with `Referrer-Policy: same-origin`, so the browser sends its real origin on the page's own `POST`; `state` is echoed verbatim for the client's own check. | — |
-| **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; client-supplied names HTML-escaped and shortened; `logo_uri` never loaded. | — |
-| **Open redirect** | A redirect URI is admitted only by exact match against the fixed allowlist, at registration, in a fetched document and in the request; a refused client or redirect URI is a page, never a redirect (RFC 6749 §4.1.2.1). | — |
-| **Authorization code interception** | S256 PKCE only; a 60-second, single-use code, whose second redemption is judged by the reuse rule on [roles and keys](roles-and-keys.md#connections); a reverse proxy's access log records neither the authorize redirect's `Location` nor the OAuth request bodies ([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients)). | The proxy rule is stated, not checkable: doctor cannot read a proxy's configuration. |
-| **Access-token theft** | Opaque, stored as digests, accepted only at `/mcp` and only in the `Authorization` header, alive `oauth.access_token_ttl` (shipped 1 hour); each request re-resolves the key, so a revoked connection or key refuses it at the next request on the lead. | A stolen access token is the key's capability at `/mcp` until it expires or the connection is revoked; on a follower, until replication catches up. |
-| **Refresh-token theft** | Never accepted at `/mcp`, where only an access token authenticates; rotation on every use, and a rotated refresh token presented again revokes the connection ([roles and keys](roles-and-keys.md#connections)), journalled as `connection.revoked` with cause `refresh_reuse`. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. The same check ends a connection whose legitimate refresh answer was lost, and the person reconnects with a new code. |
-| **Server-side request forgery** through a client metadata document URL | The document URL's form and the fetch bounds on the [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients): public unicast addresses only, no second resolution, no proxy, no redirect, size, time and concurrency caps; the token path never fetches. | The lead, which holds the signing key, makes outbound HTTPS requests to hosts an unauthenticated client names. The bounds keep them off internal addresses and cap how many run at once; they do not make the lead's egress something a client cannot cause. A network-specific NAT64 prefix (RFC 6052) on the lead's own network carries internal IPv4 addresses inside public-looking IPv6 ones and is not detectable from the address, so the deployment's egress policy must refuse it. |
-| **Registration and request flooding** | Dynamic registrations open nothing by themselves, lapse after 24 hours unused, and are capped at 10 000 unused, past which registration answers `429 limit.rate`; an authorization request writes no row until an admin-minted code verifies; the document cache evicts rather than refuses, never evicts the document of a client that has connected, and serves a copy up to 24 hours old when a fetch fails or is busy; fetches are capped per host name and per resolved address; every authorize parameter is length-bounded before anything is fetched. | A flood of registrations stalls new dynamic registrations. A flood of slow document hosts on distinct addresses can hold every fetch slot and stall new document clients the cache holds no copy of, for as long as it lasts. Open connections, and clients with a cached copy, are unaffected. |
-| **Guessing a connect code** | 60 bits per code; one message for an unknown, expired, voided, spent, or revoked or expired key's code; doctor counts wrong entries, under an operator key. | With L live codes and G wrong entries during their life, the chance any entry hits one is at most L·G / 2⁶⁰ — a bound, not a measurement. Pages are free to open, so G is bounded only by the request rate the deployment serves, and L counts every tenant's live codes, since a code is looked up before its tenant is known. The five attempts per page bound one page's typing errors, not guessing. No limit keys on a source address: behind a proxy it is the proxy's. |
-| **A token used beyond its key** | A token resolves to its key on every request and every rule applies to the key; it is not a credential on `/v1` or `/v2`; the facade never forwards it. | — |
+| A connect code is read or intercepted and entered first by someone else | Single use. It lives 10 minutes. It never appears in a URL, log or journal. A key has one live code. `oml keys show` lists connections, so an admin can spot and end an unexpected one. | For its minutes, the code is a bearer secret. Whoever enters it first connects as the key, within the key's grants and only at `/mcp`. For claude.ai, the admin sees that a connection opened and when, not whose account made it. |
+| Consent phishing: an attacker starts an authorization and sends the person the link | The page names the client and the redirect host before it asks for the code. It tells the person to enter a code only on a page they opened themselves. OML delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request. The warning is the defense, and it works only if the person reads it. |
+| A co-tenant hands a person a code for the co-tenant's own key | The confirmation names the tenant the key belongs to, using the name the operator set. No tenant admin can set it. | A person who does not read the tenant name connects into the other tenant. |
+| Mix-up: a malicious connector steers the authorization code to its own endpoint | Every authorization response carries `iss`, and the discovery document advertises support for it. | The defense works only if the client checks `iss`. |
+| Cross-site request forgery on the page | OML sets no cookie. Each `POST` must carry the request handle and pass a same-origin check. It refuses `Origin: null` as `oauth.origin_refused`. | None known. |
+| Clickjacking and injected content | `frame-ancestors 'none'`, a content policy with no script, and escaped client-supplied names. | None known. |
+| Open redirect | OML admits a redirect URI only by exact match against a fixed allowlist. A refused URI gets a page, never a redirect. | None known. |
+| Authorization code interception | S256 PKCE only. A code lives 60 seconds and works once. | Your reverse proxy must not log the authorize redirect or OAuth request bodies. OML cannot check that. |
+| Access-token theft | Tokens are opaque and stored as digests. They work only at `/mcp`, only in the `Authorization` header, and for 1 hour. Each request re-checks the key. | A stolen access token acts as the key at `/mcp` until it expires or you end the connection. |
+| Refresh-token theft | A refresh token never authenticates `/mcp`. Every use rotates it. A rotated token presented again revokes the connection. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. |
+| Server-side request forgery through a client metadata URL | The lead fetches public unicast addresses only, with no proxy, no redirect, and caps on size, time and concurrency. | The lead makes outbound HTTPS requests to hosts an unauthenticated client names. Your egress policy must refuse internal address ranges, including NAT64 prefixes. |
+| Registration and request flooding | Unused registrations lapse after 24 hours and are capped at 10,000. Past the cap, registration answers `429 limit.rate`. An authorization request writes no row until a connect code verifies. | A flood stalls new dynamic registrations. Slow document hosts can hold every fetch slot for a while. Open connections keep working. |
+| Guessing a connect code | 60 bits per code. One message covers every invalid case. | With L live codes and G wrong entries, the chance of a hit is at most L·G / 2⁶⁰. That is a bound, not a measurement. No limit keys on a source address. |
 
-Tenancy is unchanged: a connection's rows carry its key's `tenant_id` and its tenant's RLS; the
-deployment-level rows — clients, and authorization requests whose code verified but which no
-connection yet holds — belong to the
-reserved provider tenant and hold no tenant content
-([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
+A connection's rows carry its key's tenant and fall under its tenant's RLS. Deployment-level rows, such as OAuth clients, belong to a reserved provider tenant and hold no tenant content.
 
 ## Web pages: sign-in and sessions
 
-*Since v0.5.0.* A user page and an admin
-page on the lead's own origin, signed in through Google or GitHub against a per-tenant email
-allowlist ([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). They add
-what declined to carry: a session cookie, and
-pages that act with a person's authority. The origin policy, the CSP and the frame rule are the
-connect page's, already built. Every act runs as a **session key** the server holds for the
-person — credential `session`, no value, one key per capacity — so the role matrix, the grants and
-the journal are the same as for every key. The threats below are the delta; every control is a
-built since v0.5.0; none is penetration-tested or measured, and no sign-in has reached a live provider.
+A user page and an admin page run on the lead's own origin. People sign in through Google or GitHub against a per-tenant email allowlist. The pages add a session cookie, and they act with a person's authority. Every act runs as a [session key](roles-and-keys.md#session-keys), so the roles, grants and journal are the same as for any key.
 
-| Threat | Controls | Residual |
+| Threat | Control | What remains |
 |---|---|---|
-| **An agent using the pages** (R1) | An `Authorization` header on a web route is `access.verb_ceiling`; `/v1`, `/v2` and `/mcp` never read `Cookie`; a session key has no value and no connect code; no MCP tool names a page; a session exists only after a provider sign-in. | An agent that drives the person's signed-in browser acts as the person, as an agent at an admin's shell already can; OML cannot tell them apart. |
-| **Session fixation** | No session identifier exists before the callback admits; the token is minted then, and a browser arriving with an old cookie gets a new token while the old row ends. | — |
-| **Session cookie theft** | `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`; the server holds only its SHA-256; `web.session_ttl` bounds it; sign-out and any change to its allowlist entry end it. | Until then a stolen cookie acts as the person through their session keys. There is no idle timeout. |
-| **Cross-site request forgery** | `SameSite=Lax` withholds the cookie from cross-site `POST`s; every `POST` passes the connect page's same-origin check; every signed-in form carries a `csrf_token` derived from the session token and compared in constant time; every `GET` is free of effect. | — |
-| **Login forgery** (an attacker signs the victim in as the attacker) | The callback admits only the `state` sealed in the `__Host-oml_signin` cookie of the browser that started the flow. | — |
-| **Provider mix-up** | The provider is in the callback path and in the sealed cookie, which must agree before any code is redeemed. | — |
-| **A moved or recycled email address** | Only a verified address the provider returns over TLS; GitHub's primary verified address alone; the provider account is pinned per entry at first sign-in, and another account with the same address is `identity_changed`. | A provider that calls an address verified is trusted as far as the allowlist reaches. Before an entry's first sign-in nothing is pinned, so whoever controls the address at the provider first holds it. |
-| **Clickjacking and injected content** | `frame-ancestors 'none'`; `default-src 'none'` with one hashed style block and no script; every rendered string escaped and stripped of control and bidirectional formatting characters. | Memory text an agent wrote is shown to a person; it is escaped, never rendered as markup, and still says whatever it says. |
-| **Secrets in logs** | The route template, never the query: the callback's `code` and `state` and the sign-in redirect's `Location` are never logged; no cookie, token or email reaches a line; the journal holds an email's digest, never the address. | A reverse proxy's access log must drop `/web/callback/*`'s query too: stated, not checkable. |
-| **Sign-in flooding** | A sign-in start writes no row; a callback whose cookie does not open makes no outbound call; provider calls are capped per provider and timed out. | Anyone can start flows of their own and make the lead call the providers' token endpoints at the cap's rate (unmeasured,). No limit keys on a source address. |
-| **A person outliving their access** | Removing an email ends its sessions and, when it was the user's last, makes the user's session keys unreachable at once. | The person's agent keys keep working until an admin cuts each off, which the removal confirmation lists; revocation is not built. |
-| **Admin authority through the pages** | The admin key never reviews; review runs as the person's reviewer key, R2 checked on that key and the lineage closure. The admin key reads content only on the two [admin read](../api/http-api.md#admin-read) routes, and each read is journalled as `memory.admin_read` with the ids served. | A person may approve their own agents' writes through their reviewer key; the journal shows both keys. A tenant's admin reads every person's memories, held ones included, so people who need privacy from that admin need a tenant of their own. |
+| An agent uses the pages | An `Authorization` header on a web route answers `access.verb_ceiling`. `/v1`, `/v2` and `/mcp` never read `Cookie`. A session key has no value and no connect code. | An agent that drives a person's signed-in browser acts as that person. OML cannot tell them apart. |
+| Session fixation | No session identifier exists before the callback admits. The token is minted then. | None known. |
+| Session cookie theft | The cookie uses the `__Host-` prefix and is `Secure`, `HttpOnly` and `SameSite=Lax`. The server holds only its SHA-256. It expires after a fixed lifetime. Sign-out and any change to the allowlist entry end it. | A stolen cookie acts as the person until it expires. There is no idle timeout. |
+| Cross-site request forgery | `SameSite=Lax` withholds the cookie from cross-site `POST`s. Every `POST` passes the same-origin check and carries a `csrf_token`. Every `GET` is free of effect. | None known. |
+| Login forgery | The callback admits only the `state` sealed in the cookie of the browser that started the flow. | None known. |
+| A moved or recycled email address | Only a verified address from the provider counts. The provider account is pinned at first sign-in, and another account with the same address is `identity_changed`. | Before an entry's first sign-in, whoever controls the address at the provider holds it. |
+| Memory text rendered to a person | OML escapes it and strips control and bidirectional characters. | The text appears as text and still says whatever it says. |
+| Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | Your reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
+| A person outliving their access | Removing an email ends its sessions. | The person's agent keys keep working until an admin cuts each off with a global denial. |
+| Admin authority through the pages | The admin key never reviews. Review runs as the person's reviewer key. The admin key reads content only on two admin read routes, and the journal records each read as `memory.admin_read`. | A tenant's admin can read every person's memories, held ones included. People who need privacy from that admin need their own tenant. |
+
+## Review binding
+
+A verdict counts only under a `serve_id` that `oml-server` bound to the reviewer key, the memory version and its content. The serve expires. The first verdict consumes it. Any change to the served content invalidates it. This stops four attacks:
+
+- **Replay.** A captured approval cannot be submitted twice.
+- **Bait and switch.** Changed content invalidates the serve.
+- **Transplant.** A verdict made under one reviewer key cannot be submitted by another.
+- **Blind approval.** No valid serve means no verdict.
+
+The serve proves what the reviewer saw, not what the reviewer read. A careless reviewer leaves the same evidence as a careful one. The independence rules in [roles and keys](roles-and-keys.md#review-independence) make that pattern visible. They do not prevent a single instance.
 
 ## Trust boundaries
 
 ```mermaid
 flowchart LR
-  subgraph clients["Tenant clients — untrusted"]
-    A["Agent / crew<br/>(bearer API key)"]
+  subgraph clients["Tenant clients (untrusted)"]
+    A["Agent<br/>(bearer API key)"]
     H["Claude hosted apps via claude.ai<br/>(connection access token, /mcp only)"]
-    CLI["oml CLI<br/>(operator / admin / dreamer key)"]
-    W["A person's browser, planned v0.5.0<br/>(session cookie, /web only)"]
+    CLI["oml CLI<br/>(bearer key)"]
+    W["A person's browser<br/>(session cookie, /web only)"]
   end
 
-  subgraph tcb["TCB: oml-server replicas"]
-    S["oml-server<br/>holds the deployment signing key<br/>decrypts DEKs on the serving path<br/>derives tenant from key"]
+  subgraph tcb["Trusted: oml-server lead"]
+    S["oml-server<br/>holds the deployment signing key<br/>unwraps DEKs<br/>derives the tenant from the key"]
   end
 
-  subgraph data["Data plane — RLS enforced, no BYPASSRLS role exists"]
-    PG[("PostgreSQL<br/>journal · metadata · outbox<br/>RLS on every table")]
-    OS[("Object store<br/>quarantine + bodies<br/>ciphertext, per-tenant paths")]
-    DL[("Delta Lake<br/>per-tenant prefixes<br/>ciphertext bodies, derived only")]
+  subgraph data["Data plane: RLS enforced, no BYPASSRLS role"]
+    PG[("PostgreSQL<br/>journal, metadata, outbox")]
+    OS[("Object store<br/>quarantine and bodies<br/>ciphertext, per-tenant paths")]
+    DL[("Delta Lake<br/>per-tenant prefixes<br/>derived only")]
   end
 
-  subgraph priv["Privileged services — outside the TCB, no signing key"]
-    LW["oml-lakewriter<br/>SET-tenant RLS sessions<br/>keyless — moves ciphertext verbatim"]
-    RC["oml-reconciler<br/>read-only, keyless<br/>repairs via outbox through oml-server"]
-    IX["oml-indexer<br/>own per-tenant credentials"]
-  end
-
-  KMS["KMS<br/>KEK never leaves"]
+  LW["oml-lakewriter<br/>own Postgres role<br/>no signing key<br/>moves ciphertext verbatim"]
+  KMS["Key store<br/>keyring file or AWS KMS"]
 
   A -- "HTTPS, bearer key" --> S
   H -- "HTTPS, access token" --> S
@@ -483,94 +155,18 @@ flowchart LR
   S -- "wrap / unwrap DEK" --> KMS
   PG -- "outbox drain" --> LW
   LW --> DL
-  RC -. "read-only" .-> PG
-  RC -. "read-only" .-> DL
-  RC -- "repair proposals" --> S
-  IX --> PG
 ```
 
-Boundary crossings, read off the diagram: everything a tenant can do crosses exactly one boundary,
-into oml-server, carrying a bearer key or a connection's access token that resolves to one, or, since v0.5.0, a session cookie that resolves to a person's session keys —
-there is no client path to Postgres, the object store, the
-lake or KMS. The signing authority never crosses out of the TCB. The privileged services sit
-between the data stores but hold no authority to sign and (lake-writer, reconciler) no authority to
-decrypt; their writes either go through RLS-scoped sessions or come back around through oml-server
-as journalled acts.
+Everything a tenant can do crosses one boundary, into `oml-server`. It carries a bearer key, a connection's access token or a session cookie that resolves to a person's session keys. No client path reaches Postgres, the object store, the lake or the key store. The signing authority never leaves the lead.
 
-## Residual risks, stated plainly
+## Residual risks
 
-Design commitments above reduce these; none removes them. Each is carried honestly rather than
-rounded up to a guarantee.
+These risks remain after the controls above.
 
-1. **Undeclared derivation is undetectable.** The reviewer-independence rule R2 excludes a
-   reviewer whose key or principal appears in a row's *declared* lineage closure. A writer that
-   omits `derives_from` defeats that closure, and the service cannot know. Lineage exclusion is
-   exactly as good as the declared graph — the constitution states this honesty rule itself, and this page repeats it because a
-   security reader must not infer more.
-2. **Collusion is made visible, not impossible.** Two keys approving each other's work pass every
-   per-row check. The independence axis (distinct principal, optionally distinct crew/manager) and
-   the reciprocal-approval statistics in the evidence export
-   ([audit-and-lineage.md](audit-and-lineage.md)) are detection instruments for a human auditor,
-   not prevention.
-3. **Rate limiting is a per-replica approximation.** Token buckets at limit/N per replica, no
-   shared counter in v1; transient over- and under-admission is expected under skewed load
-   balancing. Its resolution is.
-4. **Lead compromise is signing-key compromise — and decrypt-everything compromise.** The lead
-   holds the signing key *and* the KMS decrypt grant, so a compromised lead can both sign
-   arbitrary events and unwrap any tenant's DEKs. This is the largest single trust statement in
-   the design, and it is two statements, not one. Detection (fork check at startup and at
-   failover promotion, chain verification against prior heads — which requires heads retained
-   outside the deployment,) and journalled rotation
-   ([Signing-key rotation](#signing-key-rotation)) are the answer for the signing half;
-   nothing detects quiet reads by a compromised key-holding process. Prevention via HSM-resident
-   signing or threshold decryption is not committed. **Follower compromise is narrower by
-   construction**: serving-path
-   decryption and misserving, bounded by the follower's credentials — a follower cannot forge a
-   chain event, so tamper-evidence survives follower compromise. In the default lead-only
-   topology the narrowing is vacuous and the lead admission stands alone.
-4b. **Indexer compromise exposes promoted plaintext.** `oml-indexer` necessarily handles promoted
-   plaintext to embed it; its compromise exposes every promoted body of the tenants it serves,
-   bounded by its per-tenant credentials. Until decides where the embedding model runs, the
-   standing commitment is that no promoted plaintext leaves the deployment's trust boundary.
-5. **The platform operator is trusted.** A Postgres superuser, a KMS administrator, or whoever
-   holds the Kubernetes Secrets can read attribution metadata, destroy or exfiltrate keys, and
-   rewrite unprotected state. OML's evidence (signed chains held by tenants via exports) makes
-   some of this detectable after the fact; none of it is prevented. OML is a trusted-provider
-   design, and no page claims otherwise.
-6. **Attribution metadata outlives erasure.** Crypto-shredding destroys body and attachment
-   bytes; who wrote what, when, where remains, in Postgres and in the lake, until the
-   attribution-erasure issue lands ([audit-and-lineage.md](audit-and-lineage.md),
-   [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
-7. **Counts leak what reads hide.** A key that can read nothing of another author's held work
-   still counts it. `seq`, `head_seq`, `next_after_seq` and `permission_epoch` are tenant-wide
-   journal positions, so a key learns how many events it cannot see occurred between two it
-   can, and when ([events tail](../api/http-api.md#events-tail)); a successor's version ordinal
-   counts the versions of its claim the key cannot read; the `claim_key` collision tells a
-   writer that a name is taken
-   ([audit-and-lineage.md](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); and
-   the [lineage read](../api/http-api.md#lineage-get-v2memoriesartifact_idlineage) names every
-   unreadable ancestor of a version the key can read as a redacted bare id, so a reader of a promoted version
-   derived from its author's held row learns that the held row exists and its id. Each is a
-   count, a name or an id, never content; together they are.
-8. **A service key's grant is broader than its job.** The reconciler's dreamer-role service key
-   needs only the repair re-enqueue, but a grant carries a role, not a verb list, so it confers
-   every dreamer verb. A stolen reconciler key can therefore propose edits and connection edges
-   inside the nodes it is granted; it can never review or ratify one, so every such proposal still
-   waits for non-author review under other keys
-   ([transport and internal authentication](#transport-and-internal-authentication)). Its
-   resolution is.
-9. **A connect code is a bearer secret for its minutes, and the lead now fetches client-chosen
-   URLs.** Whoever enters a code first connects as its key, within that key's grants and only at
-   `/mcp`; the admin learns from `connection.opened`, after the fact, that a connection opened and
-   when, and for claude.ai not whose account holds it. A person who enters a code on a link someone
-   else started connects the sender's client, and the page's warning is the only thing in the way.
-   The lead's fetch of a client metadata document is bounded as the
-   [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients) declares, and it is
-   still egress an unauthenticated client can cause from the process that holds the signing key,
-   and a flood of slow document hosts can stall new document clients
-   ([Connections](#connections-the-oauth-surface)). Verifying the flow against a live
-   client is.
-
-Everything on this page is decided, not built; no control here has been penetration-tested,
-load-tested or measured, and the issues named above are where each open edge is tracked to an
-exit criterion.
+1. **Undeclared derivation is undetectable.** Lineage exclusion is as good as the declared `derives_from` graph.
+2. **Collusion is visible only to a person looking.** Two keys approving each other's work pass every per-row check.
+3. **Lead compromise is signing-key compromise and decrypt-everything compromise.** This is the largest single trust statement in the design. Nothing detects quiet reads by a compromised lead.
+4. **The platform operator is trusted.** A Postgres superuser, a key store administrator or whoever holds the Kubernetes Secrets can read attribution metadata, destroy keys and rewrite unprotected state. Signed chains that tenants keep make some of this detectable after the fact. OML is a trusted-provider design.
+5. **Counts leak what reads hide.** A key that cannot read another author's held work still sees tenant-wide journal positions. It learns how many events it cannot see, and when. A `claim_key` collision tells a writer that a name is taken. The lineage read names unreadable ancestors as redacted ids. Each leak is a count, a name or an id, never content.
+6. **A connect code is a bearer secret for its minutes.** The lead also fetches client-chosen URLs.
+7. **Rate limits are unmeasured.** Not measured yet: request limits under skewed load.

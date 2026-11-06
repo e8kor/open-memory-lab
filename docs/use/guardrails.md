@@ -4,11 +4,11 @@ verified: 2026-11-06
 answers: "what a guardrail is, how a team gives its agents reviewed standing rules, how they load and are checked, and the limits of a rule an agent only reads"
 ---
 
-# Rules for agents
+# Set standing rules for agents
 
 A guardrail is a reviewed rule every agent session loads at its start, such as "never push to the
 release branch" or "run the tests before every commit".
-It is a memory of kind `guardrail`: agents or people write it, and it applies only after a
+It is a memory of kind `guardrail`. Agents or people write it, and it applies only after a
 different identity approves it.
 
 - **Where it applies.** From the agent's workarea and, as an administrator sets on its key, the
@@ -23,6 +23,5 @@ different identity approves it.
   `oml guardrails show` prints what a session would load.
 
 **What a rule cannot do.** A rule the agent only reads is an instruction to a model, not a
-guarantee; only the tool-call check binds. An exported file is a copy that withdrawal and erasure
-do not reach ([](https://github.com/e8kor/open-memory-lab/issues/137)). Whether agents follow
-rules they only read is unmeasured ([](https://github.com/e8kor/open-memory-lab/issues/112)).
+guarantee. Only the tool-call check binds. An exported file is a copy that withdrawal and erasure
+do not reach. Whether agents follow rules they only read is not measured yet.

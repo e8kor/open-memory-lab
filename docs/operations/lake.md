@@ -1,16 +1,21 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics"
+answers: "how to run the lake writer, rotate its key, read the lake with the named queries or DuckDB, check its health, and what happens on erase"
 ---
 
-# The lake
+# Run the lake writer
 
-The lake writer, `oml-lakewriter`, copies what Postgres commits into Delta tables for analysis.
-No client reads the lake: recall, search and get are served from Postgres. The lake answers the operator's
-questions about how the system is used.
+The lake writer, `oml-lakewriter`, copies what PostgreSQL commits into Delta tables for analysis. No client
+reads the lake. Recall, search and get are served from PostgreSQL. The lake answers your questions about how
+the system is used. The tables are on [Delta tables](../data/delta-tables.md).
 
-## Running it
+The lake writer is a separate process from the server. The Helm chart does not deploy it, and `oml quickstart`
+does not start it. Run it on the server's host, or as your own workload on a cluster, with a role of its own.
+
+## Start it
+
+You need a running server, a directory or object-store path for the lake, and a PostgreSQL role for the writer.
 
 ```sh
 oml-lakewriter keygen --out <kek-file>          # once; owner-only, back it up with the database
@@ -21,38 +26,30 @@ export OML_LAKE_KEK_FILE=<kek-file>
 oml-lakewriter run --metrics-addr 127.0.0.1:9466
 ```
 
-The role in `OML_LAKE_DATABASE_URL` must be neither the owner nor the serving role, and must not
-be a superuser or bypass row security; the writer refuses one that is. One writer runs at a
-time: a second waits for the first's lease. Losing the KEK file makes every sealed body in the
-lake unreadable, as erase does.
+The role in `OML_LAKE_DATABASE_URL` must be neither the owner nor the serving role. It must not be a
+superuser or bypass row security. The writer refuses one that is. One writer runs at a time, and a second
+waits for the first's lease.
 
-The KEK file must be owner-only (mode 600); `run` and `drain-once` refuse to start on one that
-group or others can read. Rotate it with the writer stopped:
+Losing the key-encryption key (KEK) file makes every sealed body in the lake unreadable, as erase does. The
+file must be owner-only (mode 600). `run` and `drain-once` refuse to start on one that group or others can
+read. Rotate it with the writer stopped:
 
 ```sh
 oml-lakewriter keygen --rotate --kek-file <kek-file>   # takes the lease, re-wraps, retires the old KEK
 ```
 
-If it stops part way the file keeps both versions; run it again. Back up the new file with the
-database before restarting the writer.
+If it stops part way, the file keeps both versions. Run it again. Back up the new file with the database
+before you restart the writer.
 
-## What it holds
+## Where the lake lives
 
-Each tenant has its own prefix, `<lake>/<tenant id>/`:
+Each tenant has its own prefix, `<lake>/<tenant id>/`. The provider prefix, `<lake>/_provider/`, holds
+`lake/batches` (the frontier) and `bench/results`. Load benchmark numbers with
+`oml-lakewriter load-bench eval/bench/results`.
 
-| Table | Path | One row per |
-|---|---|---|
-| `bronze.events` | `bronze/events`, by `event_date` | journal event, digest-only, signature included |
-| `silver.claims` | `silver/claims` | promoted claim version; body sealed under its own key; state `promoted`, `superseded`, `demoted`, `held` or `erased` |
-| `gold.lineage` | `gold/lineage` | ratified edge, derives-from or supersedes link |
-| `telemetry.recall_daily` | `telemetry/recall_daily`, by `day` | day, pipeline and access path: counts only, the last 30 days |
+## Run the named queries
 
-The provider prefix, `<lake>/_provider/`, holds `lake/batches` (the frontier) and
-`bench/results` (benchmark numbers, loaded with `oml-lakewriter load-bench eval/bench/results`).
-
-## Named queries
-
-`oml-lakewriter query --list` lists them; `oml-lakewriter query <name>` runs one.
+`oml-lakewriter query --list` lists them. `oml-lakewriter query <name>` runs one.
 
 | Name | Answers |
 |---|---|
@@ -64,7 +61,7 @@ The provider prefix, `<lake>/_provider/`, holds `lake/batches` (the frontier) an
 | `top-workareas` | workareas by journalled activity, with names |
 | `bench-latest` | each suite's methods on their overall metrics |
 
-The same questions in DuckDB, with its `delta` extension, against one tenant:
+DuckDB, with its `delta` extension, answers the same questions against one tenant:
 
 ```sql
 INSTALL delta; LOAD delta;
@@ -88,16 +85,17 @@ FROM delta_scan(getvariable('lake') || '/silver/claims') GROUP BY ALL;
 
 Spark reads the same paths with `spark.read.format("delta").load(path)`.
 
-## Health
+## Check its health
 
-`oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one
-fails: `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`,
-`lake.heartbeat`, `lake.kek` (pass `--kek-file`; permissions, and a warning past 90 days), `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
-The metrics listener serves the `oml_lake_*` families lists.
+`oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one fails. The
+checks are `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`, `lake.heartbeat`,
+`lake.kek`, `lake.commits`, `lake.schema`, `lake.dead_letter` and `lake.maintenance`. Pass `--kek-file` for
+`lake.kek`, which checks permissions and warns past 90 days. The metrics listener serves the `oml_lake_*`
+families ([metrics](../reference/metrics.md)).
 
-## Erasure
+## What happens on erase
 
-On `lifecycle.erase` the writer destroys the version's key in `artifact_keys` and rewrites its
-`silver.claims` row as `erased` with no body. From then, every older table version that still
-holds the sealed body opens under no key; the daily VACUUM removes those files once they are
-older than the erasure bound (default 7 days). Bronze holds digests only and needs no change.
+On `lifecycle.erase`, the writer destroys the version's key in `artifact_keys` and rewrites its
+`silver.claims` row as `erased` with no body. Every older table version that still holds the sealed body
+then opens under no key. The daily VACUUM removes those files once they are older than the erasure bound,
+7 days by default (`--retention-hours 168`). Bronze holds digests only and needs no change.

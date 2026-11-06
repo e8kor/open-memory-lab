@@ -1,32 +1,63 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "how to save a first memory, why it is held, how to find it, how a reviewer approves it, and when others see it"
+answers: "six commands that start a server, write a memory, show it held, approve it as a second identity and recall it"
 ---
 
-# Your first memory
+# Quickstart: see a memory held, then approved
 
-You need a connected agent ([Claude Code](../guides/claude-code.md) or [another
-tool](../guides/other-harnesses.md)) or the `oml` CLI with a key, and a reviewer other than the
-author. About two minutes joining a server that has a workarea for you.
+You start a server on your machine, write a memory as an agent and watch it stay invisible until a different key approves it. It takes six commands and needs Docker with compose v2 and the `oml` CLI ([install](install.md)). Time to run: Not measured yet.
 
-1. **Save.** Ask the agent to remember a decision, or run
-   `oml write "We deploy on Tuesdays; Friday deploys need two approvals."`. The answer is
-   **held**: scanned, journalled and readable by its author alone. An agent uses the `oml_write`
-   tool, which answers the same.
-2. **Find it as the author.** `oml read --query "deploy Friday" --include-unreviewed` returns the
-   held row, marked unreviewed. Without `--include-unreviewed` the author sees what everyone
-   sees, which is nothing yet.
-3. **Review it as someone else.** A reviewer key (`dreamer`) takes the next held memory with
-   `oml review next`, reads it and its sources, and runs `oml review approve` or
-   `oml review reject --reason …`. The server never serves a reviewer their own writes or
-   anything derived from them (`review.author_in_lineage`).
-4. **Find it as anyone with access.** After approval `oml read --query "deploy Friday"` returns
-   it from the workarea and its subtree. The approval changed who can read it, not how it ranks.
-5. **Correct it.** `oml write "…" --replaces <artifact_id> --expected-version <n>` writes a new
-   version. It is held too: everyone else keeps finding the old version until a reviewer
-   approves the new one. Add `--retirement --reason …` to propose retiring a memory instead.
+1. Start a server, a workarea named `crew`, an agent key and a reviewer key.
 
-Recall matches memories that contain every word of the query unless any-word search is on
-(`--match any`); if nothing is found, try fewer words. Reviewing a long queue is a person's act,
-and a person can review a listed set in one command ([reviewing](../guides/reviewing.md)).
+    ```sh
+    oml quickstart
+    ```
+
+    It writes the key files `oml/keys/agent` and `oml/keys/reviewer`. In the next commands, `A` stands for the agent's key and `R` for the reviewer's.
+
+    ```sh
+    export OML_URL=http://127.0.0.1:8080
+    A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
+    ```
+
+2. Write a memory as the agent. The answer says the memory is `held`.
+
+    ```sh
+    OML_API_KEY=$A oml write "We deploy on Tuesdays; Friday deploys need two approvals."
+    ```
+
+3. Recall it as the agent. You get no hit: a held memory is invisible to every read, even its author's.
+
+    ```sh
+    OML_API_KEY=$A oml read --query "deploy Friday"
+    ```
+
+4. Recall it again and ask for your own unreviewed memories. Now the memory appears, marked unreviewed and `held`.
+
+    ```sh
+    OML_API_KEY=$A oml read --query "deploy Friday" --include-unreviewed
+    ```
+
+5. Approve it with the reviewer key, a different identity. Paste the artifact id from step 2 or 4. The server refuses this verdict from the agent's own key.
+
+    ```sh
+    OML_API_KEY=$R oml review approve --ids <artifact_id>
+    ```
+
+6. Recall it with the agent key. The memory is found, with no flag.
+
+    ```sh
+    OML_API_KEY=$A oml read --query "deploy Friday"
+    ```
+
+## What you saw
+
+The write waited for a reviewer, and the reviewer had to be someone other than the author. Approval changed who could read the memory, not how it ranks. The cost is a delay between writing and recall; [why a write is held](../concepts/why-a-write-is-held.md) explains what that buys.
+
+## Next
+
+- Connect an agent: [Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md), [other tools](../guides/other-harnesses.md).
+- Run the server for a team: [run your own server](run-your-own.md).
+- Review a queue: [review held memories](../guides/reviewing.md).
+- Remove the stack: `docker compose --project-directory oml down -v`.

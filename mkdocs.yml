@@ -24,6 +24,59 @@ copyright: >
 
 validation:
   nav:
+    omitted_files: warn
+  anchors: warn
+
+theme:
+  name: material
+  logo: assets/brand/oml-mark.svg
+  favicon: assets/brand/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.indexes
+    - navigation.path
+    - navigation.footer
+    - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - toc.follow
+    - content.tabs.link
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+
+markdown_extensions:
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.tabbed:
+      alternate_style: true
+
+
+nav:
   - Home: index.md
   - Get started:
       - start/index.md
@@ -38,7 +91,7 @@ validation:
       - Use:
           - Remember and recall: use/remember-and-recall.md
           - Review held memories: guides/reviewing.md
-          - Organise memory in workareas: use/workareas.md
+          - Organize memory in workareas: use/workareas.md
           - Capture chat memory: use/chat-memory.md
           - Sync docs and code: use/sync.md
           - Give agents rules: use/guardrails.md
