@@ -2230,6 +2230,10 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
 const DIAGRAM: &str = "flowchart LR\n  A[Checkout] -->|calls| B[Payments]\n";
 
 async fn agent_writes_diagram(rig: &Rig, value: &str) -> uuid::Uuid {
+    agent_writes_diagram_of(rig, value, DIAGRAM).await
+}
+
+async fn agent_writes_diagram_of(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
     rig.app
         .submit_memory(
             value,
@@ -2239,7 +2243,7 @@ async fn agent_writes_diagram(rig: &Rig, value: &str) -> uuid::Uuid {
                 claim_key: None,
                 verb: Some(oml_app::types::SubmitVerb::Remember),
                 kind: oml_app::domain::MemoryKind::Memory,
-                body: DIAGRAM.to_owned(),
+                body: body.to_owned(),
                 workarea: None,
                 derives_from: Vec::new(),
                 severity: None,
@@ -2409,4 +2413,40 @@ async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_b
         "what it will be found by: {page}"
     );
     assert!(page.contains("<iframe sandbox=\"allow-scripts\""), "{page}");
+}
+
+#[tokio::test]
+async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_draws() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[("action", "issue_key"), ("name", "laptop"), ("role", "writer")],
+    )
+    .await;
+    // About 56 KiB of source: under the 64 KiB cap, and a URL path of that
+    // size, once sealed and encoded, is more than a server will accept.
+    let mut big = String::from("flowchart LR\n");
+    for i in 0..100 {
+        big.push_str(&format!("  N{i}[\"{}\"] --> N{}\n", "x".repeat(540), i + 1));
+    }
+    big.push_str("  N100[\"the last node\"]\n");
+    assert!(big.len() > 55_000 && big.len() < 64 * 1024, "{}", big.len());
+    agent_writes_diagram_of(&rig, &value_of(&page), &big).await;
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let token = frame_token(&page);
+    assert!(
+        token.len() < 1024,
+        "a token names the diagram, it does not carry it: {} bytes",
+        token.len()
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", &body[..body.len().min(300)]);
+    assert!(body.contains("the last node"), "the whole source is drawn from");
 }
