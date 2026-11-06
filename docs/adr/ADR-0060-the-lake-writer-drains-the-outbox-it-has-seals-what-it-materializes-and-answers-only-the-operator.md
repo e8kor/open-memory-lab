@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator
 tier: engineering
-status: accepted · 2026-11-05
+status: accepted design · 2026-11-06
 answers: how ADR-0003's lake writer is built against the code as it stands; which parts of ADR-0003 and its pages were stale and what replaces them; the binary and crate split; the outbox input; exactly-once and the stable prefix; the lease; how bodies are sealed and erased before ADR-0005's capture-time keys exist; recall telemetry and benchmark results in the lake; the tables; the operator's queries; maintenance; the Postgres role; dead letters; storage; doctor lines and metrics; the one C library; who holds the KEK and how it rotates; the laws and their tests
 -->
 
 # ADR-0060 — The lake writer drains the outbox it has, seals what it materializes, and answers only the operator
 
-**Status:** accepted · 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
+**Status:** accepted design · 2026-11-06 (was accepted) · introduced in v0.6.0 · first recorded 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
 
-**Release:** accepted for v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0003 (d3, d4, d6), ADR-0005 (d1, d2), ADR-0006 (d1)
 

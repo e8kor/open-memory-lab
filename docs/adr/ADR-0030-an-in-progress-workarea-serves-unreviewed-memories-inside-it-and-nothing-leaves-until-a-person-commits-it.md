@@ -1,17 +1,17 @@
 <!--
 id: adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it
 tier: engineering
-status: accepted design · 2026-11-05
+status: accepted design · 2026-11-06
 answers: what an in-progress workarea is and who may mark it (a person's key, never an agent); the one boundary rule every scoped read applies; which keys read other authors' unreviewed memories inside, labelled how; how R3 is relaxed there and only there, journalled; why ranking still reads no verdict and what telemetry records; what the commit is and why it needs zero unreviewed; how a curator agent narrows the unreviewed work inside and never widens it; how anchors, `oml sync` and draft workareas interact; how an in-progress workarea is abandoned or retired with nothing deleted; the surfaces, codes, migration, doctor lines and laws
 -->
 
 # ADR-0030 — An in-progress workarea serves unreviewed memories inside it, a curator agent may only narrow them, and nothing leaves until a person commits it
 
-**Status:** accepted design · 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
+**Status:** accepted design · 2026-11-06 (was accepted design) · introduced in v0.6.0 · first recorded 2026-11-05 · revision 2, rebuilt on the v0.5.8 API; revision 1
 ([#12](https://github.com/e8kor/open-memory-lab/pull/12), 2026-10-31, proposed) is preserved at tag
 `archive/feat/in-progress-workareas`
 
-**Release:** planned for v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0001 (d3, d5: a second bounded relaxation of R3, inside an opted-in scope only),
 ADR-0009 (d3: a transition on a node inside an in-progress subtree waits for its commit),

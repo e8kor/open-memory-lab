@@ -30,7 +30,7 @@ You need two things: a server address and an agent key. On the public server
 is by invitation) and issue a key on your page. On your own server, ask your administrator.
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.8/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
 oml login https://memory.doublegate.io
 oml setup claude-code
 ```
