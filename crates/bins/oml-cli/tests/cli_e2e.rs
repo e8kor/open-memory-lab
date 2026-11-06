@@ -6741,3 +6741,190 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
     assert_eq!(ratified["edges"][0]["state"], "ratified", "{log}");
     lab.stop().await;
 }
+
+const CODE_MANIFEST: &str = "[package]\nname = \"oml-demo\"\ndescription = \"A demo crate.\"\n";
+const CODE_LIB: &str = "//! The demo root.\n\npub mod area;\n";
+const CODE_AREA: &str = "//! The area module.\n\npub fn f() {}\n";
+
+/// `oml sync --adapter rust` end to end (ADR-0061 d5-d8, d14): a scratch
+/// clone's crate and module docs load as held claims under `oml-crate/1` and
+/// `oml-rustdoc/1`, a person reviews them, a code edit writes nothing and a
+/// doc edit supersedes exactly its claim; and a dry run over this repository
+/// itself plans a claim per crate and per module doc.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("oml-code");
+    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+        lab.issue(
+            name,
+            &[
+                "--role",
+                role,
+                "--held-by",
+                held_by,
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{wa}:{role}"),
+                "--grant",
+                &format!("{wa}:reader"),
+            ],
+        )["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let sync = issue("code-sync", "writer", "service", "crew/code-sync");
+    let reviewer = issue("eugene-code-review", "dreamer", "human", "eugene");
+    let clone = lab.dir.join("code-clone");
+    std::fs::create_dir_all(clone.join("crates/demo/src")).expect("clone dir");
+    git_in(&clone, &["init", "-q", "-b", "main"]);
+    git_in(
+        &clone,
+        &["remote", "add", "origin", "git@github.com:e8kor/Code.git"],
+    );
+    let put = |path: &str, text: &str| std::fs::write(clone.join(path), text).expect("write");
+    put("crates/demo/Cargo.toml", CODE_MANIFEST);
+    put("crates/demo/src/lib.rs", CODE_LIB);
+    put("crates/demo/src/area.rs", CODE_AREA);
+    git_in(&clone, &["add", "."]);
+    git_in(&clone, &["commit", "-q", "-m", "crate"]);
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "sync",
+            "crates",
+            "--workarea",
+            "oml-code",
+            "--adapter",
+            "rust",
+        ];
+        args.extend_from_slice(extra);
+        oml_at(&lab, &sync, &clone, &args)
+    };
+    let approve_all = || {
+        let (code, listed, log) = oml_text(
+            &lab.server,
+            &lab.creds,
+            Some(&reviewer),
+            &[
+                "review",
+                "list",
+                "--workarea",
+                "oml-code",
+                "--author-key",
+                "code-sync",
+                "--ids-only",
+                "--all",
+            ],
+        );
+        assert_eq!(code, 0, "review list: {log}");
+        let file = lab.dir.join("code-ids.txt");
+        std::fs::write(&file, &listed).expect("ids");
+        let (code, verdicts, log) = lab.json(
+            Some(&reviewer),
+            &["review", "approve", "--ids", file.to_str().expect("path")],
+        );
+        assert_eq!(code, 0, "approve: {log}");
+        verdicts["summary"]["approved"].as_u64().expect("approved")
+    };
+
+    let (code, dry, log) = run(&["--dry-run"]);
+    assert_eq!(code, 0, "dry run: {log}");
+    assert_eq!(dry["summary"]["new"], 2, "{log}");
+    let (code, first, log) = run(&[]);
+    assert_eq!(code, 0, "sync: {log}");
+    assert_eq!(
+        first["items"], dry["items"],
+        "the dry run's plan is the run's"
+    );
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-code"]);
+    assert_eq!(code, 0, "{log}");
+    let tip = |key: &str| -> Value {
+        held["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|i| i["claim_key"] == key)
+            .unwrap_or_else(|| panic!("no {key}: {held}"))
+            .clone()
+    };
+    assert_eq!(
+        tip("rust/crate/oml-demo")["anchor"]["hasher"],
+        "oml-crate/1"
+    );
+    assert_eq!(
+        tip("rust/crate/oml-demo")["anchor"]["path"],
+        "crates/demo/Cargo.toml"
+    );
+    assert_eq!(
+        tip("rust/mod/oml_demo::area")["anchor"]["hasher"],
+        "oml-rustdoc/1"
+    );
+    assert_eq!(
+        tip("rust/mod/oml_demo::area")["anchor"]["fragment"],
+        "L1-L1"
+    );
+    assert_eq!(approve_all(), 2);
+
+    // A code edit below the doc writes nothing; a doc edit supersedes its claim.
+    put(
+        "crates/demo/src/area.rs",
+        &format!("{CODE_AREA}\npub fn g() {{}}\n"),
+    );
+    git_in(&clone, &["commit", "-q", "-am", "code"]);
+    let (code, code_edit, log) = run(&[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(code_edit["summary"]["unchanged"], 2, "{log}");
+    assert_eq!(code_edit["summary"]["writes_this_run"], 0, "{log}");
+    let (code, _, log) = run(&["--check"]);
+    assert_eq!(code, 0, "check: {log}");
+    put(
+        "crates/demo/src/area.rs",
+        &CODE_AREA.replace("The area", "The whole area"),
+    );
+    git_in(&clone, &["commit", "-q", "-am", "doc"]);
+    let (code, doc_edit, log) = run(&[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(doc_edit["summary"]["changed"], 1, "{log}");
+    assert_eq!(doc_edit["summary"]["unchanged"], 1, "{log}");
+
+    // A dry run over this repository: a claim per crate and per module doc.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    if repo.join(".git").exists() {
+        let (code, whole, log) = oml_at(
+            &lab,
+            &sync,
+            &repo,
+            &[
+                "sync",
+                ".",
+                "--workarea",
+                "oml-code",
+                "--adapter",
+                "rust",
+                "--repo",
+                "github.com/e8kor/open-memory-lab",
+                "--dry-run",
+            ],
+        );
+        assert_eq!(code, 0, "dry run over the repository: {log}");
+        let keys: Vec<&str> = whole["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .filter_map(|i| i["claim_key"].as_str())
+            .collect();
+        let crates = keys.iter().filter(|k| k.starts_with("rust/crate/")).count();
+        let modules = keys.iter().filter(|k| k.starts_with("rust/mod/")).count();
+        eprintln!("dry run over this repository: {crates} crates, {modules} modules");
+        assert!(
+            crates >= 9 && modules >= 98,
+            "{crates} crates, {modules} modules"
+        );
+        assert_eq!(whole["summary"]["removed"], 0, "{log}");
+    }
+    lab.stop().await;
+}

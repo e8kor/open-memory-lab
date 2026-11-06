@@ -200,3 +200,78 @@ fn a_source_check_is_checked_against_its_anchor() {
     assert_eq!(CheckResult::Changed.stale(), Some("changed"));
     assert_eq!(CheckResult::Removed.stale(), Some("removed"));
 }
+
+fn lake(uri: &str, fragment: Option<&str>, hasher: &str) -> Value {
+    let mut anchor = json!({ "uri": uri, "rev": "5", "hash": HASH, "hasher": hasher });
+    if let Some(f) = fragment {
+        anchor["fragment"] = json!(f);
+    }
+    anchor
+}
+
+#[test]
+fn a_lake_anchor_carries_a_location_a_delta_version_a_column_fragment_and_a_lake_hasher() {
+    for (uri, fragment, hasher) in [
+        (
+            "s3://acme-lake/warehouse/sales/orders",
+            None,
+            "oml-delta-table/1",
+        ),
+        ("gs://acme-lake/sales/orders", None, "oml-delta-schema/1"),
+        (
+            "https://acct.dfs.core.windows.net/raw/sales/orders",
+            Some("col=customer.email"),
+            "oml-delta-col/1",
+        ),
+        (
+            "file:///srv/lake/sales/orders",
+            Some("col=id"),
+            "oml-delta-col/1",
+        ),
+    ] {
+        let anchor = lake(uri, fragment, hasher);
+        assert_eq!(
+            Anchor::from_json(&anchor, "/anchor")
+                .unwrap_or_else(|e| panic!("{anchor}: {e}"))
+                .to_json(),
+            anchor
+        );
+    }
+}
+
+#[test]
+fn a_lake_anchor_with_user_information_a_query_a_fragment_or_a_bad_bucket_is_refused() {
+    for uri in [
+        "s3://key:secret@acme-lake/orders",
+        "gs://acme-lake/orders?versionId=1",
+        "s3://acme-lake/orders#frag",
+        "s3://Acme_Lake/orders",
+        "s3://ab/orders",
+        "s3://acme-lake/orders/",
+        "s3:///orders",
+        "file://host/orders",
+        "file:///orders/",
+        "ftp://acme-lake/orders",
+        "s3://acme-lake/Orders\u{0301}",
+    ] {
+        assert_eq!(
+            refused(&lake(uri, None, "oml-delta-table/1")),
+            "/anchor/uri",
+            "{uri}"
+        );
+    }
+}
+
+#[test]
+fn the_rust_hashers_are_accepted_and_an_unknown_hasher_is_request_validation() {
+    // ADR-0061 d7: the closed set gains the two hashers of the rust adapter.
+    for hasher in ["oml-md/1", "oml-rustdoc/1", "oml-crate/1"] {
+        let anchor = with("hasher", json!(hasher));
+        let parsed = Anchor::from_json(&anchor, "/anchor").expect(hasher);
+        assert_eq!(parsed.to_json(), anchor);
+    }
+    assert_eq!(
+        refused(&with("hasher", json!("oml-rustdoc+pub/1"))),
+        "/anchor/hasher"
+    );
+}

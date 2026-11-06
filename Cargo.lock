@@ -3827,6 +3827,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-delta-log",
  "oml-guardrail",
  "oml-pg",
  "oml-scan",
@@ -3837,12 +3838,23 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
+ "syn 2.0.119",
  "tokio",
  "toml",
  "unicode-normalization",
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "oml-delta-log"
+version = "0.6.0"
+dependencies = [
+ "bytes",
+ "parquet",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

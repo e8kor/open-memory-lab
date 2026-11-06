@@ -1623,21 +1623,21 @@ export interface components {
         /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
         Anchor: {
             repo?: components["schemas"]["AnchorRepo"];
-            /** @description A page outside a repository: an absolute https URL with no user information and no fragment. Or a chat turn's session, chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness's own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required (ADR-0063 d4, d5). */
+            /** @description A page outside a repository, a Delta table (ADR-0062 d5) or a chat turn's session (ADR-0063 d4, d5): an absolute https, s3, gs or file URL with no user information, no query and no fragment; an s3 or gs bucket is a DNS-safe name, and an s3, gs or file path has no trailing slash. A chat uri is chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness's own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required. */
             uri?: string;
-            /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace. */
+            /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version or a Delta table version in decimal, printable ASCII without whitespace. */
             rev?: string;
             /** @description With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character. */
             path?: string;
-            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person's prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4). */
+            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000), or a Delta column col=<path> (ADR-0062 d5); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file, page or table (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person's prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4). */
             fragment?: string;
             /** @description Digest of the fragment's text, or the file's, under hasher. */
             hash?: string;
             /**
-             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).
+             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4). oml-rustdoc/1: a module doc block without its //! markers, then oml-md/1 (ADR-0061 d7). oml-crate/1: SHA-256 of one line per fact of a crate: name, description, root doc, binaries, internal dependencies and dependents (ADR-0061 d7).  oml-delta-table/1, oml-delta-schema/1 and oml-delta-col/1 hash the facts a Delta table claim, its schema claim and a column claim state (ADR-0062 d7). The server computes none of the rust or delta hashes.
              * @enum {string}
              */
-            hasher?: "oml-md/1" | "oml-turn/1";
+            hasher?: "oml-md/1" | "oml-turn/1" | "oml-rustdoc/1" | "oml-crate/1" | "oml-delta-table/1" | "oml-delta-schema/1" | "oml-delta-col/1";
         };
         /** @description What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming /origin/kind. */
         Origin: {

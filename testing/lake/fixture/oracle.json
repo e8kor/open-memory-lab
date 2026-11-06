@@ -1,0 +1,597 @@
+[
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 0
+  },
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 1
+  },
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        },
+        {
+          "metadata": {
+            "comment": "Sales channel the order came through",
+            "delta.columnMapping.id": 7,
+            "delta.columnMapping.physicalName": "col-7d3e"
+          },
+          "name": "channel",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 2
+  },
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "total_amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        },
+        {
+          "metadata": {
+            "comment": "Sales channel the order came through",
+            "delta.columnMapping.id": 7,
+            "delta.columnMapping.physicalName": "col-7d3e"
+          },
+          "name": "channel",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 3
+  },
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "total_amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        },
+        {
+          "metadata": {
+            "comment": "Sales channel the order came through",
+            "delta.columnMapping.id": 7,
+            "delta.columnMapping.physicalName": "col-7d3e"
+          },
+          "name": "channel",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 4
+  },
+  {
+    "column_mapping_mode": "name",
+    "description": "Orders placed through the shop, one row per order",
+    "name": "orders",
+    "partition_columns": [
+      "region"
+    ],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {
+            "comment": "Order identifier, unique per tenant",
+            "delta.columnMapping.id": 1,
+            "delta.columnMapping.physicalName": "col-6f1a"
+          },
+          "name": "id",
+          "nullable": false,
+          "type": "long"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 2,
+            "delta.columnMapping.physicalName": "col-02b9"
+          },
+          "name": "region",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {
+            "comment": "Order total in the sale currency, tax included",
+            "delta.columnMapping.id": 3,
+            "delta.columnMapping.physicalName": "col-3c7d"
+          },
+          "name": "total_amount",
+          "nullable": true,
+          "type": "decimal(18,2)"
+        },
+        {
+          "metadata": {
+            "delta.columnMapping.id": 4,
+            "delta.columnMapping.physicalName": "col-4e21"
+          },
+          "name": "customer",
+          "nullable": true,
+          "type": {
+            "fields": [
+              {
+                "metadata": {
+                  "comment": "Customer contact address",
+                  "delta.columnMapping.id": 5,
+                  "delta.columnMapping.physicalName": "col-5a90"
+                },
+                "name": "email",
+                "nullable": true,
+                "type": "string"
+              },
+              {
+                "metadata": {
+                  "delta.columnMapping.id": 6,
+                  "delta.columnMapping.physicalName": "col-6b44"
+                },
+                "name": "tier",
+                "nullable": true,
+                "type": "string"
+              }
+            ],
+            "type": "struct"
+          }
+        },
+        {
+          "metadata": {
+            "comment": "Sales channel the order came through",
+            "delta.columnMapping.id": 7,
+            "delta.columnMapping.physicalName": "col-7d3e"
+          },
+          "name": "channel",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "sales/orders",
+    "version": 5
+  },
+  {
+    "column_mapping_mode": null,
+    "description": null,
+    "name": "clicks",
+    "partition_columns": [],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {},
+          "name": "ts",
+          "nullable": true,
+          "type": "timestamp"
+        },
+        {
+          "metadata": {
+            "comment": "Visitor identifier, pseudonymous"
+          },
+          "name": "user_id",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {},
+          "name": "page",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "events/clicks",
+    "version": 2
+  },
+  {
+    "column_mapping_mode": null,
+    "description": null,
+    "name": "clicks",
+    "partition_columns": [],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {},
+          "name": "ts",
+          "nullable": true,
+          "type": "timestamp"
+        },
+        {
+          "metadata": {
+            "comment": "Visitor identifier, pseudonymous"
+          },
+          "name": "user_id",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {},
+          "name": "page",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "events/clicks",
+    "version": 3
+  },
+  {
+    "column_mapping_mode": null,
+    "description": "Page views and clicks of the public site",
+    "name": "clicks",
+    "partition_columns": [],
+    "schema": {
+      "fields": [
+        {
+          "metadata": {},
+          "name": "ts",
+          "nullable": true,
+          "type": "timestamp"
+        },
+        {
+          "metadata": {
+            "comment": "Visitor identifier, pseudonymous"
+          },
+          "name": "user_id",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "metadata": {},
+          "name": "page",
+          "nullable": true,
+          "type": "string"
+        }
+      ],
+      "type": "struct"
+    },
+    "table": "events/clicks",
+    "version": 4
+  }
+]

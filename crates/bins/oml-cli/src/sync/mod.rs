@@ -12,4 +12,6 @@ pub mod lines;
 pub mod markdown;
 pub mod plan;
 pub mod run;
+pub mod rust;
+pub mod rustdoc;
 pub mod source;
