@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design, 0.5.8-design and 0.6.0-design and the unreleased 0.6.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design, 0.5.8-design, 0.6.0-design and 0.6.1-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -26,6 +26,28 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.6.1-design
+
+Opened for release v0.6.1, which carries this revision: the Rust adapter for `oml sync` ([ADR-0061](adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md)), claim formats ([ADR-0056](adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)) and the Connectors Directory preparation ([ADR-0067](adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md)). Migrations 0032 to 0034.
+
+- **The connect page says where the code comes from.** Under the sentence above the code field, `/oauth/authorize` now reads "Get a connect code from your account page: Connect Claude on the web or a phone." with a same-origin link to `/web`, and "Codes are shown once; use New connect code on the key's row if you lost it." The page's policy and its CSRF handling are unchanged. [HTTP API](api/http-api.md) lists the sentences.
+
+- **A claim version names its format** ([ADR-0056](adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)). A submission or a supersession may carry `format`, a media type from a closed list (`text/plain` by default, `text/markdown`, `text/vnd.oml.mermaid`, `application/json`, `application/yaml`, `text/vnd.oml.code; lang=<language>`), and a one-line `title`, required with any format that is not prose. Both are signed with the version and fixed for it, so a format changes only by supersession; the source is stored and signed exactly as sent. Adapters compiled into the server validate each source, refuse by name what they will not draw or parse (`submission.format_invalid`), derive the text search reads (`memories.search_text`, read by the lexemes, the postings, the vocabulary, the sparse encoder and the reranker), and scan the decoded values of a JSON or YAML document as well as its source, so a format only adds findings. Every claim item carries `format` and `title`; the SDKs gain `fence_for`. Mermaid is drawn on the review card in a sandboxed frame under its own policy, with the pinned bundle vendored. Migrations 0032 to 0034 add the columns, validate their checks outside a transaction and key the near-copy check on the search text; every existing claim is `text/plain`.
+
+- **Open Memory Lab is ready for Anthropic's Connectors Directory** ([ADR-0067](adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md)). Each MCP tool carries a `title` (Remember, Recall, Workarea), and `oml_write` keeps `destructiveHint: false` because a call only adds a held row. The server instructions and the three tool descriptions describe what recall returns and when it helps instead of telling the model to call it; a write is still held for another identity and recalled text is still data. An admin can mint a connect code that lives up to 30 days with `oml keys connect-code <key> --ttl 14d` (`ttl_seconds` on `POST /v2/keys/{key}/connect-codes`), only for a connector key whose grants sit on one workarea other than the universe; any other key is refused `oauth.connect_refused` with `details.reason: not_confined`, and `oml keys show` names the live code (`live_connect_code`). `oml demo seed <workarea>` creates a workarea of thirty demonstration memories, approved, superseded and held, through the public API. Draft privacy, terms and support pages are under `docs/legal/` for the operator's review.
+
+- **`oml-lake` reads a Delta Lake's tables into anchored claims, phase 1** ([ADR-0062](adr/ADR-0062-oml-sync-maps-a-delta-lakes-tables-into-anchored-claims-from-the-log-alone-on-the-client-and-catalogs-and-reviewed-terms-say-what-they-mean.md) d2-d8, proposed). A second `oml` build, made with the `lake-sync` feature, reads a table's `_delta_log` (JSON commits and checkpoint parquet by column projection, four actions, never a data file) through the new `oml-delta-log` crate, and `oml sync <lake directory> --adapter delta --workarea <w> --uri-base <location>` writes one table claim, one schema claim and a column claim for each column that has a comment, keyed by physical name so a rename under column mapping is one supersession, and anchored by the table's location and Delta version. The default `oml` dependency tree is unchanged and refuses `--adapter delta` naming the lake build. The test lake under `testing/lake/` holds two fixture tables, schema evolution, a rename, a checkpoint and delta-rs's oracle.
+
+- **A handler's panic is a named 500, not a dropped connection.** A panic guard inside the traffic layer answers it `system.internal` with `details.reason` `handler_panic` and the request id, writes one `handler_panic` log line with the panic's text, counts it in `oml_handler_panics_total`, and the worker serves the next request; `oml doctor` gains a `handlers` line that warns on any. [Observability](operations/observability.md) and [errors](api/errors.md) name them.
+
+`oml sync --adapter rust` (ADR-0061, accepted for v0.6.1) reads a Cargo workspace at a commit as one
+claim per crate, from its manifest and root doc, and one per module, from the `//!` doc at the head
+of its file, with line-span anchors and the hashers `oml-crate/1` and `oml-rustdoc/1`, which the
+server now admits. A code edit marks nothing stale and a doc edit marks exactly its claim; the
+adapter retires only claims in the `rust/` namespace and never a claim whose file it could not
+read. The adapter port gains a set extraction; the CLI gains no runtime dependency. Pages: the CLI
+reference, ADR-0061, the HTTP API's `Anchor.hasher`, the SDKs' generated models.
 
 ## 0.6.0-design
 
