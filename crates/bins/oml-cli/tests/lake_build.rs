@@ -13,6 +13,8 @@ fn tree(features: &[&str]) -> BTreeSet<String> {
     let mut cmd = Command::new(cargo);
     cmd.current_dir(env!("CARGO_MANIFEST_DIR")).args([
         "tree",
+        "--color",
+        "never",
         "--locked",
         "-p",
         "oml-cli",
