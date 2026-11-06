@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Memory Lab</title>
+<meta name="description" content="Shared memory for AI agents. Nothing leaves its workarea until someone who did not write it approves it.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
+<link rel="canonical" href="https://memory.doublegate.io/">
+<meta property="og:title" content="Open Memory Lab">
+<meta property="og:description" content="Shared memory for AI agents. Nothing joins until a second look.">
+<meta property="og:url" content="https://memory.doublegate.io/">
+<link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
+<style>
+{{TOKENS}}
+{{FONTS}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:calc(var(--header-h) + var(--space-4))}
+body{margin:0;background:var(--ground);color:var(--ink);font:var(--t-body-weight) var(--t-body-size)/var(--t-body-line) var(--font-body);-webkit-font-smoothing:antialiased}
+a{color:var(--ice);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:var(--space-0\.5)}
+a:hover{text-decoration-thickness:var(--stroke-strong)}
+:focus-visible{outline:var(--stroke-strong) solid var(--focus);outline-offset:var(--space-0\.5)}
+code{font:var(--t-code-weight) .875em/1 var(--font-mono);background:var(--panel);border-radius:var(--radius-sm);padding:0 var(--space-1);font-variant-ligatures:none}
+.site{max-width:var(--wrap-site);margin:0 auto;padding:0 var(--space-4)}
+@media (min-width:600px){.site{padding:0 var(--space-6)}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* BrandHeader */
+header.top{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:var(--space-4);height:var(--header-h);padding:0 var(--space-4);background:var(--ground);border-bottom:1px solid var(--rule)}
+header.top .brand{flex:none;display:flex;line-height:0}
+header.top .brand svg{display:block;height:var(--space-6);width:auto}
+header.top .brand .mk{display:none;height:var(--space-8)}
+.lg-ring{stroke:var(--logo-ring)}.lg-star{fill:var(--logo-star)}.lg-ink{fill:var(--logo-ink)}
+header.top nav{display:flex;gap:var(--space-1);min-width:0;overflow-x:auto;scrollbar-width:none}
+header.top nav a{flex:none;color:var(--ink-dim);text-decoration:none;padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body)}
+header.top nav a:hover{color:var(--ink)}
+header.top .end{margin-left:auto;flex:none}
+@media (max-width:599px){header.top{gap:var(--space-2);padding:0 var(--space-3)}header.top .brand .wm{display:none}header.top .brand .mk{display:block}}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:var(--control-h);min-width:var(--target-min);padding:0 var(--space-4);border-radius:var(--radius-md);border:1px solid var(--control-border);background:transparent;color:var(--ink);font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body);text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ice)}
+.btn.sm{min-height:var(--control-h-sm);padding:0 var(--space-3)}
+.btn.primary{background:var(--star-fill);border:var(--stroke-strong) solid var(--star);color:var(--on-star)}
+.btn.primary:focus-visible{box-shadow:var(--focus-gap)}
+.row{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+
+/* hero */
+.hero{display:grid;gap:var(--space-8);padding:var(--space-12) 0;align-items:center}
+@media (min-width:1024px){.hero{grid-template-columns:minmax(0,1fr) minmax(0,var(--tile-max))}}
+.hero-copy{display:flex;flex-direction:column;gap:var(--space-6)}
+h1{font:var(--t-display-hero-weight) var(--t-display-hero-size)/var(--t-display-hero-line) var(--font-display);letter-spacing:var(--t-display-tracking);margin:0}
+@media (max-width:599px){h1{font-size:var(--t-display-size);line-height:var(--t-display-line)}}
+.lede{font:var(--t-lede-weight) var(--t-lede-size)/var(--t-lede-line) var(--font-body);color:var(--ink-dim);margin:0;max-width:var(--measure)}
+.caption{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim);margin:0}
+h2{font:var(--t-display-weight) var(--t-display-size)/var(--t-display-line) var(--font-display);letter-spacing:var(--t-display-tracking);margin:0}
+h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) var(--font-body);margin:0}
+
+/* the proof: a review card as the product shows it */
+.card{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.proof{box-shadow:var(--shadow-float)}
+.head{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.head .end{margin-left:auto;font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-faint)}
+.text{margin:0;font:var(--t-body-weight) var(--t-body-size)/var(--t-body-line) var(--font-body)}
+.chip{display:inline-flex;align-items:center;gap:var(--space-1);font:var(--t-state-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-mono);padding:var(--space-0\.5) var(--space-3) var(--space-0\.5) var(--space-2);border:1px solid currentColor;border-radius:var(--radius-pill);white-space:nowrap}
+.is-held{color:var(--held);background:var(--held-soft)}
+.glyph{display:inline-block;flex:none;width:var(--glyph-lg);height:var(--glyph-lg);vertical-align:middle}
+.timeline{list-style:none;margin:0;padding:0;display:grid;gap:var(--space-2);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.timeline li{display:grid;grid-template-columns:var(--glyph-lg) calc(var(--space-16) + var(--space-4)) minmax(0,1fr);gap:var(--space-2);align-items:center}
+.timeline .step{color:var(--ink);font-weight:var(--t-button-weight)}
+.timeline .who{font-family:var(--font-mono);color:var(--ink)}
+.timeline .wait{color:var(--ink-faint)}
+.consequence{margin:0;font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body)}
+
+/* the gate */
+section{padding:var(--space-12) 0;border-top:1px solid var(--rule-soft);display:flex;flex-direction:column;gap:var(--space-6)}
+figure{margin:0;display:flex;flex-direction:column;gap:var(--space-3);align-items:center}
+figure svg{display:block;width:100%;height:auto;font-family:var(--font-mono)}
+figure .v-wide{max-width:var(--bp-figure)}
+figure .v-tall{display:none;max-width:calc(var(--tile-max) * 0.75)}
+@media (max-width:719px){figure .v-wide{display:none}figure .v-tall{display:block}}
+.gate .zone{fill:var(--ground-alt);stroke:var(--rule)}.gate .held{stroke:var(--held);fill:none}.gate .prom{fill:var(--promoted)}.gate .ink{fill:var(--ink)}.gate .icef{fill:var(--ice)}
+.gate .scan{fill:var(--ink-dim)}.gate .gateline{stroke:var(--ice);stroke-width:var(--stroke-strong)}.gate .post{fill:var(--ice)}.gate .id{stroke:var(--ink-dim);fill:none;stroke-width:1.2px}
+.gate .ne{stroke:var(--edge);stroke-width:var(--stroke);fill:none;stroke-dasharray:3 3}.gate .neb{fill:var(--ground);stroke:var(--edge);stroke-width:var(--stroke)}
+.gate .edge{stroke:var(--edge);fill:none;stroke-width:var(--stroke)}.gate .edge-head{fill:var(--edge)}
+.gate .t{fill:var(--ink);font:var(--t-state-weight) var(--t-state-size) var(--font-mono)}
+.gate .t-dim{fill:var(--ink-dim);font:var(--t-meta-weight) var(--t-state-size) var(--font-mono)}
+.gate .t-faint{fill:var(--ink-faint);font:var(--t-meta-weight) var(--t-state-size) var(--font-mono)}
+.gate .t-num{fill:var(--star);font:var(--t-label-weight) var(--t-label-size) var(--font-mono);letter-spacing:var(--t-label-tracking)}
+details.astext{align-self:stretch;max-width:var(--bp-figure);margin:0 auto;width:100%}
+details.astext summary{cursor:pointer;min-height:var(--target-min);display:inline-flex;align-items:center;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ice)}
+details.astext ol{margin:var(--space-2) 0 0;padding-left:var(--space-6);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim);display:grid;gap:var(--space-1)}
+.vals{display:grid;gap:var(--space-6);grid-template-columns:repeat(auto-fit,minmax(calc(var(--space-16) * 3.5),1fr))}
+.vals>div{display:flex;flex-direction:column;gap:var(--space-1)}
+.vals .glyph{width:var(--space-8);height:var(--space-8);margin-bottom:var(--space-2)}
+
+/* get started */
+.start{display:grid;gap:var(--space-8)}
+@media (min-width:1024px){.start{grid-template-columns:minmax(0,1fr) minmax(0,var(--tile-max))}}
+.start ol{margin:0;padding-left:var(--space-6);display:grid;gap:var(--space-3);color:var(--ink-dim)}
+.start ol b{color:var(--ink)}
+.term{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);overflow:hidden;align-self:start}
+.term .bar{display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--rule-soft);font:var(--t-label-weight) var(--t-label-size)/var(--t-label-line) var(--font-mono);letter-spacing:var(--t-label-tracking);text-transform:uppercase;color:var(--ink-faint)}
+.term pre{margin:0;padding:var(--space-4);overflow-x:auto;font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
+.term .c{color:var(--ink-faint)}.term .p{color:var(--star)}
+.links{display:flex;flex-wrap:wrap;gap:var(--space-4);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body)}
+
+
+.held-c,.v-held{color:var(--held)}.v-gate{color:var(--ice)}.v-prom{color:var(--promoted)}.timeline li>span:first-child{display:flex;color:var(--ink-dim)}.timeline .held-c{color:var(--held)}.timeline .wait>span:first-child{color:var(--ink-faint)}
+footer{border-top:1px solid var(--rule-soft);padding:var(--space-6) var(--space-4);display:flex;flex-wrap:wrap;gap:var(--space-4);justify-content:space-between;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+footer nav{display:flex;gap:var(--space-4);flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/" aria-label="Open Memory Lab home">{{WORDMARK}}{{MARK}}</a>
+  <nav aria-label="Main"><a href="https://e8kor.github.io/open-memory-lab/">Docs</a><a href="https://github.com/e8kor/open-memory-lab">GitHub</a></nav>
+  <span class="end"><a class="btn sm" href="/web">Sign in</a></span>
+</header>
+
+<main class="site">
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>Nothing joins until a second look.</h1>
+      <p class="lede">Shared memory for AI agents. Nothing leaves its workarea until someone who did not write it approves it.</p>
+      <div class="row"><a class="btn primary" href="#start">Get started</a><a class="btn" href="https://e8kor.github.io/open-memory-lab/">Read the docs</a></div>
+    </div>
+    <article class="card proof" aria-label="A review, as the product shows it">
+      <div class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="end">v3 · held</span></div>
+      <p class="text">Recall prunes a query word that is frequent among the rows the key may read.</p>
+      <ol class="timeline" aria-label="Provenance">
+        <li><span>{{GLYPH:agent}}</span><span class="step">Written</span><span><span class="who">crew/scout</span> · agent</span></li>
+        <li><span class="held-c">{{GLYPH:held}}</span><span class="step">Held</span><span>scan: no findings</span></li>
+        <li class="wait"><span>{{GLYPH:person}}</span><span class="step">Reviewed</span><span>needs a key outside its lineage</span></li>
+        <li class="wait"><span>{{GLYPH:promoted}}</span><span class="step">Served</span><span>not yet</span></li>
+      </ol>
+      <p class="consequence">Approving shows this to every key that reads <code>universe.you.oml</code>.</p>
+      <div class="row" aria-hidden="true"><span class="btn primary">Approve</span><span class="btn">Reject…</span></div>
+    </article>
+  </div>
+
+  <section id="how" aria-labelledby="how-h">
+    <h2 id="how-h">How the gate works</h2>
+    <figure class="gate" aria-labelledby="gate-cap">
+      <figcaption id="gate-cap" class="sr-only">Review gate</figcaption>
+      {{GATE_WIDE}}
+      {{GATE_TALL}}
+      <details class="astext"><summary>As text</summary><ol>
+        <li>An agent key, <code>crew/scout</code>, writes a memory.</li>
+        <li>The memory is <code>held</code>: its author and its reviewers read it. It is scanned for secrets and personal data.</li>
+        <li>A reviewer whose key is outside the memory's lineage approves it: a person, <code>eugene</code>, or a reviewer crew over HTTP. The author is never the reviewer.</li>
+        <li>The memory is <code>promoted</code>; every key the grant covers recalls it.</li>
+        <li>Two bounded exceptions: a self-signed version in a development workarea whose policy allows it, readable only there; and unreviewed memories read inside an in-progress workarea before it is committed.</li>
+      </ol></details>
+    </figure>
+    <div class="vals">
+      <div><span class="v-held">{{GLYPH:held}}</span><h3>Held, then reviewed</h3><p class="caption">Agents remember and recall. A writer key can't approve its own writes.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Provenance on every row</h3><p class="caption">Author, reviewer, source revision and valid time.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>Recall that explains itself</h3><p class="caption">Matched words, retrievers and withheld counts. No confidence percentages.</p></div>
+    </div>
+  </section>
+
+  <section id="start" aria-labelledby="start-h">
+    <div class="start">
+      <div class="hero-copy">
+        <h2 id="start-h">Get started</h2>
+        <p class="caption">Access is by invitation. <a href="/web">Sign in</a> with GitHub or Google, issue an agent key, then:</p>
+        <ol>
+          <li><b>Install <code>oml</code>.</b> The installer checks the download against the release's signed checksums.</li>
+          <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin; the key is the only setting.</li>
+          <li><b>claude.ai or the Claude app?</b> Add the connector <code>https://memory.doublegate.io/mcp</code> and enter the connect code from your page.</li>
+        </ol>
+        <p class="links"><a href="https://e8kor.github.io/open-memory-lab/guides/claude-code/">Claude Code guide</a><a href="https://e8kor.github.io/open-memory-lab/guides/other-harnesses/">Codex, Cursor, Gemini</a><a href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a></p>
+      </div>
+      <div class="term">
+        <div class="bar"><span>macOS · Linux</span><button class="btn sm" type="button" data-copy="cmd-unix">Copy</button></div>
+<pre id="cmd-unix"><span class="c"># install the CLI</span>
+<span class="p">$ </span>curl -fsSL --proto '=https' --tlsv1.2 \
+    https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
+
+<span class="c"># install the Claude Code plugin; paste your key when asked</span>
+<span class="p">$ </span>oml setup claude-code</pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>Open Memory Lab · Apache-2.0 · memory.doublegate.io v0.6.0</span>
+  <nav aria-label="Footer"><a href="https://e8kor.github.io/open-memory-lab/">Docs</a><a href="https://github.com/e8kor/open-memory-lab">GitHub</a><a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Licence</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
+</footer>
+
+<script>
+document.querySelectorAll('button[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var pre = document.getElementById(b.dataset.copy);
+    var text = Array.prototype.filter.call(pre.childNodes, function (n) {
+      return !(n.nodeType === 1 && (n.classList.contains('c') || n.classList.contains('p')));
+    }).map(function (n) { return n.textContent; }).join('').replace(/\n{2,}/g, '\n').trim();
+    function done() { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1600); }
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, function () {}); }
+  });
+});
+</script>
+</body>
+</html>

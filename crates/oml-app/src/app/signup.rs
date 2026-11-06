@@ -496,6 +496,22 @@ where
         })
     }
 
+    /// The person's usage and limits, for the onboarding page; `None`
+    /// where they are under no quota (ADR-0068 d5).
+    pub async fn web_own_limits(
+        &self,
+        web: &Caller,
+    ) -> Result<Option<(UserUsage, Quotas)>, AppError> {
+        let Some(root) = self.quota_root(&web.key) else {
+            return Ok(None);
+        };
+        let tenant_id = web.key.tenant_id;
+        Ok(Some((
+            self.journal.user_usage(tenant_id, root).await?,
+            self.quotas_of(tenant_id, root).await?,
+        )))
+    }
+
     /// Whether the person holds any bearer or connector key: a sign-in
     /// whose person holds none lands on the onboarding page (ADR-0068 d10).
     pub async fn web_has_agent_key(&self, entry: &WebEntry) -> Result<bool, AppError> {

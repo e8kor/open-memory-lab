@@ -546,6 +546,7 @@ async fn an_open_sign_up_records_the_accepted_terms_and_lands_on_start_with_a_pr
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Waiting for your first connection"), "{html}");
     assert!(html.contains("1. Choose your client"));
+    assert!(html.contains("0 / 1000"), "the limits: {html}");
     // A second sign-in of the same account is a sign-in, not a sign-up.
     let (status, headers, _) = callback(&rig, 11, "ada@example.com").await;
     assert_eq!(status, StatusCode::SEE_OTHER);

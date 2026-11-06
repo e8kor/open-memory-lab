@@ -25,7 +25,7 @@ use oml_app::domain::{MemoryStatus, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AppError, IssuedKey, WebSessionRecord};
 
-use super::page::{STYLESHEET, attr, short};
+use super::page::{STYLESHEET, attr, glyph_svg, shell, short};
 use super::{
     Answer, append_cookie, clear_cookie, cookie, human_only, origin_refused, set_cookie,
     unique_fields, unix_now,
@@ -57,19 +57,6 @@ pub const USERS_ACTIONS: &[&str] = &["set_quota", "disable_user", "close_deletio
 /// snippet the claude.ai guide quotes.
 pub const PREFERENCES_SNIPPET: &str = "I use the Open Memory Lab connector as my long-term memory. Before answering about my projects, decisions or preferences, search it with oml_read. When we settle a fact, a decision or a finding worth keeping, save it with oml_write in one or two plain sentences. What you write waits for my review before anyone else can read it.";
 
-/// The onboarding page's own styles: the step list, and a light scheme the
-/// shared pages do not have.
-pub const START_STYLESHEET: &str = "ol.steps{list-style:none;padding:0;margin:24px 0;display:grid;gap:16px}\
-ol.steps>li{border:1px solid var(--rule);border-radius:12px;padding:18px 20px;background:var(--ground-alt)}\
-ol.steps h2{margin:0 0 4px;font-size:18px}ol.steps p.line{margin:0 0 10px;color:var(--ink-dim)}\
-.choices{display:flex;gap:8px;flex-wrap:wrap}.choices a{border:1px solid var(--rule);border-radius:999px;\
-padding:6px 14px;color:var(--ink)}.choices a.on{border-color:var(--star);color:var(--star)}\
-.copyrow{display:flex;gap:8px;align-items:flex-start}.copyrow pre{flex:1;margin:6px 0}\
-.status{font-weight:600}.status.ok{color:var(--ok)}ol.clicks{margin:8px 0 0 18px;padding:0}\
-@media (prefers-color-scheme:light){:root{--ground:#F7F4EC;--ground-alt:#FFFFFF;--panel:#FFFFFF;\
---ink:#14172E;--ink-dim:#3E4260;--ink-faint:#5F6380;--rule:#D6D2C4;--rule-soft:#E6E2D6;\
---ice:#1F5E91;--star:#B0600A;--ok:#1C7A55}button.primary{color:#FFFFFF}}";
-
 /// The onboarding page's one script: the copy buttons, and the status poll
 /// every five seconds until a first memory shows (ADR-0068 d10).
 pub const START_SCRIPT: &str = "(function(){\
@@ -77,18 +64,16 @@ document.querySelectorAll('button[data-copy]').forEach(function(b){b.hidden=fals
 b.addEventListener('click',function(){var t=document.getElementById(b.getAttribute('data-copy'));\
 if(!t||!navigator.clipboard)return;navigator.clipboard.writeText(t.textContent).then(function(){\
 b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)})})});\
-var c=document.getElementById('st-conn'),m=document.getElementById('st-mem');if(!c||!m)return;\
-function show(j){if(j.connected){c.textContent='Connected \\u2713';c.className='status ok'}\
-if(j.first_memory==='held'){m.hidden=false;m.querySelector('span').textContent='First memory held \\u2014 ';\
-m.querySelector('a').hidden=false}else if(j.first_memory==='promoted'){m.hidden=false;\
-m.querySelector('span').textContent='First memory reviewed \\u2713';m.querySelector('a').hidden=true}}\
+var w=document.getElementById('st-wait');if(!w)return;\
+function el(i){return document.getElementById(i)}\
+function show(j){if(j.connected){w.hidden=true;el('st-conn').hidden=false}\
+el('st-held').hidden=j.first_memory!=='held';el('st-promoted').hidden=j.first_memory!=='promoted'}\
 function poll(){fetch('/web/start/status',{credentials:'same-origin',cache:'no-store'})\
 .then(function(r){return r.ok?r.json():null}).then(function(j){if(j){show(j);\
 if(j.first_memory!=='promoted')setTimeout(poll,5000)}}).catch(function(){setTimeout(poll,10000)})}\
 setTimeout(poll,5000)})();";
 
 const STYLE_DIGEST: [u8; 44] = base64_32(&sha256(STYLESHEET.as_bytes()));
-const START_STYLE_DIGEST: [u8; 44] = base64_32(&sha256(START_STYLESHEET.as_bytes()));
 const SCRIPT_DIGEST: [u8; 44] = base64_32(&sha256(START_SCRIPT.as_bytes()));
 
 const GUIDES: &str = "https://e8kor.github.io/open-memory-lab/guides";
@@ -108,10 +93,9 @@ pub fn start_csp(script: bool) -> String {
         String::new()
     };
     format!(
-        "default-src 'none'; style-src 'sha256-{}' 'sha256-{}';{script} form-action 'self'; \
+        "default-src 'none'; style-src 'sha256-{}';{script} form-action 'self'; \
          frame-ancestors 'none'; base-uri 'none'",
-        d(&STYLE_DIGEST),
-        d(&START_STYLE_DIGEST)
+        d(&STYLE_DIGEST)
     )
 }
 
@@ -159,39 +143,32 @@ fn json_answer(value: &Value, attachment: Option<&str>) -> Response {
     secured(response, false)
 }
 
-/// A document of these pages: both stylesheets, and the script only where
-/// `script` is set.
+/// A page of these: the shared chrome of `page::shell`, the design
+/// system's one stylesheet, and on `/web/start` alone its one script.
 fn document(
     title: &str,
     who: Option<&str>,
     tabs: &[(&str, &str)],
+    active: &str,
     body: &str,
     script: bool,
 ) -> String {
-    let mut nav = String::new();
-    if !tabs.is_empty() {
-        nav.push_str(r#"<nav class="tabs">"#);
-        for (href, shown) in tabs {
-            let _ = write!(nav, r#"<a href="{href}">{}</a>"#, escape(shown));
-        }
-        nav.push_str("</nav>");
-    }
-    let script = if script {
-        format!("<script>{START_SCRIPT}</script>")
+    let html = shell(title, who.unwrap_or(""), tabs, active, None, body);
+    if script {
+        html.replacen(
+            "</body>",
+            &format!("<script>{START_SCRIPT}</script></body>"),
+            1,
+        )
     } else {
-        String::new()
-    };
-    format!(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="dark light"><title>Open Memory Lab: {}</title><style>{STYLESHEET}</style><style>{START_STYLESHEET}</style></head><body><header><div class="wrap bar"><a class="brand" href="/web">Open <b>Memory</b> Lab</a><span class="who">{}</span></div></header><main class="wrap">{nav}{body}</main><footer><div class="wrap">Every act on these pages is journalled under one of your keys.</div></footer>{script}</body></html>"##,
-        escape(title),
-        who.map(short).unwrap_or_default()
-    )
+        html
+    }
 }
 
 /// One value with a copy button, shown only where the script runs.
 fn copy_block(id: &str, label: &str, value: &str) -> String {
     format!(
-        r#"<p class="label">{}</p><div class="copyrow"><pre id="{id}">{}</pre><button type="button" data-copy="{id}" hidden>Copy</button></div>"#,
+        r#"<p class="label">{}</p><pre id="{id}">{}</pre><p><button type="button" data-copy="{id}" hidden>Copy</button></p>"#,
         escape(label),
         attr(value)
     )
@@ -339,16 +316,17 @@ fn field_error(field: &str, message: &str) -> ApiError {
     ApiError::validation(message.to_owned()).with_details(json!({ "field": field }))
 }
 
-/// The tabs every one of these pages shows.
+/// The tabs every one of these pages shows (ADR-0068 d10).
 fn tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     let mut tabs = vec![
         ("/web/start", "Start"),
-        ("/web", "Keys"),
+        ("/web?view=memories", "Memories"),
         ("/web?view=review", "Review"),
+        ("/web", "Keys"),
     ];
     if admin {
         tabs.push(("/web/admin", "Administration"));
-        tabs.push(("/web/admin/users", "Users"));
+        tabs.push(("/web/admin/users", "Quotas"));
     }
     tabs
 }
@@ -369,6 +347,7 @@ where
                     "Not available",
                     None,
                     &[],
+                    "",
                     &format!(
                         r#"<h1>This cannot continue</h1><p class="error">{}: {}</p><p><a href="/web/start">Back</a></p>"#,
                         escape(error.code),
@@ -400,7 +379,7 @@ where
         };
         let sealed = self.pages().signup_sealer.seal(&pending.encode());
         let body = format!(
-            r#"<div class="signin"><p class="label">Create your account</p><h1>One step left</h1><p class="lede">You get a private space for your memories, a key for each agent, and a review page. Your agents' writes wait for your review there; the operator of this server can read what you store.</p><form method="post" action="/web/sign-up"><input type="hidden" name="terms_version" value="{}"><label style="flex-direction:row;gap:10px;align-items:flex-start;font:15px var(--sans);color:var(--ink)"><input type="checkbox" name="accept_terms" value="yes" required style="min-width:auto"> <span>I accept the <a href="{}">terms</a> (version {}) and have read the <a href="{}">privacy notice</a>.</span></label><button type="submit" class="primary">Create my account</button></form></div>"#,
+            r#"<div class="signin"><p class="label">Create your account</p><h1>One step left</h1><p class="desc">A private space for your memories, a key for each agent, and a review page. Your agents' writes wait for your review; the operator of this server can read what you store.</p><form method="post" action="/web/sign-up"><input type="hidden" name="terms_version" value="{}"><label><input type="checkbox" name="accept_terms" value="yes" required> I accept the <a href="{}">terms</a> (version {}) and have read the <a href="{}">privacy notice</a>.</label><p class="oml-consequence">Creates your account and signs you in.</p><button type="submit" class="primary">Create my account</button></form></div>"#,
             attr(&policy.terms_version),
             attr(&policy.terms_url),
             short(&policy.terms_version),
@@ -408,7 +387,7 @@ where
         );
         let mut response = html_response(
             StatusCode::OK,
-            document("Create your account", None, &[], &body, false),
+            document("Create your account", None, &[], "", &body, false),
             false,
         );
         append_cookie(
@@ -594,7 +573,8 @@ where
         }
     }
 
-    /// The onboarding page: three steps, then the account's acts.
+    /// The onboarding page (ADR-0068 d10): three steps, the person's
+    /// limits, then the account's acts, in the design system's markup.
     async fn render_start(
         &self,
         token: &str,
@@ -614,6 +594,7 @@ where
             .web_deletion_pending(&web)
             .await
             .map_err(app_error)?;
+        let limits = self.app.web_own_limits(&web).await.map_err(app_error)?;
         let csrf = csrf_token(token);
         let issuer = self
             .app
@@ -621,18 +602,32 @@ where
             .map_or("", |i| i.as_str())
             .to_owned();
         let client = issued.map(|(c, _)| c).or(client);
-        let mut body = String::from(
-            r#"<p class="label">Start</p><h1>Connect your first agent</h1><p class="lede">Three steps, about two minutes.</p>"#,
-        );
+        let head = |h: &str, level: &str, desc: &str| {
+            format!(
+                r#"<header class="oml-section-head"><div class="top"><{level}>{}</{level}></div><p class="desc">{}</p></header>"#,
+                escape(h),
+                escape(desc)
+            )
+        };
+        let mut body = head("Connect an agent", "h1", "Three steps, about two minutes.");
         if let Some(notice) = notice {
-            let _ = write!(body, r#"<p class="notice">{}</p>"#, escape(notice));
+            let _ = write!(
+                body,
+                r#"<p class="notice" role="status">{}</p>"#,
+                escape(notice)
+            );
         }
-        body.push_str(r#"<ol class="steps">"#);
         // Step 1.
-        body.push_str(r#"<li><h2>1. Choose your client</h2><p class="line">Where will your agent run?</p><div class="choices">"#);
+        body.push_str(r#"<section class="card">"#);
+        body.push_str(&head(
+            "1. Choose your client",
+            "h2",
+            "Where will your agent run?",
+        ));
+        body.push_str(r#"<nav class="toggle" aria-label="Client">"#);
         for c in [Client::ClaudeAi, Client::ClaudeCode, Client::Other] {
             let on = if Some(c) == client {
-                r#" class="on""#
+                r#" class="on" aria-current="page""#
             } else {
                 ""
             };
@@ -643,44 +638,95 @@ where
                 escape(c.shown())
             );
         }
-        body.push_str("</div></li>");
+        body.push_str("</nav></section>");
         // Step 2.
-        body.push_str(r#"<li><h2>2. Get your credential</h2>"#);
+        body.push_str(r#"<section class="card">"#);
         match (client, issued) {
-            (None, _) => body.push_str(r#"<p class="line">Choose a client first.</p>"#),
+            (None, _) => body.push_str(&head(
+                "2. Get your credential",
+                "h2",
+                "Choose a client first.",
+            )),
             (Some(c), None) => {
+                body.push_str(&head(
+                    "2. Get your credential",
+                    "h2",
+                    &format!("One button issues a key for {}.", c.shown()),
+                ));
                 let _ = write!(
                     body,
-                    r#"<p class="line">One click issues a key for {}; it is shown once.</p><form method="post" action="/web/start"><input type="hidden" name="action" value="{}"><input type="hidden" name="csrf_token" value="{}"><button type="submit" class="primary">Issue my {} credential</button></form>"#,
-                    escape(c.shown()),
+                    r#"<details class="oml-help"><summary>?</summary><p>The key can write only into your own space, and every write waits for your review. A connect code works once, for ten minutes; a key's value is shown once and never again.</p></details><form method="post" action="/web/start"><input type="hidden" name="action" value="{}"><input type="hidden" name="csrf_token" value="{}"><p class="oml-consequence">Issues one key; it counts against your limit of keys.</p><button type="submit" class="primary">Issue my credential</button></form>"#,
                     c.action(),
                     attr(&csrf),
-                    escape(c.shown())
                 );
             }
-            (Some(_), Some((c, key))) => body.push_str(&credential_card(c, key, &issuer)),
+            (Some(_), Some((c, key))) => {
+                body.push_str(&head(
+                    "2. Get your credential",
+                    "h2",
+                    "Shown once: copy it now.",
+                ));
+                body.push_str(&credential_card(c, key, &issuer));
+            }
         }
-        body.push_str("</li>");
-        // Step 3.
-        let (conn_class, conn_text) = if status.connected {
-            ("status ok", "Connected \u{2713}")
-        } else {
-            ("status", "Waiting for your first connection\u{2026}")
-        };
-        let (mem_hidden, mem_text, link_hidden) = match status.first_memory {
-            Some(MemoryStatus::Held) => ("", "First memory held \u{2014} ", ""),
-            Some(MemoryStatus::Promoted) => ("", "First memory reviewed \u{2713}", " hidden"),
-            _ => (" hidden", "", ""),
-        };
+        body.push_str("</section>");
+        // Step 3: every state rendered, the current ones shown; the script
+        // flips `hidden` as the status changes.
+        let hide = |shown: bool| if shown { "" } else { " hidden" };
+        body.push_str(r#"<section class="card">"#);
+        body.push_str(&head(
+            "3. Wait for the first connection",
+            "h2",
+            "Ask your agent to remember one thing about this project.",
+        ));
         let _ = write!(
             body,
-            r#"<li><h2>3. Say hello from your agent</h2><p class="line">Ask it to remember something; you review it here.</p><p id="st-conn" class="{conn_class}">{conn_text}</p><p id="st-mem" class="status"{mem_hidden}><span>{mem_text}</span><a href="/web?view=review"{link_hidden}>review it</a></p></li></ol>"#
+            r#"<ul aria-live="polite"><li id="st-wait"{}>{}Waiting for your first connection…</li><li id="st-conn"{}>{}Connected ✓</li><li id="st-held"{}>{}First memory held — <a href="/web?view=review">review it</a></li><li id="st-promoted"{}>{}First memory reviewed ✓</li></ul></section>"#,
+            hide(!status.connected),
+            glyph_svg("in-progress"),
+            hide(status.connected),
+            glyph_svg("promoted"),
+            hide(status.first_memory == Some(MemoryStatus::Held)),
+            glyph_svg("held"),
+            hide(status.first_memory == Some(MemoryStatus::Promoted)),
+            glyph_svg("promoted"),
         );
-        // The account.
+        // The limits (d5).
+        if let Some((usage, quotas)) = limits {
+            body.push_str(r#"<section class="card">"#);
+            body.push_str(&head(
+                "Your limits",
+                "h2",
+                "Default limits; an administrator can raise one for you.",
+            ));
+            body.push_str("<table><tr><th>limit</th><th>used</th><th></th></tr>");
+            for (name, used, limit) in [
+                ("Memories", usage.memories, quotas.memories),
+                ("Keys", usage.keys, quotas.keys),
+                ("Connections", usage.connections, quotas.connections),
+            ] {
+                let _ = write!(
+                    body,
+                    r#"<tr><td>{name}</td><td class="mono">{used} / {limit}</td><td><meter min="0" max="{limit}" value="{used}" aria-label="{name}: {used} of {limit} used"></meter></td></tr>"#
+                );
+            }
+            let _ = write!(
+                body,
+                r#"<tr><td>Requests, per key</td><td class="mono">{} / min</td><td></td></tr></table></section>"#,
+                quotas.requests_per_minute
+            );
+        }
+        // The account (d6).
         let policy = self.app.signup_policy();
+        body.push_str(r#"<section class="card">"#);
+        body.push_str(&head(
+            "Your account",
+            "h2",
+            "The operator's admins can read every memory through a journalled read.",
+        ));
         let _ = write!(
             body,
-            r#"<h2>Your account</h2><p><a href="/web/start/export">Export everything as JSON</a>{}</p>"#,
+            r#"<p class="oml-consequence">A JSON download of every memory in your space, held and rejected included, and your keys.</p><p><a href="/web/start/export">Export my memories</a>{}</p>"#,
             policy.map_or(String::new(), |p| format!(
                 r#" · <a href="{}">Terms</a> · <a href="{}">Privacy</a>"#,
                 attr(&p.terms_url),
@@ -688,19 +734,21 @@ where
             ))
         );
         if pending {
-            body.push_str(r#"<p class="notice">Your deletion request is with the administrator. Your agents keep working until it is closed.</p>"#);
+            body.push_str(r#"<p class="notice" role="status">Your deletion request is with the administrator. Your agents keep working until it is closed.</p>"#);
         } else {
             let _ = write!(
                 body,
-                r#"<form class="row" method="post" action="/web/start"><input type="hidden" name="action" value="request_deletion"><input type="hidden" name="csrf_token" value="{}"><label>Type delete to ask for your account to be deleted<input name="confirm" required></label><button type="submit">Request deletion</button></form>"#,
+                r#"<form method="post" action="/web/start"><input type="hidden" name="action" value="request_deletion"><input type="hidden" name="csrf_token" value="{}"><label>Type delete to confirm<input name="confirm" autocomplete="off" required></label><p class="oml-consequence">Your agents keep working until an admin acts. Closing the request disables your account and cuts off your keys; your memories stay on record until the operator erases them.</p><button type="submit">Request deletion</button></form>"#,
                 attr(&csrf)
             );
         }
+        body.push_str("</section>");
         let who = session.user.as_str().to_owned();
         Ok(document(
             "Start",
             Some(&who),
             &tabs(session.admin),
+            "/web/start",
             &body,
             true,
         ))
@@ -1033,7 +1081,14 @@ where
             attr(&csrf)
         );
         let who = session.user.as_str().to_owned();
-        Ok(document("Users", Some(&who), &tabs(true), &body, false))
+        Ok(document(
+            "Quotas",
+            Some(&who),
+            &tabs(true),
+            "/web/admin/users",
+            &body,
+            false,
+        ))
     }
 
     async fn users_page_act(
@@ -1164,7 +1219,7 @@ fn credential_card(client: Client, key: &IssuedKey, issuer: &str) -> String {
                 "Connect code, once, for ten minutes",
                 code.and_then(|c| c.code.as_deref()).unwrap_or(""),
             ));
-            out.push_str(r#"<ol class="clicks"><li>In claude.ai open Customize, then Connectors.</li><li>Add custom connector and paste the URL.</li><li>Connect, then enter the code on the page that opens.</li></ol>"#);
+            out.push_str(r#"<p class="desc">Shown once · works once · expires in ten minutes.</p><ol><li>In claude.ai open Customize, then Connectors.</li><li>Add custom connector and paste the URL.</li><li>Connect, then enter the code on the page that opens.</li></ol>"#);
             out.push_str(&copy_block(
                 "cred-prefs",
                 "Optional: paste into claude.ai's personal preferences",
@@ -1228,10 +1283,7 @@ mod tests {
 
     #[test]
     fn the_compile_time_digests_are_sha256() {
-        for (text, digest) in [
-            (START_SCRIPT, SCRIPT_DIGEST),
-            (START_STYLESHEET, START_STYLE_DIGEST),
-        ] {
+        for (text, digest) in [(START_SCRIPT, SCRIPT_DIGEST), (STYLESHEET, STYLE_DIGEST)] {
             let d = ring::digest::digest(&ring::digest::SHA256, text.as_bytes());
             assert_eq!(base64_32(d.as_ref().try_into().unwrap()), digest);
         }
