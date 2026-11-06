@@ -88,3 +88,21 @@ jobs:
           python-version: "3.12"
       - run: python scripts/gen_design_tokens.py --check
       - run: python scripts/check_contrast.py
+
+  # The one check to require: every job above succeeded or was skipped (numbers
+  # and changelog-fragment run on pull requests only). These jobs are cheap and
+  # run on every change, so there is no path filter here.
+  ci-ok:
+    name: ci ok (practices)
+    if: always()
+    needs: [script-tests, numbers, changelog-fragment, lints, design]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "a job finished: $r" >&2; exit 1 ;; esac
+          done

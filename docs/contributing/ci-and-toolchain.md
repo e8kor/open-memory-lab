@@ -59,6 +59,43 @@ ratchet that only ever loosens, so it starts tight:
 | Schema sync | sqlx offline check: compile-time-checked queries against committed query metadata, regenerated whenever `migrations/` changes | queries and migrations cannot drift apart silently; the companion shape-vs-bytes rule is declared in the [schema page](https://github.com/e8kor/open-memory-lab/tree/main/migrations) |
 | M0 spikes | `uv run --locked --script scripts/check_chain_vectors.py`; `uv run --locked --script testing/spikes/rls/spike_rls.py --require-all` against `pgvector/pgvector:pg17` | the chain-format vectors keep reproducing outside Rust and the Rust tests' copies of them keep equalling the page, and spike 3's findings keep standing, recorded failures included ([M0 spikes](https://github.com/e8kor/open-memory-lab/blob/main/design/research/spikes-index.md)) |
 
+## Which jobs a change runs
+
+On a pull request into `main`, `scripts/ci_paths.py` sorts the changed paths into categories, and each
+workflow's `changes` job (`changed paths`) passes them to the jobs, which skip when their category is
+unchanged. A push to `main`, a merge group, a pull request into another branch, a change under
+`.github/`, `scripts/`, `Cargo.lock` or `rust-toolchain.toml`, and a path that matches no category
+each run everything. `scripts/tests/test_ci_paths.py` holds the table below and checks the workflows
+against it.
+
+| Category | Paths | Jobs it turns on |
+|---|---|---|
+| `rust` | `crates/`, `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
+| `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
+| `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
+| `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
+| `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences, `hooks/` (the mkdocs build hook) | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, chain-format vectors, and `docs_tests` |
+| `docs_tests` | `docs` or `eval` | the Rust targets that read those files, unless `cargo` already runs the workspace |
+| `cli_ref` | `docs/cli/` | `CLI reference matches the oml binary's help` |
+| `eval` | `eval/`, `bench/` | the recall eval and its data check, remember eval data, benchmark pages, and `docs_tests` |
+| `plugins` | `plugins/`, `kit/`, `.claude-plugin/` | `agent plugin agrees with the server`, `contract surfaces agree` |
+| `sdk` | `sdks/` | the Python, TypeScript and generated-code SDK jobs, `contract surfaces agree` |
+| `release` | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
+| `spikes` | `testing/spikes/` | `spike 3, RLS hardening` |
+
+The Rust tests that read files outside `crates/` are the reason `docs` and `eval` keep a slice of
+the Rust suite: `oml-scan`'s `scan` (every page under `docs/`, and `eval/recall/corpus.json`), the
+roles-and-keys footnote test in `oml-transport-http`, `oauth_endpoints` against
+`docs/reference/connect-page.md`, `cli_e2e` against `docs/cli/reference.md`, `sync_extraction`
+against `docs/adr/`, `near_duplicates` and the lake writer's bench-results load against `eval/`.
+Job `cargo test, the targets that read docs and eval` runs exactly those; a new test that reads a
+path outside `crates/` adds its target there and its path to `CATEGORIES`.
+
+The practices workflow has no filter: its jobs are cheap and the lints must always run. Each of
+`ci.yml`, `docs-checks.yml`, `m0-spikes.yml` and `practices.yml` ends in a job named `ci ok (ci)`, `ci ok (docs)`, `ci ok (spikes)` and `ci ok (practices)` respectively, which
+needs every job of its workflow and fails only when one failed or was cancelled, so a skipped job
+never blocks it. Requiring those four checks, by those four distinct names, instead of each job is a repository setting; one name shared by four workflows would let a green check from one satisfy the rule for another.
+
 ## Supply chain: cargo-deny and cargo-audit
 
 These two jobs are the enforcement of ADR-0019's claim. Compiled-in plugins mean the attack
