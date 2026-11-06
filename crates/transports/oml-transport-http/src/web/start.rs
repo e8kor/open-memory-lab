@@ -73,6 +73,9 @@ function poll(){fetch('/web/start/status',{credentials:'same-origin',cache:'no-s
 if(j.first_memory!=='promoted')setTimeout(poll,5000)}}).catch(function(){setTimeout(poll,10000)})}\
 setTimeout(poll,5000)})();";
 
+// The stylesheet is long enough that hashing it runs past the compiler's
+// const-evaluation lint; the work is bounded by the file's size.
+#[allow(long_running_const_eval)]
 const STYLE_DIGEST: [u8; 44] = base64_32(&sha256(STYLESHEET.as_bytes()));
 const SCRIPT_DIGEST: [u8; 44] = base64_32(&sha256(START_SCRIPT.as_bytes()));
 
