@@ -153,14 +153,20 @@ fn grant_line(role: Role, path: &str) -> String {
     format!("{} on {}", role.as_str(), short(path))
 }
 
+/// The Atlas tab's link, which is also its active marker.
+const ATLAS_TAB: &str = "/web?view=memories&amp;display=atlas";
+
 fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
+    // The design system's shared user nav (ADR-0069 d3): Start, Memories,
+    // Review, Atlas, Keys; then this page's Workareas and Guardrails.
     let mut tabs = vec![
-        ("/web", "Keys"),
-        ("/web?view=setup", "Set up"),
+        ("/web?view=setup", "Start"),
         ("/web?view=memories", "Memories"),
+        ("/web?view=review", "Review"),
+        (ATLAS_TAB, "Atlas"),
+        ("/web", "Keys"),
         ("/web?view=workarea", "Workareas"),
         ("/web?view=guardrails", "Guardrails"),
-        ("/web?view=review", "Review"),
     ];
     if admin {
         tabs.push(("/web/admin", "Administration"));
@@ -225,7 +231,11 @@ where
         let (active, body) = match query.get("view").unwrap_or("keys") {
             "setup" => ("/web?view=setup", self.setup_view()),
             "memories" => (
-                "/web?view=memories",
+                if query.get("display") == Some("atlas") && query.get("memory").is_none() {
+                    ATLAS_TAB
+                } else {
+                    "/web?view=memories"
+                },
                 self.memories_view(&web, session, &csrf, query).await?,
             ),
             "workarea" => (

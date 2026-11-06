@@ -25,7 +25,7 @@ use oml_app::domain::valid_time::ValidTime;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AdminState, Bearer, HIT_KINDS, RecallRequest, ServedMemory};
 
-use super::page::{attr, input, select, state_tag, text};
+use super::page::{attr, glyph_svg, input, select, state_tag, text};
 use super::views::Fields;
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::oauth::percent_encode;
@@ -290,66 +290,53 @@ impl Card {
         })
     }
 
-    /// The card, compact, in the design system's MemoryCard form
-    /// (ADR-0045 d22, d32): the state as glyph and word, the version and
-    /// the lifecycle steps in the head, the text, the author's kind and
-    /// key; the provenance timeline and the facts behind Details.
+    /// The memory as the design system's Round 3 compact row (ADR-0045
+    /// d32; ADR-0069 d3): the summary holds the state and the text,
+    /// clamped, then the author's kind, the version and the way in; the
+    /// body, closed by default, holds the provenance timeline and the facts.
     fn html(&self, open: &str) -> String {
-        let reviewed = !matches!(self.state, "held");
+        let reviewed = self.state != "held";
         let served = matches!(self.state, "promoted" | "superseded" | "demoted");
-        let step = |done: bool, never: bool| {
-            if never {
-                "no"
-            } else if done {
-                "done"
-            } else {
-                "wait"
-            }
-        };
         let rejected = self.state == "rejected";
-        let steps_label = format!(
-            "written, held, reviewed{}, served{}",
-            if reviewed { "" } else { ": not yet" },
-            if served {
-                ""
-            } else if rejected {
-                ": never"
-            } else {
-                ": not yet"
-            }
-        );
+        let quiet = matches!(self.state, "superseded" | "rejected" | "demoted");
         let who = self
             .author
             .as_deref()
             .map_or_else(|| "the shared area".to_owned(), text);
+        let kind = self.author_kind.unwrap_or("shared");
+        let actor_glyph = match self.author_kind {
+            Some("person") => glyph_svg("person"),
+            Some(_) => glyph_svg("agent"),
+            None => glyph_svg("shared"),
+        };
+        let segment = match self.state {
+            "demoted" => "retired",
+            other => other,
+        };
         let mut out = format!(
-            r#"<article class="card memory" id="m-{}" aria-label="Memory v{}, {}"><div class="mhead">{}<span class="end"><span class="ver">v{}</span><ol class="steps" role="img" aria-label="{}"><li class="{}"></li><li class="{}"></li><li class="{}"></li><li class="{}"></li></ol></span></div>"#,
+            r#"<li><details class="oml-mrow{}" id="m-{}" data-author-kind="{kind}" data-reviewed="{reviewed}"><summary><div class="top">{}<span class="tx">{}</span></div><div class="sub"><span class="oml-actor">{actor_glyph}<span class="who">{who}</span><span class="kind">{kind}</span></span><span class="vb"><ol aria-label="Versions"><li aria-current="true"><i class="{segment}"></i></li></ol>v{}{}</span><span class="more"><span class="w">Provenance</span></span></div></summary><div class="body">"#,
+            if quiet { " quiet" } else { "" },
             self.id,
-            self.version,
-            self.state,
             state_tag(self.state),
+            text(self.title.as_deref().unwrap_or(&self.body)),
             self.version,
-            steps_label,
-            step(true, false),
-            step(true, false),
-            step(reviewed, false),
-            step(served, rejected),
+            if self.state == "promoted" {
+                " · tip"
+            } else {
+                ""
+            },
         );
-        if let Some(title) = &self.title {
-            let _ = write!(out, r#"<p class="title">{}</p>"#, text(title));
+        if self.title.is_some() {
+            let _ = write!(
+                out,
+                r#"<p class="text{}">{}</p>"#,
+                if self.prose { "" } else { " mono" },
+                text(&self.body)
+            );
         }
-        let _ = write!(
-            out,
-            r#"<p class="text{}">{}</p><p class="mby">{}{}</p>"#,
-            if self.prose { "" } else { " mono" },
-            text(&self.body),
-            self.author_kind
-                .map_or_else(String::new, |k| format!("<b>{k}</b> · ")),
-            who
-        );
-        // The provenance timeline and the facts, folded: compact by default.
+        let step = |done: bool| if done { "" } else { " class=\"wait\"" };
         let review_line = match self.state {
-            "held" => "waiting: held until someone else reviews it".to_owned(),
+            "held" => "held until someone else reviews it".to_owned(),
             "rejected" => "rejected by a key outside its lineage".to_owned(),
             _ => "approved by a key outside its lineage".to_owned(),
         };
@@ -360,16 +347,25 @@ impl Card {
         };
         let _ = write!(
             out,
-            r#"<details class="more"><summary>Details</summary><ol class="timeline" aria-label="Provenance"><li class="done"><b>Written</b> {} · {}</li><li class="done"><b>Held</b> scan: {}</li><li class="{}"><b>Reviewed</b> {}</li><li class="{}"><b>Served</b> {}</li></ol><dl class="facts"><dt>Id</dt><dd class="mono">{}</dd><dt>Workarea</dt><dd class="mono">{}</dd><dt>Claim key</dt><dd class="mono">{}</dd>"#,
-            who,
+            r#"<div class="oml-timeline-wrap"><ol class="oml-timeline" aria-label="Provenance"><li><span class="c-dim">{actor_glyph}</span><span class="step">Written</span><span><span class="who">{who}</span> · {kind}</span><span>{}</span></li><li><span class="c-held">{}</span><span class="step">Held</span><span>scan: {}</span></li><li{}><span class="{}">{}</span><span class="step">{}</span><span>{review_line}</span></li><li{}><span class="{}">{}</span><span class="step">Served</span><span>{served_line}</span></li></ol></div><details class="oml-more"><summary>Details</summary><dl class="oml-facts"><dt>Id</dt><dd><span class="id">{}</span></dd><dt>Workarea</dt><dd><span class="id">{}</span></dd><dt>Claim key</dt><dd><span class="id">{}</span></dd>"#,
             self.written,
+            glyph_svg("held"),
             self.scan
                 .as_deref()
                 .map_or_else(|| "no findings".to_owned(), text),
-            step(reviewed, false),
-            review_line,
-            step(served, rejected),
-            served_line,
+            step(reviewed),
+            if rejected {
+                "c-rejected"
+            } else if reviewed {
+                "c-dim"
+            } else {
+                "c-faint"
+            },
+            glyph_svg("person"),
+            if rejected { "Rejected" } else { "Reviewed" },
+            step(served),
+            if served { "c-promoted" } else { "c-faint" },
+            glyph_svg("promoted"),
             self.id,
             text(&self.workarea),
             text(&self.claim_key),
@@ -385,7 +381,7 @@ impl Card {
         }
         let _ = write!(
             out,
-            r#"</dl><a href="{open}&amp;memory={}">Open</a></details></article>"#,
+            r#"<dt>Open</dt><dd><a href="{open}&amp;memory={}">this memory</a></dd></dl></details></div></details></li>"#,
             self.id
         );
         out
@@ -743,11 +739,11 @@ pub(crate) fn list_view(base: &str, q: &ListQuery, page: Option<&CardPage>, lede
         out.push_str(r#"<p class="dim">No memory matches.</p>"#);
     }
     let open = q.link(base, None, false);
-    out.push_str(r#"<div class="mlist">"#);
+    out.push_str(r#"<ul class="oml-mlist">"#);
     for card in &page.cards {
         out.push_str(&card.html(&open));
     }
-    out.push_str(r#"</div><p class="pager">"#);
+    out.push_str(r#"</ul><p class="pager">"#);
     if q.cursor.is_some() {
         let _ = write!(
             out,

@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0068-oml-s-design-system-is-the-source-of-truth-for-every-surface
+id: adr/ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface
 tier: engineering
 status: proposed
 answers: where OML's colours, type, spacing, glyphs and brand marks are declared; what is generated from them and how drift fails CI; which surfaces must use them; the content rule for UI copy; the brand mark rules; the contrast check; the rejected roads
 -->
 
-# ADR-0068 — OML's design system is the source of truth for every surface
+# ADR-0069 — OML's design system is the source of truth for every surface
 
 **Status:** proposed · 2026-11-06
 

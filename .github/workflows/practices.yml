@@ -1,7 +1,7 @@
 name: Practices
 
 # The merge gates of docs/contributing/review-checklist.md that a script can enforce: the
-# number registry, the changelog fragment, the three lints and the design tokens (ADR-0068),
+# number registry, the changelog fragment, the three lints and the design tokens (ADR-0069),
 # with the scripts' own tests.
 
 on:

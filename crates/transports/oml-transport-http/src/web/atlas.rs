@@ -258,36 +258,30 @@ fn svg(tiles: &[Tile], w: f64, h: f64, font: f64, class: &str) -> String {
     out
 }
 
-/// A compact state bar: one segment per non-zero state, its counts as its
-/// label (the design system's `LifecycleBar`, drawn as SVG so the policy
-/// needs no inline style).
+/// The design system's `LifecycleBar`: one `i` a non-zero state, its
+/// share a `f-<n>` class of twenty steps (the policy allows no inline
+/// style), the counts as its label.
 pub(crate) fn lifebar(c: Counts) -> String {
     let total = c.total().max(1) as f64;
     let mut out = format!(
-        r#"<svg class="lifebar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="{}">"#,
+        r#"<div class="oml-lifebar" role="img" aria-label="{}">"#,
         attr(&c.words())
     );
-    let mut x = 0.0;
     for (class, n, _) in c.parts() {
-        let w = 100.0 * n as f64 / total;
-        let _ = write!(
-            out,
-            r#"<rect class="bar {class}" x="{x:.2}" y="0" width="{:.2}" height="8"/>"#,
-            (w - 0.8).max(0.4)
-        );
-        x += w;
+        let share = ((20.0 * n as f64 / total).round() as u64).clamp(1, 20);
+        let _ = write!(out, r#"<i class="{class} f-{share}"></i>"#);
     }
-    out.push_str("</svg>");
+    out.push_str("</div>");
     out
 }
 
 fn legend(c: Counts) -> String {
-    let mut out = String::from(r#"<ul class="legend" aria-hidden="true">"#);
+    let mut out = String::from(r#"<ul class="oml-legend" aria-hidden="true">"#);
     for (class, n, word) in c.parts() {
         let state = class_state(class);
         let _ = write!(
             out,
-            r#"<li><span class="is-{state}">{}</span><b>{n}</b> {word}</li>"#,
+            r#"<li><span class="c-{state}">{}</span><b>{n}</b> {word}</li>"#,
             glyph_svg(state)
         );
     }
@@ -403,7 +397,7 @@ where
         );
         let _ = write!(
             out,
-            r#"<div class="atlas-grid"><div class="atlas-col"><p class="desc">{} readable · area = count{}</p>"#,
+            r#"<div class="oml-main"><div class="col"><p class="desc">{} readable · area = count{}</p>"#,
             total.total(),
             if found.partial {
                 " · counted from the first 2,000 rows"
@@ -444,7 +438,7 @@ where
             .map_err(mapped)?;
         let _ = write!(
             out,
-            r#"<aside class="atlas-rail" aria-labelledby="sel-h"><section class="panel"><h2 id="sel-h" class="mono">{}</h2><p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{base}?view=memories&amp;workarea={top_id}">Open memories</a></p>"#,
+            r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2><p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{base}?view=memories&amp;workarea={top_id}">Open memories</a></p>"#,
             text(&top.path),
             text(top.workarea.status.as_str()),
             if top.workarea.in_progress {

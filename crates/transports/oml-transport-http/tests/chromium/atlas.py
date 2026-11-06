@@ -99,11 +99,11 @@ def main() -> int:
                             page.screenshot(path=f"{a.shots}/{tag}-{name}.png", full_page=True)
 
                     page.goto(f"{issuer}{base}?view=memories")
-                    out[f"{tag}_cards"] = page.locator("article.card.memory").count()
+                    out[f"{tag}_cards"] = page.locator("details.oml-mrow").count()
                     # The provenance is folded by default; one card opened for the picture.
-                    out[f"{tag}_folded"] = page.locator("details.more[open]").count() == 0
+                    out[f"{tag}_folded"] = page.locator("details.oml-mrow[open]").count() == 0
                     shot("memories")
-                    details = page.locator("details.more summary").first
+                    details = page.locator("details.oml-mrow > summary").first
                     if details.count():
                         details.click()
                         shot("memories-details")

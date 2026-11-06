@@ -800,15 +800,16 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
   views of the Chromium test).
 
 - **d32 — The pages take the design system's forms; the operator's decision of 2026-11-06.** The
-  Memories card is the design system's compact MemoryCard: its state as glyph and one word, its
-  version and a four-step lifecycle bar (written, held, reviewed, served) in the head, its text,
-  and its author's kind (`agent`, `person`) and key; the provenance timeline and the facts (id,
-  workarea, claim key, source, format, valid time) fold behind Details, closed by default. The
-  filters are labelled in plain words (Text, State, Workarea, Source, Author). The Atlas is
-  AtlasScreen's treemap (d25, d30). Component styles use the design system's token names
-  (`--held`, `--promoted`, `--space-3`, `--radius-md`, `--bar-h` and the rest) with today's
-  values as fallbacks, so the shared tokens and stylesheet replace them when they land; the
-  pages' header and shared stylesheet are that change's, not this one's. The design system
+  Memories card is the design system's Round 3 compact row ([ADR-0069](ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)
+  d3): its state as glyph and one word and its text, clamped, then its author's kind (`agent`,
+  `person`) and key and its version bar; the provenance timeline (written, held, reviewed,
+  served, a step not yet taken marked waiting) and the facts (id, workarea, claim key, source,
+  format, valid time) fold inside it, closed by default. The filters are labelled in plain
+  words (Text, State, Workarea, Source, Author). The Atlas is AtlasScreen's treemap (d25, d30)
+  in the shared rail layout. The shared stylesheet (`tokens.css`, `web.css`) styles the row,
+  the rail, the panel, the lifebar and the legend; the filters and the treemap have their own
+  `memories.css` after it, `var(--…)` only. The user page's nav is the design system's (Start,
+  Memories, Review, Atlas, Keys), then Workareas and Guardrails. The design system
   places no lifecycle acts on the Atlas; the operator's d30 does, so the scope's panel carries
   d28's dropdown.
 
