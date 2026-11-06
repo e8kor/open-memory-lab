@@ -664,6 +664,8 @@ impl Lab {
                     valid_until: None,
                     on_similar: Default::default(),
                     origin: None,
+                    format: None,
+                    title: None,
                     valid_from: None,
                     idempotency_key: format!("seed-{claim_key}"),
                     claim_key: Some(claim_key.to_owned()),
