@@ -73,6 +73,11 @@ def remote_branches(root: Path, remote: str = "origin", main: str = "main") -> l
     return [r for r in refs if r not in skip]
 
 
+def merged_into(root: Path, ref: str, base: str) -> bool:
+    """True when every commit of `ref` is already in `base`."""
+    return subprocess.run(["git", "merge-base", "--is-ancestor", ref, base], cwd=root, capture_output=True).returncode == 0
+
+
 def open_prs(root: Path) -> dict[str, int]:
     try:
         r = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "200", "--json", "number,headRefName"],
