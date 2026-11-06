@@ -66,4 +66,4 @@ OML_API_KEY=$A oml read --query "deploy"                       # found
 | [Benchmarks](benchmarks/index.md) | recall quality and latency, with method |
 | [Help](faq.md) | FAQ, troubleshooting, release notes |
 
-The current release is v0.6.1 ([release notes](changelog.md)). Open issues are on [GitHub](https://github.com/e8kor/open-memory-lab/issues). Code is Apache-2.0; this documentation is CC BY 4.0.
+The current release is v0.6.2 ([release notes](changelog.md)). Open issues are on [GitHub](https://github.com/e8kor/open-memory-lab/issues). Code is Apache-2.0; this documentation is CC BY 4.0.
