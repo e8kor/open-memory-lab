@@ -49,6 +49,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: paths
+        shell: bash  # -eo pipefail: a crashing classifier fails this job and so "ci ok"
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
@@ -159,7 +160,7 @@ jobs:
   # The one check to require: it succeeds when every job above succeeded or was
   # skipped by the filter, and fails when one failed or was cancelled.
   ci-ok:
-    name: ci ok
+    name: ci ok (docs)
     if: always()
     needs: [changes, build-strict, bench-pages, contract-sync, openapi-valid, remember-eval-data, generated-references, cli-reference]
     runs-on: ubuntu-latest

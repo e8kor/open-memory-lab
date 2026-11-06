@@ -53,6 +53,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: paths
+        shell: bash  # -eo pipefail: a crashing classifier fails this job and so "ci ok"
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
@@ -142,6 +143,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_tests == 'true' && needs.changes.outputs.cargo != 'true'
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ""  # none of these targets starts Postgres; a future one that does fails here, not hangs
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -834,7 +837,7 @@ jobs:
   # The one check to require: it succeeds when every job above succeeded or was
   # skipped by the filter, and fails when one failed or was cancelled.
   ci-ok:
-    name: ci ok
+    name: ci ok (ci)
     if: always()
     needs: [changes, lint, test, docs-reading-tests, e2e, compose, image, cli-matrix, install-smoke, deny, plugin, recall-eval, recall-eval-data, chart, sdk-python, sdk-typescript, sdk-generated]
     runs-on: ubuntu-latest

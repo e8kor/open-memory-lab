@@ -29,12 +29,12 @@ CATEGORIES: dict[str, list[str]] = {
     # The machine-readable contracts the server include_str!s and its tests read.
     "api": ["docs/api/*.yaml", "docs/api/*.json"],
     # Pages and what the site build reads. Rust tests read some pages (see DOCS_READ_BY_RUST).
-    "docs": ["docs/**", "design/**", "mkdocs.yml", "requirements.txt", "changes/**", "*.md", "LICENSE", "LICENSE-docs", "LICENSES/**"],
+    "docs": ["docs/**", "design/**", "mkdocs.yml", "requirements.txt", "changes/**", "*.md", "LICENSE", "LICENSE-docs", "LICENSES/**", "hooks/**"],  # hooks/ holds the mkdocs build hook
     "cli_ref": ["docs/cli/**"],  # compared with the built oml binary's help
-    "plugins": ["plugins/**", "kit/**", "hooks/**", ".claude-plugin/**"],
+    "plugins": ["plugins/**", "kit/**", ".claude-plugin/**"],
     "sdk": ["sdks/**"],
     "eval": ["eval/**", "bench/**"],
-    "release": ["Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/**"],
+    "release": ["Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/**", "LICENSES/**"],  # the image copies LICENSES/
     "spikes": ["testing/spikes/**"],
     # Runs everything: the workflows, the lockfile, the toolchain pin and the scripts the jobs run.
     "ci": [".github/**", "Cargo.lock", "rust-toolchain.toml", "scripts/**"],

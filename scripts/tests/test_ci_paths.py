@@ -63,6 +63,13 @@ class Selection(unittest.TestCase):
                   "scripts/ci_paths.py", "scripts/tests/test_ci_paths.py"]:
             self.assertEqual(on([f]), set(P.OUTPUTS), f)
 
+    def test_the_mkdocs_build_hook_selects_the_site_build(self):
+        self.assertIn("docs", on(["hooks/status_line.py"]))
+        self.assertNotIn("plugins", on(["hooks/status_line.py"]))
+
+    def test_the_licenses_the_image_copies_select_the_release_jobs_and_the_site(self):
+        self.assertEqual(on(["LICENSES/Apache-2.0.txt"]), {"docs", "docs_tests", "release"})
+
     def test_a_path_in_no_category_selects_everything(self):
         self.assertEqual(on(["docs/index.md", "some-new-dir/x"]), set(P.OUTPUTS))
 
@@ -125,6 +132,22 @@ class Workflows(unittest.TestCase):
             self.assertIn("if: always()", block, wf)
             needs = re.search(r"needs: \[(.*?)\]", block).group(1).split(", ")
             self.assertEqual(sorted(needs), sorted(ids), wf)
+
+    def test_the_four_final_checks_have_four_distinct_names(self):
+        names = []
+        for wf in [*FILTERED, "practices.yml"]:
+            block = self.text(wf).split("\n  ci-ok:\n", 1)[1]
+            names.append(re.search(r"^    name: (.*)$", block, re.M).group(1))
+        self.assertEqual(sorted(names), ["ci ok (ci)", "ci ok (docs)", "ci ok (practices)", "ci ok (spikes)"])
+
+    def test_a_crashing_classifier_fails_the_changes_job_and_so_every_final_check(self):
+        for wf in FILTERED:
+            t = self.text(wf)
+            step = t.split("      - id: paths\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("| tee", step, wf)
+            self.assertRegex(step, r"(^|\n)        shell: bash\b", f"{wf}: a pipe needs -o pipefail")
+            block = t.split("\n  ci-ok:\n", 1)[1]
+            self.assertIn("changes", re.search(r"needs: \[(.*?)\]", block).group(1).split(", "), wf)
 
     def test_every_check_name_survives(self):
         old = {

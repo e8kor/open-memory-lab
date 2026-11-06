@@ -74,13 +74,13 @@ against it.
 | `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
 | `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
 | `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
-| `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, chain-format vectors, and `docs_tests` |
+| `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences, `hooks/` (the mkdocs build hook) | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, chain-format vectors, and `docs_tests` |
 | `docs_tests` | `docs` or `eval` | the Rust targets that read those files, unless `cargo` already runs the workspace |
 | `cli_ref` | `docs/cli/` | `CLI reference matches the oml binary's help` |
 | `eval` | `eval/`, `bench/` | the recall eval and its data check, remember eval data, benchmark pages, and `docs_tests` |
-| `plugins` | `plugins/`, `kit/`, `hooks/`, `.claude-plugin/` | `agent plugin agrees with the server`, `contract surfaces agree` |
+| `plugins` | `plugins/`, `kit/`, `.claude-plugin/` | `agent plugin agrees with the server`, `contract surfaces agree` |
 | `sdk` | `sdks/` | the Python, TypeScript and generated-code SDK jobs, `contract surfaces agree` |
-| `release` | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/` | the release image, `compose`, `chart` and `install-smoke` |
+| `release` | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
 | `spikes` | `testing/spikes/` | `spike 3, RLS hardening` |
 
 The Rust tests that read files outside `crates/` are the reason `docs` and `eval` keep a slice of
@@ -92,9 +92,9 @@ Job `cargo test, the targets that read docs and eval` runs exactly those; a new 
 path outside `crates/` adds its target there and its path to `CATEGORIES`.
 
 The practices workflow has no filter: its jobs are cheap and the lints must always run. Each of
-`ci.yml`, `docs-checks.yml`, `m0-spikes.yml` and `practices.yml` ends in a job named `ci ok`, which
+`ci.yml`, `docs-checks.yml`, `m0-spikes.yml` and `practices.yml` ends in a job named `ci ok (ci)`, `ci ok (docs)`, `ci ok (spikes)` and `ci ok (practices)` respectively, which
 needs every job of its workflow and fails only when one failed or was cancelled, so a skipped job
-never blocks it. Requiring those four checks instead of each job is a repository setting.
+never blocks it. Requiring those four checks, by those four distinct names, instead of each job is a repository setting; one name shared by four workflows would let a green check from one satisfy the rule for another.
 
 ## Supply chain: cargo-deny and cargo-audit
 

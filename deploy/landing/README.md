@@ -2,7 +2,9 @@
 
 `index.html` is the public landing page of the maintainer's server, `https://memory.doublegate.io/`.
 It is one self-contained file: inline CSS, the OML mark inline, no external assets and no
-tracking. Caddy serves `index.html`, `privacy.html` and `terms.html` for `/`, `/privacy` and `/terms` alone and passes every other path to the lead.
+tracking. It is generated: edit `index.src.html` and run `python scripts/gen_design_tokens.py`,
+which fills in the design tokens, the wordmark, the glyphs, the review-gate diagram and the
+display font (ADR-0069). Deploying it is a copy to `/srv/data/www/memory/`, an operator step. Caddy serves `index.html`, `privacy.html` and `terms.html` for `/`, `/privacy` and `/terms` alone and passes every other path to the lead.
 
 ```caddyfile
 memory.doublegate.io {

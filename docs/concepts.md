@@ -20,6 +20,9 @@ See [write and read memories](use/remember-and-recall.md) and [audit and lineage
 
 Every write is scanned, held, reviewed by someone who did not write it, signed, and only then readable. While a memory is held, only its author can read it. A reviewer's approval moves it to state `promoted`.
 
+--8<-- "states.md"
+
+
 The reviewer is never the author, and approval decides who can read a memory, not how it ranks. When no reviewer is available, nothing is approved and held memories wait. See [why a write is held](concepts/why-a-write-is-held.md) and [admission](architecture/admission.md).
 
 ## Workarea
