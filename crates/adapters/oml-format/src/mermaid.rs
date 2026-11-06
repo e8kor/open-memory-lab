@@ -200,6 +200,43 @@ fn lines(source: &str) -> Result<(Vec<Line<'_>>, Option<String>), FormatRefusal>
     Ok((out, title))
 }
 
+/// Mermaid's entity codes, `#60;` or `#lt;`, as the drawing decodes them. A
+/// code the drawing does not know is left as written.
+fn decode_entities(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '#'
+            && let Some(len) = chars[i + 1..].iter().take(12).position(|c| *c == ';')
+        {
+            let code: String = chars[i + 1..i + 1 + len].iter().collect();
+            let decoded = match code.as_str() {
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "amp" => Some('&'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{a0}'),
+                _ => code
+                    .strip_prefix(['x', 'X'])
+                    .map(|h| u32::from_str_radix(h, 16))
+                    .unwrap_or_else(|| code.parse::<u32>())
+                    .ok()
+                    .and_then(char::from_u32),
+            };
+            if let Some(ch) = decoded {
+                out.push(ch);
+                i += len + 2;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 fn unquote(s: &str) -> &str {
     s.strip_prefix('"')
         .and_then(|r| r.strip_suffix('"'))
@@ -232,7 +269,7 @@ fn refuse_constructs(l: &Line<'_>, kind: Kind) -> Result<(), FormatRefusal> {
             l.no,
         ));
     }
-    let chars: Vec<char> = t.chars().collect();
+    let chars: Vec<char> = decode_entities(t).chars().collect();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '<' {
@@ -333,21 +370,47 @@ impl Cursor<'_> {
         self.s.get(self.i).copied()
     }
     fn rest(&self) -> String {
-        self.s[self.i..].iter().collect()
+        self.s.get(self.i..).unwrap_or_default().iter().collect()
+    }
+    /// The text from `from` to the cursor; empty when the range is not one.
+    fn slice(&self, from: usize) -> String {
+        self.s
+            .get(from..self.i.min(self.s.len()))
+            .unwrap_or_default()
+            .iter()
+            .collect()
     }
 }
 
+/// The statements of a line: split on `;` outside a quoted label.
+fn split_statements(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (i, ch) in line.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            ';' if !quoted => {
+                out.push(&line[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&line[start..]);
+    out
+}
+
 /// `id` and, when written, the label of its shape.
-fn flow_node(c: &mut Cursor<'_>) -> Option<(String, Option<String>)> {
+fn flow_node(c: &mut Cursor<'_>) -> Result<(String, Option<String>), &'static str> {
     c.skip_ws();
     let start = c.i;
     while c.peek().is_some_and(is_id) {
         c.i += 1;
     }
     if c.i == start {
-        return None;
+        return Err("a node was expected");
     }
-    let id: String = c.s[start..c.i].iter().collect();
+    let id: String = c.slice(start);
     let mut label = None;
     if c.peek().is_some_and(|ch| matches!(ch, '[' | '(' | '{')) {
         while c
@@ -362,14 +425,20 @@ fn flow_node(c: &mut Cursor<'_>) -> Option<(String, Option<String>)> {
             while c.peek().is_some_and(|ch| ch != '"') {
                 c.i += 1;
             }
-            label = Some(c.s[from..c.i].iter().collect::<String>());
+            if c.peek().is_none() {
+                return Err("a quoted label is not closed");
+            }
+            label = Some(c.slice(from));
             c.i += 1;
         } else {
             let from = c.i;
             while c.peek().is_some_and(|ch| !matches!(ch, ']' | ')' | '}')) {
                 c.i += 1;
             }
-            let mut text: String = c.s[from..c.i].iter().collect();
+            if c.peek().is_none() {
+                return Err("a label is not closed");
+            }
+            let mut text: String = c.slice(from);
             while text.ends_with('/') || text.ends_with('\\') {
                 text.pop();
             }
@@ -383,7 +452,7 @@ fn flow_node(c: &mut Cursor<'_>) -> Option<(String, Option<String>)> {
         }
         label = label.map(|l| l.trim().to_owned()).filter(|l| !l.is_empty());
     }
-    Some((id, label))
+    Ok((id, label))
 }
 
 /// An arrow with its optional label; `None` when no arrow starts here.
@@ -398,7 +467,7 @@ fn flow_arrow(c: &mut Cursor<'_>) -> Result<Option<Option<String>>, ()> {
         {
             c.i += 1;
         }
-        c.s[from..c.i].iter().collect::<String>()
+        c.slice(from)
     };
     let body = run(c);
     if body.is_empty() {
@@ -443,7 +512,7 @@ fn flow_arrow(c: &mut Cursor<'_>) -> Result<Option<Option<String>>, ()> {
         if c.peek() != Some('|') {
             return Err(());
         }
-        label = Some(c.s[from..c.i].iter().collect::<String>().trim().to_owned());
+        label = Some(c.slice(from).trim().to_owned());
         c.i += 1;
     }
     Ok(Some(
@@ -460,7 +529,7 @@ fn flow(body: &[Line<'_>], m: &mut Model) -> Result<(), FormatRefusal> {
         if matches!(word, "subgraph" | "end" | "direction") {
             continue;
         }
-        for statement in trimmed.split(';') {
+        for statement in split_statements(trimmed) {
             let chars: Vec<char> = statement.trim().chars().collect();
             if chars.is_empty() {
                 continue;
@@ -471,8 +540,7 @@ fn flow(body: &[Line<'_>], m: &mut Model) -> Result<(), FormatRefusal> {
             loop {
                 let mut group = Vec::new();
                 loop {
-                    let (id, label) =
-                        flow_node(&mut c).ok_or_else(|| syntax(l, "a node was expected"))?;
+                    let (id, label) = flow_node(&mut c).map_err(|what| syntax(l, what))?;
                     m.node(&id, label, l.no)?;
                     group.push(id);
                     c.skip_ws();
@@ -857,16 +925,28 @@ impl Format for Mermaid {
     }
     fn validate(&self, source: &str) -> Result<Parsed, FormatRefusal> {
         let sentences = parse(source)?;
+        // The drawing decodes entity codes, so a rule that reads bytes sees
+        // `AKIA#73;…` where the reader sees the key (ADR-0056 d6).
+        let decoded = decode_entities(source);
+        let views = if decoded == source {
+            Vec::new()
+        } else {
+            vec![ScanView {
+                path: "source".to_owned(),
+                text: decoded,
+            }]
+        };
         Ok(Parsed {
             search_text: sentences.join("\n"),
+            views,
             ..Parsed::default()
         })
     }
     fn search_text(&self, parsed: &Parsed) -> String {
         parsed.search_text.clone()
     }
-    fn scan_views(&self, _parsed: &Parsed) -> Vec<ScanView> {
-        Vec::new()
+    fn scan_views(&self, parsed: &Parsed) -> Vec<ScanView> {
+        parsed.views.clone()
     }
     fn render_hint(&self) -> RenderHint {
         RenderHint::Diagram

@@ -30,6 +30,8 @@ fn is_secret_key(segment: &str) -> bool {
     let k = segment.to_lowercase();
     SECRET_KEYS.contains(&k.as_str())
         || k.ends_with("_secret")
+        || k.ends_with("_password")
+        || k.ends_with("_passwd")
         || k.ends_with("_token")
         || k.ends_with("_key")
 }
@@ -46,9 +48,10 @@ fn is_placeholder(value: &str) -> bool {
         || matches!(lower.as_str(), "changeme" | "example" | "redacted")
 }
 
-/// Whether the path's last segment names a secret.
+/// Whether any segment of the path names a secret, so a value nested in an
+/// array or object under `password` is as keyed as one directly under it.
 fn keyed_secret(entry: &Entry) -> bool {
-    entry.path.last().is_some_and(|s| is_secret_key(s))
+    entry.path.iter().any(|s| is_secret_key(s))
 }
 
 /// The search text, the scan views and the keyed-secret finding of a
