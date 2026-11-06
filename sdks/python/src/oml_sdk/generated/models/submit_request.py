@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..models.severity import Severity
 from ..models.submit_request_kind import SubmitRequestKind
+from ..models.submit_request_on_similar import SubmitRequestOnSimilar
 from ..models.submit_request_verb import SubmitRequestVerb
 from ..types import UNSET, Unset
 
@@ -58,6 +59,10 @@ class SubmitRequest:
                 namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
                 is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+            on_similar (SubmitRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names a
+                row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+                rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+                no idempotency record. Not part of the request digest. Since v0.5.9.
             anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
                 immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
@@ -75,6 +80,7 @@ class SubmitRequest:
     rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
+    on_similar: SubmitRequestOnSimilar | Unset = UNSET
     anchor: Anchor | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -113,6 +119,10 @@ class SubmitRequest:
         if not isinstance(self.derives_from, Unset):
             derives_from = self.derives_from
 
+        on_similar: str | Unset = UNSET
+        if not isinstance(self.on_similar, Unset):
+            on_similar = self.on_similar.value
+
         anchor: dict[str, Any] | Unset = UNSET
         if not isinstance(self.anchor, Unset):
             anchor = self.anchor.to_dict()
@@ -142,6 +152,8 @@ class SubmitRequest:
             field_dict["workarea"] = workarea
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
+        if on_similar is not UNSET:
+            field_dict["on_similar"] = on_similar
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
 
@@ -198,6 +210,13 @@ class SubmitRequest:
 
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
+        _on_similar = d.pop("on_similar", UNSET)
+        on_similar: SubmitRequestOnSimilar | Unset
+        if isinstance(_on_similar, Unset):
+            on_similar = UNSET
+        else:
+            on_similar = SubmitRequestOnSimilar(_on_similar)
+
         _anchor = d.pop("anchor", UNSET)
         anchor: Anchor | Unset
         if isinstance(_anchor, Unset):
@@ -216,6 +235,7 @@ class SubmitRequest:
             rule=rule,
             workarea=workarea,
             derives_from=derives_from,
+            on_similar=on_similar,
             anchor=anchor,
         )
 

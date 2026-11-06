@@ -47,6 +47,7 @@ class ErrorCode(StrEnum):
     SUBMISSION_CLAIM_KEY_CONFLICT = "submission.claim_key_conflict"
     SUBMISSION_LINEAGE_REQUIRED = "submission.lineage_required"
     SUBMISSION_SCAN_VETO = "submission.scan_veto"
+    SUBMISSION_SIMILAR_EXISTS = "submission.similar_exists"
     SUBMISSION_SIMULATION_ID_REQUIRED = "submission.simulation_id_required"
     SUBMISSION_TIP_CONFLICT = "submission.tip_conflict"
     SUBMISSION_UNIVERSE_REFUSED = "submission.universe_refused"

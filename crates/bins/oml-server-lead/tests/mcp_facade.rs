@@ -1186,6 +1186,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
             "workarea": crew.to_string(),
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1529,6 +1530,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": null,
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1631,6 +1633,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
+            "similar": [],
             "idempotent_replay": false,
         })
     );
