@@ -5,10 +5,15 @@
 //! `<iframe sandbox="allow-scripts" src="/web/render/<token>">`; the frame is
 //! an opaque origin, so it has no cookie, no storage and no access to the
 //! parent, and its policy forbids every network request. Its one input is
-//! the source the session was already shown, sealed into the token with the
-//! session and an expiry, so what is drawn is what was served and a token
-//! opens for no other session. A rendering is not part of what is signed
-//! and journals nothing; the reviewer always has the source beside it.
+//! the source the session was already shown. The source stays in the lead's
+//! memory, keyed by the session and the memory; the token sealed into the
+//! URL names the memory, the session and an expiry only, so a diagram near
+//! the 64 KiB cap fits in a URL path and a token opens for no other
+//! session. A rendering is not part of what is signed and journals nothing;
+//! the reviewer always has the source beside it.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -39,6 +44,59 @@ pub const RENDER_PURPOSE: &[u8] = b"oml render frame";
 
 /// A token's life, seconds (ADR-0056 d9).
 pub const RENDER_TTL_SECS: u64 = 300;
+
+/// How many sources the lead holds for frames at once; the oldest expiry
+/// goes first. 256 sources of at most 64 KiB is 16 MiB, chosen, not
+/// measured (FR-109).
+pub const RENDER_SOURCES_MAX: usize = 256;
+
+/// The sources the frame route draws from, keyed by session and memory, each
+/// with its expiry. A restart or an eviction answers `not_found`; the card
+/// still shows the source.
+#[derive(Default)]
+pub struct Sources {
+    held: Mutex<HashMap<(String, String), (u64, Arc<str>)>>,
+}
+
+impl Sources {
+    fn put(&self, session: &str, memory_id: &str, source: &str, expires: u64, now: u64) {
+        let mut held = self.held.lock().expect("render sources lock");
+        held.retain(|_, (e, _)| *e > now);
+        while held.len() >= RENDER_SOURCES_MAX {
+            let Some(oldest) = held
+                .iter()
+                .min_by_key(|(_, (e, _))| *e)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            held.remove(&oldest);
+        }
+        held.insert(
+            (session.to_owned(), memory_id.to_owned()),
+            (expires, Arc::from(source)),
+        );
+    }
+
+    fn get(&self, session: &str, memory_id: &str, now: u64) -> Option<Arc<str>> {
+        let held = self.held.lock().expect("render sources lock");
+        held.get(&(session.to_owned(), memory_id.to_owned()))
+            .filter(|(e, _)| *e > now)
+            .map(|(_, source)| Arc::clone(source))
+    }
+
+    /// How many sources are held, for the metric and the tests.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.held.lock().expect("render sources lock").len()
+    }
+
+    /// Whether none is held.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 /// The one script the frame runs besides the bundle: Mermaid at
 /// `securityLevel: "strict"` with no HTML labels, and Mermaid's own message
@@ -95,41 +153,42 @@ pub fn frame_document(source: &str) -> String {
     )
 }
 
-/// The token for `source`: the memory it belongs to, the session's CSRF
-/// token as the session binding, and its expiry, sealed.
+/// The token for `source`: it names the memory, the session's CSRF token as
+/// the session binding and an expiry, sealed; the source is put in `sources`
+/// under the same session and memory, never in the token.
 #[must_use]
 pub fn token(
     sealer: &impl oml_app::ports::HandleSealer,
+    sources: &Sources,
     session: &str,
     memory_id: &str,
     source: &str,
     now: u64,
 ) -> String {
-    let claim = json!({
-        "e": now + RENDER_TTL_SECS,
-        "s": session,
-        "i": memory_id,
-        "x": source,
-    });
+    let expires = now + RENDER_TTL_SECS;
+    sources.put(session, memory_id, source, expires, now);
+    let claim = json!({ "e": expires, "s": session, "i": memory_id });
     sealer.seal(claim.to_string().as_bytes())
 }
 
 /// The source a token opens for `session` at `now`, or `None` for a token
-/// that is forged, expired, another session's or not a render token.
+/// that is forged, expired, another session's or not a render token, or
+/// whose source the lead no longer holds.
 #[must_use]
 pub fn open(
     sealer: &impl oml_app::ports::HandleSealer,
+    sources: &Sources,
     handle: &str,
     session: &str,
     now: u64,
-) -> Option<String> {
+) -> Option<Arc<str>> {
     let bytes = sealer.open(handle)?;
     let claim: Value = serde_json::from_slice(&bytes).ok()?;
     let expires = claim["e"].as_u64()?;
     if now >= expires || claim["s"].as_str()? != session {
         return None;
     }
-    claim["x"].as_str().map(str::to_owned)
+    sources.get(session, claim["i"].as_str()?, now)
 }
 
 /// The frame's answer: the document under its own policy, never cached.
@@ -204,15 +263,54 @@ mod tests {
     #[test]
     fn a_token_opens_for_its_session_before_it_expires_and_never_after() {
         let sealer = AeadSealer::generate_for(RENDER_PURPOSE);
-        let t = token(&sealer, "csrf-a", "id", "flowchart LR\n A-->B", 1_000);
+        let sources = Sources::default();
+        let t = token(
+            &sealer,
+            &sources,
+            "csrf-a",
+            "id",
+            "flowchart LR\n A-->B",
+            1_000,
+        );
         assert_eq!(
-            open(&sealer, &t, "csrf-a", 1_000 + RENDER_TTL_SECS - 1).as_deref(),
+            open(&sealer, &sources, &t, "csrf-a", 1_000 + RENDER_TTL_SECS - 1).as_deref(),
             Some("flowchart LR\n A-->B")
         );
-        assert_eq!(open(&sealer, &t, "csrf-a", 1_000 + RENDER_TTL_SECS), None);
-        assert_eq!(open(&sealer, &t, "csrf-b", 1_000), None, "another session");
+        assert_eq!(
+            open(&sealer, &sources, &t, "csrf-a", 1_000 + RENDER_TTL_SECS),
+            None
+        );
+        assert_eq!(
+            open(&sealer, &sources, &t, "csrf-b", 1_000),
+            None,
+            "another session"
+        );
         let other = AeadSealer::generate_for(b"oml web sign-in");
-        assert_eq!(open(&other, &t, "csrf-a", 1_000), None, "another purpose");
+        assert_eq!(
+            open(&other, &sources, &t, "csrf-a", 1_000),
+            None,
+            "another purpose"
+        );
+        assert!(!t.contains("flowchart"), "the source is never in the token");
+    }
+
+    #[test]
+    fn the_held_sources_are_bounded_and_the_oldest_expiry_goes_first() {
+        let sealer = AeadSealer::generate_for(RENDER_PURPOSE);
+        let sources = Sources::default();
+        for i in 0..RENDER_SOURCES_MAX + 10 {
+            let _ = token(
+                &sealer,
+                &sources,
+                "s",
+                &format!("m{i}"),
+                "flowchart LR",
+                1_000 + i as u64,
+            );
+        }
+        assert_eq!(sources.len(), RENDER_SOURCES_MAX);
+        let first = token(&sealer, &sources, "s", "m0", "flowchart LR", 5_000);
+        assert!(open(&sealer, &sources, &first, "s", 5_001).is_some());
     }
 
     #[test]

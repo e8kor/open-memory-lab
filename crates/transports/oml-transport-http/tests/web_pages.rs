@@ -2423,7 +2423,11 @@ async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_d
         &rig,
         &cookie,
         "/web",
-        &[("action", "issue_key"), ("name", "laptop"), ("role", "writer")],
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
     )
     .await;
     // About 56 KiB of source: under the 64 KiB cap, and a URL path of that
@@ -2448,5 +2452,8 @@ async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_d
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", &body[..body.len().min(300)]);
-    assert!(body.contains("the last node"), "the whole source is drawn from");
+    assert!(
+        body.contains("the last node"),
+        "the whole source is drawn from"
+    );
 }

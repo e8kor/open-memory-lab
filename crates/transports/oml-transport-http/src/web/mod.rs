@@ -119,6 +119,8 @@ pub struct WebPages {
     /// Seals the frame route's tokens, which open for no other purpose
     /// (ADR-0056 d9).
     render_sealer: AeadSealer,
+    /// The sources the frame route draws, held here and never in a token.
+    render_sources: render::Sources,
     counters: [ProviderCounter; 2],
 }
 
@@ -150,6 +152,7 @@ impl WebPages {
             session_ttl_secs: WEB_SESSION_TTL_SECS,
             sealer: AeadSealer::generate_for(WEB_SIGN_IN_PURPOSE),
             render_sealer: AeadSealer::generate_for(render::RENDER_PURPOSE),
+            render_sources: render::Sources::default(),
             counters: Default::default(),
         }
     }
@@ -299,6 +302,7 @@ where
         }
         render::iframe(&render::token(
             &self.pages().render_sealer,
+            &self.pages().render_sources,
             csrf,
             memory_id,
             source,
@@ -333,7 +337,13 @@ where
         };
         line.session(&session.1);
         let csrf = oml_app::domain::web::csrf_token(&session.0);
-        let source = render::open(&self.pages().render_sealer, token, &csrf, unix_now());
+        let source = render::open(
+            &self.pages().render_sealer,
+            &self.pages().render_sources,
+            token,
+            &csrf,
+            unix_now(),
+        );
         match (source, self.app.oauth_issuer()) {
             (Some(source), Some(issuer)) => Answer {
                 response: render::frame_response(issuer.as_str(), &source),
