@@ -76,7 +76,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0055 | `main` |  | a person reviews a listed set of held items in one act each item judge | used |
 | adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
-| adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
+| adr | 0058 | `docs/production-requirements-r2` | #94 | the public server runs to stated slos with an error budget and without | open |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
 | adr | 0060 | `feat/lake-writer-r2` | #93 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |

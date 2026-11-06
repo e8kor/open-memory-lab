@@ -55,10 +55,10 @@ Nothing in this section is released. Each row is the plan of 2026-11-03 as revis
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
-ADR-0027 ([#10](https://github.com/e8kor/open-memory-lab/pull/10)), ADR-0030
-([#12](https://github.com/e8kor/open-memory-lab/pull/12)), ADR-0035
-([#17](https://github.com/e8kor/open-memory-lab/pull/17)), ADR-0036
-([#19](https://github.com/e8kor/open-memory-lab/pull/19)). The number ADR-0032 is not used by any record.
+ADR-0030 ([#12](https://github.com/e8kor/open-memory-lab/pull/12)) and ADR-0036
+([#19](https://github.com/e8kor/open-memory-lab/pull/19)). Parked records are kept as tags:
+ADR-0027 ([archive/feat/ontology-crews](https://github.com/e8kor/open-memory-lab/tree/archive/feat/ontology-crews))
+and ADR-0035 ([archive/feat/deliverables](https://github.com/e8kor/open-memory-lab/tree/archive/feat/deliverables)). The number ADR-0032 is not used by any record.
 
 ## Not scheduled
 
