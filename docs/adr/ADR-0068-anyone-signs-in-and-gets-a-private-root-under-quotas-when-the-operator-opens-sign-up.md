@@ -1,11 +1,11 @@
 <!--
-id: adr/ADR-0067-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up
+id: adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up
 tier: engineering
 status: proposed
 answers: how a deployment opens sign-up to anyone with a Google or GitHub account and keeps self-hosters unchanged; how a self-signed-up person accepts the terms and which version is recorded; which tenant and which admin key a sign-up lands under; why a person's space is a user root and not a tenant of their own, and what proves no second person can see, count or recall it; how a person reviews their agents' writes without breaking R2; which quotas and rate limits hold, what they refuse and how an admin raises them; how a person exports their memories and asks for their account to be deleted, and what deletion does while erasure is unbuilt; the per-address sign-up limit, the disable switch and the absence of anonymous access; the onboarding page and its status poll; what it amends in ADR-0045 and ADR-0058
 -->
 
-# ADR-0067 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
+# ADR-0068 — When the operator opens sign-up, anyone signs in with Google or GitHub and gets a private root under quotas, and leaves through a journalled request
 
 **Status:** proposed · 2026-11-06
 
