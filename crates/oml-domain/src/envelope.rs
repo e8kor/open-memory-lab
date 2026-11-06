@@ -98,6 +98,19 @@ pub mod event_types {
     /// An email leaves the allowlist; the commit ends its sessions, and the
     /// user's agent keys keep working (ADR-0045 d2, d13).
     pub const WEB_EMAIL_REMOVED: &str = "web.email_removed";
+    /// A person signed up in open mode: the entry's email digest, the drawn
+    /// user, the provider and the terms version they accepted (ADR-0068 d2).
+    pub const WEB_SIGNED_UP: &str = "web.signed_up";
+    /// An admin set or cleared one person's quota (ADR-0068 d5).
+    pub const WEB_QUOTA_SET: &str = "web.quota_set";
+    /// An admin disabled a person: their entries and sessions end and
+    /// their agent keys are cut off (ADR-0068 d8).
+    pub const WEB_USER_DISABLED: &str = "web.user_disabled";
+    /// A person asked for their account to be deleted (ADR-0068 d6).
+    pub const WEB_DELETION_REQUESTED: &str = "web.deletion_requested";
+    /// An admin closed a deletion request by disabling the person; the
+    /// bytes wait for erasure (ADR-0068 d6).
+    pub const WEB_DELETION_CLOSED: &str = "web.deletion_closed";
     /// An admin key read memories' text and attribution: the ids served
     /// and, for a search, a digest of the query, never either text
     /// (ADR-0045 d21).

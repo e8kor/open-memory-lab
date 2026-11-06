@@ -160,7 +160,7 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     // The design system's shared user nav (ADR-0069 d3): Start, Memories,
     // Review, Atlas, Keys; then this page's Workareas and Guardrails.
     let mut tabs = vec![
-        ("/web?view=setup", "Start"),
+        ("/web/start", "Start"),
         ("/web?view=memories", "Memories"),
         ("/web?view=review", "Review"),
         (ATLAS_TAB, "Atlas"),
@@ -174,8 +174,9 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     tabs
 }
 
-const ADMIN_TABS: [(&str, &str); 8] = [
+const ADMIN_TABS: [(&str, &str); 9] = [
     ("/web/admin", "People"),
+    ("/web/admin/users", "Quotas"),
     ("/web/admin?view=queue", "Queue"),
     ("/web/admin?view=memories", "Memories"),
     ("/web/admin?view=workarea", "Workareas"),

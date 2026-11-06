@@ -1883,6 +1883,64 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/web/users:
+    get:
+      tags: [web]
+      operationId: listWebUsers
+      summary: The people of the tenant with their quota use and limits, and the pending deletion requests.
+      description: 'Requires: admin key role (ADR-0068 d5, d6, d11). mode is signup.mode; address_limit_shared is true when no proxy is trusted, so every sign-up shares one address limit. under_quotas marks the people of the sign-up tenant. oml doctor reads it for its quota and signup lines. Journals nothing. Proposed.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The people and the pending requests.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mode, address_limit_shared, users, deletions]
+                properties:
+                  mode: { type: string, enum: [allowlist, open] }
+                  address_limit_shared: { type: boolean }
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      required: [user, signed_up, disabled, under_quotas, usage, quotas]
+                      properties:
+                        user: { type: string }
+                        signed_up: { type: boolean }
+                        disabled: { type: boolean }
+                        under_quotas: { type: boolean }
+                        usage:
+                          type: object
+                          properties:
+                            memories: { type: integer }
+                            keys: { type: integer }
+                            connections: { type: integer }
+                        quotas:
+                          type: object
+                          properties:
+                            memories: { type: integer }
+                            keys: { type: integer }
+                            connections: { type: integer }
+                            requests_per_minute: { type: integer }
+                  deletions:
+                    type: array
+                    items:
+                      type: object
+                      required: [user, requested_at]
+                      properties:
+                        user: { type: string }
+                        requested_at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/search:
     get:
       tags: [search]
@@ -2250,6 +2308,163 @@ paths:
           content:
             text/html:
               schema: { type: string }
+
+  /web/sign-up:
+    post:
+      tags: [web]
+      operationId: webSignUp
+      summary: Accept the terms and create the account, in open sign-up.
+      description: 'Only where signup.mode is open (ADR-0068 d2, d9). The same-origin check; the sealed __Host-oml_signup cookie the callback set for an unlisted, verified identity; accept_terms=yes and the current terms_version. Takes one slot of the client address''s hourly limit (limit.rate past it). Creates the entry under a drawn user, journalled as web.signed_up with the terms version, issues <user>-web and <user>-review, opens a session and answers 303 /web/start. Proposed.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [accept_terms, terms_version]
+              properties:
+                accept_terms: { type: string, enum: [yes] }
+                terms_version: { type: string }
+      responses:
+        '303':
+          description: To /web/start, setting the __Host-oml_session cookie.
+        '400':
+          description: request.validation (accept_terms or terms_version), on a page.
+          content:
+            text/html:
+              schema: { type: string }
+        '429':
+          description: limit.rate, on a page.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /web/start:
+    get:
+      tags: [web]
+      operationId: startPage
+      summary: The onboarding page; the sign-in page without a session.
+      description: 'Three steps: choose a client (query client: claude-ai, claude-code, other), get its credential, and wait for the first connection and the first memory. The only page with a script, hashed in its CSP with connect-src self, for its copy buttons and its status poll (ADR-0068 d10). Proposed.'
+      security: []
+      parameters:
+        - { name: client, in: query, required: false, schema: { type: string, enum: [claude-ai, claude-code, other] } }
+      responses:
+        '200':
+          description: The page.
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [web]
+      operationId: startPageAct
+      summary: One act of the onboarding page, named by action.
+      description: 'Requires a session, csrf_token and the same-origin check. issue_claude_ai issues a connector key <user>-claude-ai and shows its connect code once; issue_claude_code and issue_other issue <user>-claude-code and <user>-agent and show the value once; a taken name gains -2 to -9. Past the keys quota, limit.quota. request_deletion with confirm=delete journals web.deletion_requested (ADR-0068 d6, d10). Proposed.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [action, csrf_token]
+              properties:
+                action: { type: string, enum: [issue_claude_ai, issue_claude_code, issue_other, request_deletion] }
+                csrf_token: { type: string }
+                confirm: { type: string }
+      responses:
+        '200':
+          description: The page with the credential, shown once.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: After request_deletion, to /web/start.
+
+  /web/start/status:
+    get:
+      tags: [web]
+      operationId: startStatus
+      summary: Whether the person's agent has connected and the state of their newest memory.
+      description: 'A session only; without one access.not_found (ADR-0068 d7, d10). connected is true once any of the person''s agent keys authenticated since the process started or a connector key has an open connection. Proposed.'
+      security: []
+      responses:
+        '200':
+          description: The status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connected, first_memory]
+                properties:
+                  connected: { type: boolean }
+                  first_memory: { type: [string, 'null'], enum: [held, promoted, null] }
+        '404':
+          description: access.not_found, on a page.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /web/start/export:
+    get:
+      tags: [web]
+      operationId: startExport
+      summary: Everything the person holds, as a JSON download.
+      description: 'A session only. Every memory in the person''s root and below, every state, with its workarea path, claim key, version, state, text and times; the person''s keys (ADR-0068 d6). Proposed.'
+      security: []
+      responses:
+        '200':
+          description: The export, Content-Disposition attachment.
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: access.not_found, on a page.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /web/admin/users:
+    get:
+      tags: [web]
+      operationId: usersPage
+      summary: The admin's users page — quota use, quotas and pending deletion requests.
+      description: 'For an admin session; any other answers access.not_found (ADR-0068 d5, d6, d8). Proposed.'
+      security: []
+      responses:
+        '200':
+          description: The page.
+          content:
+            text/html:
+              schema: { type: string }
+        '404':
+          description: access.not_found, on a page.
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [web]
+      operationId: usersPageAct
+      summary: One act of the users page, named by action, run as <user>-admin.
+      description: 'set_quota (user, quota, limit; empty limit returns to the default) journals web.quota_set; disable_user journals web.user_disabled and cuts off every agent key of the person; close_deletion disables the person and journals web.deletion_closed (ADR-0068 d5, d6, d8). Proposed.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [action, csrf_token, user]
+              properties:
+                action: { type: string, enum: [set_quota, disable_user, close_deletion] }
+                csrf_token: { type: string }
+                user: { type: string }
+                quota: { type: string, enum: [memories, keys, connections, requests_per_minute] }
+                limit: { type: string }
+      responses:
+        '303':
+          description: Back to /web/admin/users.
 
   /v2/admin/memories/search:
     post:

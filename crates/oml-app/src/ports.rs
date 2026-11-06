@@ -359,6 +359,30 @@ pub enum MetadataFold {
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
     AdminRead,
+    /// `web.quota_set`: one person's override of one quota, or with `None`
+    /// its return to the deployment's default (ADR-0068 d5).
+    QuotaSet {
+        user_root: Uuid,
+        quota: oml_domain::signup::Quota,
+        limit: Option<u64>,
+    },
+    /// `web.user_disabled`: every entry naming `user` is disabled at the
+    /// commit's time and their sessions end in the same commit (ADR-0068
+    /// d8). The key cut-offs are their own `key.denied` commits.
+    UserDisabled {
+        user: Name,
+    },
+    /// `web.deletion_requested`: the person's pending request, at the
+    /// commit's time; a second request while one is pending changes nothing
+    /// (ADR-0068 d6).
+    DeletionRequested {
+        user: Name,
+    },
+    /// `web.deletion_closed`: the pending request closes at the commit's
+    /// time; its row is kept (ADR-0068 d6).
+    DeletionClosed {
+        user: Name,
+    },
     /// `workarea.status_proposed`: the proposal's row, `pending` with no
     /// ratifier, its `proposed_seq` this commit's seq. The store refuses a
     /// node or proposing key its tenant does not hold, a proposer principal
@@ -726,6 +750,24 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
+    /// What the person whose root is `user_root` holds against their
+    /// quotas: distinct memories in the root and below, live bearer and
+    /// connector keys naming the root, and open connections of those keys
+    /// (ADR-0068 d5).
+    fn user_usage(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<crate::types::UserUsage, StoreError>> + Send;
+
+    /// The person's quota overrides an admin set, each replacing its
+    /// default (ADR-0068 d5).
+    fn user_quota_overrides(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<(oml_domain::signup::Quota, u64)>, StoreError>> + Send;
+
     /// The tenant's journalled default search pipeline, by name, or `None`
     /// when it follows the deployment's (ADR-0049 d4).
     fn tenant_search_default(
@@ -1264,6 +1306,12 @@ pub trait WebStore: JournalStore {
         tenant_id: Uuid,
         search: &AdminSearch,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// The tenant's pending deletion requests, oldest first (ADR-0068 d6).
+    fn web_deletion_requests(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<crate::types::DeletionRequest>, StoreError>> + Send;
 
     /// Removes the tenant's session rows that expired before `at`; the
     /// count removed.

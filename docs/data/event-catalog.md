@@ -113,6 +113,11 @@ Issuing an access token and refreshing are not events. They change no authority.
 | `web.email_allowed` | `email_digest`, `user`, `admin`, `by_key_id` | An admin adds an email to the web allowlist. The journal holds a digest, never the address. |
 | `web.email_changed` | the same fields | An entry's user or admin flag changed. Its sessions end. |
 | `web.email_removed` | the same fields | An entry was removed. Its sessions end. The user's agent keys keep working. |
+| `web.signed_up` | `email_digest`, `user`, `admin`, `provider`, `terms_version`, `self_signup`, `by_key_id` | A person signed up in open mode ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d2). The actor is the `signup.issuer` admin key. The fold is `web.email_allowed`'s, with `terms_version` recorded on the entry. The user is drawn, never derived from the email. |
+| `web.quota_set` | `user`, `user_root`, `quota`, `limit` | An admin set one person's quota. A null `limit` returns it to the deployment's default (d5). |
+| `web.user_disabled` | `user`, `by_key_id` | An admin disabled a person: every entry of the user is disabled and its sessions end in the same commit. Each live agent key of the person is then cut off by its own `key.denied` (d8). |
+| `web.deletion_requested` | `user` | The person asked, as `<user>-web`, for their account to be deleted. Nothing ends and no access changes (d6). |
+| `web.deletion_closed` | `user`, `by_key_id` | An admin closed the request after disabling the person. The memories stay until they are erased (d6). |
 | `memory.admin_read` | `artifact_ids`, `query_digest` | An admin key read memory text and attribution. The payload holds ids and a query digest, never text. |
 | `search.default_set` | `pipeline`, `by_key_id` | An admin set the tenant's default search pipeline. A null `pipeline` follows the deployment's default. |
 | `telemetry.settings_set` | `query_text`, `by_key_id` | An admin turned recall query text on or off. Off also clears stored query text in the same commit. |

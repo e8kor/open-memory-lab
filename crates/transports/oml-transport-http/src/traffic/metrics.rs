@@ -128,6 +128,11 @@ struct AgeLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct QuotaLabels {
+    quota: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct WebFailureLabels {
     provider: String,
     reason: String,
@@ -179,6 +184,7 @@ pub struct Metrics {
     curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
     web_failures: Family<WebFailureLabels, Counter>,
+    quota_refusals: Family<QuotaLabels, Counter>,
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
     sparse_backlog: Gauge,
@@ -327,6 +333,7 @@ impl Default for Metrics {
         let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
+        let quota_refusals = Family::<QuotaLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
         let sparse_backlog = Gauge::default();
         registry.register(
@@ -410,6 +417,12 @@ impl Default for Metrics {
             "sign-in provider exchanges that failed, by provider and reason",
             web_failures.clone(),
         );
+        // One label, the closed set of the four quotas (ADR-0068 d5).
+        registry.register(
+            "oml_quota_refused",
+            "requests refused by a person's quota or a key's request rate, by quota",
+            quota_refusals.clone(),
+        );
         let quality = Quality::register(&mut registry);
         // The learned sparse encoder's outbox (ADR-0052 d15): versions
         // written or failed, a closed set, and the entries waiting, summed
@@ -454,6 +467,7 @@ impl Default for Metrics {
             curation_acts,
             source_checks,
             web_failures,
+            quota_refusals,
             quality,
             sparse_encoded,
             sparse_backlog,
@@ -573,6 +587,15 @@ impl Metrics {
             .get_or_create(&RerankLabels {
                 outcome: outcome.to_owned(),
                 reason: reason.unwrap_or("none").to_owned(),
+            })
+            .inc();
+    }
+
+    /// One request refused by `quota` (ADR-0068 d5).
+    pub fn quota_refused(&self, quota: &'static str) {
+        self.quota_refusals
+            .get_or_create(&QuotaLabels {
+                quota: quota.to_owned(),
             })
             .inc();
     }

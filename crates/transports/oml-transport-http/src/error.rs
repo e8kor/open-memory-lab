@@ -23,6 +23,9 @@ pub struct ApiError {
     pub rule: &'static str,
     pub retryable: bool,
     pub details: Option<Value>,
+    /// The seconds `Retry-After` names, where a refusal knows them; a
+    /// retryable refusal without them names 1 (ADR-0068 d5, d9).
+    pub retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -39,7 +42,33 @@ impl ApiError {
             rule,
             retryable: false,
             details: None,
+            retry_after: None,
         }
+    }
+
+    /// Marks `response` with the quota this refusal names, if any, for
+    /// `oml_quota_refused_total`; a page's refusal marks its page too
+    /// (ADR-0068 d5).
+    pub fn mark_quota(&self, response: &mut Response) {
+        if let Some(quota) = self
+            .details
+            .as_ref()
+            .and_then(|d| d.get("quota"))
+            .and_then(Value::as_str)
+            .and_then(oml_app::domain::signup::Quota::parse)
+        {
+            response
+                .extensions_mut()
+                .insert(crate::traffic::QuotaRefused(quota.as_str()));
+        }
+    }
+
+    /// Retryable after `secs` seconds, which `Retry-After` names.
+    #[must_use]
+    pub fn retry_after(mut self, secs: u64) -> Self {
+        self.retryable = true;
+        self.retry_after = Some(secs.max(1));
+        self
     }
 
     #[must_use]
@@ -199,11 +228,15 @@ impl ApiError {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
+        // A refusal naming a quota is counted by the request layer
+        // (ADR-0068 d5).
+        self.mark_quota(&mut response);
         if self.retryable {
             // Retryable refusals carry Retry-After (errors.md envelope table).
-            response
-                .headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            let secs = self.retry_after.unwrap_or(1).to_string();
+            if let Ok(value) = HeaderValue::from_str(&secs) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
         }
         response
     }
@@ -848,6 +881,41 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         )
         .retryable(),
         AppError::TelemetryOff => ApiError::unavailable("telemetry_off"),
+        // A person's quota of the sign-up tenant; nothing was journalled
+        // (errors.md `limit.quota`; ADR-0068 d5).
+        AppError::QuotaReached(reached) => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.quota",
+            "A person who signed up holds at most their quotas of memories, keys and connections; an administrator can raise one (ADR-0068 d5).",
+            format!(
+                "your {} quota of {} is reached",
+                reached.quota.as_str(),
+                reached.limit
+            ),
+        )
+        .with_details(json!({
+            "quota": reached.quota.as_str(),
+            "limit": reached.limit,
+            "used": reached.used,
+        })),
+        AppError::KeyRateLimited {
+            limit,
+            retry_after_secs,
+        } => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "A key of a person who signed up makes at most its requests per minute (ADR-0068 d5).",
+            format!("this key made {limit} requests this minute, its limit"),
+        )
+        .with_details(json!({ "quota": "requests_per_minute", "limit": limit }))
+        .retry_after(retry_after_secs),
+        AppError::SignupRateLimited { retry_after_secs } => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "Sign-ups from one address are limited per hour (ADR-0068 d9).",
+            "too many accounts were created from this address in the last hour",
+        )
+        .retry_after(retry_after_secs),
         AppError::ReplayReranks { name } => ApiError::validation(format!(
             "the replay runs no reranking pipeline, so it never takes a live recall's reranker slot: {name}"
         ))

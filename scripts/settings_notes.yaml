@@ -42,6 +42,39 @@ server:
   web.github.client_secret:
     default: unset
     note: The matching secret. Set both or neither. The web pages need `oauth.issuer` and at least one provider.
+  signup.mode:
+    default: "`allowlist`: the sign-in allowlist, unchanged"
+    note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer`, a sign-in provider (`web.google.*` or `web.github.*`) and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."
+  signup.tenant:
+    default: unset
+    note: The tenant id sign-ups land in. Every person of that tenant is under the `quota.*` limits.
+  signup.issuer:
+    default: unset
+    note: The name of an admin key of the sign-up tenant that adds each entry and issues its session keys.
+  signup.terms_version:
+    default: unset
+    note: The terms version a person accepts, recorded on their entry and in `web.signed_up`. Changing it makes an open terms page refuse with `terms_version`.
+  signup.terms_url:
+    default: unset
+    note: The terms page the terms checkbox links.
+  signup.privacy_url:
+    default: unset
+    note: The privacy page the terms checkbox links.
+  signup.per_ip_per_hour:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: New accounts from one client address in a rolling hour, counted per process; an IPv6 address counts by its /64 and an IPv4 address by itself. The address is the request line's, so behind a proxy set `server.trusted_proxies`, or every sign-up shares one bucket (`oml doctor` warns).
+  quota.memories:
+    default: "`1000`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Live memories in a person's root, counted as chains, so a new version of a memory is not a new memory. Past it, `limit.quota`. An admin overrides one person's limit on `/web/admin/users`, journaled as `web.quota_set`. A value above 1,000,000 stops the start.
+  quota.keys:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Live agent keys of a person. Past it, `limit.quota`.
+  quota.connections:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Open connections of a person. Past it, `limit.quota`.
+  quota.requests_per_minute:
+    default: "`120`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Requests per key per UTC minute, counted per process. Past it, `limit.rate`.
   brief.max_tokens:
     default: "`400`"
     note: The token budget a workarea's brief is cut to when an agent reads the workarea. The first member that does not fit ends the brief.

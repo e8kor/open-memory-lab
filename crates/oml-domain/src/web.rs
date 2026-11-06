@@ -292,6 +292,8 @@ pub enum SignInRefusal {
     ProviderRefused,
     #[error("the session has ended; sign in again")]
     SessionExpired,
+    #[error("this account is disabled; ask the administrator of this server")]
+    Disabled,
 }
 
 impl SignInRefusal {
@@ -305,6 +307,7 @@ impl SignInRefusal {
             SignInRefusal::IdentityChanged => "identity_changed",
             SignInRefusal::ProviderRefused => "provider_refused",
             SignInRefusal::SessionExpired => "session_expired",
+            SignInRefusal::Disabled => "disabled",
         }
     }
 }

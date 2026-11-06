@@ -4634,6 +4634,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // that cannot is warned about (ADR-0044 d14).
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
+    let mut signup_overview: Option<Value> = None;
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
@@ -4709,6 +4710,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             let is_admin = matches!(&me, Some(Ok(v)) if v["role"] == "admin");
             if pages_on && is_admin {
                 admin_emails = count_admin_emails(&client);
+                // Open sign-up's people and requests (ADR-0068 d11).
+                signup_overview = client.get("/v2/web/users").ok().map(|(_, v)| v);
             }
             // The tenant's search default, read by an admin key (ADR-0049
             // d8).
@@ -4724,7 +4727,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         .ok()
         .filter(|u| !u.trim().is_empty())
         .and_then(|u| Scrape::fetch(u.trim_end_matches('/')));
-    let web = web_doctor(ready.as_ref(), admin_emails, scrape.as_ref());
+    let mut web = web_doctor(ready.as_ref(), admin_emails, scrape.as_ref());
+    web.extend(signup_doctor(signup_overview.as_ref()));
     let web_warn = web.iter().any(|line| line.starts_with("warn"));
     let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
@@ -5564,6 +5568,55 @@ fn web_doctor(
     lines
 }
 
+/// Open sign-up's doctor lines (ADR-0068 d5, d6, d9, d11), from
+/// `GET /v2/web/users` read by an admin key: the people at or above 90% of
+/// a quota, the pending deletion requests, and an open mode whose sign-ups
+/// share one address bucket because no proxy is trusted.
+fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
+    let Some(o) = overview else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if o["mode"] == "open" && o["address_limit_shared"] == true {
+        lines.push(
+            "warn signup: open with no server.trusted_proxies; every sign-up shares one address limit"
+                .to_owned(),
+        );
+    }
+    let mut near: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut people = 0;
+    for u in o["users"].as_array().into_iter().flatten() {
+        if u["under_quotas"] != true || u["disabled"] == true {
+            continue;
+        }
+        let mut hit = false;
+        for quota in ["memories", "keys", "connections"] {
+            let used = u["usage"][quota].as_u64().unwrap_or(0);
+            let limit = u["quotas"][quota].as_u64().unwrap_or(0);
+            if limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(9) {
+                *near.entry(quota).or_default() += 1;
+                hit = true;
+            }
+        }
+        people += usize::from(hit);
+    }
+    if people > 0 {
+        let by: Vec<String> = near.iter().map(|(q, n)| format!("{q}: {n}")).collect();
+        lines.push(format!(
+            "warn quota: {people} users at or above 90% of a quota ({})",
+            by.join(", ")
+        ));
+    }
+    if let Some(pending) = o["deletions"].as_array().filter(|d| !d.is_empty()) {
+        lines.push(format!(
+            "warn signup: {} deletion requests pending, oldest requested {}; close each on /web/admin/users",
+            pending.len(),
+            pending[0]["requested_at"].as_str().unwrap_or("?")
+        ));
+    }
+    lines
+}
+
 /// Source anchors (ADR-0057 d17): a server before v0.5.8, which accepts no
 /// anchor; the served versions of the key's default workarea that read
 /// stale, as the server counts them; and the claim edges there waiting for
@@ -5857,6 +5910,38 @@ mod tests {
             "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn doctor_names_people_near_a_quota_pending_deletions_and_a_shared_address_limit() {
+        let overview = serde_json::json!({
+            "mode": "open",
+            "address_limit_shared": true,
+            "users": [
+                {"user": "ua", "under_quotas": true, "disabled": false,
+                 "usage": {"memories": 950, "keys": 1, "connections": 0},
+                 "quotas": {"memories": 1000, "keys": 5, "connections": 5}},
+                {"user": "ub", "under_quotas": true, "disabled": false,
+                 "usage": {"memories": 10, "keys": 5, "connections": 0},
+                 "quotas": {"memories": 1000, "keys": 5, "connections": 5}},
+                {"user": "op", "under_quotas": false, "disabled": false,
+                 "usage": {"memories": 5000, "keys": 9, "connections": 0},
+                 "quotas": {"memories": 1000, "keys": 5, "connections": 5}}
+            ],
+            "deletions": [{"user": "ub", "requested_at": "2026-11-06T10:00:00.000000Z"}]
+        });
+        let lines = signup_doctor(Some(&overview));
+        assert_eq!(
+            lines,
+            vec![
+                "warn signup: open with no server.trusted_proxies; every sign-up shares one address limit",
+                "warn quota: 2 users at or above 90% of a quota (keys: 1, memories: 1)",
+                "warn signup: 1 deletion requests pending, oldest requested 2026-11-06T10:00:00.000000Z; close each on /web/admin/users",
+            ]
+        );
+        let quiet = serde_json::json!({"mode": "allowlist", "address_limit_shared": true, "users": [], "deletions": []});
+        assert!(signup_doctor(Some(&quiet)).is_empty());
+        assert!(signup_doctor(None).is_empty());
     }
 
     #[test]

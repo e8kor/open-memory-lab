@@ -77,6 +77,55 @@ where
         finish(&rid, result)
     }
 
+    pub(crate) async fn list_web_users(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(&rid, Self::list_web_users_inner(&st, &headers).await)
+    }
+
+    /// `GET /v2/web/users`, admin by key role (ADR-0068 d5, d6, d11): the
+    /// sign-up mode, whether sign-ups share one address bucket, each
+    /// person's usage and limits, and the pending deletion requests.
+    async fn list_web_users_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+        let token = bearer(headers)?;
+        let (users, deletions) = st
+            .app
+            .signup_overview(&token)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let policy = st.app.signup_policy();
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "mode": policy.map_or("allowlist", |p| p.mode.as_str()),
+                "address_limit_shared": !st.traffic.proxies_trusted(),
+                "users": users.iter().map(|u| json!({
+                    "user": u.user.as_str(),
+                    "signed_up": u.signed_up,
+                    "disabled": u.disabled,
+                    "under_quotas": u.under_quotas,
+                    "usage": {
+                        "memories": u.usage.memories,
+                        "keys": u.usage.keys,
+                        "connections": u.usage.connections,
+                    },
+                    "quotas": {
+                        "memories": u.quotas.memories,
+                        "keys": u.quotas.keys,
+                        "connections": u.quotas.connections,
+                        "requests_per_minute": u.quotas.requests_per_minute,
+                    },
+                })).collect::<Vec<_>>(),
+                "deletions": deletions.iter().map(|d| json!({
+                    "user": d.user.as_str(),
+                    "requested_at": d.requested_at.as_str(),
+                })).collect::<Vec<_>>(),
+            }),
+        ))
+    }
+
     /// `GET /v2/web/emails`: one page of the tenant's entries, after the
     /// cursor, which is the hex of the last entry's email digest.
     async fn list_web_emails_inner(
