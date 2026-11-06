@@ -46,6 +46,14 @@ A value that does not parse stops the server at start and names the key. Per-ten
 | `search.sparse.fetch` | `OML_SEARCH__SPARSE__FETCH` | `false` | `true` lets the server download missing sparse-model files at start and check each digest. |
 | `search.sparse.threads` | `OML_SEARCH__SPARSE__THREADS` | `2` | The threads of the sparse encoder's own pool. It writes each version's postings after the write commits, off the commit path. |
 
+## Terms and privacy pages
+
+A deployment that lets people sign themselves up publishes its own terms and privacy pages. The project
+ships none: the operator writes them, hosts them and gives their addresses in the sign-up settings
+(`signup.terms_url`, `signup.privacy_url` and the version a person accepts, `signup.terms_version`), which
+the sign-up page links. Open sign-up and these settings are specified in ADR-0068 and are not in a release
+yet; until they are, a deployment is invite-only and needs none of them.
+
 ## Lake writer
 
 The `oml-lakewriter` binary takes these as flags or environment variables. See [run the lake writer](lake.md).

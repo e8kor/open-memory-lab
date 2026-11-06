@@ -9,7 +9,6 @@ exclude_docs: |
   contributing/
   NUMBERS.md
   adr/
-  legal/
 hooks:
   - hooks/status_line.py
 

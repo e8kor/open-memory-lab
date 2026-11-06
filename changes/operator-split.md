@@ -1,0 +1,1 @@
+The operator's landing page, terms and privacy drafts and Caddy snippet for the maintainer's hosted server are no longer in this repository, and [Settings](operations/configuration.md) says an operator supplies their own terms and privacy addresses. The product, its web console and the self-host documentation stay.
