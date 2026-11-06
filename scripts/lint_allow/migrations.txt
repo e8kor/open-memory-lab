@@ -22,3 +22,5 @@
 0023_recall_telemetry.sql
 0024_review_queue_order.sql
 0025_source_anchors.sql
+0026_valid_time.sql   # VALIDATE CONSTRAINT inside its transaction, before the no-transaction rule
+0028_in_progress.sql  # likewise

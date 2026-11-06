@@ -47,9 +47,11 @@ Writes enter held. Nothing in this family changes what anyone can read.
 
 | Event | Payload fields | Meaning |
 |---|---|---|
-| `submission.remember` | `artifact_id`, `workarea_id`, `claim_key`, `version`, `kind`, `plaintext_digest`, `ciphertext_digest`, `body_bytes`, `derives_from`, `anchor`, `origin`, `provenance`, `replaces`, `retirement`, `scan` | A writer submits a memory. It is held and scanned in the same call. A supersession names the replaced version in `replaces`. `retirement: true` proposes to retire the claim. |
+| `submission.remember` | `artifact_id`, `workarea_id`, `claim_key`, `version`, `kind`, `plaintext_digest`, `ciphertext_digest`, `body_bytes`, `derives_from`, `format`, `title`, `anchor`, `origin`, `provenance`, `replaces`, `retirement`, `scan` | A writer submits a memory. It is held and scanned in the same call. A supersession names the replaced version in `replaces`. `retirement: true` proposes to retire the claim. |
 | `submission.learn` | the same fields | The memory derives from named prior memories, so `derives_from` is required. An empty one is refused as `submission.lineage_required`. |
 | `source.checked` | `artifact_id`, `workarea_id`, `rev`, `result`, `hash`, `path`, `fragment` | A key compared a version's anchored span with its source at `rev`. `result` is `fresh`, `equivalent`, `moved`, `changed` or `removed`. It changes no text and moves nothing through review. |
+
+`format` is the media type signed with the version and fixed for it, from the closed list of ADR-0056 d1; `title` is the one-line title, present only when the version has one. `plaintext_digest` is the digest of the source as stored, whatever its format, so the signature covers both. An event without `format` reads as `text/plain` and keeps its digest (since v0.6.0).
 
 `body_bytes` is the UTF-8 length of the NFC-normalized body. `anchor` is the origin the author declared, or `null`. `origin.kind` is as declared, or `manual` when none was sent. Neither is inherited by a successor. A chat anchor's `uri` is `chat://<harness>/<session>` with a `turn=<n>` fragment. Erasure does not remove `anchor`.
 

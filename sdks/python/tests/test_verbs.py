@@ -204,3 +204,17 @@ def test_events_tails_the_named_workarea_from_after_seq(oml_server, agent, marke
     assert page.head_seq >= written.value.journal_seq
     later = agent.events(workarea=oml_server.workarea, after_seq=page.head_seq)
     assert later.items == []
+
+
+def test_fence_for_names_the_markdown_fence_of_each_media_type():
+    from oml_sdk import fence_for
+
+    assert fence_for("text/vnd.oml.mermaid") == "mermaid"
+    assert fence_for("application/json") == "json"
+    assert fence_for("application/yaml") == "yaml"
+    assert fence_for("text/vnd.oml.code; lang=rust") == "rust"
+    assert fence_for("text/vnd.oml.code;lang=python") == "python"
+    assert fence_for("text/markdown") == "markdown"
+    assert fence_for("text/plain") == ""
+    assert fence_for(None) == ""
+    assert fence_for("application/x-unknown") == ""

@@ -10,6 +10,7 @@ description = "The lead server composition (ADR-0023 d13): signer + kms-file key
 oml-app.workspace = true
 oml-scan.workspace = true
 oml-fetch.workspace = true
+oml-format.workspace = true
 oml-pg.workspace = true
 oml-rerank.workspace = true
 oml-transport-http.workspace = true

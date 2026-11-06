@@ -26,7 +26,7 @@ CATEGORIES = {
     "Trust and governance": [1, 7, 9, 10, 12, 30, 55, 65],
     "Storage and data": [2, 3, 4, 5, 17, 60],
     "Search and recall": [13, 48, 49, 52, 53, 54, 59],
-    "Writing and review": [11, 20, 21, 50],
+    "Writing and review": [11, 20, 21, 50, 56],
     "Sources and sync": [47, 57, 61, 62, 63],
     "Integrations and agents": [14, 22, 25, 28, 29, 31, 37, 38, 39, 40],
     "Operations and security": [15, 16, 23, 26, 33, 34, 41, 42, 43, 44, 45, 46, 58],

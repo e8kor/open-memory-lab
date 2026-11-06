@@ -310,6 +310,8 @@ impl World {
                     rule: None,
                     valid_from: None,
                     valid_until: None,
+                    format: None,
+                    title: None,
                 },
             )
             .await

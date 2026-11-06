@@ -193,6 +193,8 @@ fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 

@@ -106,6 +106,7 @@ Refusals at write time. A refused write stores nothing.
 
 | Code | HTTP | Fires when |
 |---|---|---|
+| `submission.format_invalid` | 422 | The source fails its format's adapter: `details.reason` names the rule (`mermaid.directive_refused`, `mermaid.interaction_refused`, `mermaid.styling_refused`, `mermaid.html_label_refused`, `mermaid.unsupported_diagram`, `mermaid.syntax_error`, `mermaid.too_many_nodes`, `mermaid.too_many_relations`, `json.invalid`, `json.duplicate_key`, `yaml.invalid`, `yaml.alias_refused`, `yaml.tag_refused`, `yaml.merge_refused`, `yaml.complex_key`, `yaml.second_document`, `yaml.duplicate_key`, `yaml.empty`, `format.bidi_control`, `format.too_large`, `format.too_deep`, `format.too_many_scalars`), `details.line` and `details.column` where it was found. Nothing is journalled and no row is stored. | The source is the signed text, so it must be a document its format accepts; a refusal names the rule so the writer corrects it in one retry. |
 | `submission.scan_veto` | 422 | The scan vetoed the write. `details.finding` names the class, the rule and where, never the matched text. |
 | `submission.attachment_missing` | 422 | Reserved. This build does not return it. |
 | `submission.simulation_id_required` | 422 | Reserved. This build does not return it. |
@@ -203,7 +204,7 @@ Reserved. This build serves neither an evidence export nor a settings apply.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. |
+| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. A handler that panicked answers it with `details.reason` `handler_panic`; the panic's text is in the lead's log under `event=handler_panic`, never in the body. |
 | `system.unavailable` | 503 | The replica cannot serve safely. `details.reason` says why, for example Postgres unreachable or a failed fork check. Retryable, with `Retry-After`. |
 
 Review unavailability is not an API error. When no reviewer can approve, writes still land held. `oml doctor` reports it.
@@ -220,7 +221,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workarea_unresolved`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `oauth.connect_refused`, `request.workarea_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

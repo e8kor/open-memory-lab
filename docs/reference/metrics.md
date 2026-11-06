@@ -18,6 +18,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 
 | Metric | Type | Labels | Counts |
 |---|---|---|---|
+| `oml_handler_panics_total` | counter | none | Requests whose handler panicked and were answered `500 system.internal` with `details.reason` `handler_panic` by the panic guard inside the traffic layer; the lead's log carries one `handler_panic` line per panic with its request id and text, and the worker serves the next request. Every one is a defect; doctor's `handlers` line warns on any. |
 | `oml_http_request_duration_seconds` | histogram | `route`, `status` | API requests. `route` is the matched route template or `unmatched`. Probes answered `200` are not counted. |
 | `oml_mcp_call_duration_seconds` | histogram | `tool`, `mode`, `outcome` | Calls on `/mcp`. `outcome` is `result`, `tool_error` or `rpc_error`. `mode` is empty for a tool without modes. |
 | `oml_idempotency_replays_total` | counter | none | Responses that carried `Idempotency-Replay: true`. |

@@ -460,6 +460,7 @@ pub fn held_memory(
         anchor: None,
         origin_kind: None,
         source_check: None,
+        format: Box::default(),
     }
 }
 

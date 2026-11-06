@@ -5,7 +5,7 @@
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID and validates them (in that or a later
-            migration), and on a partitioned table creates indexes ON ONLY the parent and
+            migration, and only in a migration marked `-- no-transaction`), and on a partitioned table creates indexes ON ONLY the parent and
             ATTACHes the per-partition indexes.
 ports       no localhost:5432, 127.0.0.1:5432 or PGPORT:-5432 default in tests or scripts.
 like        no LIKE or ILIKE operator in the SQL of crates/adapters/oml-pg/src; row security
@@ -64,6 +64,11 @@ def lint_migrations(root: Path, use_allow: bool = True) -> list[str]:
         def esc(rule: str) -> bool:
             return re.search(rf"--\s*lint:allow\s+{rule}\b\s+\S", raw) is not None
 
+        if (re.search(r"VALIDATE\s+CONSTRAINT", sql, re.I) and not esc("validate")
+                and not raw.lstrip().startswith("-- no-transaction")):
+            problems.append(f"{f.name}: VALIDATE CONSTRAINT runs in the migration transaction, "
+                            "under the lock its other statements hold; move it to a "
+                            "`-- no-transaction` migration")
         if not re.search(r"SET\s+(?:LOCAL\s+)?lock_timeout", sql, re.I) and not esc("lock_timeout"):
             problems.append(f"{f.name}: no SET [LOCAL] lock_timeout")
         for stmt in sql.split(";"):

@@ -56,6 +56,8 @@ The rule set is `oml-scan/1`. Its findings fall into two actions:
 
 The `pii.email` and `pii.phone` rules exist and are off in this build; no setting turns them on. A rule pass takes about 4 µs for a 124-byte chat turn and 26 µs for a 1.5 KB abstract. It takes 13 ms for a mebibyte of base64.
 
+A claim in a format other than prose is scanned twice over, never less than prose. The adapter accepts the source or refuses it by name (`submission.format_invalid`) before the scan. The scan then runs over the source as for prose, and over each decoded string the adapter hands it: the scalars of a JSON or YAML document after escapes, quoting, folding and block scalars are decoded, because a rule that reads only bytes does not see `"\u002d-----BEGIN PRIVATE KEY"`. A finding on a decoded string names its key path and never the value. A value under a key whose last segment is `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `client_secret`, `authorization` or `credentials`, or ends `_secret`, `_token` or `_key`, is vetoed as `secret.keyed_value` unless it is empty or a placeholder (`<…>`, `${…}`, `{{…}}`, `***`, `changeme`, `example`, `redacted`). A format can add a finding and never remove one. The title is scanned as free text that reaches the journal. Design record: [ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md).
+
 `oml admin rescan` reports what the current rule set would refuse or hold in memories already stored. It changes nothing.
 
 ## Who reviews

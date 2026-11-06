@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claim formats — mockups</title>
+<meta name="description" content="Design mockups for the proposed ADR-0056: a claim version names its format, the signature covers its source as stored, and compiled adapters derive what search reads and what a page may render.">
+<meta name="theme-color" content="#0A0D22">
+<style>
+:root {
+  --ground: #0A0D22; --ground-alt: #0E1230; --panel: #111638; --term: #070918;
+  --ink: #EFE9DA; --ink-dim: #B7B4C6; --ink-faint: #8C8FA8;
+  --rule: #262C52; --rule-soft: #1A1F42;
+  --ice: #9FC6E6; --star: #F6A83E; --ok: #7FD1AE; --bad: #E58A8A;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: var(--ice); text-decoration: none; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.label { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+code, .mono { font-family: var(--mono); }
+code { font-size: .9em; background: var(--rule-soft); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+header.top { border-bottom: 1px solid var(--rule-soft); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 60px; padding: 8px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.pill { font: 11px var(--mono); color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.hero { padding: 40px 0 16px; }
+h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 10px 0 14px; font-weight: 650; }
+h1 em { font-style: normal; color: var(--star); }
+.lede { color: var(--ink-dim); max-width: 46em; margin: 0 0 12px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.toc a { display: inline-block; font: 13px var(--mono); color: var(--ink-dim); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+section { border-top: 1px solid var(--rule-soft); padding: 44px 0; }
+h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.2; margin: 8px 0 10px; font-weight: 620; }
+.sub { color: var(--ink-dim); max-width: 46em; margin: 0 0 24px; }
+.note { font-size: 13px; color: var(--ink-faint); margin: 10px 0 0; }
+footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: var(--ink-faint); font: 12px var(--mono); }
+
+/* review card (ADR-0045 chrome, ADR-0050 card) */
+.pr { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--ground-alt); }
+.pr .head { padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.pr .head b { font-weight: 600; }
+.pr .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 860px) { .pr .cols { grid-template-columns: 1fr; } }
+.pr .col { padding: 14px 16px; min-width: 0; }
+.pr .col + .col { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 860px) { .pr .col + .col { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.pr .foot { padding: 12px 16px; border-top: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.src { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre; overflow-x: auto; margin: 0; max-height: 360px; }
+.src .k { color: var(--ice); } .src .c { color: var(--ink-faint); } .src .add { color: var(--ok); }
+.frame { border: 1px dashed var(--rule); border-radius: 8px; background: var(--term); padding: 8px; min-height: 200px; }
+.frame .fb { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font: 11px var(--mono); color: var(--ink-faint); margin: 0 0 6px; }
+.frame svg { width: 100%; height: auto; display: block; }
+.frame.fail { display: flex; flex-direction: column; }
+.frame.fail .err { margin: auto 0; font: 12.5px/1.6 var(--mono); color: var(--bad); padding: 12px; }
+.diff { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .ctx { color: var(--ink-faint); }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font: 12.5px/1.5 var(--mono); margin: 12px 0 0; }
+.kv dt { color: var(--ink-faint); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.found { font: 12.5px/1.6 var(--mono); color: var(--ink-dim); margin: 6px 0 0; padding: 0 0 0 14px; }
+.found li { margin: 0; }
+.tag { display: inline-block; font: 12px var(--mono); padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; line-height: 1.6; white-space: nowrap; }
+.t-add { color: var(--ok); } .t-upd { color: var(--ice); } .t-stale { color: var(--star); } .t-ret { color: var(--bad); } .t-dim { color: var(--ink-faint); }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 13px var(--sans); border-radius: 7px; padding: 5px 12px; border: 1px solid var(--rule); color: var(--ink); background: transparent; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #0B1A13; }
+.sign { font: 12px var(--mono); color: var(--star); }
+.term { background: var(--term); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .tb { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rule-soft); font: 12px var(--mono); color: var(--ink-faint); flex-wrap: wrap; }
+.term pre { margin: 0; padding: 14px 16px 16px; font: 13px/1.65 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.p { color: var(--star); } .b { color: var(--bad); } .cc { color: var(--ink-faint); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap bar">
+  <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>Open Memory Lab <span class="pill">design mockups</span></span>
+  <span class="pill">ADR-0056 · proposed 2026-11-05</span>
+</div></header>
+<main class="wrap">
+<div class="hero">
+  <p class="label">Design artefact, not a built feature</p>
+  <h1>The reviewer signs the <em>source</em>, and sees the diagram beside it</h1>
+  <p class="lede">A Mermaid claim is reviewed as its source, complete and always shown. Where the page can draw it safely, the drawing sits beside the source in a sandboxed frame with no network; when the drawing fails, the source is still there and the verdict judges the same bytes.</p>
+  <p class="note">Every field, page layout, identifier and value on this page is illustrative.</p>
+  <ul class="toc">
+    <li><a href="#card">Review card</a></li><li><a href="#fail">Rendering fails</a></li><li><a href="#json">JSON refused</a></li>
+  </ul>
+</div>
+
+<section id="card">
+  <p class="label">ADR-0056 d5, d9, d10 · ADR-0045 d11 admin page review · illustrative</p>
+  <h2>A Mermaid supersession on the review card</h2>
+  <p class="sub">Source on the left, the drawing on the right, then what the claim will be found by and what changed since the version it replaces. Nothing on the parent page is a script; only the frame runs the pinned bundle.</p>
+  <div class="pr">
+    <div class="head"><b>Review · alice-review</b><span class="mono t-dim">alice.tallyline · 2 held</span><span class="tag t-upd">supersession v2 → v1</span><span class="tag t-dim">text/vnd.oml.mermaid</span><span class="tag t-add">scan pass · mermaid/1</span></div>
+    <div class="cols">
+      <div class="col">
+        <p class="label" style="margin:0 0 4px">Held · written by alice-agent</p>
+        <p style="margin:0 0 10px;font-weight:600">The payment flow from checkout to settlement, as of 2026-11-05</p>
+<pre class="src"><span class="k">flowchart</span> LR
+  C[Checkout] --&gt;|authorize| P[Payments]
+  P --&gt;|charge| G[Card gateway]
+  G --&gt;|result| P
+<span class="add">  P --&gt;|emit settled| L[Ledger]</span>
+  P --&gt;|confirm| C
+  <span class="c">%% retries live in the payments client policy</span></pre>
+        <dl class="kv"><dt>format</dt><dd>text/vnd.oml.mermaid</dd><dt>source digest</dt><dd>sha256:4be1…09c2 · what you sign</dd><dt>serve</dt><dd>srv_7f3a… · expires 14:32</dd></dl>
+      </div>
+      <div class="col">
+        <div class="frame">
+          <div class="fb"><span>/web/render/… · sandboxed · no network</span><span>mermaid-3c9e….js</span></div>
+          <svg viewBox="0 0 440 230" role="img" aria-label="The payment flow drawn: Checkout to Payments labelled authorize; Payments to Card gateway labelled charge; Card gateway back to Payments labelled result; Payments to Ledger labelled emit settled; Payments back to Checkout labelled confirm.">
+            <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#B7B4C6"/></marker><marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7FD1AE"/></marker></defs>
+            <g font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#EFE9DA">
+              <rect x="10" y="90" width="96" height="36" rx="5" fill="#111638" stroke="#9FC6E6"/><text x="58" y="113" text-anchor="middle">Checkout</text>
+              <rect x="170" y="90" width="96" height="36" rx="5" fill="#111638" stroke="#9FC6E6"/><text x="218" y="113" text-anchor="middle">Payments</text>
+              <rect x="330" y="20" width="100" height="36" rx="5" fill="#111638" stroke="#9FC6E6"/><text x="380" y="43" text-anchor="middle">Card gateway</text>
+              <rect x="330" y="170" width="100" height="36" rx="5" fill="#111638" stroke="#7FD1AE"/><text x="380" y="193" text-anchor="middle">Ledger</text>
+            </g>
+            <g fill="none" stroke="#B7B4C6" stroke-width="1.3">
+              <path d="M106 102 L168 102" marker-end="url(#ah)"/>
+              <path d="M168 116 L108 116" marker-end="url(#ah)"/>
+              <path d="M266 96 C300 70 300 45 328 40" marker-end="url(#ah)"/>
+              <path d="M330 50 C300 62 290 80 266 104" marker-end="url(#ah)"/>
+              <path d="M266 120 C300 150 300 180 328 186" stroke="#7FD1AE" marker-end="url(#ahn)"/>
+            </g>
+            <g font-family="ui-monospace, monospace" font-size="10" fill="#8C8FA8">
+              <text x="137" y="96" text-anchor="middle">authorize</text>
+              <text x="137" y="132" text-anchor="middle">confirm</text>
+              <text x="300" y="56" text-anchor="middle">charge</text>
+              <text x="280" y="82" text-anchor="middle">result</text>
+              <text x="312" y="160" text-anchor="middle" fill="#7FD1AE">emit settled</text>
+            </g>
+          </svg>
+        </div>
+        <p class="label" style="margin:14px 0 0">Found by · search text, mermaid/1</p>
+        <ol class="found">
+          <li>The payment flow from checkout to settlement, as of 2026-11-05.</li>
+          <li>Checkout (C) authorize Payments (P).</li>
+          <li>Payments (P) charge Card gateway (G).</li>
+          <li>Card gateway (G) result Payments (P).</li>
+          <li>Payments (P) emit settled Ledger (L).</li>
+          <li>Payments (P) confirm Checkout (C).</li>
+        </ol>
+        <p class="note" style="margin:6px 0 0">The <code>%%</code> comment is in the source you sign and in no search text.</p>
+      </div>
+    </div>
+    <div class="cols" style="border-top:1px solid var(--rule-soft)">
+      <div class="col">
+        <p class="label" style="margin:0 0 8px">Structural diff against v1 · mermaid/1</p>
+<pre class="diff"><span class="ctx">equivalent: false · 1 change</span>
+<span class="add">+ edge P → L  "emit settled"</span>
+<span class="add">+ node L     "Ledger"</span>
+<span class="ctx">  4 edges, 3 nodes unchanged; layout and order not compared</span></pre>
+      </div>
+      <div class="col">
+        <p class="label" style="margin:0 0 8px">Scan · rules 2026.11 · mermaid/1</p>
+        <dl class="kv" style="margin:0"><dt>source</dt><dd>pass</dd><dt>labels, decoded</dt><dd>pass · 9 strings</dd><dt>warnings</dt><dd>none · 5 relations, under quality.many_claims at 12</dd></dl>
+      </div>
+    </div>
+    <div class="foot">
+      <span class="sign">You approve the source on the left, sha256:4be1…09c2. The drawing is a view of it.</span>
+      <div class="acts"><span class="btn ok">Approve</span><span class="btn">Reject…</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="fail">
+  <p class="label">ADR-0056 d9 · illustrative</p>
+  <h2>When the drawing fails, the card is the same card</h2>
+  <p class="sub">OML's validator accepted the subset; the pinned bundle could not draw it. The frame prints Mermaid's message; the source, the search text, the diff and the verdict buttons are unchanged.</p>
+  <div class="pr">
+    <div class="head"><b>Review · alice-review</b><span class="tag t-dim">text/vnd.oml.mermaid</span><span class="tag t-add">scan pass</span></div>
+    <div class="cols">
+      <div class="col">
+        <p style="margin:0 0 10px;font-weight:600">Order states from cart to refund</p>
+<pre class="src"><span class="k">stateDiagram-v2</span>
+  [*] --&gt; Cart
+  Cart --&gt; Paid : capture
+  Paid --&gt; Shipped : dispatch
+  Shipped --&gt; Refunded : refund
+  Paid --&gt; Refunded : refund</pre>
+      </div>
+      <div class="col">
+        <div class="frame fail">
+          <div class="fb"><span>/web/render/… · sandboxed · no network</span><span>mermaid-3c9e….js</span></div>
+          <p class="err">Could not draw this diagram.<br>Error: layout failed for state Refunded<br><span class="t-dim">The source on the left is what you review.</span></p>
+        </div>
+      </div>
+    </div>
+    <div class="foot">
+      <span class="sign">You approve the source on the left.</span>
+      <div class="acts"><span class="btn ok">Approve</span><span class="btn">Reject…</span></div>
+    </div>
+  </div>
+  <p class="note">Every such failure is a gap between OML's subset parser and the pinned bundle, tracked as FR-109.</p>
+</section>
+
+<section id="json">
+  <p class="label">ADR-0056 d6, d13 · illustrative</p>
+  <h2>A JSON fragment refused by the scan, naming the path and never the value</h2>
+  <div class="two">
+    <div class="term">
+      <div class="tb"><span>claude · ~/src/tallyline-api</span><span>mockup</span></div>
+<pre><span class="p">●</span> oml_write <span class="cc">{"format":"application/json",
+  "title":"The payments client's retry policy",
+  "text":"{\"payments\":{\"retry\":{\"max_attempts\":5,
+    \"backoff_ms\":[200,800,3200]},
+    \"api_key\":\"pk_live_51H…\"}}",
+  "idempotency_key":"s52/t1/1"}</span>
+  <span class="b">submission.scan_veto</span> <span class="cc">· 422 · nothing journalled</span>
+  finding  secret.keyed_value
+  path     $.payments.api_key
+<span class="p">●</span> oml_write <span class="cc">{… "api_key":"${PAYMENTS_API_KEY}" …}</span>
+  <span class="t-add">held</span> · format application/json · json/1</pre>
+    </div>
+    <div class="term">
+      <div class="tb"><span>oml_write answer, abridged</span><span>mockup</span></div>
+<pre>"format": "application/json",
+"indexed": {
+  "title": ["payments", "client", "retry", "policy"],
+  "text": [
+    "payments retry max_attempts is 5",
+    "payments retry backoff_ms 0 is 200",
+    "payments retry backoff_ms 1 is 800",
+    "payments retry backoff_ms 2 is 3200"
+  ]
+},
+"warnings": []</pre>
+    </div>
+  </div>
+  <p class="note">The placeholder <code>${PAYMENTS_API_KEY}</code> passes and is not indexed: a value under a secret-shaped key never reaches the search text.</p>
+</section>
+</main>
+<footer><div class="wrap">Open Memory Lab · design mockups for proposed ADR-0056 · 2026-11-05 · fields, pages, digests and identifiers illustrative</div></footer>
+</body>
+</html>

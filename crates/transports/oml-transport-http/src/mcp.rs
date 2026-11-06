@@ -169,6 +169,9 @@ struct WriteArgs {
     valid_until: Option<String>,
     /// The origin the author declares (ADR-0057 d1).
     anchor: Option<Value>,
+    /// The media type of `text` and its title (ADR-0056 d13).
+    format: Option<String>,
+    title: Option<String>,
     /// What kind of source the text came from (ADR-0063 d1, d2).
     origin: Option<Value>,
 }
@@ -573,6 +576,8 @@ where
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("expected_version", args.expected_version),
                 ("anchor", args.anchor),
+                ("format", args.format.map(Value::from)),
+                ("title", args.title.map(Value::from)),
                 ("origin", args.origin),
             ] {
                 if let Some(value) = value {
@@ -613,6 +618,8 @@ where
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("anchor", args.anchor),
+                ("format", args.format.map(Value::from)),
+                ("title", args.title.map(Value::from)),
                 ("origin", args.origin),
             ] {
                 if let Some(value) = value {
@@ -916,6 +923,8 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("promoted_at", "promoted_at"),
         ("valid_from", "valid_from"),
         ("valid_until", "valid_until"),
+        ("format", "format"),
+        ("title", "title"),
         ("anchor", "anchor"),
         ("origin", "origin"),
         ("stale", "stale"),

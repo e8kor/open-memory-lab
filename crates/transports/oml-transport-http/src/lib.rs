@@ -290,11 +290,9 @@ where
             probes.fallback(names_unassigned).with_state(self)
         };
         // Outside every route, the fallback and axum's own 404 and 405
-        // included (ADR-0042 d1, d4).
-        router.layer(axum::middleware::from_fn_with_state(
-            traffic,
-            traffic::layer,
-        ))
+        // included (ADR-0042 d1, d4); the panic guard just inside it, so a
+        // handler's panic is a named 500, never a dropped connection.
+        traffic::guard(router, traffic)
     }
 
     /// The handler of one [`ROUTES`] entry. A table entry with no handler
@@ -469,6 +467,13 @@ where
             // doctor's web line reads it (ADR-0045 d18); their failed
             // exchanges are the metrics listener's (ADR-0054 d1).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
+            // The claim formats this build serves and the adapters that
+            // derive their search text: doctor's formats line reads them
+            // (ADR-0056 d14).
+            "formats": {
+                "enabled": st.app.formats().allowed(),
+                "adapters": st.app.formats().adapters(),
+            },
             // The scanner's rule set, how many rules it loaded and whether
             // the personal-data rules are on: doctor's scan line reads them
             // (ADR-0065 d11). Its findings are the metrics listener's.
@@ -576,6 +581,8 @@ where
             valid_from: req.valid_from,
             valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
+            format: req.format,
+            title: req.title,
             origin: parse_origin(req.origin.as_ref())?,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
@@ -1090,6 +1097,8 @@ where
             anchor: parse_anchor(req.anchor.as_ref())?,
             origin: parse_origin(req.origin.as_ref())?,
             expected_version: parse_expected_version(req.expected_version)?,
+            format: req.format,
+            title: req.title,
         };
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
@@ -2592,6 +2601,13 @@ struct SubmitBody {
     /// The origin the author declares (ADR-0057 d1-d3).
     #[serde(default)]
     anchor: Option<Value>,
+    /// The media type of `body`, `text/plain` when omitted (ADR-0056 d1).
+    #[serde(default)]
+    format: Option<String>,
+    /// One line, at most 100 characters; required of a non-prose claim
+    /// (ADR-0056 d10).
+    #[serde(default)]
+    title: Option<String>,
     /// `origin: {kind}` (ADR-0063 d1, d2).
     #[serde(default)]
     origin: Option<Value>,
@@ -2705,6 +2721,12 @@ struct SupersedeBody {
     valid_from: Option<String>,
     #[serde(default)]
     valid_until: Option<String>,
+    /// The successor's own format and title; nothing is inherited, so a
+    /// format changes by supersession alone (ADR-0056 d2).
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3880,6 +3902,10 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
         "valid_until": m.valid.until.as_ref().map(ValidEnd::as_str),
+        // The media type signed with the version and its title (ADR-0056
+        // d1, d12; ADR-0050 d5).
+        "format": m.format.media_type,
+        "title": m.format.title,
         // The author's declared origin, and the served version's latest
         // source check, from the source alone (ADR-0057 d1, d5).
         "anchor": m.anchor.as_deref().map_or(Value::Null, Anchor::to_json),

@@ -3,6 +3,7 @@
 // edited; OmlClient is the hand-written wrapper (docs/engineering/sdks.md).
 
 export {
+  fenceFor,
   type EventsPage,
   type EventsQuery,
   type GetInput,

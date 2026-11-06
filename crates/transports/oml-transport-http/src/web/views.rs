@@ -19,8 +19,8 @@ use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{
-    AdminState, AppError, Bearer, GuardrailRequest, HIT_KINDS, ListRequest, NamedServe,
-    RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, Verdict,
+    AdminState, AppError, Bearer, GuardrailRequest, HIT_KINDS, ListRequest, MemoryRecord,
+    NamedServe, RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, Verdict,
     VerdictRequest, WebEmailRequest, WebSessionRecord,
 };
 use oml_app::types::{BULK_VERDICT_MAX, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest};
@@ -225,7 +225,10 @@ where
         let csrf = csrf_token(token);
         let (active, body) = match query.get("view").unwrap_or("keys") {
             "setup" => ("/web?view=setup", self.setup_view()),
-            "memories" => ("/web?view=memories", self.memories_view(&web, query).await?),
+            "memories" => (
+                "/web?view=memories",
+                self.memories_view(&web, &csrf, query).await?,
+            ),
             "workarea" => (
                 "/web?view=workarea",
                 self.workarea_view(&web, session, &csrf).await?,
@@ -418,6 +421,7 @@ where
     async fn memories_view(
         &self,
         web: &oml_app::app::Caller,
+        csrf: &str,
         query: &Fields,
     ) -> Result<String, ApiError> {
         let bearer = Bearer::Session(web);
@@ -430,7 +434,7 @@ where
                 ApiError::validation("memory is not an id").with_details(json!({"field": "memory"}))
             })?;
             let served = self.app.get_memory(bearer, id).await.map_err(app_error)?;
-            body.push_str(&memory_card(&served));
+            body.push_str(&memory_card(&served, &self.frame_for(csrf, &served.memory)));
             return Ok(body);
         }
         if let Some(q) = query.get("q") {
@@ -787,7 +791,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             ),
             Some(served) => {
                 let serve_id = format!("srv_{}", served.memory.memory_id.simple());
-                body.push_str(&memory_card(&served));
+                body.push_str(&memory_card(&served, &self.frame_for(&csrf, &served.memory)));
                 body.push_str(&form(
                     path,
                     "verdict",
@@ -1294,7 +1298,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             let read = retry_chain(|| self.app.admin_read(Bearer::Session(admin), id))
                 .await
                 .map_err(app_error)?;
-            body.push_str(&attribution_card(&read));
+            body.push_str(&attribution_card(
+                &read,
+                &self.frame_for(csrf, &read.memory),
+            ));
             body.push_str("<h2>Replace it</h2>");
             body.push_str(&form(
                 "/web/admin",
@@ -1443,6 +1450,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     valid_from: None,
                     valid_until: None,
                     anchor: None,
+                    format: None,
+                    title: None,
                     origin: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
@@ -1505,6 +1514,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     anchor: None,
                     origin: None,
                     expected_version,
+                    format: None,
+                    title: None,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
                     .await
@@ -1803,7 +1814,68 @@ fn valid_line(m: &ServedMemory) -> String {
     text(&line)
 }
 
-fn memory_card(m: &ServedMemory) -> String {
+/// What a card says of a version's format (ADR-0056 d9): for prose without a
+/// title nothing, so a prose card is as it was; otherwise the title, the
+/// media type, and for a derived search text what the claim will be found
+/// by. The source itself is always the card's text, escaped, never rendered.
+fn title_line(m: &MemoryRecord) -> String {
+    m.format.title.as_ref().map_or_else(String::new, |t| {
+        format!(r#"<p class="label">title</p><p>{}</p>"#, text(t))
+    })
+}
+
+/// The class of the paragraph holding the source: monospaced for a format
+/// that is not prose, where indentation carries meaning.
+fn source_class(m: &MemoryRecord) -> &'static str {
+    if matches!(m.format.media_type.as_str(), "text/plain" | "text/markdown") {
+        ""
+    } else {
+        " mono"
+    }
+}
+
+fn format_lines(m: &MemoryRecord) -> String {
+    let f = &m.format;
+    let prose = matches!(f.media_type.as_str(), "text/plain" | "text/markdown");
+    if prose && f.search_text.is_none() {
+        return String::new();
+    }
+    let mut out = String::new();
+    if !prose {
+        out.push_str(&format!(
+            r#"<p class="label">format</p><p class="mono">{}</p>"#,
+            text(&f.media_type)
+        ));
+    }
+    if let Some(found) = &f.search_text {
+        out.push_str(&format!(
+            r#"<p class="label">it will be found by</p><p class="text mono dim">{}</p>"#,
+            text(found)
+        ));
+    }
+    out
+}
+
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    /// The drawing beside a Mermaid claim's source, in a sandboxed frame
+    /// (ADR-0056 d9); nothing for any other format.
+    fn frame_for(&self, csrf: &str, m: &MemoryRecord) -> String {
+        if m.format.media_type == "text/vnd.oml.mermaid" {
+            self.render_iframe(csrf, &m.memory_id.to_string(), &m.body)
+        } else {
+            String::new()
+        }
+    }
+}
+
+fn memory_card(m: &ServedMemory, frame: &str) -> String {
     let from = if m.anonymous {
         "the shared area".to_owned()
     } else {
@@ -1816,11 +1888,15 @@ fn memory_card(m: &ServedMemory) -> String {
     });
     warning
         + &format!(
-            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
+            r#"<div class="card"><p class="label">{} · {} · version {}</p>{}<p class="text{}">{}</p>{}{}<p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
             state_tag(memory_state(m)),
             short(m.workarea_path.as_deref().unwrap_or("")),
             m.memory.version,
+            title_line(&m.memory),
+            source_class(&m.memory),
             text(&m.memory.body),
+            frame,
+            format_lines(&m.memory),
             short(&m.memory.claim_key),
             from,
             anchor_line(m.memory.anchor.as_deref()),
@@ -1839,13 +1915,17 @@ fn author_line(m: &AdminMemory) -> String {
     }
 }
 
-fn attribution_card(m: &AdminMemory) -> String {
+fn attribution_card(m: &AdminMemory, frame: &str) -> String {
     let mut out = format!(
-        r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p></div><h2>Attribution</h2><table><tr><th>Field</th><th>Value</th></tr>"#,
+        r#"<div class="card"><p class="label">{} · {} · version {}</p>{}<p class="text{}">{}</p>{}{}</div><h2>Attribution</h2><table><tr><th>Field</th><th>Value</th></tr>"#,
         state_tag(m.state.as_str()),
         short(&m.workarea_path),
         m.memory.version,
-        text(&m.memory.body)
+        title_line(&m.memory),
+        source_class(&m.memory),
+        text(&m.memory.body),
+        frame,
+        format_lines(&m.memory)
     );
     let ids = |v: &[Uuid]| {
         if v.is_empty() {

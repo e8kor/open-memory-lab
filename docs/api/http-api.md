@@ -77,6 +77,8 @@ Requires: writer effective access on the resolved workarea; every derives_from a
 | `derives_from` | array of string | no | Artifact ids; the declared lineage (omission is undetectable — honesty rule). |
 | `on_similar` | `hold` \| `refuse` | no | Omitted, hold. |
 | `anchor` | object | no | The origin the author declares: signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. |
+| `format` | string | no | The media type of body, signed with the version and fixed for it: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. |
+| `title` | string | no | One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. |
 | `origin` | object | no | What kind of source the text was taken from: signed in the submission event, immutable per version, never inherited by a successor. |
 
 **Responses.** `202` Held, visible to no one else until ratified (R3).; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).; `422` A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
@@ -176,6 +178,8 @@ Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Gr
 | `on_similar` | `hold` \| `refuse` | no | Omitted, hold. |
 | `valid_from` | string | no | When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. |
 | `valid_until` | string | no | When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. |
+| `format` | string | no | The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. |
+| `title` | string | no | One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. |
 
 **Responses.** `202` The proposed replacement, held.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
