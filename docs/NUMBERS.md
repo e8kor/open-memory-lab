@@ -74,7 +74,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0053 | `main` |  | reranking is a local cross encoder stage after fusion off by default u | used |
 | adr | 0054 | `main` |  | recall is measured by what readers do next and only other readers use | used |
 | adr | 0055 | `main` |  | a person reviews a listed set of held items in one act each item judge | used |
-| adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
 | adr | 0056 | `feat/claim-formats` |  | a claim version names its format the signature covers its source and a | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
@@ -185,15 +184,10 @@ is a collision: the branch that reserved later renumbers.
 | fr | 106 | `main` |  | Usage as a ranking signal is served only as the opt-in pipeline `bm25- | used |
 | fr | 107 | `main` |  | Usage counts one credit per principal per version per day, so one pers | used |
 | fr | 108 | `main` |  | The real-usage eval set is rolling: its query text lives 30 days, so n | used |
-| fr | 109 | `design/claim-formats` | #63 | A Mermaid claim is validated by OML's own parser of a subset (ADR-0056 | open |
 | fr | 109 | `feat/claim-formats` |  | A Mermaid claim is validated by OML's own parser of a subset (ADR-0056 | open |
-| fr | 110 | `design/claim-formats` | #63 | The pinned Mermaid bundle adds to the server binary and to the first r | open |
 | fr | 110 | `feat/claim-formats` |  | The pinned Mermaid bundle adds to the server binary and to the first r | open |
-| fr | 111 | `design/claim-formats` | #63 | A write in a non-prose format parses its source and stores a search te | open |
 | fr | 111 | `feat/claim-formats` |  | A write in a non-prose format parses its source and stores a search te | open |
-| fr | 112 | `design/claim-formats` | #63 | Whether diagram and fragment claims help an agent is unmeasured: the r | open |
 | fr | 112 | `feat/claim-formats` |  | Whether diagram and fragment claims help an agent is unmeasured: the r | open |
-| fr | 113 | `design/claim-formats` | #63 | The per-format thresholds of `quality.many_claims` (12 relations in a | open |
 | fr | 113 | `feat/claim-formats` |  | The per-format thresholds of `quality.many_claims` (12 relations in a | open |
 | fr | 114 | `main` |  | The proposed ADR-0057 d5 marks a memory `stale` only once `oml sync` o | used |
 | fr | 115 | `main` |  | The origin filters `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4 | used |
