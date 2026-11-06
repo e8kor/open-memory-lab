@@ -1310,6 +1310,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             &oml_app::types::SubmitRequest {
                 on_similar: Default::default(),
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("k-{body}"),
                 claim_key: None,
                 verb: Some(oml_app::types::SubmitVerb::Remember),
@@ -1948,6 +1949,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             &oml_app::types::SubmitRequest {
                 on_similar: Default::default(),
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("g-{body}"),
                 claim_key: None,
                 verb: None,
@@ -2132,6 +2134,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .submit_memory(
             value.as_str(),
             &oml_app::types::SubmitRequest {
+                origin: None,
                 anchor: None,
                 idempotency_key: "k-api-v3".to_owned(),
                 claim_key: Some("api-version".to_owned()),
@@ -2170,6 +2173,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .supersede(
             value.as_str(),
             &oml_app::types::SupersedeRequest {
+                origin: None,
                 idempotency_key: "k-api-v4".to_owned(),
                 target_id: v1,
                 body: "the api is at version 4".to_owned(),

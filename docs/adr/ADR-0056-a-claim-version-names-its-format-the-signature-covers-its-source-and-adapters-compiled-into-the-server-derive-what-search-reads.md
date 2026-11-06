@@ -9,7 +9,7 @@ answers: whether a claim may be a Mermaid diagram, a JSON or YAML fragment or a 
 
 **Status:** accepted · 2026-11-06 (built in v0.6.x; the unbuilt parts are listed under [Build record](#build-record))
 
-**Release:** introduced in v0.6.x ([releases](../product/releases.md#decisions)); migration 0033
+**Release:** introduced in v0.6.x ([releases](../product/releases.md#decisions)); migration 0032
 
 **Amends:** ADR-0039 (d3: `oml_write` gains `format`; d4: every claim item carries `format`).
 ADR-0045 (d8: the pages' policy gains one `frame-src` source, and one new route answers under its own
@@ -411,8 +411,8 @@ list.
   `AKIA#73;…` is scanned as the key the drawing shows. A line splits into statements on `;` outside
   a quoted label, and an unclosed quote or bracket is `mermaid.syntax_error`.
 - The near-copy check of ADR-0050 d17 reads `coalesce(search_text, claim)` on both sides: the keys'
-  trigger and refill (0035), the writer's keys and each candidate's comparison. The approval's
-  event carries `format` beside `served_body_digest`. 0033 adds its checks `NOT VALID` and 0034,
+  trigger and refill (0034), the writer's keys and each candidate's comparison. The approval's
+  event carries `format` beside `served_body_digest`. 0032 adds its checks `NOT VALID` and 0033,
   marked `-- no-transaction`, validates them, so the scans run under `SHARE UPDATE EXCLUSIVE`.
 - A Mermaid card shows the title, the source, the drawing, then the format and what the claim will
   be found by; the structural diff on a card and the cross-format "format changed" line are not

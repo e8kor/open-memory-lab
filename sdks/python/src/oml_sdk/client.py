@@ -43,6 +43,8 @@ from .generated.models import (
     Memory,
     MemoryPage,
     MemorySummary,
+    Origin,
+    OriginKind,
     RecallRequest,
     RecallRequestKindsItem,
     RecallRequestMatch,
@@ -91,6 +93,7 @@ READ_RECALL = (
     "match",
     "anchor_repo",
     "anchor_path_prefix",
+    "origin_kinds",
 )
 READ_LISTING = (
     "own",
@@ -104,6 +107,7 @@ READ_LISTING = (
     "cursor",
     "anchor_repo",
     "anchor_path_prefix",
+    "origin_kinds",
 )
 
 
@@ -301,6 +305,7 @@ class OmlClient:
         anchor: Mapping[str, Any] | None = None,
         format: str | None = None,
         title: str | None = None,
+        origin_kind: str | None = None,
         idempotency_key: str | None = None,
     ) -> Written[SubmitAccepted]:
         """Write a claim, held on arrival; the fields set choose the route
@@ -312,9 +317,11 @@ class OmlClient:
         raise `request.validation` naming the field before anything is sent.
         With `replaces`, `expected_version` is required: the claim's latest
         version as last read, else `submission.version_conflict` (ADR-0057
-        d19). `anchor` is the origin the author declares (ADR-0057 d1).
-        `format` is the media type of `text`, `text/plain` when omitted, and
-        `title` the one line a claim that is not prose requires (ADR-0056).
+        d19). `anchor` is the origin the author declares (ADR-0057 d1),
+        `origin_kind` what kind of source the text came from, recorded
+        `manual` when omitted (ADR-0063 d1, d2), `format` the media type of
+        `text`, `text/plain` when omitted, and `title` the one line a claim
+        that is not prose requires (ADR-0056).
         """
         if replaces is None:
             for field, value in (
@@ -337,6 +344,7 @@ class OmlClient:
                 anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
                 format_=_opt(format),
                 title=_opt(title),
+                origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
             )
             return self._write(
                 idempotency_key,
@@ -359,6 +367,7 @@ class OmlClient:
             body=text,
             expected_version=expected_version,
             anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
+            origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
             workarea=_opt(workarea),
             retirement=_opt(retirement),
             kind=SupersedeRequestKind(kind) if kind is not None else UNSET,
@@ -397,6 +406,7 @@ class OmlClient:
         cursor: str | None = None,
         anchor_repo: str | None = None,
         anchor_path_prefix: str | None = None,
+        origin_kinds: Sequence[str] | None = None,
     ) -> Memory | RecallResponse | MemoryPage:
         """Read in `oml_read`'s three modes (ADR-0039 d4). `artifact_id`
         fetches one version with its text, a `Memory`. `query` recalls over
@@ -427,7 +437,11 @@ class OmlClient:
             "limit": limit,
             "cursor": cursor,
         }
-        origin = {"anchor_repo": anchor_repo, "anchor_path_prefix": anchor_path_prefix}
+        origin = {
+            "anchor_repo": anchor_repo,
+            "anchor_path_prefix": anchor_path_prefix,
+            "origin_kinds": origin_kinds,
+        }
         if artifact_id is not None:
             if query is not None:
                 raise _invalid(
@@ -455,6 +469,9 @@ class OmlClient:
                 match=RecallRequestMatch(match) if match is not None else UNSET,
                 anchor_repo=_opt(anchor_repo),
                 anchor_path_prefix=_opt(anchor_path_prefix),
+                origin_kinds=[OriginKind(k) for k in origin_kinds]
+                if origin_kinds is not None
+                else UNSET,
             )
             return self._send(
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)
@@ -476,6 +493,7 @@ class OmlClient:
         cursor: str | None = None,
         anchor_repo: str | None = None,
         anchor_path_prefix: str | None = None,
+        origin_kinds: Sequence[str] | None = None,
     ) -> MemoryPage:
         """One page of `GET /v1/memories`, `own` defaulting to true as
         `oml_read`'s listing does (ADR-0039 d4)."""
@@ -493,6 +511,9 @@ class OmlClient:
                 cursor=_opt(cursor),
                 anchor_repo=_opt(anchor_repo),
                 anchor_path_prefix=_opt(anchor_path_prefix),
+                origin_kinds=[OriginKind(k) for k in origin_kinds]
+                if origin_kinds is not None
+                else UNSET,
             )
         ).parsed
 

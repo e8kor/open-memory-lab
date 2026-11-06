@@ -6,10 +6,10 @@
 -- search_text. The check's writer side and candidate comparison read the same
 -- text in the application.
 --
--- No row is refilled: 0033 is unreleased, so every row a deployment holds
+-- No row is refilled: 0032 is unreleased, so every row a deployment holds
 -- has search_text NULL and keys of its claim, which are the keys of
 -- coalesce(search_text, claim). A database that wrote a format claim between
--- 0033 and this file is refilled with oml_similar_keys_refill, as doctor
+-- 0032 and this file is refilled with oml_similar_keys_refill, as doctor
 -- directs. Replacing a function and a trigger waits on no row; a lock is
 -- waited for at most 5 s.
 

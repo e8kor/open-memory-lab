@@ -6,11 +6,13 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod rescan;
 mod search;
 mod sparse;
 mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
@@ -59,6 +61,7 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::origin::OriginKind;
 use oml_domain::similar::{
     Fingerprint, MAX_CANDIDATES as SIMILAR_MAX_CANDIDATES, MAX_LISTED as SIMILAR_MAX_LISTED,
     Relation, relate,
@@ -504,6 +507,7 @@ fn submit_request_digest(
     }
     let doc = with_anchor(doc, req.anchor.as_ref());
     let doc = with_format(doc, req.format.as_deref(), req.title.as_deref());
+    let doc = with_origin(doc, req.origin);
     sha256_digest_string(doc.to_string().as_bytes())
 }
 
@@ -520,6 +524,35 @@ fn with_format(mut doc: Value, format: Option<&str>, title: Option<&str>) -> Val
         }
     }
     doc
+}
+
+/// The name of a person's chat workarea under their user root (ADR-0063
+/// d8).
+pub const CHAT_WORKAREA: &str = "chat";
+
+/// A request digest's document with `origin` when sent, and unchanged
+/// otherwise, so a request without one digests as it did before
+/// ADR-0063.
+fn with_origin(mut doc: Value, origin: Option<OriginKind>) -> Value {
+    if let (Some(kind), Some(members)) = (origin, doc.as_object_mut()) {
+        members.insert("origin".to_owned(), kind.to_json());
+    }
+    doc
+}
+
+/// The kind a submission records: as declared, `manual` when none was
+/// sent, after the two compositions with the anchor (ADR-0063 d2).
+fn recorded_origin(
+    origin: Option<OriginKind>,
+    anchor: Option<&Anchor>,
+) -> Result<OriginKind, AppError> {
+    let kind = origin.unwrap_or(OriginKind::Manual);
+    kind.check_with(anchor)
+        .map_err(|e| AppError::OriginInvalid {
+            field: e.field,
+            reason: e.reason,
+        })?;
+    Ok(kind)
 }
 
 /// A request digest's document with the anchor when sent, and unchanged
@@ -675,6 +708,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
         *body = with_format(body.take(), req.format.as_deref(), req.title.as_deref());
+        *body = with_origin(body.take(), req.origin);
         if let Some(members) = body.as_object_mut() {
             for (name, value) in [
                 ("valid_from", &req.valid_from),
@@ -1296,6 +1330,13 @@ where
     #[must_use]
     pub fn with_search(self, search: SearchConfig) -> Self {
         Self { search, ..self }
+    }
+
+    /// The scanner's version, rule count and personal-data setting, for
+    /// `/readyz` and doctor's scan line (ADR-0065 d11).
+    #[must_use]
+    pub fn scanner_info(&self) -> Option<crate::ports::ScannerInfo> {
+        self.scanner.info()
     }
 
     /// The deployment's search settings.
@@ -3026,6 +3067,19 @@ where
             ),
             None => None,
         };
+        // `chat` is reserved in every user root's namespace for a key a
+        // person holds, at any depth, so an agent never takes the name
+        // before the person opens their chat workarea; refused before
+        // anything is journalled (ADR-0063 d8).
+        if let Some(parent) = ancestors.first()
+            && parent.user().is_some()
+            && name.as_str() == CHAT_WORKAREA
+            && key.held_by != HeldBy::Human
+        {
+            return Err(AppError::ChatScopeHumanOnly {
+                held_by: key.held_by,
+            });
+        }
         if let Some(parent) = ancestors.first()
             && frozen_refuses(parent.status, FrozenOp::CreateChild)
         {
@@ -4651,6 +4705,12 @@ where
             false,
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        // The claim key reaches the journal as plaintext, so a veto in it
+        // refuses as one in the body does (ADR-0065 d7).
+        if let Some(claim_key) = req.claim_key.as_deref() {
+            self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
+        }
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -4747,6 +4807,7 @@ where
             guardrail,
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
             format: Box::new(format),
         };
@@ -4754,8 +4815,8 @@ where
         // The catalog payload of submission.remember: digest-only, body
         // plaintext never rides the journal (ADR-0002 d1; event-catalog.md).
         // The PoC stores the body inline and unencrypted, so there is no
-        // ciphertext digest, and it pins no scan rule set, so there is no
-        // scanner version (admission.md rule-set registry).
+        // ciphertext digest; the scanner names the rule set its verdict was
+        // taken under, or none (admission.md rule-set registry; ADR-0065 d1).
         let mut payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
@@ -4768,13 +4829,14 @@ where
             "attachments": [],
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": Value::Null,
             "retirement": false,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });
@@ -5117,6 +5179,9 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
+        if let Some(reason) = req.reason.as_deref() {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         let ids_refused = |reason: String| AppError::BulkShape {
             field: "/artifact_ids",
             reason,
@@ -5242,6 +5307,9 @@ where
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        if let Some(reason) = reason {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         // The head first, then every read R2 and the compare-and-set judge:
         // the row's closure, which a claim edge's proposal widens while the
         // row is held, its rivals and its target. A commit landing after the
@@ -5555,6 +5623,17 @@ where
             shape,
             started.elapsed().as_secs_f64(),
         );
+        let kinds: Vec<&'static str> = result
+            .hits
+            .iter()
+            .map(|h| {
+                h.served
+                    .memory
+                    .origin_kind
+                    .map_or("none", OriginKind::as_str)
+            })
+            .collect();
+        self.observer.recall_hits_by_origin(&kinds);
         // Hits served labelled `unreviewed` (ADR-0030 d5).
         let unreviewed = result
             .hits
@@ -6482,6 +6561,20 @@ where
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
     /// write naming the field, since a written anchor is never erased.
+    /// A field the journal keeps as plaintext beside a body, a claim key or
+    /// a verdict's reason: a veto finding refuses, a hold finding passes,
+    /// since no review follows (ADR-0065 d7).
+    fn scan_veto_only(&self, tenant_id: Uuid, kind: &str, text: &str) -> Result<(), AppError> {
+        match self.scanner.scan(&AdmissionEnvelope {
+            tenant_id,
+            kind,
+            body: text,
+        }) {
+            ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(reason)),
+            ScanOutcome::Pass | ScanOutcome::Hold(_) => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());
@@ -6874,6 +6967,7 @@ where
             req.retirement,
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
@@ -6974,6 +7068,7 @@ where
             guardrail,
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
             format: Box::new(format),
         };
@@ -6998,6 +7093,7 @@ where
             "attachments": [],
             "derives_from": derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": {
@@ -7007,7 +7103,7 @@ where
             "retirement": req.retirement,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });

@@ -21,6 +21,7 @@
 pub mod error;
 pub mod mcp;
 pub mod oauth;
+mod rescan;
 mod search;
 pub mod time;
 pub mod traffic;
@@ -54,6 +55,7 @@ use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
+use oml_app::domain::origin::{self as origin_grammar, OriginKind};
 use oml_app::domain::valid_time::{ValidEnd, fixed_width};
 use oml_app::domain::{HeldBy, MemoryKind, MemoryStatus, Role, WorkareaStatus, nfc};
 use oml_app::ports::{
@@ -131,6 +133,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/emails/remove"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
+    ("GET", "/v2/admin/rescan"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
     ("GET", "/v2/usage/settings"),
@@ -340,6 +343,7 @@ where
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
+            ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
             ("GET", "/v2/usage/settings") => get(Self::usage_settings),
@@ -470,6 +474,14 @@ where
                 "enabled": st.app.formats().allowed(),
                 "adapters": st.app.formats().adapters(),
             },
+            // The scanner's rule set, how many rules it loaded and whether
+            // the personal-data rules are on: doctor's scan line reads them
+            // (ADR-0065 d11). Its findings are the metrics listener's.
+            "scan": st.app.scanner_info().map(|i| json!({
+                "version": i.version,
+                "rules": i.rules,
+                "pii": i.pii,
+            })),
             // The served search pipelines and the deployment's default:
             // doctor's search line reads them (ADR-0049 d8).
             "search": {
@@ -571,6 +583,7 @@ where
             anchor: parse_anchor(req.anchor.as_ref())?,
             format: req.format,
             title: req.title,
+            origin: parse_origin(req.origin.as_ref())?,
         };
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
@@ -800,6 +813,7 @@ where
                     anchor: anchor_filter(
                         req.anchor_repo.as_deref(),
                         req.anchor_path_prefix.as_deref(),
+                        req.origin_kinds.as_deref(),
                         "/",
                     )?,
                 },
@@ -1081,6 +1095,7 @@ where
             valid_from: req.valid_from,
             valid_until: req.valid_until,
             anchor: parse_anchor(req.anchor.as_ref())?,
+            origin: parse_origin(req.origin.as_ref())?,
             expected_version: parse_expected_version(req.expected_version)?,
             format: req.format,
             title: req.title,
@@ -2593,6 +2608,9 @@ struct SubmitBody {
     /// (ADR-0056 d10).
     #[serde(default)]
     title: Option<String>,
+    /// `origin: {kind}` (ADR-0063 d1, d2).
+    #[serde(default)]
+    origin: Option<Value>,
 }
 
 /// openapi.yaml `RecallRequest`, closed (ADR-0025 d16).
@@ -2629,9 +2647,10 @@ struct RecallBody {
     include_expired: Option<bool>,
     /// The recall's now: a period or an instant (proposed ADR-0059 d5).
     now: Option<String>,
-    /// The origin filters (ADR-0057 d4).
+    /// The origin filters (ADR-0057 d4; ADR-0063 d3).
     anchor_repo: Option<String>,
     anchor_path_prefix: Option<String>,
+    origin_kinds: Option<Vec<String>>,
 }
 
 /// openapi.yaml `SourceCheckRequest`, closed (ADR-0057 d5).
@@ -2658,6 +2677,9 @@ struct SupersedeBody {
     /// The successor's own anchor (ADR-0057 d2).
     #[serde(default)]
     anchor: Option<Value>,
+    /// The successor's own `origin` (ADR-0063 d2).
+    #[serde(default)]
+    origin: Option<Value>,
     /// When sent, the target's workarea, by id or name (ADR-0039 d7).
     workarea: Option<String>,
     #[serde(default)]
@@ -3529,8 +3551,17 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     };
     let mut anchor_repo = None;
     let mut anchor_path_prefix = None;
+    let mut origin_kinds: Option<Vec<String>> = None;
     let mut seen = HashSet::new();
     for (name, value) in params {
+        // origin_kinds may be sent comma-separated or repeated, as a
+        // generated client explodes a list (ADR-0063 d3).
+        if name == "origin_kinds" {
+            origin_kinds
+                .get_or_insert_with(Vec::new)
+                .extend(value.split(',').map(ToOwned::to_owned));
+            continue;
+        }
         if !seen.insert(name.as_str()) {
             return Err(ApiError::validation(format!(
                 "the query parameter {name} is given more than once"
@@ -3579,7 +3610,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             }
         }
     }
-    req.anchor = anchor_filter(anchor_repo, anchor_path_prefix, "")?;
+    req.anchor = anchor_filter(anchor_repo, anchor_path_prefix, origin_kinds.as_deref(), "")?;
     Ok(req)
 }
 
@@ -3589,8 +3620,18 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
 pub(crate) fn anchor_filter(
     repo: Option<&str>,
     path_prefix: Option<&str>,
+    origin_kinds: Option<&[String]>,
     base: &str,
 ) -> Result<AnchorFilter, ApiError> {
+    let origin_kinds = match origin_kinds {
+        None => Vec::new(),
+        Some(kinds) => {
+            origin_grammar::parse_kinds(kinds.iter().map(String::as_str)).map_err(|why| {
+                ApiError::validation(format!("origin_kinds: {why}"))
+                    .with_details(json!({ "field": format!("{base}origin_kinds") }))
+            })?
+        }
+    };
     if let Some(repo) = repo {
         anchor_grammar::check_repo(repo).map_err(|why| {
             ApiError::validation(format!("anchor_repo: {why}"))
@@ -3606,7 +3647,22 @@ pub(crate) fn anchor_filter(
     Ok(AnchorFilter {
         repo: repo.map(ToOwned::to_owned),
         path_prefix: path_prefix.map(ToOwned::to_owned),
+        origin_kinds,
     })
+}
+
+/// A body's `origin`, a closed object whose `kind` is one of the seven,
+/// refused naming the field (ADR-0063 d1).
+pub(crate) fn parse_origin(origin: Option<&Value>) -> Result<Option<OriginKind>, ApiError> {
+    origin
+        .filter(|o| !o.is_null())
+        .map(|o| {
+            OriginKind::from_json(o, "/origin").map_err(|e| {
+                ApiError::validation(format!("origin: {e}"))
+                    .with_details(json!({ "field": e.field }))
+            })
+        })
+        .transpose()
 }
 
 /// A body's `anchor`, checked against the grammar and refused naming the
@@ -3853,6 +3909,8 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         // The author's declared origin, and the served version's latest
         // source check, from the source alone (ADR-0057 d1, d5).
         "anchor": m.anchor.as_deref().map_or(Value::Null, Anchor::to_json),
+        // What kind of source the text came from, as signed (ADR-0063 d3).
+        "origin": m.origin_kind.map_or(Value::Null, OriginKind::to_json),
         "stale": source_check(m).and_then(SourceCheck::stale),
         "source_checked": source_check(m).map(source_checked_json),
     });

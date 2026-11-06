@@ -15,7 +15,7 @@ from the key. Since v0.4.1 the Claude Code plugin and the other tools' configura
 address to the maintainer's public server, `https://memory.doublegate.io`, so with a key from that
 server the key is the only setting.
 
-The commands on this page are for v0.5.8; the default server dates from v0.4.1 and sign-in from
+The commands on this page are for v0.6.0; the default server dates from v0.4.1 and sign-in from
 v0.5.0 ([releases](../product/releases.md)).
 
 ## Use OML: you have a key, and perhaps a server address
@@ -27,7 +27,7 @@ URL as it is (since v0.4.1). For your own server you also need its address, such
 `https://oml.example.com`:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.8/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```

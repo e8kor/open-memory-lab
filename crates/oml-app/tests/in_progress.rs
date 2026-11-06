@@ -193,6 +193,7 @@ impl World {
             .submit_memory(
                 key.value.as_str(),
                 &SubmitRequest {
+                    origin: None,
                     on_similar: Default::default(),
                     valid_from: None,
                     valid_until: None,
@@ -641,6 +642,7 @@ async fn a_curator_cannot_act_outside_an_in_progress_scope() {
         .submit_memory(
             w.curator.value.as_str(),
             &SubmitRequest {
+                origin: None,
                 on_similar: Default::default(),
                 valid_from: None,
                 valid_until: None,
@@ -762,6 +764,7 @@ async fn every_curator_act_is_journalled_under_its_key_and_reversible() {
         .supersede(
             w.curator.value.as_str(),
             &SupersedeRequest {
+                origin: None,
                 on_similar: Default::default(),
                 valid_from: None,
                 valid_until: None,
@@ -1270,6 +1273,7 @@ async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
         .submit_memory(
             w.ann.value.as_str(),
             &SubmitRequest {
+                origin: None,
                 on_similar: Default::default(),
                 valid_from: None,
                 valid_until: None,

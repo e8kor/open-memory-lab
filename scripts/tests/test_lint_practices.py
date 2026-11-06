@@ -72,15 +72,15 @@ class Migrations(unittest.TestCase):
 
 
 class ClaimFormatsMigrations(unittest.TestCase):
-    """Review of #90 H2: 0033's checks are validated outside its transaction."""
+    """Review of #90 H2: 0032's checks are validated outside its transaction."""
 
     ROOT = Path(__file__).resolve().parents[2]
 
     def test_0033_validates_nothing_and_0034_validates_without_a_transaction(self):
         mig = self.ROOT / "migrations"
-        head = (mig / "0033_claim_formats.sql").read_text()
+        head = (mig / "0032_claim_formats.sql").read_text()
         self.assertNotRegex(L.strip_sql(head), r"(?i)VALIDATE\s+CONSTRAINT")
-        after = (mig / "0034_claim_formats_validate.sql").read_text()
+        after = (mig / "0033_claim_formats_validate.sql").read_text()
         self.assertEqual("-- no-transaction", after.splitlines()[0])
         self.assertRegex(after, r"(?i)SET\s+lock_timeout")
         for name in ("memories_format_shape", "memories_title_line", "memories_search_text_by"):

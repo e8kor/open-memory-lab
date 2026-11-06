@@ -148,6 +148,7 @@ async fn world() -> World {
 
 fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> SubmitRequest {
     SubmitRequest {
+        origin: None,
         on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
@@ -469,6 +470,7 @@ async fn valid_time_is_refused_on_steering_and_on_a_retirement() {
         .promoted("t", "the deploy runs on fridays", None, None)
         .await;
     let retire = SupersedeRequest {
+        origin: None,
         on_similar: Default::default(),
         idempotency_key: "r".to_owned(),
         target_id: target,
@@ -499,6 +501,7 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         .promoted("a", "the freeze holds", Some("2026-10"), None)
         .await;
     let supersede = |idem: &str, until: Option<&str>| SupersedeRequest {
+        origin: None,
         on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         target_id: v1,
@@ -599,6 +602,7 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
         .promoted("a", "the api is at version 3", Some("2025-01"), None)
         .await;
     let next = SupersedeRequest {
+        origin: None,
         on_similar: Default::default(),
         idempotency_key: "b".to_owned(),
         target_id: v1,

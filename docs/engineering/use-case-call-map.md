@@ -172,6 +172,19 @@ new call to one of these rows.
 | UC-SM-04 | [Load a repository's documents and keep them in step](../product/use-cases.md#load-a-repositorys-documents-and-keep-them-in-step) | designed (ADR-0057 d6–d9) | a script calling `oml write` per memory | `oml sync <source> --workarea <w> [--dry-run]` over `write`, `read` and the review listing |
 | UC-SM-05 | [Link the decisions documents say amend each other](../product/use-cases.md#link-the-decisions-documents-say-amend-each-other) | designed (ADR-0057 d10) | `oml edges propose claim` and `oml edges ratify`, one edge at a time | `oml sync … --edges [--ratify]` over the same two routes |
 
+### Conversations
+
+Added on 2026-11-05 with the proposed [ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md), planned for v0.6.0; its d14 traces
+each new call to one of these rows.
+
+| UC | Use case | Status | Calls today | Minimal |
+|---|---|---|---|---|
+| UC-CH-01 | [Say what kind of source a memory came from](../product/use-cases.md#say-what-kind-of-source-a-memory-came-from) | designed (ADR-0063 d1, d2) | none | `write {text, origin: {kind}}`; `oml write --origin-kind` |
+| UC-CH-02 | [Find only what a person said, or only what documents say](../product/use-cases.md#find-only-what-a-person-said-or-only-what-documents-say) | designed (ADR-0063 d3) | none | `read {query, origin_kinds}`; `read {origin_kinds}`; `oml read --origin-kind` |
+| UC-CH-03 | [Remember what a person said in a session](../product/use-cases.md#remember-what-a-person-said-in-a-session) | designed (ADR-0063 d4–d7) | the agent writes when asked | `write {text, origin: {kind: chat}, anchor: chat}`, asked by `oml hook stop` |
+| UC-CH-04 | [Open a person's chat memory](../product/use-cases.md#open-a-persons-chat-memory) | designed (ADR-0063 d8) | `oml workareas create` | `oml chat init` over `POST /v2/workareas` |
+| UC-CH-05 | [Be reminded on each prompt](../product/use-cases.md#be-reminded-on-each-prompt) | designed (ADR-0063 d10) | none | `oml hook user-prompt` over `read {query, workarea, match: any, include_unreviewed}` |
+
 ### Sessions and agents
 
 | UC | Use case | Status | Calls today | Minimal |

@@ -77,6 +77,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
         .submit_memory(
             &keys[0],
             &SubmitRequest {
+                origin: None,
                 valid_from: None,
                 valid_until: None,
                 on_similar: Default::default(),

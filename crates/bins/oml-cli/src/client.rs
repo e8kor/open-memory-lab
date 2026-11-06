@@ -143,6 +143,19 @@ impl Client {
         }
     }
 
+    /// PUT a JSON body under the key; returns (status, parsed body).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn put(&self, path: &str, body: &Value) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .put(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?);
+        finish(request.send_json(body.clone()))
+    }
+
     /// POST a JSON body; returns (status, parsed body).
     pub fn post(
         &self,

@@ -1075,20 +1075,96 @@ impl IdGen for OsIds {
     }
 }
 
-/// The PoC deterministic scanner: rules, not a model — same input, same
-/// verdict (admission.md). The rule set is two literal markers.
-pub struct MarkerScanner;
+/// The lead's rule set, one per process: every app the lead composes scans
+/// with it, and the metrics listener reads its counts (ADR-0065 d11). The
+/// personal-data rules stay off (d6).
+static RULES: std::sync::LazyLock<oml_scan::RuleSet> =
+    std::sync::LazyLock::new(|| oml_scan::RuleSet::new(oml_scan::Options::default()));
 
-impl Scanner for MarkerScanner {
+/// The deterministic scanner the lead composes: the compiled `oml-scan/1`
+/// rule set (ADR-0065), rules, not a model — same input, same verdict
+/// (admission.md). A submission's body is reported as `/body`; an anchor
+/// value as `/anchor`, its field named by the refusal itself (ADR-0057 d2).
+/// The PoC's `[oml:veto]` and `[oml:hold]` markers stay as rules (d10).
+pub struct RuleScanner;
+
+/// Above this many bytes a scan leaves the async worker: a mebibyte takes
+/// about 13 ms in a release build, and a worker held that long stalls every
+/// request queued on it (ADR-0065 d9).
+pub const BLOCKING_SCAN_BYTES: usize = 64 * 1024;
+
+/// Run a scan of `len` bytes, off the async worker when it is long and the
+/// runtime has other workers to carry the rest (`block_in_place` on a
+/// multi-thread runtime); in place otherwise.
+fn off_the_executor<T>(len: usize, scan: impl FnOnce() -> T) -> T {
+    let multi = tokio::runtime::Handle::try_current()
+        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    if len > BLOCKING_SCAN_BYTES && multi {
+        tokio::task::block_in_place(scan)
+    } else {
+        scan()
+    }
+}
+
+fn scanned_field(envelope: &AdmissionEnvelope<'_>) -> &'static str {
+    match envelope.kind {
+        "anchor" => "/anchor",
+        "claim_key" => "/claim_key",
+        "reason" => "/reason",
+        _ => "/body",
+    }
+}
+
+impl Scanner for RuleScanner {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome {
-        if envelope.body.contains("[oml:veto]") {
-            ScanOutcome::Veto("poc-rules/marker-veto".to_owned())
-        } else if envelope.body.contains("[oml:hold]") {
-            ScanOutcome::Hold("poc-rules/marker-hold".to_owned())
-        } else {
-            ScanOutcome::Pass
+        let field = scanned_field(envelope);
+        let verdict = off_the_executor(envelope.body.len(), || {
+            RULES.scan(&[(field, envelope.body)])
+        });
+        match (&verdict, verdict.reason()) {
+            (oml_scan::Verdict::Veto(_), Some(reason)) => ScanOutcome::Veto(reason),
+            (oml_scan::Verdict::Hold(_), Some(reason)) => ScanOutcome::Hold(reason),
+            _ => ScanOutcome::Pass,
         }
     }
+
+    fn version(&self) -> Option<&'static str> {
+        Some(oml_scan::RULESET)
+    }
+
+    fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<oml_app::ports::ScanFinding> {
+        off_the_executor(envelope.body.len(), || {
+            RULES.findings(scanned_field(envelope), envelope.body)
+        })
+        .into_iter()
+        .map(|f| oml_app::ports::ScanFinding {
+            class: f.class.to_owned(),
+            rule: f.rule.to_owned(),
+            veto: f.action == oml_scan::Action::Veto,
+            at: f.location(),
+        })
+        .collect()
+    }
+
+    fn info(&self) -> Option<oml_app::ports::ScannerInfo> {
+        Some(oml_app::ports::ScannerInfo {
+            version: oml_scan::RULESET,
+            rules: RULES.rules(),
+            pii: RULES.options().pii,
+        })
+    }
+}
+
+/// The findings the lead's scanner counted since start, by class, rule and
+/// action: what `oml_scan_findings_total` serves (ADR-0065 d11). Counts
+/// only; no finding carries what it matched.
+#[must_use]
+pub fn scan_counts() -> Vec<(&'static str, &'static str, &'static str, u64)> {
+    RULES
+        .counts()
+        .into_iter()
+        .map(|(class, rule, action, n)| (class, rule, action.as_str(), n))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1310,8 +1386,8 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
 /// The store the lead composes: the Postgres adapter, every port call timed
 /// into the running request (ADR-0042 d14).
 pub type LeadStore = Timed<PgStore>;
-pub type LeadApp = App<LeadStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
-pub type LeadState = ApiState<LeadStore, LeadSigner, SystemClock, OsIds, MarkerScanner>;
+pub type LeadApp = App<LeadStore, LeadSigner, SystemClock, OsIds, RuleScanner>;
+pub type LeadState = ApiState<LeadStore, LeadSigner, SystemClock, OsIds, RuleScanner>;
 
 /// A `/readyz` probe over the composition's own pool.
 #[must_use]
@@ -1341,7 +1417,7 @@ pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
         LeadSigner::new(signing_key),
         SystemClock,
         OsIds,
-        MarkerScanner,
+        RuleScanner,
     )
     .with_observer(Arc::new(ScopeObserver))
     .with_search(search)
@@ -1550,6 +1626,8 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     // queue a task writes off the recall's path, counted on the metrics
     // listener (ADR-0054 d1, d2).
     let meter: Arc<dyn oml_app::ports::TelemetryMeter> = Arc::clone(traffic.metrics()) as _;
+    // The scan's findings by rule, read at each scrape (ADR-0065 d11).
+    traffic.metrics().with_scan_counts(scan_counts);
     let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
     let app = app.with_telemetry(telemetry);
     let app = match sparse {

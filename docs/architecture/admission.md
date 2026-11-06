@@ -154,7 +154,8 @@ into the submission envelope by digest; their storage protocol is
 
 ## The deterministic scan
 
-*Available since v0.1.0, as the marker scanner · [releases](../product/releases.md)*
+*Available since v0.1.0, as the marker scanner; the `oml-scan/1` rule set is planned for v0.6.0
+([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)) · [releases](../product/releases.md)*
 
 The scan runs in the same call as capture — before the commit transaction, never inside it
 ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
@@ -173,8 +174,9 @@ why the scan can veto but can never promote.
 For attachments, the scan covers what determinism can reach: where a deterministic text
 extractor exists for the type, the extracted text is scanned and gated; for opaque binaries
 the reviewed claim is provenance + digest + scan result, stated honestly per type
-([storage](storage.md) owns the attachment rules). Scan latency is unmeasured; a rule pass is
-expected to scale with body bytes, and no figure is asserted until one is measured.
+([storage](storage.md) owns the attachment rules). A rule pass scales with body bytes: under
+`oml-scan/1`, about 4 µs for a 124-byte chat turn, 26 µs for a 1.5 KB abstract and 13 ms for a
+mebibyte of base64, with one field bounded at 1 MiB ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d9).
 
 A claim in a format other than prose is scanned twice over, never less than prose is
 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)
@@ -228,6 +230,14 @@ The v1 shipped registry:
 | `secret.private_key` | A named private-key pattern — PEM-delimited key blocks, OpenSSH private keys — in claim text or deterministically extracted attachment text | veto |
 | `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own credential formats among them — a key, `oml_[A-Za-z0-9]{43}`, and a connection's access and refresh tokens, `oml_at_[A-Za-z0-9]{43}` and `oml_rt_[A-Za-z0-9]{43}` ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) | veto |
 | `secret.credential_pair` | A named user-and-password pattern — connection strings, basic-auth URLs | veto |
+| `secret.assignment` | A password, secret, token or API-key assignment whose value passes the entropy test ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d3) | veto |
+| `anchor.secret_path` | An anchor's or a moved check's path with a secret-shaped component ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d2; ADR-0065 d4) | veto |
+| `format.scan_bound` | One scanned field over 1 MiB (ADR-0065 d9) | veto |
+| `injection.override`, `injection.role`, `injection.tool_call` | An instruction aimed at the reader: overriding earlier instructions, a chat template or system-prompt tag, a covert or reader-triggered action (ADR-0065 d5) | hold |
+| `unicode.bidi`, `unicode.invisible` | A bidirectional control; more than three invisible format characters, or tag characters outside a flag (ADR-0065 d5) | hold |
+| `encoding.base64_blob` | A dense base64 run of 400 characters or more (ADR-0065 d5) | hold |
+| `pii.email`, `pii.phone` | An email address or a phone number; off unless a tenant turns them on (ADR-0065 d6) | hold |
+| `test.marker` | The two test markers the proof of concept used, kept so suites can force either outcome (ADR-0065 d10) | veto, hold |
 | `format.encoding` | Declared text that is not valid UTF-8 or cannot be NFC-normalized (the normalization step above has nothing lawful to produce) | veto |
 | `format.media_type_mismatch` | Attachment bytes whose leading structure contradicts the declared media type | veto |
 | `vocab.term_pending` | A citation of a CURIE that exists but is still held — distinct from unknown ([ontologies](ontologies.md)) | annotate |

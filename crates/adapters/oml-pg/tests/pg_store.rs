@@ -2585,9 +2585,11 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
             // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
-            // on every existing row (proposed ADR-0059 d11); 0033 adds the
-            // format, the title and the derived search text, text/plain with
-            // none on every existing row (ADR-0056 d1, d4).
+            // on every existing row (proposed ADR-0059 d11); 0029 adds the origin
+            // kind, null on every row written before it and never backfilled
+            // (ADR-0063 d2); 0032 adds the format, the title and the derived
+            // search text, text/plain with none on every existing row
+            // (ADR-0056 d1, d4).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -2595,7 +2597,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
                  - 'source_check_fragment' - 'source_check_at' \
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
-                 - 'format' - 'title' - 'search_text' - 'search_text_by'"
+                 - 'origin_kind' - 'format' - 'title' - 'search_text' - 'search_text_by'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5890,8 +5892,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 35,
-        "every migration through 0035_similar_keys_search_text"
+        applied, 34,
+        "every migration through 0034_similar_keys_search_text"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7338,8 +7340,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 35,
-        "every migration through 0035_similar_keys_search_text"
+        applied, 34,
+        "every migration through 0034_similar_keys_search_text"
     );
     drop(conn);
 
@@ -8217,8 +8219,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 35,
-        "every migration through 0035_similar_keys_search_text"
+        applied, 34,
+        "every migration through 0034_similar_keys_search_text"
     );
     drop(conn);
 

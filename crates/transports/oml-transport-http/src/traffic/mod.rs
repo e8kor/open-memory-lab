@@ -76,6 +76,8 @@ struct Observed {
     search: Option<(&'static str, bool, &'static str)>,
     /// A recall's answer shape and its seconds, by pipeline (ADR-0054 d1).
     answered: Option<(&'static str, &'static str, f64)>,
+    /// Each served hit's origin kind (ADR-0063 d13).
+    origins: Vec<&'static str>,
     /// A verdict and the seconds its memory waited for it (ADR-0054 d1).
     verdict: Option<(&'static str, f64)>,
     /// Hits served labelled `unreviewed`, a mode set and a curator act
@@ -186,6 +188,11 @@ pub fn recall_answered(pipeline: &'static str, result: &'static str, seconds: f6
     in_scope(|scope| scope.update(|o, _| o.answered = Some((pipeline, result, seconds))));
 }
 
+/// The request's recall served hits of these origin kinds (ADR-0063 d13).
+pub fn recall_hits_by_origin(kinds: &[&'static str]) {
+    in_scope(|scope| scope.update(|o, _| o.origins.extend_from_slice(kinds)));
+}
+
 /// The request's write ran the similar check (ADR-0050 d1).
 pub fn similar_checked(relation: &'static str, on_similar: &'static str, seconds: f64) {
     in_scope(|scope| scope.update(|o, _| o.similar = Some((relation, on_similar, seconds))));
@@ -240,6 +247,10 @@ impl RequestObserver for ScopeObserver {
 
     fn recall_answered(&self, pipeline: &'static str, result: &'static str, seconds: f64) {
         recall_answered(pipeline, result, seconds);
+    }
+
+    fn recall_hits_by_origin(&self, kinds: &[&'static str]) {
+        recall_hits_by_origin(kinds);
     }
 
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
@@ -616,6 +627,9 @@ pub(crate) async fn layer(
         traffic
             .metrics
             .similar_checked(relation, on_similar, seconds);
+    }
+    for kind in &observed.origins {
+        traffic.metrics.recall_hit_origin(kind);
     }
     for &(pipeline, stage, seconds) in &observed.stages {
         traffic.metrics.recall_stage(pipeline, stage, seconds);

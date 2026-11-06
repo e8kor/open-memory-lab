@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.5.8-design
+  version: 0.6.0-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -146,6 +146,7 @@ paths:
         - { name: own, in: query, schema: { type: boolean, default: false } }
         - { name: anchor_repo, in: query, schema: { $ref: '#/components/schemas/AnchorRepo' }, description: "Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo." }
         - { name: anchor_path_prefix, in: query, schema: { $ref: '#/components/schemas/AnchorPathPrefix' }, description: "Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4)." }
+        - { name: origin_kinds, in: query, style: form, explode: false, schema: { $ref: '#/components/schemas/OriginKinds' }, description: "Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds." }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
         - { $ref: '#/components/parameters/Limit' }
@@ -2285,6 +2286,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/admin/rescan:
+    get:
+      tags: [admin]
+      operationId: adminRescan
+      summary: Rescan the versions the tenant stores with the server's rule set and report what it would refuse or hold, by rule and place, never the text.
+      description: 'Requires: admin key role (ADR-0065 d13); every other role answers access.verb_ceiling. Reads the submissions journalled after after_seq, at most limit journal events, and scans each stored version but an erased one, body and anchor, as admission does. Changes nothing and journals nothing: a version it would veto stays where it is for a person to retire (ADR-0001 R4). A finding names its class, rule and place, never the matched text. Since v0.6.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: after_seq, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 }, description: 'Rescan the submissions journalled after this sequence number.' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 }, description: 'The most journal events this window reads.' }
+      responses:
+        '200':
+          description: What this window found.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                scanner_version: oml-scan/1
+                scanned: 2
+                findings:
+                - artifact_id: 00000000-0000-4000-8000-0000000000a1
+                  workarea_id: 00000000-0000-4000-8000-0000000000b1
+                  version: 1
+                  state: promoted
+                  class: secret.api_token
+                  rule: github-token
+                  action: veto
+                  at: /body line 3
+                by_rule:
+                - { class: secret.api_token, rule: github-token, action: veto, count: 1 }
+                next_after_seq: null
+              schema: { $ref: '#/components/schemas/RescanReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2710,6 +2750,7 @@ components:
         anchor: { $ref: '#/components/schemas/Anchor' }
         format: { type: string, description: "The media type of body, signed with the version and fixed for it: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13)." }
         title: { type: string, maxLength: 100, description: "One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10)." }
+        origin: { $ref: '#/components/schemas/Origin' }
 
     SubmitAccepted:
       type: object
@@ -2818,6 +2859,11 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/Anchor' }
             - { type: 'null' }
+        origin:
+          description: What kind of source the version's text came from, as signed; null on versions written before ADR-0063 (d1-d3).
+          oneOf:
+            - { $ref: '#/components/schemas/Origin' }
+            - { type: 'null' }
         stale:
           description: changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5).
           oneOf:
@@ -2871,6 +2917,7 @@ components:
         include_text: { type: boolean, default: true, description: Whether each served item carries its text (ADR-0039 d7). }
         anchor_repo: { $ref: '#/components/schemas/AnchorRepo' }
         anchor_path_prefix: { $ref: '#/components/schemas/AnchorPathPrefix' }
+        origin_kinds: { $ref: '#/components/schemas/OriginKinds' }
         include_unreviewed:
           type: boolean
           description: >-
@@ -3169,6 +3216,7 @@ components:
         body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
         expected_version: { type: integer, minimum: 1, description: "The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19)." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        origin: { $ref: '#/components/schemas/Origin' }
         workarea: { $ref: '#/components/schemas/WorkareaRef', description: "When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7)." }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
@@ -3194,12 +3242,36 @@ components:
         submission.scan_veto.
       properties:
         repo: { $ref: '#/components/schemas/AnchorRepo' }
-        uri: { type: string, maxLength: 2048, pattern: '^https://[^@#\s]+$', description: 'A page outside a repository: an absolute https URL with no user information and no fragment.' }
+        uri: { type: string, maxLength: 2048, pattern: '^(https://[^@#\s]+|chat://[a-z][a-z0-9-]{0,31}/[0-9a-f]{32})$', description: 'A page outside a repository: an absolute https URL with no user information and no fragment. Or a chat turn''s session, chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness''s own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required (ADR-0063 d4, d5).' }
         rev: { type: string, minLength: 1, maxLength: 128, description: 'With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace.' }
         path: { type: string, minLength: 1, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
-        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21).' }
+        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person''s prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4).' }
         hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "Digest of the fragment's text, or the file's, under hasher." }
-        hasher: { type: string, enum: [oml-md/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).' }
+        hasher: { type: string, enum: [oml-md/1, oml-turn/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person''s prompt as the harness passed it, UTF-8 after NFC, keyed by the person''s chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).' }
+
+    Origin:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      description: >-
+        What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+        event, immutable per version, never inherited by a successor. Omitted on a write, it is
+        recorded manual. chat requires a chat anchor and a chat anchor requires chat; either
+        mismatch is request.validation naming /origin/kind.
+      properties:
+        kind: { $ref: '#/components/schemas/OriginKind' }
+
+    OriginKind:
+      type: string
+      enum: [repo, doc, code, lake, chat, web, manual]
+
+    OriginKinds:
+      type: array
+      minItems: 1
+      maxItems: 7
+      uniqueItems: true
+      items: { $ref: '#/components/schemas/OriginKind' }
+      description: 'Rows whose origin kind is one of these, combined with every other filter by AND; rows without a kind are left out (ADR-0063 d3).'
 
     AnchorRepo:
       type: string
@@ -3988,6 +4060,52 @@ components:
             The lead's oauth.issuer, or null where connections are off; doctor reads whether
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build: { $ref: '#/components/schemas/Build' }
+        scan:
+          type: [object, 'null']
+          description: >-
+            The scanner's rule set, how many rules it loaded and whether the personal-data rules
+            are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065
+            d11). Its findings are counted on the metrics listener, never here.
+          properties:
+            version: { type: string }
+            rules: { type: integer, minimum: 0 }
+            pii: { type: boolean }
+
+    RescanReport:
+      type: object
+      description: One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value.
+      required: [scanner_version, scanned, findings, by_rule, next_after_seq]
+      additionalProperties: false
+      properties:
+        scanner_version: { type: [string, 'null'] }
+        scanned: { type: integer, minimum: 0, description: 'Versions scanned in this window: every stored state but erased.' }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [artifact_id, workarea_id, version, state, class, rule, action, at]
+            additionalProperties: false
+            properties:
+              artifact_id: { type: string }
+              workarea_id: { type: string }
+              version: { type: integer, minimum: 1 }
+              state: { type: string }
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              at: { type: string, description: 'The field and line, /body line 3.' }
+        by_rule:
+          type: array
+          items:
+            type: object
+            required: [class, rule, action, count]
+            additionalProperties: false
+            properties:
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              count: { type: integer, minimum: 1 }
+        next_after_seq: { type: [integer, 'null'], description: 'The after_seq of the next window, or null at the chain head.' }
 
     Build:
       type: object

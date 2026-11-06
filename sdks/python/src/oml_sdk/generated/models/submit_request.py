@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
 
 
 T = TypeVar("T", bound="SubmitRequest")
@@ -76,6 +77,10 @@ class SubmitRequest:
             title (str | Unset): One line stating the one fact the body shows, NFC, at most 100 characters, signed with the
                 version. Required with a format other than text/plain and text/markdown: request.validation with details.field
                 title otherwise (ADR-0056 d10).
+            origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+                event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+                requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+                /origin/kind.
     """
 
     body: str
@@ -92,6 +97,7 @@ class SubmitRequest:
     anchor: Anchor | Unset = UNSET
     format_: str | Unset = UNSET
     title: str | Unset = UNSET
+    origin: Origin | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,6 +147,10 @@ class SubmitRequest:
 
         title = self.title
 
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -174,6 +184,8 @@ class SubmitRequest:
             field_dict["format"] = format_
         if title is not UNSET:
             field_dict["title"] = title
+        if origin is not UNSET:
+            field_dict["origin"] = origin
 
         return field_dict
 
@@ -181,6 +193,7 @@ class SubmitRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -246,6 +259,13 @@ class SubmitRequest:
 
         title = d.pop("title", UNSET)
 
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
+
         submit_request = cls(
             body=body,
             verb=verb,
@@ -261,6 +281,7 @@ class SubmitRequest:
             anchor=anchor,
             format_=format_,
             title=title,
+            origin=origin,
         )
 
         submit_request.additional_properties = d
