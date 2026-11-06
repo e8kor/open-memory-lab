@@ -1407,12 +1407,12 @@ const SIMILAR_HEALTH_SAMPLE: i64 = 2000;
 /// the word split runs on the sample alone. A key whose version is gone
 /// altogether is outside the sample; the delete trigger removes it.
 const SIMILAR_HEALTH: &str = "WITH start AS MATERIALIZED (SELECT gen_random_uuid() AS s), v AS ( \
-         SELECT x.id, x.state, cardinality(oml_similar_words(x.claim)) > 0 AS worded FROM ( \
-           (SELECT 0 AS lap, m.id, m.claim, \
+         SELECT x.id, x.state, cardinality(oml_similar_words(coalesce(x.search_text, x.claim))) > 0 AS worded FROM ( \
+           (SELECT 0 AS lap, m.id, m.claim, m.search_text, \
                    oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
               FROM memories m WHERE m.tenant_id = $1 AND m.id >= (SELECT s FROM start) ORDER BY m.id LIMIT $3) \
            UNION ALL \
-           (SELECT 1, m.id, m.claim, \
+           (SELECT 1, m.id, m.claim, m.search_text, \
                    oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) \
               FROM memories m WHERE m.tenant_id = $1 AND m.id < (SELECT s FROM start) ORDER BY m.id LIMIT $3)) x \
          ORDER BY x.lap, x.id LIMIT $3) \

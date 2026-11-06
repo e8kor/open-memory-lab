@@ -252,3 +252,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0031 | `feat/lake-writer` | #75 | lake writer | open |
 | migration | 0033 | `feat/claim-formats` |  | claim formats | reserved |
 | migration | 0034 | `feat/claim-formats` | #90 | claim formats validate | reserved |
+| migration | 0035 | `feat/claim-formats` | #90 | similar keys search text | reserved |
