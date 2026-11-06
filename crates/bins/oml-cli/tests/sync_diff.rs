@@ -1667,3 +1667,196 @@ fn excluding_a_path_that_holds_this_syncs_claims_is_refused_unless_explicit() {
     );
     assert_eq!(report.json["summary"]["unchanged"], 3);
 }
+
+// The `rust` adapter's diff (ADR-0061 d5-d8, d10).
+
+const RS_A: &str = "[package]\nname = \"oml-a\"\ndescription = \"Crate A.\"\n";
+const RS_LIB: &str = "//! A root.\n\npub mod m;\n";
+const RS_M: &str = "//! Module m.\n\npub fn f() {}\n";
+
+fn rust_loaded(m: &str, commit: &str) -> Loaded {
+    let mut l = loaded(
+        &[
+            ("crates/a/Cargo.toml", RS_A),
+            ("crates/a/src/lib.rs", RS_LIB),
+            ("crates/a/src/m.rs", m),
+        ],
+        Kind::Rust,
+        commit,
+    );
+    l.path = "crates".into();
+    l.scope = Scope::Prefix("crates".into());
+    l
+}
+
+fn rust_opts() -> Options {
+    Options {
+        source: "crates".into(),
+        ..opts()
+    }
+}
+
+#[test]
+fn a_code_edit_marks_nothing_stale_and_a_doc_edit_marks_exactly_its_claim() {
+    let fake = Fake::new();
+    let first = run(&fake, &rust_loaded(RS_M, &rev(1)), &rust_opts());
+    assert_eq!(
+        outcomes(&first),
+        pairs(&[("new", "rust/crate/oml-a"), ("new", "rust/mod/oml_a::m"),])
+    );
+    let hashers: Vec<_> = fake
+        .writes()
+        .iter()
+        .map(|(_, b)| b["anchor"]["hasher"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(hashers, ["oml-crate/1", "oml-rustdoc/1"]);
+    fake.promote_all();
+    let code = run(
+        &fake,
+        &rust_loaded(
+            "//! Module m.\n\npub fn f() { 1; }\npub fn g() {}\n",
+            &rev(2),
+        ),
+        &rust_opts(),
+    );
+    assert!(
+        outcomes(&code).iter().all(|(o, _)| o == "unchanged"),
+        "{:?}",
+        outcomes(&code)
+    );
+    assert!(fake.writes().is_empty());
+    let doc = run(
+        &fake,
+        &rust_loaded("//! Module m, rewritten.\n\npub fn f() {}\n", &rev(3)),
+        &rust_opts(),
+    );
+    assert_eq!(
+        outcomes(&doc),
+        pairs(&[
+            ("unchanged", "rust/crate/oml-a"),
+            ("changed", "rust/mod/oml_a::m"),
+        ])
+    );
+    assert_eq!(fake.writes().len(), 1);
+}
+
+#[test]
+fn the_rust_adapter_never_retires_a_claim_outside_its_namespace() {
+    let fake = Fake::new();
+    let mut docs = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(1));
+    docs.path = String::new();
+    docs.scope = Scope::Prefix(String::new());
+    run(
+        &fake,
+        &docs,
+        &Options {
+            source: ".".into(),
+            ..opts()
+        },
+    );
+    fake.promote_all();
+    let mut code = rust_loaded(RS_M, &rev(2));
+    code.path = String::new();
+    code.scope = Scope::Prefix(String::new());
+    let report = run(
+        &fake,
+        &code,
+        &Options {
+            source: ".".into(),
+            ..opts()
+        },
+    );
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    assert_eq!(
+        fake.writes().len(),
+        2,
+        "only the two rust claims are written"
+    );
+    fake.promote_all();
+    // And the other way: a headings run leaves the rust claims alone.
+    let mut again = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Headings, &rev(3));
+    again.path = String::new();
+    again.scope = Scope::Prefix(String::new());
+    let report = run(
+        &fake,
+        &again,
+        &Options {
+            source: ".".into(),
+            ..opts()
+        },
+    );
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    assert!(fake.writes().is_empty());
+}
+
+#[test]
+fn an_unsupported_or_unreadable_file_retires_none_of_its_claims() {
+    let fake = Fake::new();
+    run(&fake, &rust_loaded(RS_M, &rev(1)), &rust_opts());
+    fake.promote_all();
+    let mut broken = rust_loaded(RS_M, &rev(2));
+    broken
+        .files
+        .iter_mut()
+        .find(|(p, _)| p.ends_with("m.rs"))
+        .unwrap()
+        .1 = vec![0xff, 0xfe];
+    let report = run(&fake, &broken, &rust_opts());
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    assert!(fake.writes().is_empty());
+    assert_eq!(report.json["unreadable"][0]["path"], "crates/a/src/m.rs");
+    let report = run(
+        &fake,
+        &rust_loaded("#![doc = \"x\"]\n//! Module m.\n", &rev(3)),
+        &rust_opts(),
+    );
+    assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+    assert!(fake.writes().is_empty());
+    assert!(
+        report.json["unreadable"][0]["why"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported")
+    );
+    // A module that is really gone is retired, as before.
+    let mut gone = rust_loaded(RS_M, &rev(4));
+    gone.files.retain(|(p, _)| !p.ends_with("m.rs"));
+    gone.files
+        .iter_mut()
+        .find(|(p, _)| p.ends_with("lib.rs"))
+        .unwrap()
+        .1 = b"//! A root.\n".to_vec();
+    let report = run(&fake, &gone, &rust_opts());
+    assert_eq!(report.json["summary"]["removed"], 1, "{}", report.json);
+}
+
+#[test]
+fn an_adr_or_headings_run_over_a_workarea_holding_only_rust_claims_never_touches_them() {
+    for kind in [Kind::Headings, Kind::Adr] {
+        let fake = Fake::new();
+        run(&fake, &rust_loaded(RS_M, &rev(1)), &rust_opts());
+        fake.promote_all();
+        let mut docs = loaded(&[("docs/guide.md", GUIDE_V1)], kind, &rev(2));
+        docs.path = String::new();
+        docs.scope = Scope::Prefix(String::new());
+        let report = try_run(
+            &fake,
+            &docs,
+            &Options {
+                source: ".".into(),
+                ..opts()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{kind:?}: a rust-only workarea must not refuse: {e}"));
+        assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+        let keys: Vec<String> = fake
+            .writes()
+            .iter()
+            .map(|(_, b)| b["claim_key"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert!(
+            keys.iter().all(|k| !k.starts_with("rust/")),
+            "{kind:?} wrote {keys:?}"
+        );
+    }
+}

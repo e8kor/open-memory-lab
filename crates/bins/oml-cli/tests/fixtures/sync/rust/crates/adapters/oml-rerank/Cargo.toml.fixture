@@ -1,0 +1,59 @@
+[package]
+name = "oml-rerank"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The lead's local models through candle, pure Rust: the cross-encoder behind oml-app's Reranker port (ADR-0053) and the learned sparse encoder behind its SparseEncoder port (ADR-0052 d14); the lead alone depends on it, so the CLI never carries it."
+
+[dependencies]
+oml-app.workspace = true
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+sha2.workspace = true
+hex.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "rt-multi-thread"] }
+oml-port-contracts.workspace = true
+
+[features]
+# The network: candle, tokenizers and their numerics. Off, the crate is the
+# model pins, the settings and the fetch, which the lead's configuration
+# reads whether or not it can rerank (ADR-0053 d2).
+default = ["model"]
+model = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:rayon",
+    "dep:tokio",
+    "dep:tracing",
+]
+
+[[example]]
+name = "timing"
+required-features = ["model"]
+
+[[example]]
+name = "sparse_encode"
+required-features = ["model"]
+
+[[test]]
+name = "model"
+required-features = ["model"]
+
+[[test]]
+name = "sparse"
+required-features = ["model"]
+
+[lints]
+workspace = true

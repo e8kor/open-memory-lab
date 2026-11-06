@@ -9,9 +9,11 @@
 use serde_json::{Map, Value};
 use unicode_normalization::UnicodeNormalization;
 
-/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1` in v0.5.8,
-/// and `oml-turn/1` for a chat anchor alone (ADR-0063 d4).
-pub const HASHERS: [&str; 2] = ["oml-md/1", TURN_HASHER];
+/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1`; the two of
+/// the `rust` adapter, `oml-rustdoc/1` for a module's doc and `oml-crate/1`
+/// for a crate's facts, which the server computes none of (ADR-0061 d7); and
+/// `oml-turn/1` for a chat anchor alone (ADR-0063 d4).
+pub const HASHERS: [&str; 4] = ["oml-md/1", "oml-rustdoc/1", "oml-crate/1", TURN_HASHER];
 
 /// A chat turn's hasher: the SHA-256 of the person's prompt as the harness
 /// passed it, UTF-8 after NFC (ADR-0063 d4).
@@ -195,7 +197,10 @@ impl Anchor {
                     ));
                 }
                 if !HASHERS.contains(&hasher) {
-                    return Err(refuse(&field("hasher"), "one of oml-md/1, oml-turn/1"));
+                    return Err(refuse(
+                        &field("hasher"),
+                        "one of oml-md/1, oml-rustdoc/1, oml-crate/1, oml-turn/1",
+                    ));
                 }
                 if chat != (hasher == TURN_HASHER) {
                     return Err(refuse(
