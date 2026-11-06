@@ -119,6 +119,13 @@ class Changelog(unittest.TestCase):
         self.assertIsNotNone(C.verdict(code + [("A", "changes/README.md")], []))
         self.assertIsNone(C.verdict([("M", "README.md")], []))
 
+    def test_a_release_branch_that_assembles_the_changelog_passes_and_any_other_release_branch_does_not(self):
+        code = [("M", "crates/a/src/lib.rs")]
+        assembled = code + [("M", "docs/changelog.md"), ("D", "changes/78.md")]
+        self.assertIsNone(C.verdict(assembled, [], "release/v0.6.0"))
+        self.assertIsNotNone(C.verdict(code, [], "release/v0.6.0"))
+        self.assertIsNotNone(C.verdict(assembled, [], "feat/x"))
+
 
 class DiskGuard(unittest.TestCase):
     def test_a_limit_below_usage_refuses(self):
