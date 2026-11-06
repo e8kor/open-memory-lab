@@ -15,14 +15,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oml_numbers as N  # noqa: E402
 
 
-def check(root: Path, base: str, branch: str, remote: str = "origin") -> list[str]:
+def check(root: Path, base: str, branch: str, remote: str = "origin", prs: dict[str, int] | None = None) -> list[str]:
+    """`prs` maps the head of each open pull request to its number; None asks GitHub. When it is
+    known, only open pull requests hold numbers (as scan_rows reads it), and a branch fully merged
+    into `base` holds none."""
+    prs = N.open_prs(root) if prs is None else prs
     reg = root / N.REGISTRY
     rows = N.parse_registry(reg.read_text()) if reg.exists() else []
     mine = N.numbers_added(root, base, "HEAD")
     others = {}
     for b in N.remote_branches(root, remote, base.split("/")[-1]):
         name = b.split("/", 1)[1]
-        if name != branch:
+        if name != branch and not (prs and name not in prs) and not N.merged_into(root, b, base):
             for key, title in N.numbers_added(root, base, b).items():
                 if mine.get(key) != title:  # a branch stacked on this one repeats its numbers
                     others.setdefault(key, []).append(name)
