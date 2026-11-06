@@ -7,7 +7,7 @@ answers: why OML now serves a web console after ADR-0015 declined one, and how e
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view and the workarea dropdowns (d22–d29)
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workarea dropdowns and the pages' copy (d22–d31)
 
 **Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
 
@@ -638,7 +638,8 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
       `request.validation` naming the field; a workarea or key the acting key may not name is
       `access.not_found`, as on the API.
     - **Text.** On the user page `q` runs the recall path itself (`POST /v1/recall`'s use case
-      as `<user>-web`, unreviewed rows included), so the view finds what an agent of the person
+      as `<user>-web`, unreviewed rows included, where "own" is every key naming the person's
+      user as d16 reads it for a session user key), so the view finds what the person's agents
       would find and nothing more; its answer is one ranked page of at most 100 rows, recall's
       own bound, with no next page, and the other filters narrow that page. On the admin page
       `q` is the admin read's full-text match (d21), which keeps keyset order and pages.
@@ -668,10 +669,11 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
 - **d24 — The admin page lists through the admin read, and every page it serves is one
   `memory.admin_read` event.** The view runs `POST /v2/admin/memories/search`'s use case as
   `<user>-admin` (d21) with the filters of d22, `origin` and `author` joining `query`,
-  `workarea` and `state` on that route as well; the CLI's `oml admin read` keeps its flags.
+  `workarea` and `state` in the use case; the lab route and the CLI's `oml admin read` keep
+  their fields, and gain the two when a client asks for them.
   Each page served, a list page or a JSON page (d25), writes exactly one `memory.admin_read`
-  event naming the page's `artifact_ids` and, for a text query, its `query_digest`; never one per
-  row, and never one for a page that served no row. Opening one memory stays d21's single read.
+  event naming the page's `artifact_ids` and, for a text query, its `query_digest`; an empty
+  page included, since the search was the admin's act, and never one per row. Opening one memory stays d21's single read.
   The admin page's list is the tenant's every memory, every state and every root, as d10 says.
 
 - **d25 — The Atlas view draws the same page of memories, and its data comes from a same-origin
@@ -679,7 +681,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
   `display=atlas`, keeping every filter and the cursor, opens the Atlas view of the same page:
   the OML Live Atlas of [docs/atlas](../atlas/index.html), "a quiet instrument room over a
   living ledger", drawn over the page's real rows instead of its mocked desk. Each workarea on
-  the page is a hub on its own orbit, coloured by its status; each memory is a point around its
+  the page is a hub on its own orbit around the `universe` core; each memory is a point around its
   workarea, coloured by state, with a held row marked by the ring the docs atlas gives held
   claims, so state reads by form as well as colour; selecting a point opens a panel with the
   fields the card shows. It never draws a wider set than the list: no other page, no other
@@ -774,10 +776,10 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
     `workarea_status` take a session key's caller as every other use case the pages call does;
     their checks and refusals are unchanged.
 
-- **d29 — What this amends and adds.** `WEB_ROUTES` grows from six to eight (d25); the user
+- **d29 — What this amends and adds.** `WEB_ROUTES` grows from six to eight (d25), and their JSON route also answers the Atlas's workareas (d30); the user
   page's actions gain `workarea_transition` and `workarea_ratify`, and the admin page's gain
-  those two and `workarea_mode` (d28); the admin page gains a Workareas view; `POST
-  /v2/admin/memories/search` gains `origin` and `author` (d24). d1's decline of "graph pictures"
+  those two and `workarea_mode` (d28); the admin page gains a Workareas view; the admin read's use case gains `origin` and
+  `author` (d24), its lab route unchanged. d1's decline of "graph pictures"
   is narrowed to everything but the Atlas view of d25, and d7's and d8's "no script" to every
   view but that one (d26). No MCP tool, verb, journal event or table is added, and no migration.
   No new failure is the operator's: a page that fails to draw keeps its text list (d27), and
@@ -787,8 +789,41 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
   `the_json_route_answers_exactly_the_lists_rows`, `every_admin_page_of_memories_is_one_admin_read_event`,
   `the_atlas_view_allows_two_same_origin_scripts_and_no_inline_script`, `the_filters_narrow_the_list`,
   `the_atlas_page_runs_its_scripts_from_the_same_origin_in_chromium`,
-  `the_workarea_options_offered_are_exactly_the_acts_allowed` and
-  `a_workarea_act_is_confirmed_before_it_runs`.
+  `the_workarea_options_offered_are_exactly_the_acts_allowed`,
+  `a_workarea_act_is_confirmed_before_it_runs` and
+  `the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_read` (d30).
+
+- **d30 — The Atlas draws the workareas the viewer may read as nested regions, and only those;
+  the operator's decision of 2026-11-06.** The JSON route of d25 also answers `workareas`: the
+  nodes the tree read serves the page's reading key under the page's `workarea` filter
+  (`universe` when none), so `<user>-web`'s root, its children and the `universe` node on the
+  user page, and the tenant's tree, which an admin key reads as structure, on the admin page.
+  Each carries its id, parent, name, path, status, whether it is in progress, and its rows by
+  state: approved (promoted tips), held, in progress (held inside an in-progress scope) and
+  other. The counts are taken from the same listing the list pages through, as the same key,
+  so a region and a count exist only where the list would show the row: a held row of another
+  author is counted only inside an in-progress scope (ADR-0001 R3; ADR-0030 d3), and a node
+  the key may not read is neither drawn nor counted, and filtering to it is `access.not_found`.
+  On the admin page the counts are the admin read's scope and no wider; they carry no content
+  and journal nothing, as the queue's depth does (d16), while the page of rows beside them is
+  d24's one `memory.admin_read`. Counting stops after 2,000 rows a view (chosen, not measured)
+  and says the counts are at least those shown. The drawing is a circle packing on the floor:
+  a region's size follows its count, a child sits inside its parent, and this page's memories
+  sit inside their region with d25's colour and form. A region's label shows its name, its
+  counts and an `in progress` badge; an `ontology` badge joins when a workarea can say it is
+  an ontology crew's (ADR-0027, not on main yet). Selecting a
+  region opens its panel: its counts, a link that sets the same `workarea` filter on the Atlas
+  and on the list, and d28's dropdown of the acts the page's keys may take there now, a
+  keyboard reaches through the text list. A breadcrumb leads back to every workarea and one
+  level up. The text alternative of d27 gains an ordered list of the workareas, each with its
+  counts and state, equivalent to the drawing.
+
+- **d31 — Each section of both pages is a short heading, its control and at most one muted line;
+  the operator's decision of 2026-11-06.** Explanations that change no decision move behind a
+  `?` disclosure or to the guides. The lines kept are the ones a person acts on: shown once,
+  held until someone else reviews it, works once until a time, what removing an address ends.
+  Buttons are verbs, headings nouns. The pages' words fall by about a third (counted on the
+  views of the Chromium test).
 
 ## Consequences
 
